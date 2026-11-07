@@ -118,7 +118,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	ip4, ip6 := s.TailscaleIPs()
-	log.Printf("up as %s (%v, %v), advertising exit routes. Approve them in the admin console if this is a new node.", cfg.Hostname, ip4, ip6)
+	log.Printf("up as %s (%v, %v), advertising exit routes", cfg.Hostname, ip4, ip6) // approval, if missing, is the next step logged
 	if cfg.ProxyPort != 0 {
 		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", cfg.ProxyPort))
 		if err != nil {
