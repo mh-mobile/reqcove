@@ -41,7 +41,7 @@ func TestStoreMergesEventsAndRedacts(t *testing.T) {
 		t.Fatalf("merged flow = %+v", v)
 	}
 	for _, h := range append(v.ReqHeaders, v.RespHeaders...) {
-		if secretHeaders[strings.ToLower(h[0])] && h[1] != "[redacted]" {
+		if v := strings.ToLower(h[1]); strings.Contains(v, "s3cret") || strings.Contains(v, "=1") || strings.Contains(v, "=2") {
 			t.Errorf("header %s not redacted: %q", h[0], h[1])
 		}
 	}

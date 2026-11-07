@@ -209,13 +209,15 @@ func TestEndToEnd(t *testing.T) {
 	cookies := 0
 	for _, hd := range append(v.ReqHeaders, v.RespHeaders...) {
 		switch strings.ToLower(hd[0]) {
-		case "authorization", "set-cookie":
+		case "authorization":
 			if hd[1] != "[redacted]" {
 				t.Errorf("%s not redacted: %q", hd[0], hd[1])
 			}
-			if strings.EqualFold(hd[0], "set-cookie") {
-				cookies++
+		case "set-cookie": // the name stays, the value goes
+			if hd[1] != "a=[redacted]" && hd[1] != "b=[redacted]" {
+				t.Errorf("%s not redacted: %q", hd[0], hd[1])
 			}
+			cookies++
 		}
 	}
 	if cookies != 2 {

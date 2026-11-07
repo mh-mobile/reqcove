@@ -670,7 +670,11 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	for i, kv := range h {
 		out[i] = kv
 		switch name := strings.ToLower(kv[0]); {
-		case secretHeaders[name]:
+		case name == "cookie":
+			out[i][1] = maskCookies(kv[1], "; ", false)
+		case name == "set-cookie":
+			out[i][1] = maskCookies(kv[1], ";", true)
+		case secretHeader(name):
 			out[i][1] = "[redacted]"
 		case name == "referer" || name == "location" || name == "content-location":
 			out[i][1] = maskURLs(kv[1])
@@ -679,9 +683,35 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	return out
 }
 
-// secretHeaders are masked in every header list reqcove records.
-var secretHeaders = map[string]bool{
-	"authorization": true, "proxy-authorization": true, "cookie": true, "set-cookie": true,
+// secretHeader reports whether a header's whole value is a secret: the
+// authorization headers and any whose name says it carries a key or token
+// (X-Api-Key, X-Auth-Token, X-Amz-Security-Token, ...). Masking a harmless
+// header by mistake costs little; missing a key does not.
+func secretHeader(name string) bool {
+	for _, w := range []string{"auth", "token", "secret", "password", "passwd", "api-key", "api_key", "apikey", "session", "credential", "signature"} {
+		if strings.Contains(name, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// maskCookies keeps each cookie's name, so it shows which cookies went, and
+// masks its value. In Set-Cookie (oneCookie), only the first pair is a
+// cookie; the attributes after it (Path, HttpOnly, ...) stay.
+func maskCookies(v, sep string, oneCookie bool) string {
+	parts := strings.Split(v, sep)
+	for i, p := range parts {
+		if oneCookie && i > 0 {
+			break
+		}
+		if name, _, ok := strings.Cut(p, "="); ok {
+			parts[i] = name + "=[redacted]"
+		} else if i == 0 {
+			parts[i] = "[redacted]" // a value without a name
+		}
+	}
+	return strings.Join(parts, sep)
 }
 
 // secretParams are query parameters whose values are masked.
@@ -692,7 +722,8 @@ var secretParams = map[string]bool{
 	"auth": true, "code": true, "signature": true, "sig": true,
 }
 
-var queryRE = regexp.MustCompile(`([?&;])([^=&#\s]+)=([^&#\s]*)`)
+// A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the fragment).
+var queryRE = regexp.MustCompile(`([?&;#])([^=&#\s]+)=([^&#\s]*)`)
 
 // maskURLs masks the values of secret query parameters anywhere in v.
 func maskURLs(v string) string {
