@@ -28,7 +28,7 @@ import (
 func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove mcp")
+		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove cleanup | reqcove mcp")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -41,6 +41,8 @@ func main() {
 		err = runMCP(ctx, os.Args[2:])
 	case "status":
 		err = status(ctx, os.Args[2:])
+	case "cleanup":
+		err = cleanup(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}

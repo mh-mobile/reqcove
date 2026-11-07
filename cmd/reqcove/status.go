@@ -75,7 +75,7 @@ func status(ctx context.Context, args []string) error {
 	defer session.Close()
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "status"})
 	if err != nil {
-		return err
+		return fmt.Errorf("the running reqcove did not answer status (%v); an older build? restart `reqcove run` with this one", err)
 	}
 	b, _ := json.Marshal(res.StructuredContent)
 	if *asJSON {
@@ -105,6 +105,7 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
+	printCA(filepath.Join(*state, "mitmproxy"))
 	if len(out.NextSteps) == 0 {
 		fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
 		return nil
@@ -128,12 +129,57 @@ func offlineStatus(state, uvx string) error {
 	} else {
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
-	if ca, err := capture.ReadCA(filepath.Join(state, "mitmproxy")); err != nil {
-		fmt.Println("  CA:    none yet; the first `reqcove run` makes it")
-	} else {
-		fmt.Printf("  CA:    %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
-	}
+	printCA(filepath.Join(state, "mitmproxy"))
 	fmt.Println("start it with: reqcove run --device NAME --allow-hosts api.example.com")
+	return nil
+}
+
+// printCA says which CA the devices must trust, and how to add and remove it on an iPhone.
+func printCA(confdir string) {
+	ca, err := capture.ReadCA(confdir)
+	if err != nil {
+		fmt.Println("  CA:          none yet; the first `reqcove run` makes it")
+		return
+	}
+	fmt.Printf("  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
+	fmt.Println("    add on an iPhone:    with the exit node on, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,")
+	fmt.Println("                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
+	fmt.Printf("    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
+}
+
+// cleanup lists how to undo reqcove, and with --delete-state removes the state directory.
+func cleanup(args []string) error {
+	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
+	state := fs.String("state", defaultState(), "state directory")
+	hostname := fs.String("hostname", "reqcove", "tailnet node name")
+	del := fs.Bool("delete-state", false, "delete the state directory (node key, CA and its private key, logs)")
+	fs.Parse(args)
+	ca, caErr := capture.ReadCA(filepath.Join(*state, "mitmproxy"))
+	fmt.Println("To undo reqcove:")
+	fmt.Printf("  1. On each iPhone: Tailscale app, Exit Node, None (or set the Wi-Fi proxy back to Off).\n")
+	if caErr == nil {
+		fmt.Printf("  2. On each iPhone: Settings, General, VPN & Device Management, %q, Remove Profile.\n", ca.Name)
+	} else {
+		fmt.Println("  2. On each iPhone: remove the reqcove CA profile, if you installed one.")
+	}
+	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", *hostname)
+	fmt.Printf("  4. This computer: delete %s (`reqcove cleanup --delete-state`).\n", *state)
+	if !*del {
+		return nil
+	}
+	if _, err := os.Stat(*state); err != nil {
+		fmt.Printf("%s is already gone\n", *state)
+		return nil
+	}
+	unlock, err := lockState(*state) // refuses while `reqcove run` holds it
+	if err != nil {
+		return fmt.Errorf("%w: stop `reqcove run` first", err)
+	}
+	unlock()
+	if err := os.RemoveAll(*state); err != nil {
+		return err
+	}
+	fmt.Printf("deleted %s\n", *state)
 	return nil
 }
 

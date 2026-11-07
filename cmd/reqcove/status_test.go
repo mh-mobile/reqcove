@@ -97,3 +97,28 @@ func captureStdout(t *testing.T, f func() error) string {
 	}
 	return string(b)
 }
+
+func TestCleanup(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	os.MkdirAll(filepath.Join(dir, "tsnet"), 0o700)
+	out := captureStdout(t, func() error { return cleanup([]string{"--state", dir}) })
+	if !strings.Contains(out, "Exit Node, None") || !strings.Contains(out, `remove "reqcove"`) {
+		t.Errorf("steps:\n%s", out)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("deleted without --delete-state")
+	}
+	// While a run holds the lock, the state stays.
+	unlock, err := lockState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup([]string{"--state", dir, "--delete-state"}); err == nil {
+		t.Error("deleted the state of a running reqcove")
+	}
+	unlock()
+	captureStdout(t, func() error { return cleanup([]string{"--state", dir, "--delete-state"}) })
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("state still there after --delete-state")
+	}
+}
