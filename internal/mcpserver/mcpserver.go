@@ -65,6 +65,9 @@ type StatsOut struct {
 	Stats map[string]any `json:"stats"`
 }
 
+// Version is reqcove's, as MCP clients see it.
+var Version = "dev"
+
 // StatusOut is what the status tool returns; `reqcove status` prints it.
 type StatusOut struct {
 	Node      any            `json:"node"`       // exitnode.Status
@@ -75,7 +78,7 @@ type StatusOut struct {
 // New returns an MCP server with the read-only tools over st; status, when
 // not nil, adds the status tool.
 func New(st *capture.Store, status func() StatusOut) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "dev"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
 	if status != nil {
 		mcp.AddTool(s, &mcp.Tool{Name: "status", Description: "Whether reqcove is ready to carry and record the devices' traffic: its tailnet node (login, Tailnet Lock, exit node approval, devices found), mitmproxy, and the next steps for the user when something is missing. Check it first when no flows arrive."},
 			func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatusOut, error) {

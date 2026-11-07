@@ -25,12 +25,16 @@ import (
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 )
 
+// version is set at release builds: -ldflags "-X main.version=v0.1.0".
+var version = "dev"
+
 func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove cleanup | reqcove mcp")
+		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove cleanup | reqcove mcp | reqcove version")
 		os.Exit(2)
 	}
+	mcpserver.Version = version
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var err error
@@ -43,6 +47,9 @@ func main() {
 		err = status(ctx, os.Args[2:])
 	case "cleanup":
 		err = cleanup(os.Args[2:])
+	case "version", "--version", "-version":
+		fmt.Println("reqcove", version)
+		return
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}

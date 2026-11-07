@@ -1,0 +1,44 @@
+name: release
+
+# Push a tag such as v0.1.0. This builds the binaries and makes a DRAFT
+# release; nothing is public until someone publishes the draft.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./... && go test ./...
+      - name: build
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          mkdir -p dist
+          go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/reqcove --save_path=third_party
+          # go-licenses keeps LICENSE files only; Tailscale also has a PATENTS grant.
+          cp "$(go list -m -f '{{.Dir}}' tailscale.com)/PATENTS" third_party/tailscale.com/
+          for target in darwin/arm64 linux/amd64 linux/arm64; do
+            os=${target%/*} arch=${target#*/}
+            name=reqcove_${VERSION#v}_${os}_${arch}
+            mkdir -p "build/$name"
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION" -o "build/$name/reqcove" ./cmd/reqcove
+            cp LICENSE README.md "build/$name/"
+            cp -R third_party "build/$name/third_party_licenses"
+            tar -C build -czf "dist/$name.tar.gz" "$name"
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+      - name: draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --draft --generate-notes --title "${{ github.ref_name }}"
