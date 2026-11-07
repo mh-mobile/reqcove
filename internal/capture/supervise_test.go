@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -126,4 +127,43 @@ func TestRestartRefusesBrokenRules(t *testing.T) {
 		t.Fatalf("state %v, err %v", c.Store.Stats()["state"], c.Err())
 	}
 	c.Stop()
+}
+
+// A mitmdump left behind by a reqcove that died without Stop is stopped by
+// the next Start on the same directory; an unrelated process is not.
+func TestStartStopsStaleMitmdump(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "rcvk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	state := filepath.Join(dir, "s")
+	os.MkdirAll(state, 0o700)
+	spawn := func(arg string) *exec.Cmd {
+		cmd := exec.Command("/bin/sh", "-c", "sleep 600", "fake-uvx", arg)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		go cmd.Wait()
+		t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+		return cmd
+	}
+	alive := func(c *exec.Cmd) bool { return syscall.Kill(c.Process.Pid, 0) == nil }
+
+	stale := spawn("reqcove_socket=" + filepath.Join(state, "ingest.sock"))
+	os.WriteFile(filepath.Join(state, "mitmdump.pid"), []byte(strconv.Itoa(stale.Process.Pid)), 0o600)
+	killStale(state, filepath.Join(state, "ingest.sock"))
+	time.Sleep(200 * time.Millisecond)
+	if alive(stale) {
+		t.Error("the stale mitmdump still runs")
+	}
+
+	other := spawn("reqcove_socket=/somewhere/else.sock") // a reused PID: not ours
+	os.WriteFile(filepath.Join(state, "mitmdump.pid"), []byte(strconv.Itoa(other.Process.Pid)), 0o600)
+	killStale(state, filepath.Join(state, "ingest.sock"))
+	time.Sleep(200 * time.Millisecond)
+	if !alive(other) {
+		t.Error("stopped a process that is not this directory's mitmdump")
+	}
 }

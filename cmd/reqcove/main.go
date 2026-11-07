@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -35,6 +36,9 @@ func main() {
 		os.Exit(2)
 	}
 	mcpserver.Version = version
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(capture.GoMemoryLimit)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var err error

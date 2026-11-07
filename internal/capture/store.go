@@ -197,6 +197,10 @@ const (
 	DefaultBodyHead = 64 << 10
 	DefaultMaxFlows = 10000
 	DefaultMaxBytes = 64 << 20
+	// GoMemoryLimit is the soft limit `run` gives Go's GC (unless GOMEMLIMIT
+	// is set): with GOGC alone the heap grows to about twice the live store,
+	// which the soak test measured at 175 MB with full heads.
+	GoMemoryLimit = 120 << 20
 )
 
 func NewStore(maxFlows, maxBytes int) *Store {

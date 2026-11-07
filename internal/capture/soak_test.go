@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,7 @@ func TestSoak(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), d+5*time.Minute)
 	defer cancel()
+	debug.SetMemoryLimit(GoMemoryLimit) // as `reqcove run` does
 	h := startHarness(t, ctx, []string{"127.0.0.1"})
 	mitmPid := pidOn(":" + h.port())
 
@@ -74,6 +76,7 @@ func TestSoak(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	hc := h.client("soak-device")
+	hc.Timeout = 0 // the streams below last the whole run; the harness's client gives up after 2 minutes
 	dial := hc.Transport.(*http.Transport).DialContext
 
 	// The POST that never ends: 4 KiB every 100 ms for the whole run.

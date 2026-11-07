@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -108,6 +109,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		return nil, err
 	}
 	sock := filepath.Join(cfg.Dir, "ingest.sock")
+	killStale(cfg.Dir, sock)
 	os.Remove(sock) // callers hold the state directory lock, so a socket here is stale
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -211,6 +213,9 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
+	// If reqcove dies without Stop (SIGKILL, a crash), mitmdump outlives it
+	// in its own process group; the next Start stops it (killStale).
+	os.WriteFile(filepath.Join(c.cfg.Dir, "mitmdump.pid"), []byte(strconv.Itoa(p.cmd.Process.Pid)), 0o600)
 	go func() {
 		p.err = p.cmd.Wait()
 		close(p.done)
@@ -289,6 +294,7 @@ func (c *Capture) Stop() {
 	<-c.done
 	c.ln.Close()
 	os.Remove(c.ln.Addr().String())
+	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	if c.WebURL != "" {
 		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
 	}
@@ -314,6 +320,33 @@ func (c *Capture) accept() {
 			}
 		}()
 	}
+}
+
+// killStale stops a mitmdump (with uvx above it) left by a reqcove that died
+// without stopping it, as recorded in dir/mitmdump.pid. Only a process whose
+// arguments name this directory's socket is stopped: the PID may have been reused.
+func killStale(dir, sock string) {
+	b, err := os.ReadFile(filepath.Join(dir, "mitmdump.pid"))
+	if err != nil {
+		return
+	}
+	os.Remove(filepath.Join(dir, "mitmdump.pid"))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 {
+		return
+	}
+	args, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil || !strings.Contains(string(args), "reqcove_socket="+sock) {
+		return
+	}
+	syscall.Kill(-pid, syscall.SIGTERM)
+	for range 50 {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	syscall.Kill(-pid, syscall.SIGKILL)
 }
 
 // CA describes the mitmproxy CA, so the profile on the iPhone can be matched.
