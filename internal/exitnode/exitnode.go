@@ -64,7 +64,7 @@ var current atomic.Pointer[policy]
 // looking for the devices instead of failing.
 func Run(ctx context.Context, cfg Config) error {
 	envknob.SetNoLogsNoSupport() // keep tsnet from uploading logs (they carry destination IPs)
-	preflight(len(cfg.DNS) == 0)
+	preflight(cfg.DNS)
 	s := &tsnet.Server{
 		Dir:         cfg.Dir,
 		Hostname:    cfg.Hostname,
