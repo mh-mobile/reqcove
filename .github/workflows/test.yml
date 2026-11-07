@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: gofmt
         run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
