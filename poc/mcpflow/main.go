@@ -1,8 +1,14 @@
-// Command mcpflow is test 1 of the MCP-in-Go design: it starts mitmproxy
-// (mitmdump, SOCKS5 mode) through uvx with an embedded addon, receives flows
-// over a Unix socket, and serves them to an agent as MCP tools over stdio.
+// Command mcpflow tries the MCP-in-Go design.
 //
-// stdout carries MCP; everything else goes to stderr or the child's log file.
+//	mcpflow run -confdir DIR   starts mitmproxy (mitmdump, SOCKS5 mode) through uvx
+//	                           with an embedded addon, keeps the flows it sends over
+//	                           a Unix socket, and serves MCP on another Unix socket.
+//	                           Runs until Ctrl-C.
+//	mcpflow mcp                is what an agent launches: it relays MCP between its
+//	                           stdio and the running `run`.
+//	mcpflow stdio -confdir DIR does both in one process (test 1).
+//
+// In mcp and stdio, stdout carries MCP; logs go to stderr or the child's log file.
 package main
 
 import (
@@ -10,6 +16,7 @@ import (
 	"context"
 	_ "embed"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -25,20 +32,40 @@ import (
 var addonPy []byte
 
 var (
-	confdir   = flag.String("confdir", "", "mitmproxy confdir (CA lives here); required")
-	socksPort = flag.String("socks-port", "11080", "mitmproxy SOCKS5 port on 127.0.0.1")
-	mitmSpec  = flag.String("mitmproxy", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
-	maxFlows  = flag.Int("max-flows", 10000, "flows kept in memory")
+	flags     = flag.NewFlagSet("mcpflow", flag.ExitOnError)
+	confdir   = flags.String("confdir", "", "mitmproxy confdir (CA lives here); required for run and stdio")
+	socksPort = flags.String("socks-port", "11080", "mitmproxy SOCKS5 port on 127.0.0.1")
+	mitmSpec  = flags.String("mitmproxy", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
+	uvx       = flags.String("uvx", "uvx", "path to uvx")
+	maxFlows  = flags.Int("max-flows", 10000, "flows kept in memory")
+	mcpSock   = flags.String("mcp-sock", defaultMCPSock(), "Unix socket where run serves MCP")
 )
 
+func defaultMCPSock() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".reqcove-poc", "mcp.sock")
+}
+
 func main() {
-	flag.Parse()
 	log.SetOutput(os.Stderr)
+	if len(os.Args) < 2 {
+		log.Fatal("usage: mcpflow run|mcp|stdio [flags]")
+	}
+	cmd := os.Args[1]
+	flags.Parse(os.Args[2:])
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	switch cmd {
+	case "mcp":
+		relay(ctx)
+		return
+	case "run", "stdio":
+	default:
+		log.Fatalf("unknown command %q", cmd)
+	}
 	if *confdir == "" {
 		log.Fatal("-confdir is required")
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// macOS caps Unix socket paths at 104 bytes, so stay short and under /tmp.
 	dir, err := os.MkdirTemp("/tmp", "rcv-")
@@ -68,9 +95,62 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "poc"}, nil)
 	addTools(server, st)
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && ctx.Err() == nil {
+	if cmd == "stdio" {
+		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && ctx.Err() == nil {
+			log.Print(err)
+		}
+		return
+	}
+	if err := serveMCP(ctx, server); err != nil {
 		log.Print(err)
 	}
+}
+
+// serveMCP accepts agents (via `mcpflow mcp`) on the MCP socket until ctx ends.
+// Only this user can connect: the socket's directory is 0700.
+func serveMCP(ctx context.Context, server *mcp.Server) error {
+	if err := os.MkdirAll(filepath.Dir(*mcpSock), 0o700); err != nil {
+		return err
+	}
+	os.Remove(*mcpSock) // a stale socket from a run that was killed
+	ln, err := net.Listen("unix", *mcpSock)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(*mcpSock)
+	go func() { <-ctx.Done(); ln.Close() }()
+	log.Printf("serving MCP on %s; flows via SOCKS5 127.0.0.1:%s", *mcpSock, *socksPort)
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return nil
+		}
+		go func() {
+			ss, err := server.Connect(ctx, &mcp.IOTransport{Reader: c, Writer: c}, nil)
+			if err != nil {
+				log.Print(err)
+				c.Close()
+				return
+			}
+			ss.Wait()
+		}()
+	}
+}
+
+// relay connects the agent's stdio to the running `run`.
+func relay(ctx context.Context) {
+	c, err := net.Dial("unix", *mcpSock)
+	if err != nil {
+		log.Fatalf("is `mcpflow run` running? %v", err)
+	}
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(c, os.Stdin); c.(*net.UnixConn).CloseWrite(); done <- struct{}{} }()
+	go func() { io.Copy(os.Stdout, c); done <- struct{}{} }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	c.Close()
 }
 
 func startMitmproxy(dir, sock, addon string) (*exec.Cmd, error) {
@@ -78,7 +158,7 @@ func startMitmproxy(dir, sock, addon string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("uvx", "--from", *mitmSpec, "mitmdump",
+	cmd := exec.Command(*uvx, "--from", *mitmSpec, "mitmdump",
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", *socksPort,
 		"--set", "confdir="+*confdir,
 		"--set", "proxyauth=any",

@@ -21,9 +21,11 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// TestEndToEnd runs the real pipeline: mcpflow → uvx mitmdump → addon →
-// Unix socket → store → MCP over stdio. Opt-in: it downloads mitmproxy with
-// uvx, opens port 11080 and makes one request to github.com.
+// TestEndToEnd runs the real pipeline: `mcpflow run` → uvx mitmdump → addon →
+// Unix socket → store, read by an agent through `mcpflow mcp` (stdio relay).
+// It reconnects once to check that flows outlive an agent session.
+// Opt-in: it downloads mitmproxy with uvx, opens port 11080 and makes one
+// request to github.com.
 // REQCOVE_E2E_COLD=1 also uses an empty uv cache to time a first install.
 func TestEndToEnd(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
@@ -39,18 +41,51 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	confdir := t.TempDir()
-	cmd := exec.Command(bin, "-confdir", confdir, "-socks-port", "11080")
-	cmd.Stderr = os.Stderr
-	if os.Getenv("REQCOVE_E2E_COLD") != "" {
-		// Also hide installed tools: uvx would reuse `uv tool install mitmproxy`.
-		cmd.Env = append(os.Environ(), "UV_CACHE_DIR="+t.TempDir(), "UV_TOOL_DIR="+t.TempDir())
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "0"}, nil)
-	start := time.Now()
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	sockDir, err := os.MkdirTemp("/tmp", "rcvt-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer os.RemoveAll(sockDir)
+	mcpSock := filepath.Join(sockDir, "mcp.sock")
+	run := exec.Command(bin, "run", "-confdir", confdir, "-socks-port", "11080", "-mcp-sock", mcpSock)
+	run.Stderr = os.Stderr
+	if os.Getenv("REQCOVE_E2E_COLD") != "" {
+		// Also hide installed tools: uvx would reuse `uv tool install mitmproxy`.
+		run.Env = append(os.Environ(), "UV_CACHE_DIR="+t.TempDir(), "UV_TOOL_DIR="+t.TempDir())
+	}
+	start := time.Now()
+	if err := run.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		run.Process.Signal(os.Interrupt)
+		run.Wait()
+		time.Sleep(500 * time.Millisecond)
+		if pid := pidOn(":11080"); pid != 0 {
+			t.Errorf("mitmdump still listening on 11080 (pid %d)", pid)
+		}
+		if _, err := os.Stat(mcpSock); err == nil {
+			t.Error("MCP socket left behind")
+		}
+	}()
+	for {
+		if _, err := os.Stat(mcpSock); err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("run never served MCP")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	connect := func() *mcp.ClientSession {
+		client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "0"}, nil)
+		s, err := client.Connect(ctx, &mcp.CommandTransport{Command: exec.Command(bin, "mcp", "-mcp-sock", mcpSock)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	session := connect()
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -155,13 +190,18 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("want 2 Set-Cookie headers, got %d", cookies)
 	}
 
-	t.Logf("RSS KB: mcpflow=%s mitmdump=%s", rss(cmd.Process.Pid), rss(pidOn(":11080")))
+	t.Logf("RSS KB: run=%s mitmdump=%s", rss(run.Process.Pid), rss(pidOn(":11080")))
 	if err := session.Close(); err != nil {
 		t.Log(err)
 	}
-	time.Sleep(time.Second)
-	if pid := pidOn(":11080"); pid != 0 {
-		t.Errorf("mitmdump still listening on 11080 (pid %d)", pid)
+
+	// A new agent session sees the same flows: they live in `run`, not in the session.
+	session = connect()
+	defer session.Close()
+	var again statsOut
+	call(t, ctx, session, "capture_stats", nil, &again)
+	if again.Stats["flows"] != n+1 {
+		t.Errorf("after reconnecting, flows = %d, want %d", again.Stats["flows"], n+1)
 	}
 }
 
