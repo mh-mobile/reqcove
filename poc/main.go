@@ -1,6 +1,7 @@
-// Command poc is the stage 0–3 prototype of reqcove: a tsnet exit node that
+// Command poc is the stage 0–4 prototype of reqcove: a tsnet exit node that
 // carries TCP and UDP from one allowed device. QUIC is dropped except to Apple.
-// With -socks5, TCP 80/443 (except Apple) goes to mitmproxy's SOCKS5 mode.
+// With -socks5, TCP 80/443 (except Apple) goes to mitmproxy's SOCKS5 mode,
+// with the device name as the SOCKS5 user name.
 package main
 
 import (
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"golang.org/x/net/proxy"
+	"tailscale.com/client/local"
 	"tailscale.com/envknob"
 	"tailscale.com/ipn"
 	"tailscale.com/net/tsaddr"
@@ -37,7 +39,10 @@ var (
 	socks5   = flag.String("socks5", "", "mitmproxy SOCKS5 address (e.g. 127.0.0.1:1080); TCP 80/443 goes there")
 )
 
-var current atomic.Pointer[policy]
+var (
+	current atomic.Pointer[policy]
+	lc      *local.Client // set once in main, before any flow is carried
+)
 
 func main() {
 	flag.Parse()
@@ -82,7 +87,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer s.Close()
-	lc, err := s.LocalClient()
+	lc, err = s.LocalClient()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,8 +119,10 @@ func relay(c net.Conn, src, dst netip.AddrPort, v verdict) {
 	defer c.Close()
 	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
 	if v == socks {
+		// The SOCKS5 user name carries the device name to mitmproxy (proxyauth=any).
+		auth := &proxy.Auth{User: deviceName(src.Addr()), Password: "-"}
 		var err error
-		if d, err = proxy.SOCKS5("tcp", *socks5, nil, d); err != nil {
+		if d, err = proxy.SOCKS5("tcp", *socks5, auth, d); err != nil {
 			logEvent("tcp %v -> %v socks: %v", src, dst, err)
 			return
 		}
@@ -132,6 +139,24 @@ func relay(c net.Conn, src, dst netip.AddrPort, v verdict) {
 	go pipe(&wg, out, c)
 	go pipe(&wg, c, out)
 	wg.Wait()
+}
+
+// deviceName maps a tailnet IP to its node name, falling back to the IP.
+// ponytail: cached for the life of the process; restart after renaming a device.
+var names sync.Map
+
+func deviceName(ip netip.Addr) string {
+	if n, ok := names.Load(ip); ok {
+		return n.(string)
+	}
+	name := ip.String()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if w, err := lc.WhoIs(ctx, ip.String()); err == nil && w.Node != nil && w.Node.ComputedName != "" {
+		name = w.Node.ComputedName
+	}
+	names.Store(ip, name)
+	return name
 }
 
 // pipe copies until EOF, then half-closes dst so the other direction can finish.
