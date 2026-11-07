@@ -16,15 +16,36 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type ListIn struct {
+// FilterIn is shared by list_flows, search_flows and summarize.
+type FilterIn struct {
 	Device string `json:"device,omitempty" jsonschema:"device name or StableID"`
 	Host   string `json:"host,omitempty" jsonschema:"host; also matches its subdomains (example.com matches api.example.com)"`
 	Since  string `json:"since,omitempty" jsonschema:"only requests started at or after this: RFC 3339 time, or a duration ago such as 10m or 2h"`
 	Until  string `json:"until,omitempty" jsonschema:"only requests started at or before this: RFC 3339 time, or a duration ago"`
 	Status string `json:"status,omitempty" jsonschema:"response status: 404, a class such as 4xx, or none for flows without a response (open or failed)"`
 	Method string `json:"method,omitempty" jsonschema:"HTTP method, such as POST"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"flows per page, newest first (default 50, at most 500)"`
-	Cursor int64  `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page, for older flows"`
+}
+
+type PageIn struct {
+	Limit  int   `json:"limit,omitempty" jsonschema:"flows per page, newest first (default 50, at most 500)"`
+	Cursor int64 `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page, for older flows"`
+}
+
+type ListIn struct {
+	FilterIn
+	PageIn
+}
+
+type SearchIn struct {
+	Query  string `json:"query" jsonschema:"text to find, case-insensitive, in URLs and header names and values (secrets are already masked, so their values cannot be found)"`
+	Bodies bool   `json:"bodies,omitempty" jsonschema:"also search the kept heads of the bodies"`
+	FilterIn
+	PageIn
+}
+
+type SummarizeIn struct {
+	FilterIn
+	Top int `json:"top,omitempty" jsonschema:"keys kept per breakdown, most frequent first (default 10, at most 100)"`
 }
 type ListOut struct {
 	Flows      []capture.Summary `json:"flows"`
@@ -49,6 +70,31 @@ func New(st *capture.Store) *mcp.Server {
 			}
 			flows, next := st.List(q)
 			return nil, ListOut{Flows: flows, NextCursor: next}, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "search_flows", Description: "Find flows whose URL or headers contain some text (and bodies, with bodies), newest first, with where it matched. Same filters and paging as list_flows."},
+		func(_ context.Context, _ *mcp.CallToolRequest, in SearchIn) (*mcp.CallToolResult, ListOut, error) {
+			if in.Query == "" {
+				return nil, ListOut{}, fmt.Errorf("query is required")
+			}
+			q, err := filter(ListIn{in.FilterIn, in.PageIn}, time.Now())
+			if err != nil {
+				return nil, ListOut{}, err
+			}
+			q.Query, q.QueryBodies = in.Query, in.Bodies
+			flows, next := st.List(q)
+			return nil, ListOut{Flows: flows, NextCursor: next}, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "summarize", Description: "Count the flows matching the filters by host, User-Agent, status, method, device and content type, with the time span. A User-Agent is not an app: several apps can share one, and one app can send several."},
+		func(_ context.Context, _ *mcp.CallToolRequest, in SummarizeIn) (*mcp.CallToolResult, capture.Counts, error) {
+			q, err := filter(ListIn{FilterIn: in.FilterIn}, time.Now())
+			if err != nil {
+				return nil, capture.Counts{}, err
+			}
+			top := min(max(in.Top, 0), 100)
+			if top == 0 {
+				top = 10
+			}
+			return nil, st.Summarize(q, top), nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "get_flow", Description: "Get one flow. Authorization and cookie headers are masked. With --rules, url and request_headers are what the app sent, before the rules; mapped_url is where map_remote sent it; response_headers are what the app received; rewrites names the rules applied."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in GetIn) (*mcp.CallToolResult, capture.FlowView, error) {

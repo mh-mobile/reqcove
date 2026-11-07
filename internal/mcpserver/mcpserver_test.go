@@ -64,6 +64,35 @@ func TestTools(t *testing.T) {
 	if s := call[StatsOut](t, session, "capture_stats", nil); s.Stats["flows"] != float64(1) {
 		t.Fatalf("capture_stats = %v", s.Stats)
 	}
+
+	// Filters reach the store through the embedded input structs.
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "example.net", "status": "2xx", "limit": 1}); len(got.Flows) != 1 {
+		t.Errorf("list_flows host+status = %+v", got)
+	}
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"status": "4xx"}); len(got.Flows) != 0 {
+		t.Errorf("list_flows 4xx = %+v", got)
+	}
+	found := call[ListOut](t, session, "search_flows", map[string]any{"query": "API.EXAMPLE"})
+	if len(found.Flows) != 1 || found.Flows[0].MatchedIn[0] != "url" {
+		t.Errorf("search_flows url = %+v", found)
+	}
+	if got := call[ListOut](t, session, "search_flows", map[string]any{"query": "hello"}); len(got.Flows) != 0 {
+		t.Errorf("search_flows looked in bodies without bodies: %+v", got)
+	}
+	if got := call[ListOut](t, session, "search_flows", map[string]any{"query": "hello", "bodies": true}); len(got.Flows) != 1 || got.Flows[0].MatchedIn[0] != "response_body" {
+		t.Errorf("search_flows bodies = %+v", got)
+	}
+	if got := call[ListOut](t, session, "search_flows", map[string]any{"query": "s3cret"}); len(got.Flows) != 0 {
+		t.Errorf("a masked secret was found: %+v", got)
+	}
+	sum := call[capture.Counts](t, session, "summarize", map[string]any{"device": "iphone-test"})
+	if sum.Flows != 1 || sum.ByHost[0] != (capture.Count{Key: "api.example.net", Count: 1}) || sum.ByStatus[0].Key != "200" || sum.ByDevice[0].Key != "iphone-test" {
+		t.Errorf("summarize = %+v", sum)
+	}
+	// Bad input is an error the agent sees, not a crash.
+	if res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "search_flows", Arguments: map[string]any{}}); err == nil && !res.IsError {
+		t.Error("search_flows without a query succeeded")
+	}
 }
 
 // TestServeAndRelay: an agent's stdio, relayed to the socket `run` serves, reaches the tools.

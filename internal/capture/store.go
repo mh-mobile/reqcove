@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -276,22 +277,23 @@ func (s *Store) evictLocked() {
 }
 
 type Summary struct {
-	ID          string `json:"id"`
-	Time        string `json:"time"`                  // request start, local time
-	DurationMS  int64  `json:"duration_ms,omitempty"` // request start to response end
-	Device      string `json:"device,omitempty"`      // StableID
-	DeviceName  string `json:"device_name,omitempty"`
-	Method      string `json:"method"`
-	Host        string `json:"host"`
-	URL         string `json:"url"`
-	State       string `json:"state"`
-	Status      int    `json:"status,omitempty"`
-	ContentType string `json:"content_type,omitempty"` // of the response
-	RespSize    int64  `json:"response_body_size"`
-	UserAgent   string `json:"user_agent,omitempty"`
-	Origin      string `json:"origin,omitempty"`
-	Referer     string `json:"referer,omitempty"`
-	Error       string `json:"error,omitempty"`
+	ID          string   `json:"id"`
+	Time        string   `json:"time"`                  // request start, local time
+	DurationMS  int64    `json:"duration_ms,omitempty"` // request start to response end
+	Device      string   `json:"device,omitempty"`      // StableID
+	DeviceName  string   `json:"device_name,omitempty"`
+	Method      string   `json:"method"`
+	Host        string   `json:"host"`
+	URL         string   `json:"url"`
+	State       string   `json:"state"`
+	Status      int      `json:"status,omitempty"`
+	ContentType string   `json:"content_type,omitempty"` // of the response
+	RespSize    int64    `json:"response_body_size"`
+	UserAgent   string   `json:"user_agent,omitempty"`
+	Origin      string   `json:"origin,omitempty"`
+	Referer     string   `json:"referer,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	MatchedIn   []string `json:"matched_in,omitempty"` // with Filter.Query: url, request_headers, response_headers, request_body, response_body
 }
 
 // Filter selects flows for List; zero fields match everything.
@@ -301,7 +303,9 @@ type Filter struct {
 	Since, Until float64 // unix seconds; the request's start
 	Status       string  // "404", "4xx", or "none" (no response: open or failed)
 	Method       string
-	Before       int64 // cursor from a previous page: only older flows
+	Query        string // case-insensitive text in the URL or header names and values (as stored, masked)
+	QueryBodies  bool   // Query also looks in the kept body heads
+	Before       int64  // cursor from a previous page: only older flows
 	Limit        int
 }
 
@@ -317,6 +321,39 @@ func ValidStatus(s string) bool {
 	return err == nil && n >= 100 && n <= 599
 }
 
+// matchedIn says where Query occurs in f.
+func (q Filter) matchedIn(f *Flow) []string {
+	needle := strings.ToLower(q.Query)
+	has := func(s string) bool { return strings.Contains(strings.ToLower(s), needle) }
+	inHeaders := func(h [][2]string) bool {
+		for _, kv := range h {
+			if has(kv[0]) || has(kv[1]) {
+				return true
+			}
+		}
+		return false
+	}
+	var where []string
+	if has(f.URL) || has(f.MappedURL) {
+		where = append(where, "url")
+	}
+	if inHeaders(f.ReqHeaders) {
+		where = append(where, "request_headers")
+	}
+	if inHeaders(f.RespHeaders) {
+		where = append(where, "response_headers")
+	}
+	if q.QueryBodies {
+		if bytes.Contains(bytes.ToLower(f.ReqBody.Head), []byte(needle)) {
+			where = append(where, "request_body")
+		}
+		if bytes.Contains(bytes.ToLower(f.RespBody.Head), []byte(needle)) {
+			where = append(where, "response_body")
+		}
+	}
+	return where
+}
+
 func (q Filter) match(f *Flow, name string) bool {
 	host, fhost := strings.ToLower(q.Host), strings.ToLower(f.Host)
 	switch {
@@ -326,6 +363,9 @@ func (q Filter) match(f *Flow, name string) bool {
 		q.Since != 0 && f.Start < q.Since,
 		q.Until != 0 && f.Start > q.Until,
 		q.Method != "" && !strings.EqualFold(f.Method, q.Method):
+		return false
+	}
+	if q.Query != "" && len(q.matchedIn(f)) == 0 {
 		return false
 	}
 	switch {
@@ -355,7 +395,11 @@ func (s *Store) List(q Filter) ([]Summary, int64) {
 		if len(out) == q.Limit {
 			return out, last
 		}
-		out = append(out, s.summary(f))
+		v := s.summary(f)
+		if q.Query != "" {
+			v.MatchedIn = q.matchedIn(f)
+		}
+		out = append(out, v)
 		last = f.seq
 	}
 	return out, 0
@@ -373,6 +417,83 @@ func (s *Store) summary(f *Flow) Summary {
 		v.DurationMS = int64((f.End - f.Start) * 1000)
 	}
 	return v
+}
+
+// Counts is what summarize returns: how the matching flows split up.
+type Counts struct {
+	Flows       int     `json:"flows"`
+	First       string  `json:"first,omitempty"` // earliest request start
+	Last        string  `json:"last,omitempty"`
+	ByHost      []Count `json:"by_host"`
+	ByUserAgent []Count `json:"by_user_agent"`
+	ByStatus    []Count `json:"by_status"` // "none": no response (open or failed)
+	ByMethod    []Count `json:"by_method"`
+	ByDevice    []Count `json:"by_device"`
+	ByType      []Count `json:"by_content_type"`
+}
+
+type Count struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+// Summarize counts the flows q matches (Limit and Before are ignored),
+// keeping the top n keys of each kind.
+func (s *Store) Summarize(q Filter, n int) Counts {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	q.Before = 0
+	tally := map[string]map[string]int{}
+	add := func(kind, key string) {
+		if tally[kind] == nil {
+			tally[kind] = map[string]int{}
+		}
+		tally[kind][key]++
+	}
+	var c Counts
+	var first, last float64
+	for _, id := range s.order {
+		f := s.flows[id]
+		if !q.match(f, s.names[f.Device]) {
+			continue
+		}
+		c.Flows++
+		if f.Start > 0 && (first == 0 || f.Start < first) {
+			first = f.Start
+		}
+		last = max(last, f.Start)
+		status := "none"
+		if f.Status != 0 {
+			status = strconv.Itoa(f.Status)
+		}
+		ct, _, _ := strings.Cut(header(f.RespHeaders, "content-type"), ";")
+		device := s.names[f.Device]
+		if device == "" {
+			device = f.Device
+		}
+		add("host", strings.ToLower(f.Host))
+		add("ua", header(f.ReqHeaders, "user-agent"))
+		add("status", status)
+		add("method", strings.ToUpper(f.Method))
+		add("device", device)
+		add("type", strings.TrimSpace(ct))
+	}
+	top := func(kind string) []Count {
+		out := []Count{}
+		for k, v := range tally[kind] {
+			out = append(out, Count{k, v})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Count > out[j].Count || out[i].Count == out[j].Count && out[i].Key < out[j].Key
+		})
+		return out[:min(len(out), n)]
+	}
+	c.ByHost, c.ByUserAgent, c.ByStatus, c.ByMethod, c.ByDevice, c.ByType = top("host"), top("ua"), top("status"), top("method"), top("device"), top("type")
+	if first > 0 {
+		c.First = unixTime(first).Format("2006-01-02T15:04:05.000Z07:00")
+		c.Last = unixTime(last).Format("2006-01-02T15:04:05.000Z07:00")
+	}
+	return c
 }
 
 func unixTime(sec float64) time.Time { return time.UnixMilli(int64(sec * 1000)) }

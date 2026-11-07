@@ -103,3 +103,41 @@ func TestValidStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarizeAndSearch(t *testing.T) {
+	st := NewStore(100, 1<<20)
+	st.SetDeviceNames(map[string]string{"nPHONE": "iphone"})
+	base := float64(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix())
+	add := func(id, host, ua, ctype string, status int, start float64) {
+		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "device": "nPHONE", "method": "get", "host": host,
+			"url": "https://" + host + "/" + id, "ts": start, "headers": [][2]string{{"User-Agent", ua}, {"X-Trace", "trace-" + id}}}))
+		if status != 0 {
+			st.Apply(line(t, map[string]any{"ev": "response", "id": id, "status": status, "headers": [][2]string{{"Content-Type", ctype}}}))
+		}
+	}
+	add("a", "api.example.com", "App/1", "application/json; charset=utf-8", 200, base)
+	add("b", "API.example.com", "App/1", "application/json", 200, base+5)
+	add("c", "img.example.com", "Safari", "image/png", 404, base+9)
+	add("d", "api.example.com", "App/1", "", 0, base+2)
+
+	c := st.Summarize(Filter{}, 2)
+	if c.Flows != 4 || fmt.Sprint(c.ByHost) != "[{api.example.com 3} {img.example.com 1}]" ||
+		fmt.Sprint(c.ByUserAgent) != "[{App/1 3} {Safari 1}]" || fmt.Sprint(c.ByStatus) != "[{200 2} {404 1}]" ||
+		fmt.Sprint(c.ByType) != "[{application/json 2} { 1}]" || fmt.Sprint(c.ByMethod) != "[{GET 4}]" || fmt.Sprint(c.ByDevice) != "[{iphone 4}]" {
+		t.Errorf("summarize = %+v", c)
+	}
+	if want := time.Unix(int64(base), 0).Format("2006-01-02T15:04:05.000Z07:00"); c.First != want {
+		t.Errorf("first = %s, want %s", c.First, want)
+	}
+	if c := st.Summarize(Filter{Status: "none"}, 10); c.Flows != 1 || c.ByStatus[0].Key != "none" {
+		t.Errorf("summarize none = %+v", c)
+	}
+	// Search: header values, case-insensitive, with where it matched.
+	fs, _ := st.List(Filter{Query: "TRACE-C", Limit: 10})
+	if len(fs) != 1 || fs[0].ID != "c" || fmt.Sprint(fs[0].MatchedIn) != "[request_headers]" {
+		t.Errorf("search = %+v", fs)
+	}
+	if fs, _ := st.List(Filter{Query: "image/", Limit: 10}); len(fs) != 1 || fmt.Sprint(fs[0].MatchedIn) != "[response_headers]" {
+		t.Errorf("search response header = %+v", fs)
+	}
+}
