@@ -165,6 +165,7 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
 	p := &proc{cmd: exec.Command(c.cfg.Uvx, c.args...), done: make(chan struct{})}
 	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
+	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1") // mitmproxy.log as it happens, not when Python's buffer fills
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := p.cmd.Start(); err != nil {
 		return nil, err

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"tailscale.com/envknob"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/store/mem"
 	"tailscale.com/net/netns"
@@ -104,6 +105,11 @@ func TestTwoNodes(t *testing.T) {
 		t.Fatalf("matched devices %v, want only phone (%s)", names, phoneID)
 	}
 	rcIP := reqcove.Addresses[0].Addr()
+	// tsnet uploads its logs (they carry destination IPs) unless this is set.
+	// In tests logpolicy never uploads anyway, so the knob is what can be checked.
+	if !envknob.NoLogsNoSupport() {
+		t.Error("Run did not turn off tsnet's log upload")
+	}
 
 	// TCP 443 through the exit node goes to SOCKS5 as the device.
 	echo := func(c net.Conn) string {
