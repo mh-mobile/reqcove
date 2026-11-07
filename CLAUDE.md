@@ -1,4 +1,4 @@
-# far-traffic（仮称）
+# Reqcove（フォルダ名の far-traffic は仮）
 
 遠くの iPhone の HTTP(S) を、自宅の Tailscale Exit Node と mitmproxy で見る OSS の準備段階。まだコードはない。
 
