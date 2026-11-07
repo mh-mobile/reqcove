@@ -73,7 +73,7 @@ func main() {
 		Dir:         *stateDir,
 		Hostname:    *hostname,
 		ExitNodeDNS: dnsServers,
-		// Needs the local tsnet fork (go.mod replace, tsnet-fork.patch).
+		// Needs the tsnet fork: github.com/mh-mobile/tailscale, branch reqcove/v1.104.5 (go.mod replace).
 		FallbackUDP: func(src, dst netip.AddrPort) bool {
 			ok := decideUDP(current.Load(), src, dst)
 			logUDPOnce(src, dst, ok)

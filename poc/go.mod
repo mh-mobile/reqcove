@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/net v0.62.0
-	tailscale.com v1.105.0-pre.0.20261106233810-46f938791d5d
+	tailscale.com v1.104.5
 )
 
 require (
@@ -57,4 +57,4 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
 )
 
-replace tailscale.com => ../../reqcove-tsnet-fork
+replace tailscale.com => github.com/mh-mobile/tailscale v0.0.0-20261107081331-e0c229886844
