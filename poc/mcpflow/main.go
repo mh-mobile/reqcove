@@ -16,6 +16,7 @@ import (
 	"context"
 	_ "embed"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -38,6 +39,9 @@ var (
 	mitmSpec  = flags.String("mitmproxy", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
 	uvx       = flags.String("uvx", "uvx", "path to uvx")
 	maxFlows  = flags.Int("max-flows", 10000, "flows kept in memory")
+	maxBytes  = flags.Int("max-bytes", 256<<20, "bytes of body heads kept in memory")
+	bodyHead  = flags.Int("body-head", 64<<10, "decoded bytes of each body kept")
+	python    = flags.String("python", "3.14", "Python for uvx (zstd decoding needs 3.14)")
 	mcpSock   = flags.String("mcp-sock", defaultMCPSock(), "Unix socket where run serves MCP")
 )
 
@@ -84,7 +88,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	st := newStore(*maxFlows)
+	st := newStore(*maxFlows, *maxBytes)
 	go accept(ln, st)
 
 	child, err := startMitmproxy(dir, sock, addon)
@@ -158,11 +162,14 @@ func startMitmproxy(dir, sock, addon string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(*uvx, "--from", *mitmSpec, "mitmdump",
+	cmd := exec.Command(*uvx, "--python", *python, "--from", *mitmSpec, "mitmdump",
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", *socksPort,
 		"--set", "confdir="+*confdir,
 		"--set", "proxyauth=any",
-		"--set", "stream_large_bodies=1", "--set", "store_streamed_bodies=true",
+		// Bodies stream through the addon's callables; store_streamed_bodies would
+		// buffer them in mitmproxy anyway. -q equivalent: no flow lines, errors only.
+		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
+		"--set", fmt.Sprintf("reqcove_body_head=%d", *bodyHead),
 		"-s", addon, "--set", "reqcove_socket="+sock)
 	cmd.Stdout, cmd.Stderr = logf, logf // never onto our stdout: that is the MCP stream
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -214,7 +221,7 @@ type getIn struct {
 	Bodies bool   `json:"bodies,omitempty" jsonschema:"include request and response bodies"`
 }
 type statsOut struct {
-	Stats map[string]int64 `json:"stats"`
+	Stats map[string]any `json:"stats"`
 }
 
 func addTools(s *mcp.Server, st *store) {
