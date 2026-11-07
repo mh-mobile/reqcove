@@ -1,0 +1,32 @@
+# 手元だけのメモ（リポジトリには入れない）
+/NOTES.md
+/docs/poc-plan.ja.md
+
+# 秘密：mitmproxy の CA（秘密鍵を含む）、鍵、環境変数
+mitmproxy-ca*.pem
+mitmproxy-ca*.p12
+*.key
+.env
+.env.*
+
+# 通信の記録（ヘッダーや本文に秘密が入る）
+*.har
+*.zhar
+*.mitm
+*.flow
+
+# ビルドの出力
+/reqcove
+/dist/
+*.test
+*.out
+
+# Python
+__pycache__/
+.venv/
+
+# macOS、エディタ、Claude Code の個人設定
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
