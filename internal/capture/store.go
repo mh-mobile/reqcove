@@ -76,6 +76,7 @@ type Body struct {
 type Flow struct {
 	seq         int64       // arrival order; the list cursor
 	ID          string      `json:"id"`
+	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
 	Device      string      `json:"device,omitempty"`
 	Client      string      `json:"client,omitempty"`
 	Start       float64     `json:"start"`
@@ -251,7 +252,7 @@ func (s *Store) Apply(line []byte) {
 	before := f.bytes()
 	switch e.Ev {
 	case "request":
-		f.Device, f.Client, f.Start = e.Device, e.Client, e.TS
+		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, s.mask(e.URL), e.Host, s.mask(e.Path), e.HTTPVersion
 		f.ReqHeaders = s.maskHeaders(e.Headers)
 		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites

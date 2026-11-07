@@ -317,7 +317,7 @@ class Reqcove:
         # Recorded as the app sent it: the host is checked again in reqcove,
         # and a rule may send the request to a host outside --allow-hosts.
         ev = {
-            "v": VERSION, "ev": "request", "id": flow.id, "device": device,
+            "v": VERSION, "ev": "request", "id": flow.id, "device": device, "conn": flow.client_conn.id,
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "ts": r.timestamp_start, "method": r.method, "url": r.pretty_url,
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,

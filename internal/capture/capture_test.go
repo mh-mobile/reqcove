@@ -203,6 +203,9 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("token not masked as it arrived: %q", login.URL)
 	}
 	v := h.doneFlow(fmt.Sprintf("/r%d", n-1), true)
+	if v.Conn == "" {
+		t.Error("flow has no connection ID")
+	}
 	if v.RespBodyText != fmt.Sprintf("ok/r%d", n-1) || !v.RespBody.Final || v.Device != "test-device" {
 		t.Errorf("newest flow: body=%q final=%v device=%q", v.RespBodyText, v.RespBody.Final, v.Device)
 	}

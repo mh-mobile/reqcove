@@ -119,7 +119,7 @@ func New(st *capture.Store) *mcp.Server {
 			}
 			return nil, TLSOut{Failures: st.TLSFailures(q)}, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "mitmproxy's state (ready; restarting after it exited, when nothing is captured; failed), the window the records cover (oldest_flow to newest_flow; older flows were evicted to stay within max_flows and max_bytes), counts of stored flows, truncated bodies and of events dropped or rejected, and mitmproxy's versions."},
+	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "mitmproxy's state (ready; restarting after it exited, when nothing is captured; failed), the window the records cover (oldest_flow to newest_flow; older flows were evicted to stay within max_flows and max_bytes), counts of stored flows, truncated bodies and of events dropped or rejected (out_of_scope: requests and TLS failures for hosts outside --allow-hosts, counted but never recorded, so their hosts are unknown), and mitmproxy's versions."},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatsOut, error) {
 			return nil, StatsOut{Stats: st.Stats()}, nil
 		})
