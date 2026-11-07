@@ -115,6 +115,8 @@ setting, so this works on Wi-Fi only.
 - Logs are not sent to Tailscale. A tailnet that requires data plane audit logs is
   not supported, and `reqcove status` says so.
 
+More in [docs/SECURITY.md](docs/SECURITY.md).
+
 ## Limits
 
 - Apps that pin certificates cannot be decrypted (`list_tls_failures` shows them).
