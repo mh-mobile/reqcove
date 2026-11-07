@@ -132,7 +132,8 @@ func run(ctx context.Context, args []string) error {
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, WebPort: webPort(*web),
-		Logf: func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
+		CAName: caName(),
+		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
 	if err != nil {
 		return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name())
@@ -140,6 +141,9 @@ func run(ctx context.Context, args []string) error {
 	defer cap.Stop()
 	s := cap.Store.Stats()
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
+	if ca := cap.CA; ca.Name != "" {
+		log.Printf("CA %q, SHA-256 %s, until %s: iPhones get it from http://mitm.it (the same CA as long as %s is kept)", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"), filepath.Join(*state, "mitmproxy"))
+	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
 	}
@@ -171,6 +175,14 @@ func run(ctx context.Context, args []string) error {
 		return nil // Ctrl-C, or mitmproxy failed (already logged)
 	}
 	return err
+}
+
+// caName names a new CA after this machine and the day, so an iPhone holding
+// CAs from several machines can tell their profiles apart.
+func caName() string {
+	host, _ := os.Hostname()
+	host = strings.TrimSuffix(host, ".local")
+	return fmt.Sprintf("Reqcove CA (%s, %s)", host, time.Now().Format("2006-01-02"))
 }
 
 func webPort(on bool) int {

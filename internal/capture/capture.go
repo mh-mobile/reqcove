@@ -6,8 +6,12 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +47,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	AllowHosts   HostRules                     // hosts decrypted and recorded; the zero value records nothing
 	NoRedact     bool                          // keep secrets in the records (--no-redact)
+	CAName       string                        // name of a CA made for this confdir (mitmproxy's own is just "mitmproxy"); empty: mitmproxy's default
 	WebPort      int                           // run mitmweb on 127.0.0.1:WebPort instead of mitmdump (--web); 0: mitmdump
 	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
@@ -61,6 +66,7 @@ type Capture struct {
 	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener; the same across restarts
 	SocksSecret string // the SOCKS5 password; any user name (reqcove sends the device's StableID)
 	WebURL      string // with WebPort: mitmweb's address, with its password as the token
+	CA          CA     // the CA iPhones must trust
 
 	cfg    Config
 	args   []string
@@ -126,6 +132,11 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
 		return fail(err)
 	}
+	if cfg.CAName != "" {
+		if err := ensureCA(ctx, cfg); err != nil {
+			return fail(fmt.Errorf("making the CA: %w", err))
+		}
+	}
 	// mitmweb's password goes in confdir/config.yaml (0600), which mitmproxy
 	// reads at start; never in argv. mitmdump gets no config file.
 	webConfig := filepath.Join(cfg.Confdir, "config.yaml")
@@ -184,6 +195,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err != nil {
 		return fail(err)
 	}
+	c.CA, _ = readCA(cfg.Confdir) // mitmproxy has made it by now if it was missing
 	ctx, c.cancel = context.WithCancel(ctx)
 	go c.supervise(ctx, p)
 	return c, nil
@@ -302,6 +314,47 @@ func (c *Capture) accept() {
 			}
 		}()
 	}
+}
+
+// CA describes the mitmproxy CA, so the profile on the iPhone can be matched.
+type CA struct {
+	Name     string
+	SHA256   string // fingerprint, as iOS shows it in the profile's details
+	NotAfter time.Time
+}
+
+func readCA(confdir string) (CA, error) {
+	b, err := os.ReadFile(filepath.Join(confdir, "mitmproxy-ca-cert.pem"))
+	if err != nil {
+		return CA{}, err
+	}
+	blk, _ := pem.Decode(b)
+	if blk == nil {
+		return CA{}, errors.New("no PEM in mitmproxy-ca-cert.pem")
+	}
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return CA{}, err
+	}
+	sum := sha256.Sum256(cert.Raw)
+	return CA{Name: cert.Subject.CommonName, SHA256: strings.ToUpper(hex.EncodeToString(sum[:])), NotAfter: cert.NotAfter}, nil
+}
+
+// ensureCA makes the CA with mitmproxy's own CertStore.create_store, which
+// takes a name (mitmproxy always passes "mitmproxy"), so iPhones holding CAs
+// from several machines can tell them apart. An existing CA is never touched.
+// create_store is internal mitmproxy API: TestCANamed catches a change.
+func ensureCA(ctx context.Context, cfg Config) error {
+	if _, err := os.Stat(filepath.Join(cfg.Confdir, "mitmproxy-ca.pem")); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
+		return err
+	}
+	const py = `import sys; from pathlib import Path; from mitmproxy.certs import CertStore; CertStore.create_store(Path(sys.argv[1]), "mitmproxy", 2048, organization="Reqcove", cn=sys.argv[2])`
+	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
+	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
+	return cmd.Run()
 }
 
 // freePort asks the kernel for an unused port.
