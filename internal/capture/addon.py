@@ -17,8 +17,10 @@ first; header, done and error events are kept so flows are never orphaned.
 """
 
 import base64
+import hmac
 import json
 import queue
+import re
 import socket
 import sys
 import threading
@@ -161,17 +163,45 @@ class Reqcove:
         self.queue_limit = 32 << 20
         self.dropped_bodies = 0
         self.dropped_events = 0
+        self.out_of_scope = 0
+        self.secret = None  # SOCKS5 password; None rejects every connection
+        self.allow_all = False
+        self.allow = []
         threading.Thread(target=self._writer, daemon=True).start()
 
     def load(self, loader):
         loader.add_option("reqcove_socket", str, "", "Unix socket of `reqcove run`.")
         loader.add_option("reqcove_body_head", int, 64 * 1024, "Bytes of each decoded body sent to reqcove.")
         loader.add_option("reqcove_queue_bytes", int, 32 << 20, "Byte budget of the queue to reqcove.")
+        loader.add_option("reqcove_secret_file", str, "", "File holding the SOCKS5 password reqcove uses.")
+        loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
         self.head_limit = ctx.options.reqcove_body_head
         self.queue_limit = ctx.options.reqcove_queue_bytes
+        if "reqcove_secret_file" in updated:
+            try:
+                with open(ctx.options.reqcove_secret_file) as f:
+                    self.secret = f.read().strip() or None
+            except OSError:
+                self.secret = None
+        if "reqcove_allow_hosts" in updated:
+            rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
+            self.allow_all = bool(rules.get("all"))
+            self.allow = [re.compile(p) for p in rules.get("patterns") or []]
+
+    def socks5_auth(self, data):
+        # mitmproxy's proxyauth=any has already accepted any user and password;
+        # only reqcove, which holds the secret, may use this listener.
+        if self.secret is None or not hmac.compare_digest(data.password.encode(), self.secret.encode()):
+            data.valid = False
+
+    def _in_scope(self, host):
+        host = host.lower().rstrip(".")
+        if host == "mitm.it":
+            return False  # decrypted so iPhones can get the CA; never recorded
+        return self.allow_all or any(r.match(host) for r in self.allow)
 
     def running(self):
         # Connect now, not on the first flow: reqcove waits for this hello
@@ -201,6 +231,14 @@ class Reqcove:
         self._put(msg, size)
 
     def requestheaders(self, flow):
+        if not self._in_scope(flow.request.pretty_host):
+            # allow_hosts works per connection, so a connection to an allowed host
+            # can carry requests to others (HTTP/2 coalescing). Pass them through.
+            flow.metadata["reqcove_skip"] = True
+            flow.request.stream = True
+            self.out_of_scope += 1
+            self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
+            return
         device = _device(flow)
         if device:
             flow.comment = device  # shows the device in mitmweb
@@ -216,6 +254,9 @@ class Reqcove:
         r.stream = _Head(self, flow, "request", r.headers)
 
     def responseheaders(self, flow):
+        if flow.metadata.get("reqcove_skip"):
+            flow.response.stream = True
+            return
         s = flow.response
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
@@ -225,12 +266,19 @@ class Reqcove:
         s.stream = _Head(self, flow, "response", s.headers)
 
     def response(self, flow):
+        if flow.metadata.get("reqcove_skip"):
+            return
         self.put_event({"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end})
 
     def error(self, flow):
+        if flow.metadata.get("reqcove_skip"):
+            return
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg})
 
     def websocket_message(self, flow):
+        if flow.metadata.get("reqcove_skip"):
+            flow.websocket.messages.clear()
+            return
         m = flow.websocket.messages[-1]
         self.put_event({
             "v": VERSION, "ev": "ws", "id": flow.id, "from_client": m.from_client,
@@ -262,6 +310,7 @@ class Reqcove:
             msg["head"] = base64.b64encode(msg["head"]).decode()
         msg["dropped_bodies"] = self.dropped_bodies
         msg["dropped_events"] = self.dropped_events
+        msg["out_of_scope"] = self.out_of_scope
         return (json.dumps(msg) + "\n").encode()
 
     def _writer(self):

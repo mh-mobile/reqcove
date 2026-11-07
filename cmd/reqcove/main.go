@@ -58,6 +58,12 @@ func run(ctx context.Context, args []string) error {
 		devices = append(devices, v)
 		return nil
 	})
+	var allowSpecs []string
+	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything. Without it, nothing is recorded.`, func(v string) error {
+		allowSpecs = append(allowSpecs, v)
+		return nil
+	})
+	noRedact := fs.Bool("no-redact", false, "keep Authorization, cookies and secret query values in the records")
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
@@ -72,6 +78,19 @@ func run(ctx context.Context, args []string) error {
 	dns, err := parseDNS(*dnsFlag)
 	if err != nil {
 		return err
+	}
+	allow, err := capture.ParseAllowHosts(allowSpecs)
+	if err != nil {
+		return err
+	}
+	switch {
+	case allow.All:
+		log.Print("WARN: --allow-hosts '*': every decrypted request is recorded, including other apps' and sites'. Agents, and their model providers, can read them.")
+	case len(allow.Patterns) == 0:
+		log.Print("no --allow-hosts: traffic is carried but nothing is decrypted or recorded. Add --allow-hosts api.example.com for your app.")
+	}
+	if *noRedact {
+		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
 	}
 
 	if err := os.MkdirAll(*state, 0o700); err != nil {
@@ -98,6 +117,7 @@ func run(ctx context.Context, args []string) error {
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
+		AllowHosts: allow, NoRedact: *noRedact,
 	})
 	if err != nil {
 		return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name())
@@ -121,7 +141,7 @@ func run(ctx context.Context, args []string) error {
 
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
-		Devices: devices, SocksAddr: cap.SocksAddr, Verbose: *verbose,
+		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, Verbose: *verbose,
 		OnDevices: cap.Store.SetDeviceNames,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. Turn off the exit node on the iPhone: without reqcove it cannot reach the internet.")

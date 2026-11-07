@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -48,6 +50,7 @@ type event struct {
 	// counters the addon attaches to every line
 	DroppedBodies int64 `json:"dropped_bodies"`
 	DroppedEvents int64 `json:"dropped_events"`
+	OutOfScope    int64 `json:"out_of_scope"`
 }
 
 const wireVersion = 2
@@ -112,6 +115,18 @@ type Store struct {
 	orphanUpdates int64
 	evicted       int64
 	names         map[string]string // device StableID -> display name
+	allow         HostRules         // hosts recorded (--allow-hosts)
+	redact        bool              // mask secrets as they arrive (off: --no-redact)
+	outOfScope    int64             // requests to hosts outside allow, seen here
+	addonOOS      int64             // the same, seen by the addon
+}
+
+// SetScope sets which hosts are recorded and whether secrets are masked.
+// Call it before flows arrive.
+func (s *Store) SetScope(allow HostRules, redact bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allow, s.redact = allow, redact
 }
 
 // SetDeviceNames tells the store the display name of each device it may see.
@@ -122,7 +137,8 @@ func (s *Store) SetDeviceNames(names map[string]string) {
 }
 
 func NewStore(maxFlows, maxBytes int) *Store {
-	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}}
+	// Permissive until SetScope: capture.Start always sets the real scope.
+	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, allow: HostRules{All: true}, redact: true}
 }
 
 func (s *Store) Apply(line []byte) {
@@ -138,9 +154,12 @@ func (s *Store) Apply(line []byte) {
 		return
 	}
 	s.addonDropped = [2]int64{max(s.addonDropped[0], e.DroppedBodies), max(s.addonDropped[1], e.DroppedEvents)}
+	s.addonOOS = max(s.addonOOS, e.OutOfScope)
 	switch e.Ev {
 	case "hello":
 		s.hello = e
+		return
+	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "tls_failed":
 		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Client, e.SNI, e.Msg})
@@ -156,7 +175,11 @@ func (s *Store) Apply(line []byte) {
 	f := s.flows[e.ID]
 	if f == nil {
 		if e.Ev != "request" {
-			s.orphanUpdates++ // the request event was dropped or evicted
+			s.orphanUpdates++ // the request event was dropped, evicted or out of scope
+			return
+		}
+		if !s.allow.Match(e.Host) {
+			s.outOfScope++ // the addon should have skipped it; this is the second check
 			return
 		}
 		f = &Flow{ID: e.ID, State: "open"}
@@ -167,10 +190,10 @@ func (s *Store) Apply(line []byte) {
 	switch e.Ev {
 	case "request":
 		f.Device, f.Client, f.Start = e.Device, e.Client, e.TS
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
-		f.ReqHeaders = e.Headers
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, s.mask(e.URL), e.Host, s.mask(e.Path), e.HTTPVersion
+		f.ReqHeaders = s.maskHeaders(e.Headers)
 	case "response":
-		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
+		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, s.maskHeaders(e.Headers)
 	case "body":
 		head, _ := base64.StdEncoding.DecodeString(e.Head)
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
@@ -182,7 +205,7 @@ func (s *Store) Apply(line []byte) {
 	case "done":
 		f.End, f.State = e.TSEnd, "done"
 	case "error":
-		f.Error, f.State = e.Msg, "error"
+		f.Error, f.State = s.mask(e.Msg), "error"
 	case "ws":
 		f.WSMessages++
 		f.WSBytes += e.Size
@@ -245,8 +268,7 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 	if f == nil {
 		return FlowView{}, fmt.Errorf("no flow %q", id)
 	}
-	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]}
-	v.ReqHeaders, v.RespHeaders = redact(f.ReqHeaders), redact(f.RespHeaders)
+	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
 	if bodies {
 		v.ReqBodyText, v.RespBodyText, v.BodyEncoding = bodyText(f.ReqBody.Head, f.RespBody.Head)
 	}
@@ -260,28 +282,66 @@ func (s *Store) Stats() map[string]any {
 		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted,
 		"addon_dropped_bodies": s.addonDropped[0], "addon_dropped_events": s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
+		"out_of_scope": s.outOfScope + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
 		"tls_failures": len(s.tlsFailures),
 		"mitmproxy":    s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 	}
 }
 
-// secretHeaders are masked in every header list reqcove returns.
-var secretHeaders = map[string]bool{
-	"authorization": true, "proxy-authorization": true, "cookie": true, "set-cookie": true,
+func (s *Store) mask(v string) string {
+	if !s.redact {
+		return v
+	}
+	return maskURLs(v)
 }
 
-func redact(h [][2]string) [][2]string {
+func (s *Store) maskHeaders(h [][2]string) [][2]string {
+	if !s.redact {
+		return h
+	}
 	out := make([][2]string, len(h))
 	for i, kv := range h {
 		out[i] = kv
-		if secretHeaders[strings.ToLower(kv[0])] {
+		switch name := strings.ToLower(kv[0]); {
+		case secretHeaders[name]:
 			out[i][1] = "[redacted]"
+		case name == "referer" || name == "location" || name == "content-location":
+			out[i][1] = maskURLs(kv[1])
 		}
 	}
 	return out
 }
 
+// secretHeaders are masked in every header list reqcove records.
+var secretHeaders = map[string]bool{
+	"authorization": true, "proxy-authorization": true, "cookie": true, "set-cookie": true,
+}
+
+// secretParams are query parameters whose values are masked.
+var secretParams = map[string]bool{
+	"token": true, "access_token": true, "refresh_token": true, "id_token": true,
+	"api_key": true, "apikey": true, "key": true, "secret": true, "client_secret": true,
+	"password": true, "passwd": true, "session": true, "sessionid": true, "sid": true,
+	"auth": true, "code": true, "signature": true, "sig": true,
+}
+
+var queryRE = regexp.MustCompile(`([?&;])([^=&#\s]+)=([^&#\s]*)`)
+
+// maskURLs masks the values of secret query parameters anywhere in v.
+func maskURLs(v string) string {
+	return queryRE.ReplaceAllStringFunc(v, func(m string) string {
+		sub := queryRE.FindStringSubmatch(m)
+		name, err := url.QueryUnescape(sub[2])
+		if err != nil {
+			name = sub[2]
+		}
+		if secretParams[strings.ToLower(name)] {
+			return sub[1] + sub[2] + "=REDACTED"
+		}
+		return m
+	})
+}
 func bodyText(req, resp []byte) (string, string, string) {
 	if isText(req) && isText(resp) {
 		return string(req), string(resp), ""

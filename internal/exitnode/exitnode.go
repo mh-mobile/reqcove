@@ -26,12 +26,13 @@ import (
 )
 
 type Config struct {
-	Dir       string           // tsnet state
-	Hostname  string           // tailnet node name
-	DNS       []netip.AddrPort // exit node DNS upstreams; empty: /etc/resolv.conf
-	Devices   []string         // --device specs
-	SocksAddr string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
-	Verbose   bool             // log tsnet's backend and every flow decision
+	Dir         string           // tsnet state
+	Hostname    string           // tailnet node name
+	DNS         []netip.AddrPort // exit node DNS upstreams; empty: /etc/resolv.conf
+	Devices     []string         // --device specs
+	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
+	SocksSecret string           // its password
+	Verbose     bool             // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
 }
@@ -70,7 +71,9 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 			return nil, true // RST
 		}
-		return func(c net.Conn) { relay(c, src, dst, v, p.devices[src.Addr().Unmap()].ID, cfg.SocksAddr, cfg.Verbose) }, true
+		return func(c net.Conn) {
+			relay(c, src, dst, v, p.devices[src.Addr().Unmap()].ID, cfg.SocksAddr, cfg.SocksSecret, cfg.Verbose)
+		}, true
 	})
 	if err := s.Start(); err != nil {
 		return err
@@ -140,12 +143,12 @@ func watchDevices(ctx context.Context, lc *local.Client, cfg Config, self []neti
 	}
 }
 
-func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr string, verbose bool) {
+func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr, socksSecret string, verbose bool) {
 	defer c.Close()
 	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
 	if v == socks {
 		// The SOCKS5 user name carries the device's StableID to mitmproxy.
-		auth := &proxy.Auth{User: device, Password: "-"}
+		auth := &proxy.Auth{User: device, Password: socksSecret}
 		var err error
 		if d, err = proxy.SOCKS5("tcp", socksAddr, auth, d); err != nil {
 			logEvent("tcp %v -> %v socks: %v", src, dst, err)

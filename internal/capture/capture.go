@@ -5,7 +5,9 @@ package capture
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,11 +41,14 @@ type Config struct {
 	MaxBytes     int
 	Log          io.Writer // mitmdump's stdout and stderr; errors only (termlog_verbosity=error)
 	ReadyTimeout time.Duration
+	AllowHosts   HostRules // hosts decrypted and recorded; the zero value records nothing
+	NoRedact     bool      // keep secrets in the records (--no-redact)
 }
 
 type Capture struct {
-	Store     *Store
-	SocksAddr string // 127.0.0.1:port of mitmdump's SOCKS5 listener
+	Store       *Store
+	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener
+	SocksSecret string // the SOCKS5 password; any user name (reqcove sends the device's StableID)
 
 	cmd  *exec.Cmd
 	ln   net.Listener
@@ -72,7 +77,16 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		ln.Close()
 		return nil, err
 	}
-	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), ln: ln, done: make(chan struct{})}
+	// A new SOCKS5 password each run, in a file (not argv, which ps shows).
+	secret := rand.Text()
+	secretFile := filepath.Join(cfg.Dir, "socks-secret")
+	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns})
+	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, ln: ln, done: make(chan struct{})}
+	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
 	args := []string{"--python", cfg.Python, "--from", cfg.MitmSpec, "mitmdump",
@@ -83,7 +97,12 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		// would buffer them in mitmproxy anyway. -q equivalent: errors only.
 		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
 		"--set", fmt.Sprintf("reqcove_body_head=%d", cfg.BodyHead),
-		"-s", addon, "--set", "reqcove_socket=" + sock}
+		"-s", addon, "--set", "reqcove_socket=" + sock,
+		"--set", "reqcove_secret_file=" + secretFile,
+		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
+	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
+		args = append(args, "--allow-hosts", re) // per connection: others pass through undecrypted
+	}
 	for _, re := range strings.Split(strings.TrimSpace(appleIgnoreHosts), "\n") {
 		args = append(args, "--ignore-hosts", re)
 	}

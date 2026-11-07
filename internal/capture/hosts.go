@@ -1,0 +1,98 @@
+package capture
+
+import (
+	"fmt"
+	"net/netip"
+	"regexp"
+	"strings"
+)
+
+// HostRules is which hosts reqcove decrypts and records (--allow-hosts).
+// The zero value allows nothing.
+type HostRules struct {
+	All      bool     // "*": everything (except Apple's hosts)
+	Patterns []string // anchored regexps over a lowercase host without port
+	res      []*regexp.Regexp
+}
+
+// ParseAllowHosts turns --allow-hosts specs into rules. A spec is a host
+// ("api.example.com"), a wildcard for a domain and its subdomains
+// ("*.example.com"), an IPv4 address, or "*" for everything.
+func ParseAllowHosts(specs []string) (HostRules, error) {
+	var r HostRules
+	for _, spec := range specs {
+		for _, h := range strings.Split(spec, ",") {
+			raw := strings.ToLower(strings.TrimSpace(h))
+			h = strings.TrimSuffix(raw, ".")
+			if h != raw && (h == "*" || h == "") {
+				return r, fmt.Errorf("--allow-hosts: bad host %q", raw) // "*." must not mean "*"
+			}
+			switch {
+			case h == "":
+			case h == "*":
+				r.All = true
+			case strings.HasPrefix(h, "*."):
+				if !validHost(h[2:]) {
+					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
+				}
+				r.Patterns = append(r.Patterns, `^(.+\.)?`+regexp.QuoteMeta(h[2:])+`$`)
+			default:
+				if !validHost(h) {
+					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
+				}
+				r.Patterns = append(r.Patterns, `^`+regexp.QuoteMeta(h)+`$`)
+			}
+		}
+	}
+	for _, p := range r.Patterns {
+		r.res = append(r.res, regexp.MustCompile(p))
+	}
+	return r, nil
+}
+
+func validHost(h string) bool {
+	if a, err := netip.ParseAddr(h); err == nil {
+		return a.Is4()
+	}
+	if strings.Contains(h, "..") || strings.HasPrefix(h, ".") || strings.HasPrefix(h, "-") {
+		return false
+	}
+	for _, c := range h {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return h != ""
+}
+
+// Match reports whether host (as in the Host header or SNI) is allowed.
+func (r HostRules) Match(host string) bool {
+	if r.All {
+		return true
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if h, _, ok := strings.Cut(host, ":"); ok && !strings.Contains(h, ":") {
+		host = h // drop a port
+	}
+	for _, re := range r.res {
+		if re.MatchString(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// mitmAllowHosts is the value for mitmproxy's allow_hosts, which matches
+// "host:port" strings with re.search: anchored, with an optional port.
+// mitm.it, where iPhones get the CA, is always decrypted (and never recorded).
+// nil means "decrypt everything" (All).
+func (r HostRules) mitmAllowHosts() []string {
+	if r.All {
+		return nil
+	}
+	out := []string{`^mitm\.it(:\d+)?$`}
+	for _, p := range r.Patterns {
+		out = append(out, strings.TrimSuffix(p, "$")+`(:\d+)?$`)
+	}
+	return out
+}

@@ -31,7 +31,7 @@ type harness struct {
 	confdir string
 }
 
-func startHarness(t *testing.T, ctx context.Context, extraEnv ...string) *harness {
+func startHarness(t *testing.T, ctx context.Context, allow []string, extraEnv ...string) *harness {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "rcvt-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
@@ -43,8 +43,12 @@ func startHarness(t *testing.T, ctx context.Context, extraEnv ...string) *harnes
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)
 	}
+	rules, err := ParseAllowHosts(allow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	start := time.Now()
-	h.c, err = Start(ctx, Config{
+	h.c, err = Start(ctx, Config{AllowHosts: rules,
 		Dir: dir, Confdir: h.confdir, Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1",
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20, Log: os.Stderr, ReadyTimeout: 2 * time.Minute,
 	})
@@ -68,7 +72,7 @@ func (h *harness) port() string { _, p, _ := net.SplitHostPort(h.c.SocksAddr); r
 
 // client returns an HTTP client that goes through mitmdump as the given device.
 func (h *harness) client(device string) *http.Client {
-	socks, err := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: device, Password: "-"}, proxy.Direct)
+	socks, err := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: device, Password: h.c.SocksSecret}, proxy.Direct)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -146,7 +150,7 @@ func TestEndToEnd(t *testing.T) {
 		// Also hide installed tools: uvx would reuse `uv tool install mitmproxy`.
 		env = []string{"UV_CACHE_DIR=" + t.TempDir(), "UV_TOOL_DIR=" + t.TempDir()}
 	}
-	h := startHarness(t, ctx, env...)
+	h := startHarness(t, ctx, []string{"127.0.0.1"}, env...)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "a=1")
@@ -167,12 +171,10 @@ func TestEndToEnd(t *testing.T) {
 		resp.Body.Close()
 	}
 	t.Logf("%d requests through mitmdump in %v", n, time.Since(sendStart).Round(10*time.Millisecond))
-	resp, err := hc.Get("https://github.com/robots.txt") // decrypted with the fresh CA
-	if err != nil {
-		t.Fatalf("github via mitmproxy: %v", err)
+	// A secret query value is masked as it arrives.
+	if resp, err := hc.Get(backend.URL + "/login?user=u&token=abc123"); err == nil {
+		resp.Body.Close()
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
 
 	h.waitFlows(n + 1)
 	s := h.stats()
@@ -183,13 +185,12 @@ func TestEndToEnd(t *testing.T) {
 	if s["brotli_decode"] != true {
 		t.Errorf("hello: brotli decoding off (%v)", s["brotli"])
 	}
-	gh := h.doneFlow("github.com/robots.txt", false)
-	if gh.Status != 200 || gh.Device != "test-device" || gh.State != "done" {
-		t.Errorf("github flow = %+v", gh)
+	if login := h.doneFlow("/login", false); strings.Contains(login.URL, "abc123") || !strings.Contains(login.URL, "user=u") {
+		t.Errorf("token not masked as it arrived: %q", login.URL)
 	}
 	v := h.doneFlow(fmt.Sprintf("/r%d", n-1), true)
-	if v.RespBodyText != fmt.Sprintf("ok/r%d", n-1) || !v.RespBody.Final {
-		t.Errorf("newest body = %q final=%v", v.RespBodyText, v.RespBody.Final)
+	if v.RespBodyText != fmt.Sprintf("ok/r%d", n-1) || !v.RespBody.Final || v.Device != "test-device" {
+		t.Errorf("newest flow: body=%q final=%v device=%q", v.RespBodyText, v.RespBody.Final, v.Device)
 	}
 	cookies := 0
 	for _, hd := range append(v.ReqHeaders, v.RespHeaders...) {
@@ -206,21 +207,57 @@ func TestEndToEnd(t *testing.T) {
 	if cookies != 2 {
 		t.Errorf("want 2 Set-Cookie headers, got %d", cookies)
 	}
-	// Apple's hosts pass through undecrypted: a client that does not trust the
-	// mitmproxy CA still connects, sees Apple's own certificate, and nothing is recorded.
-	socks, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: "-"}, proxy.Direct)
+
+	// Hosts outside --allow-hosts (github.com) and Apple's hosts pass through
+	// undecrypted: a client that does not trust the mitmproxy CA still connects,
+	// sees the site's own certificate, and nothing is recorded.
+	socks, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: h.c.SocksSecret}, proxy.Direct)
 	plain := &http.Client{Transport: &http.Transport{DialContext: socks.(proxy.ContextDialer).DialContext}, Timeout: 30 * time.Second}
-	ar, err := plain.Get("https://www.apple.com/")
-	if err != nil {
-		t.Fatalf("apple.com through mitmproxy with system roots: %v", err)
+	for _, u := range []string{"https://github.com/robots.txt", "https://www.apple.com/"} {
+		r, err := plain.Get(u)
+		if err != nil {
+			t.Fatalf("%s through mitmproxy with system roots: %v", u, err)
+		}
+		r.Body.Close()
+		if issuer := r.TLS.PeerCertificates[0].Issuer.String(); strings.Contains(issuer, "mitmproxy") {
+			t.Errorf("%s was intercepted: issuer %s", u, issuer)
+		}
 	}
-	ar.Body.Close()
-	if issuer := ar.TLS.PeerCertificates[0].Issuer.String(); strings.Contains(issuer, "mitmproxy") {
-		t.Errorf("apple.com was intercepted: issuer %s", issuer)
+	// mitm.it, where iPhones get the CA, is served by mitmproxy and not recorded.
+	if r, err := plain.Get("http://mitm.it/"); err != nil || r.StatusCode != 200 {
+		t.Errorf("mitm.it: %v %v", err, r)
+	} else {
+		r.Body.Close()
 	}
 	time.Sleep(time.Second)
-	for _, f := range h.c.Store.List("", "apple.com", 10) {
-		t.Errorf("apple.com was recorded: %+v", f)
+	for _, host := range []string{"github.com", "apple.com", "mitm.it"} {
+		for _, f := range h.c.Store.List("", host, 10) {
+			t.Errorf("%s was recorded: %+v", host, f)
+		}
+	}
+
+	// allow_hosts works per connection. A request on an allowed connection
+	// (127.0.0.1) whose Host is elsewhere is still not recorded: the addon
+	// checks every request (the HTTP/2 coalescing case, made with HTTP/1.1).
+	oos := h.stat("out_of_scope")
+	req, _ := http.NewRequest("GET", backend.URL+"/coalesced", nil)
+	req.Host = "elsewhere.example"
+	if r, err := hc.Do(req); err == nil {
+		r.Body.Close()
+	}
+	time.Sleep(time.Second)
+	if fs := h.c.Store.List("", "", 100000); len(fs) > 0 && strings.Contains(fs[0].URL, "/coalesced") {
+		t.Errorf("request to a host outside --allow-hosts was recorded: %+v", fs[0])
+	}
+	if h.stat("out_of_scope") != oos+1 {
+		t.Errorf("out_of_scope = %d, want %d", h.stat("out_of_scope"), oos+1)
+	}
+
+	// Only reqcove, which knows the secret, may use the SOCKS5 listener.
+	bad, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: "wrong"}, proxy.Direct)
+	if c, err := bad.Dial("tcp", backend.Listener.Addr().String()); err == nil {
+		c.Close()
+		t.Error("SOCKS5 accepted a wrong password")
 	}
 	t.Logf("RSS KB: test=%s mitmdump=%s", rss(os.Getpid()), rss(pidOn(":"+h.port())))
 }
@@ -299,7 +336,7 @@ func TestTrial2(t *testing.T) {
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	h := startHarness(t, ctx)
+	h := startHarness(t, ctx, []string{"127.0.0.1"})
 	mitmPid := pidOn(":" + h.port())
 	peak := samplePeak(mitmPid, os.Getpid())
 	hc := h.client("trial-device")

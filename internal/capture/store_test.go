@@ -48,8 +48,8 @@ func TestStoreMergesEventsAndRedacts(t *testing.T) {
 	if len(v.RespHeaders) != 3 {
 		t.Errorf("repeated Set-Cookie lost: %v", v.RespHeaders)
 	}
-	if st.flows["a"].ReqHeaders[0][1] != "Bearer s3cret" {
-		t.Error("redaction modified the stored flow")
+	if st.flows["a"].ReqHeaders[0][1] != "[redacted]" {
+		t.Error("the stored flow kept the secret: masking must happen as it arrives")
 	}
 }
 
@@ -82,5 +82,41 @@ func TestStoreKeepsHelloAndTLSFailures(t *testing.T) {
 	s := st.Stats()
 	if s["mitmproxy"] != "12.3.1" || s["brotli_decode"] != true || s["tls_failures"] != 1 || s["addon_dropped_bodies"] != int64(3) {
 		t.Fatalf("stats = %v", s)
+	}
+}
+
+func TestStoreScopeAndIngestRedaction(t *testing.T) {
+	allow, _ := ParseAllowHosts([]string{"*.example.net"})
+	st := NewStore(10, 1<<20)
+	st.SetScope(allow, true)
+	st.Apply(line(t, map[string]any{"ev": "request", "id": "out", "host": "tracker.example.org", "url": "https://tracker.example.org/"}))
+	st.Apply(line(t, map[string]any{"ev": "done", "id": "out"}))
+	st.Apply(line(t, map[string]any{"ev": "request", "id": "in", "host": "api.example.net",
+		"url":     "https://api.example.net/v1?q=1&access_token=abc123&Key=k",
+		"path":    "/v1?q=1&access_token=abc123&Key=k",
+		"headers": [][2]string{{"Referer", "https://app.example.net/?session=s1&tab=2"}, {"X-Trace", "token=keep-me"}}}))
+	st.Apply(line(t, map[string]any{"ev": "error", "id": "in", "msg": "failed: https://api.example.net/v1?token=t9"}))
+
+	s := st.Stats()
+	if s["flows"] != 1 || s["out_of_scope"] != int64(1) {
+		t.Fatalf("out-of-scope host recorded: %v", s)
+	}
+	v, _ := st.Get("in", false)
+	stored := st.flows["in"]
+	for _, got := range []string{v.URL, v.Path, v.ReqHeaders[0][1], v.Error, stored.URL} {
+		if strings.Contains(got, "abc123") || strings.Contains(got, "=k") || strings.Contains(got, "s1") || strings.Contains(got, "t9") {
+			t.Errorf("secret survived ingest: %q", got)
+		}
+	}
+	if !strings.Contains(v.URL, "q=1") || !strings.Contains(v.ReqHeaders[0][1], "tab=2") || v.ReqHeaders[1][1] != "token=keep-me" {
+		t.Errorf("masked too much: url=%q referer=%q x-trace=%q", v.URL, v.ReqHeaders[0][1], v.ReqHeaders[1][1])
+	}
+
+	raw := NewStore(10, 1<<20)
+	raw.SetScope(allow, false) // --no-redact
+	raw.Apply(line(t, map[string]any{"ev": "request", "id": "r", "host": "api.example.net", "url": "https://api.example.net/?token=abc",
+		"headers": [][2]string{{"Authorization", "Bearer s3cret"}}}))
+	if v, _ := raw.Get("r", false); v.URL != "https://api.example.net/?token=abc" || v.ReqHeaders[0][1] != "Bearer s3cret" {
+		t.Errorf("--no-redact masked anyway: %+v", v)
 	}
 }
