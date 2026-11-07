@@ -43,6 +43,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	AllowHosts   HostRules                     // hosts decrypted and recorded; the zero value records nothing
 	NoRedact     bool                          // keep secrets in the records (--no-redact)
+	WebPort      int                           // run mitmweb on 127.0.0.1:WebPort instead of mitmdump (--web); 0: mitmdump
 	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
@@ -59,6 +60,7 @@ type Capture struct {
 	Store       *Store
 	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener; the same across restarts
 	SocksSecret string // the SOCKS5 password; any user name (reqcove sends the device's StableID)
+	WebURL      string // with WebPort: mitmweb's address, with its password as the token
 
 	cfg    Config
 	args   []string
@@ -124,13 +126,37 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
 		return fail(err)
 	}
+	// mitmweb's password goes in confdir/config.yaml (0600), which mitmproxy
+	// reads at start; never in argv. mitmdump gets no config file.
+	webConfig := filepath.Join(cfg.Confdir, "config.yaml")
+	if cfg.Confdir != "" {
+		os.Remove(webConfig) // a password left by a --web run that did not stop cleanly
+	}
+	var webURL string
+	if cfg.WebPort != 0 {
+		if cfg.Confdir == "" {
+			return fail(errors.New("--web needs a confdir"))
+		}
+		pw := rand.Text()
+		if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
+			return fail(err)
+		}
+		if err := os.WriteFile(webConfig, []byte("web_password: "+pw+"\n"), 0o600); err != nil {
+			return fail(err)
+		}
+		webURL = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", cfg.WebPort, pw)
+	}
 	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns})
-	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret,
+	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
 		cfg: cfg, ln: ln, done: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
-	c.args = []string{"--python", cfg.Python, "--from", cfg.MitmSpec, "mitmdump",
+	tool := "mitmdump"
+	if cfg.WebPort != 0 {
+		tool = "mitmweb"
+	}
+	c.args = []string{"--python", cfg.Python, "--from", cfg.MitmSpec, tool,
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
 		"--set", "confdir=" + cfg.Confdir,
 		"--set", "proxyauth=any",
@@ -143,6 +169,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
+	}
+	if cfg.WebPort != 0 {
+		c.args = append(c.args, "--set", "web_host=127.0.0.1", "--set", fmt.Sprintf("web_port=%d", cfg.WebPort), "--set", "web_open_browser=false")
 	}
 	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
 		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted
@@ -248,6 +277,9 @@ func (c *Capture) Stop() {
 	<-c.done
 	c.ln.Close()
 	os.Remove(c.ln.Addr().String())
+	if c.WebURL != "" {
+		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
+	}
 }
 
 func (c *Capture) accept() {

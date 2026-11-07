@@ -64,6 +64,7 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	})
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), applied to --allow-hosts hosts only")
+	web := fs.Bool("web", false, "run mitmweb instead of mitmdump, its UI on http://127.0.0.1:8081 (no masking, can edit and replay)")
 	noRedact := fs.Bool("no-redact", false, "keep Authorization, cookies and secret query values in the records")
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
@@ -130,7 +131,7 @@ func run(ctx context.Context, args []string) error {
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
-		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules,
+		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, WebPort: webPort(*web),
 		Logf: func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
 	if err != nil {
@@ -141,6 +142,10 @@ func run(ctx context.Context, args []string) error {
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
+	}
+	if *web {
+		log.Printf("mitmweb on %s", cap.WebURL)
+		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps every flow until reqcove stops, so memory is not bounded.")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -166,6 +171,13 @@ func run(ctx context.Context, args []string) error {
 		return nil // Ctrl-C, or mitmproxy failed (already logged)
 	}
 	return err
+}
+
+func webPort(on bool) int {
+	if on {
+		return 8081
+	}
+	return 0
 }
 
 func parseDNS(v string) ([]netip.AddrPort, error) {
