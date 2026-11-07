@@ -189,6 +189,16 @@ func (s *Store) SetDeviceNames(names map[string]string) {
 	s.names = names
 }
 
+// The store's default bounds, what `reqcove run` uses. MaxBytes counts the
+// kept body heads (up to BodyHead each). The soak test (4 hours of a busy
+// phone) found 256 MiB of heads would take the Go process far past its
+// 150 MB budget; 64 MiB keeps it inside.
+const (
+	DefaultBodyHead = 64 << 10
+	DefaultMaxFlows = 10000
+	DefaultMaxBytes = 64 << 20
+)
+
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
 	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, allow: HostRules{All: true}, redact: true, state: "starting"}

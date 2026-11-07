@@ -137,7 +137,7 @@ func run(ctx context.Context, args []string) error {
 	cap, err := capture.Start(ctx, capture.Config{
 		Dir: *state, Confdir: filepath.Join(*state, "mitmproxy"),
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
-		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, WebPort: webPort(*web),
 		CAName: caName(),

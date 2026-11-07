@@ -61,7 +61,7 @@ func tryHarness(t *testing.T, ctx context.Context, allow []string, tweak func(*C
 	start := time.Now()
 	cfg := Config{AllowHosts: rules,
 		Dir: dir, Confdir: h.confdir, Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1",
-		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20, Log: os.Stderr, ReadyTimeout: 2 * time.Minute,
+		BodyHead: DefaultBodyHead, MaxFlows: DefaultMaxFlows, MaxBytes: DefaultMaxBytes, Log: os.Stderr, ReadyTimeout: 2 * time.Minute,
 	}
 	if tweak != nil {
 		tweak(&cfg)
