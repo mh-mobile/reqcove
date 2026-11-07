@@ -148,7 +148,8 @@ func Run(ctx context.Context, cfg Config) error {
 // that appear late (Tailnet Lock), join later or change IP are found, and
 // reports the node's status.
 func watch(ctx context.Context, lc *local.Client, cfg Config) {
-	var lastProblems, lastIDs, lastStep string
+	var lastProblems, lastStep string
+	lastIDs := fmt.Sprint(map[string]string{}) // no "carrying traffic from map[]" before login
 	t := time.NewTicker(3 * time.Second)
 	defer t.Stop()
 	for {
