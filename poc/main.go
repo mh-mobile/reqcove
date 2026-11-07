@@ -74,9 +74,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if st, err := lc.StatusWithoutPeers(ctx); err == nil && st.Self != nil {
-		log.Printf("node key (for `tailscale lock sign`): %v", st.Self.PublicKey)
-	}
+	// The node key only exists after login, so point at where it shows up.
+	log.Printf("under Tailnet Lock, after login run `tailscale lock status` on a signing device and sign the locked-out %s", *hostname)
 	if _, err := s.Up(ctx); err != nil {
 		log.Fatal(err)
 	}
