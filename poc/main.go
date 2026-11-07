@@ -37,6 +37,7 @@ var (
 	stateDir = flag.String("state", "", "tsnet state directory (default ~/.reqcove-poc/tsnet)")
 	verbose  = flag.Bool("verbose", false, "print tsnet backend logs (DNS, magicsock, ...)")
 	socks5   = flag.String("socks5", "", "mitmproxy SOCKS5 address (e.g. 127.0.0.1:1080); TCP 80/443 goes there")
+	dnsFlag  = flag.String("dns", "", "exit node DNS upstreams, comma-separated (e.g. 1.1.1.1:53,8.8.8.8:53); default: first nameserver in /etc/resolv.conf")
 )
 
 var (
@@ -54,12 +55,24 @@ func main() {
 		home, _ := os.UserHomeDir()
 		*stateDir = filepath.Join(home, ".reqcove-poc", "tsnet")
 	}
+	var dnsServers []netip.AddrPort
+	for _, v := range strings.Split(*dnsFlag, ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		ap, err := netip.ParseAddrPort(v)
+		if err != nil {
+			log.Fatalf("-dns: %v", err)
+		}
+		dnsServers = append(dnsServers, ap)
+	}
 	envknob.SetNoLogsNoSupport() // keep tsnet from uploading logs (they carry destination IPs)
-	preflight()
+	preflight(len(dnsServers) == 0)
 
 	s := &tsnet.Server{
-		Dir:      *stateDir,
-		Hostname: *hostname,
+		Dir:         *stateDir,
+		Hostname:    *hostname,
+		ExitNodeDNS: dnsServers,
 		// Needs the local tsnet fork (go.mod replace, tsnet-fork.patch).
 		FallbackUDP: func(src, dst netip.AddrPort) bool {
 			ok := decideUDP(current.Load(), src, dst)
@@ -223,10 +236,11 @@ func interfaceAddrs() []netip.Addr {
 }
 
 // preflight warns about host settings that break the exit node (plan, stage 0).
-func preflight() {
-	// The exit node's DoH forwards to the first nameserver in /etc/resolv.conf.
+func preflight(checkResolvConf bool) {
+	// Without -dns, the exit node's DoH forwards to the first nameserver in /etc/resolv.conf.
 	ns, err := firstNameserver("/etc/resolv.conf")
 	switch {
+	case !checkResolvConf:
 	case err != nil:
 		log.Printf("WARN: /etc/resolv.conf: %v (exit-node DNS will fail)", err)
 	case ns == "100.100.100.100" || !netip.MustParseAddr(ns).Is4():

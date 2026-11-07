@@ -1,9 +1,9 @@
 diff --git a/net/dns/resolver/exitdns_repro_test.go b/net/dns/resolver/exitdns_repro_test.go
 new file mode 100644
-index 0000000..e65fb2e
+index 0000000..2c9837f
 --- /dev/null
 +++ b/net/dns/resolver/exitdns_repro_test.go
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,66 @@
 +package resolver
 +
 +import (
@@ -27,6 +27,14 @@ index 0000000..e65fb2e
 +	}
 +	r := newResolver(t)
 +	defer r.Close()
++	// e.g. REQCOVE_EXIT_DNS=1.1.1.1:53 to bypass /etc/resolv.conf.
++	if v := os.Getenv("REQCOVE_EXIT_DNS"); v != "" {
++		r.SetExitNodeDNSServers([]netip.AddrPort{netip.MustParseAddrPort(v)})
++	}
++	qtype := dns.TypeA
++	if os.Getenv("REQCOVE_QTYPE") == "HTTPS" {
++		qtype = dns.Type(65)
++	}
 +	doms := strings.Fields("icloud.com google.com notion.so instagram.com x.com line.me zoom.us openai.com slack.com youtube.com microsoft.com wikipedia.org cloudflare.com amazon.co.jp netflix.com go.dev figma.com facebook.com anthropic.com python.org tailscale.com docker.com mitmproxy.org npmjs.com rust-lang.org nhk.or.jp apple.com github.com example.com yahoo.co.jp")
 +	var ok atomic.Int64
 +	var wg sync.WaitGroup
@@ -37,7 +45,7 @@ index 0000000..e65fb2e
 +			defer wg.Done()
 +			b := dns.NewBuilder(nil, dns.Header{ID: reproTxID(), RecursionDesired: true})
 +			b.StartQuestions()
-+			b.Question(dns.Question{Name: dns.MustNewName(d + "."), Type: dns.TypeA, Class: dns.ClassINET})
++			b.Question(dns.Question{Name: dns.MustNewName(d + "."), Type: qtype, Class: dns.ClassINET})
 +			q, _ := b.Finish()
 +			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 +			defer cancel()
@@ -62,8 +70,46 @@ index 0000000..e65fb2e
 +	}
 +	return 0
 +}
+diff --git a/net/dns/resolver/exitdns_servers_test.go b/net/dns/resolver/exitdns_servers_test.go
+new file mode 100644
+index 0000000..01fc99b
+--- /dev/null
++++ b/net/dns/resolver/exitdns_servers_test.go
+@@ -0,0 +1,32 @@
++package resolver
++
++import (
++	"net/netip"
++	"testing"
++	"time"
++)
++
++func TestExitNodeResolversUsesSetServers(t *testing.T) {
++	r := newResolver(t)
++	defer r.Close()
++	r.SetExitNodeDNSServers([]netip.AddrPort{
++		netip.MustParseAddrPort("1.1.1.1:53"),
++		netip.MustParseAddrPort("8.8.8.8:53"),
++	})
++	got, err := r.exitNodeResolvers()
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := []struct {
++		addr  string
++		delay time.Duration
++	}{{"1.1.1.1:53", 0}, {"8.8.8.8:53", 200 * time.Millisecond}}
++	if len(got) != len(want) {
++		t.Fatalf("got %d resolvers, want %d", len(got), len(want))
++	}
++	for i, w := range want {
++		if got[i].name.Addr != w.addr || got[i].startDelay != w.delay {
++			t.Errorf("resolver %d = %s after %v, want %s after %v", i, got[i].name.Addr, got[i].startDelay, w.addr, w.delay)
++		}
++	}
++}
 diff --git a/net/dns/resolver/tsdns.go b/net/dns/resolver/tsdns.go
-index 5a79143..05c6b4e 100644
+index 5a79143..f96d824 100644
 --- a/net/dns/resolver/tsdns.go
 +++ b/net/dns/resolver/tsdns.go
 @@ -8,10 +8,12 @@
@@ -79,7 +125,25 @@ index 5a79143..05c6b4e 100644
  	"net"
  	"net/netip"
  	"os"
-@@ -519,6 +521,8 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
+@@ -251,6 +253,17 @@ type Resolver struct {
+ 	ipToHost       map[netip.Addr]dnsname.FQDN
+ 	subdomainHosts set.Set[dnsname.FQDN]
+ 	magicHosts     MagicDNSHosts // or nil if none installed
++	exitNodeDNS    []netip.AddrPort
++}
++
++// SetExitNodeDNSServers sets the upstream servers that the exit node's DNS
++// proxy (HandlePeerDNSQuery) forwards to. Empty restores the default: the
++// first nameserver in /etc/resolv.conf, which on a home network is often a
++// router that drops some query types or loses concurrent queries.
++func (r *Resolver) SetExitNodeDNSServers(servers []netip.AddrPort) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	r.exitNodeDNS = slices.Clone(servers)
+ }
+ 
+ // MagicDNSHosts is a live source of MagicDNS host records, installed
+@@ -519,6 +532,8 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
  		return marshalResponse(resp)
  	}
  
@@ -88,10 +152,33 @@ index 5a79143..05c6b4e 100644
  	switch runtime.GOOS {
  	default:
  		return nil, errors.New("unsupported exit node OS")
-@@ -553,6 +557,15 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
- 			}}
+@@ -530,28 +545,19 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
+ 		// want to blend in everything from scutil --dns.
+ 		fallthrough
+ 	case "linux", "freebsd", "openbsd", "illumos", "solaris", "ios":
+-		nameserver, err := stubResolverForOS()
++		resolvers, err := r.exitNodeResolvers()
+ 		if err != nil {
+-			r.logf("stubResolverForOS: %v", err)
+-			metricDNSExitProxyErrorResolvConf.Add(1)
+ 			return nil, err
  		}
+-		// TODO: more than 1 resolver from /etc/resolv.conf?
  
+-		var resolvers []resolverAndDelay
+-		switch nameserver {
+-		case tsaddr.TailscaleServiceIP(), tsaddr.TailscaleServiceIPv6():
+-			// If resolv.conf says 100.100.100.100, it's coming right back to us anyway
+-			// so avoid the loop through the kernel and just do what we
+-			// would've done anyway. By not passing any resolvers, the forwarder
+-			// will use its default ones from our DNS config.
+-		case netip.Addr{}:
+-			// Likewise, if the platform has no resolv.conf, just use our defaults.
+-		default:
+-			resolvers = []resolverAndDelay{{
+-				name: &dnstype.Resolver{Addr: net.JoinHostPort(nameserver.String(), "53")},
+-			}}
+-		}
 +		// DoH clients send ID 0 (RFC 8484, section 4.1). Forwarded unchanged,
 +		// concurrent queries all carry the same ID, and a home router's DNS
 +		// relay answered as few as 2 of 30. Give each forwarded query its own
@@ -100,11 +187,10 @@ index 5a79143..05c6b4e 100644
 +		q = slices.Clone(q)
 +		binary.BigEndian.PutUint16(q, uint16(rand.Uint32()))
 +		restoreID = true
-+
+ 
  		err = r.forwarder.forwardWithDestChan(ctx, packet{q, "tcp", from}, ch, resolvers...)
  		if err != nil {
- 			metricDNSExitProxyErrorForward.Add(1)
-@@ -562,6 +575,9 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
+@@ -562,6 +568,9 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
  	select {
  	case p, ok := <-ch:
  		if ok {
@@ -114,6 +200,54 @@ index 5a79143..05c6b4e 100644
  			return p.Bs, nil
  		}
  		panic("unexpected close chan")
+@@ -570,6 +579,47 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
+ 	}
+ }
+ 
++// exitNodeResolvers returns the upstreams for the exit node's DNS proxy:
++// those set by SetExitNodeDNSServers, else the first nameserver in
++// /etc/resolv.conf. Nil means the forwarder's defaults from our DNS config.
++func (r *Resolver) exitNodeResolvers() ([]resolverAndDelay, error) {
++	r.mu.Lock()
++	servers := r.exitNodeDNS
++	r.mu.Unlock()
++	if len(servers) > 0 {
++		var resolvers []resolverAndDelay
++		for i, ap := range servers {
++			resolvers = append(resolvers, resolverAndDelay{
++				name:       &dnstype.Resolver{Addr: ap.String()},
++				startDelay: time.Duration(i) * 200 * time.Millisecond, // try the next one if the first is slow
++			})
++		}
++		return resolvers, nil
++	}
++
++	nameserver, err := stubResolverForOS()
++	if err != nil {
++		r.logf("stubResolverForOS: %v", err)
++		metricDNSExitProxyErrorResolvConf.Add(1)
++		return nil, err
++	}
++	// TODO: more than 1 resolver from /etc/resolv.conf?
++	switch nameserver {
++	case tsaddr.TailscaleServiceIP(), tsaddr.TailscaleServiceIPv6():
++		// If resolv.conf says 100.100.100.100, it's coming right back to us anyway
++		// so avoid the loop through the kernel and just do what we
++		// would've done anyway. By not passing any resolvers, the forwarder
++		// will use its default ones from our DNS config.
++		return nil, nil
++	case netip.Addr{}:
++		// Likewise, if the platform has no resolv.conf, just use our defaults.
++		return nil, nil
++	}
++	return []resolverAndDelay{{
++		name: &dnstype.Resolver{Addr: net.JoinHostPort(nameserver.String(), "53")},
++	}}, nil
++}
++
+ var debugExitNodeDNSNetPkg = envknob.RegisterBool("TS_DEBUG_EXIT_NODE_DNS_NET_PKG")
+ 
+ // handleExitNodeDNSQueryWithNetPkg takes a DNS query message in q and
 diff --git a/tsnet/fallbackudp_test.go b/tsnet/fallbackudp_test.go
 new file mode 100644
 index 0000000..fc02990
@@ -223,10 +357,10 @@ index 0000000..fc02990
 +	}
 +}
 diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
-index adf5ff5..bc0ae87 100644
+index adf5ff5..8b87d0a 100644
 --- a/tsnet/tsnet.go
 +++ b/tsnet/tsnet.go
-@@ -267,6 +267,16 @@ type Server struct {
+@@ -267,6 +267,21 @@ type Server struct {
  	// If unset, logs are discarded.
  	Logf logger.Logf
  
@@ -240,10 +374,25 @@ index adf5ff5..bc0ae87 100644
 +	// must not block. It must be set before Start and not changed after.
 +	FallbackUDP func(src, dst netip.AddrPort) (forward bool)
 +
++	// ExitNodeDNS, if non-empty, is where this node's exit node DNS proxy
++	// forwards queries from peers using it as an exit node, tried in order.
++	// If empty, it uses the first nameserver in /etc/resolv.conf.
++	ExitNodeDNS []netip.AddrPort
++
  	// Ephemeral, if true, specifies that the instance should register
  	// as an Ephemeral node (https://tailscale.com/s/ephemeral-nodes).
  	Ephemeral bool
-@@ -1321,11 +1331,23 @@ func (s *Server) getTCPHandlerForFlow(src, dst netip.AddrPort) (handler func(net
+@@ -933,6 +948,9 @@ func (s *Server) start() (reterr error) {
+ 		return fmt.Errorf("netstack.Create: %w", err)
+ 	}
+ 	ns.SetMetricsRegistry(sys.UserMetricsRegistry())
++	if len(s.ExitNodeDNS) > 0 {
++		sys.DNSManager.Get().Resolver().SetExitNodeDNSServers(s.ExitNodeDNS)
++	}
+ 	sys.Tun.Get().Start()
+ 	sys.Set(ns)
+ 	if s.Tun == nil {
+@@ -1321,11 +1339,23 @@ func (s *Server) getTCPHandlerForFlow(src, dst netip.AddrPort) (handler func(net
  func (s *Server) getUDPHandlerForFlow(src, dst netip.AddrPort) (handler func(nettype.ConnPacketConn), intercept bool) {
  	ln, ok := s.listenerForDstAddr("udp", dst, false)
  	if !ok {
