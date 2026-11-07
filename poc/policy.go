@@ -43,26 +43,44 @@ var denied = []netip.Prefix{
 
 var apple = netip.MustParsePrefix("17.0.0.0/8")
 
-// decideTCP must stay a pure table lookup: tsnet calls it with its lock held.
-func decideTCP(p *policy, src, dst netip.AddrPort) verdict {
+// carried reports whether a flow may leave this Mac at all, for TCP and UDP.
+func carried(p *policy, src, dst netip.AddrPort) bool {
 	if p == nil {
-		return reject // not configured yet
+		return false // not configured yet
 	}
 	s, d := src.Addr().Unmap(), dst.Addr().Unmap()
 	switch {
 	case !slices.Contains(p.allowSrc, s):
-		return reject
+		return false
 	case !d.Is4():
-		return reject // IPv6: the Linux setup rejected it too; this Mac has no IPv6 uplink
+		return false // IPv6: the Linux setup rejected it too; this Mac has no IPv6 uplink
 	case slices.Contains(p.self, d), slices.Contains(p.local, d):
-		return reject
+		return false
 	}
 	for _, pfx := range denied {
 		if pfx.Contains(d) {
-			return reject
+			return false
 		}
 	}
-	if apple.Contains(d) {
+	return true
+}
+
+// decideUDP reports whether netstack should forward a UDP flow. It runs
+// inside netstack's packet processing, so it must stay a pure table lookup.
+func decideUDP(p *policy, src, dst netip.AddrPort) bool {
+	if !carried(p, src, dst) {
+		return false
+	}
+	// Drop QUIC except to Apple, so apps fall back to TCP, where mitmproxy sees them.
+	return dst.Port() != 443 || apple.Contains(dst.Addr().Unmap())
+}
+
+// decideTCP must stay a pure table lookup: tsnet calls it with its lock held.
+func decideTCP(p *policy, src, dst netip.AddrPort) verdict {
+	if !carried(p, src, dst) {
+		return reject
+	}
+	if apple.Contains(dst.Addr().Unmap()) {
 		return direct
 	}
 	if p.socks && (dst.Port() == 80 || dst.Port() == 443) {

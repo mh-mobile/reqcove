@@ -55,3 +55,41 @@ func TestDecideTCP(t *testing.T) {
 		}
 	}
 }
+
+func TestDecideUDP(t *testing.T) {
+	iphone := netip.MustParseAddr("100.101.0.1")
+	other := netip.MustParseAddr("100.101.0.2")
+	p := &policy{
+		allowSrc: []netip.Addr{iphone},
+		self:     []netip.Addr{netip.MustParseAddr("100.101.0.3")},
+		local:    []netip.Addr{netip.MustParseAddr("192.168.1.10"), netip.MustParseAddr("203.0.113.7")},
+	}
+	tests := []struct {
+		p    *policy
+		src  netip.Addr
+		dst  string
+		want bool
+	}{
+		{p, iphone, "17.248.225.4:443", true}, // Apple QUIC passes
+		{p, iphone, "1.1.1.1:443", false},     // other QUIC falls back to TCP
+		{p, iphone, "1.1.1.1:53", true},       // DNS to a public resolver
+		{p, iphone, "8.8.8.8:3478", true},     // STUN for calls
+		{p, iphone, "203.0.113.50:50000", true},
+
+		{nil, iphone, "1.1.1.1:53", false},
+		{p, other, "1.1.1.1:53", false},
+		{p, iphone, "100.101.0.3:53", false}, // this node
+		{p, iphone, "127.0.0.1:53", false},   // netstack would hand it to this Mac's loopback
+		{p, iphone, "0.0.0.0:53", false},
+		{p, iphone, "192.168.1.1:53", false},   // home router
+		{p, iphone, "203.0.113.7:5353", false}, // this Mac, outside RFC 1918
+		{p, iphone, "224.0.0.251:5353", false},
+		{p, iphone, "[2606:4700::1111]:53", false},
+	}
+	for _, tt := range tests {
+		got := decideUDP(tt.p, netip.AddrPortFrom(tt.src, 50000), netip.MustParseAddrPort(tt.dst))
+		if got != tt.want {
+			t.Errorf("decideUDP(src=%v, dst=%v) = %v, want %v", tt.src, tt.dst, got, tt.want)
+		}
+	}
+}

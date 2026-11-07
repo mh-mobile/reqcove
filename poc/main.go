@@ -1,5 +1,5 @@
-// Command poc is the stage 0–1 prototype of reqcove: a tsnet exit node that
-// carries TCP from one allowed device. UDP is left to tsnet, which drops it.
+// Command poc is the stage 0–2 prototype of reqcove: a tsnet exit node that
+// carries TCP and UDP from one allowed device. QUIC is dropped except to Apple.
 package main
 
 import (
@@ -49,7 +49,16 @@ func main() {
 	envknob.SetNoLogsNoSupport() // keep tsnet from uploading logs (they carry destination IPs)
 	preflight()
 
-	s := &tsnet.Server{Dir: *stateDir, Hostname: *hostname}
+	s := &tsnet.Server{
+		Dir:      *stateDir,
+		Hostname: *hostname,
+		// Needs the local tsnet fork (go.mod replace, tsnet-fork.patch).
+		FallbackUDP: func(src, dst netip.AddrPort) bool {
+			ok := decideUDP(current.Load(), src, dst)
+			logUDPOnce(src, dst, ok)
+			return ok
+		},
+	}
 	if *verbose {
 		s.Logf = log.Printf
 	}
@@ -121,6 +130,16 @@ func pipe(wg *sync.WaitGroup, dst, src net.Conn) {
 		cw.CloseWrite()
 	} else {
 		dst.Close()
+	}
+}
+
+// A dropped UDP flow is decided again on every retransmit, so log each flow once.
+// ponytail: seen grows without bound; fine for a short PoC run.
+var seen sync.Map
+
+func logUDPOnce(src, dst netip.AddrPort, forward bool) {
+	if _, dup := seen.LoadOrStore([2]netip.AddrPort{src, dst}, struct{}{}); !dup {
+		logEvent("udp %v -> %v forward=%v", src, dst, forward)
 	}
 }
 
