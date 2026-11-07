@@ -118,6 +118,7 @@ func run(ctx context.Context, args []string) error {
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: allow, NoRedact: *noRedact,
+		Logf: func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
 	if err != nil {
 		return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name())
@@ -131,8 +132,8 @@ func run(ctx context.Context, args []string) error {
 	go func() {
 		<-cap.Done()
 		if ctx.Err() == nil {
-			log.Printf("mitmproxy exited: %v (log: %s)", cap.Err(), mitmLog.Name())
-			cancel() // ponytail: no restart yet; the state task adds it
+			log.Printf("%v (log: %s)", cap.Err(), mitmLog.Name())
+			cancel()
 		}
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
@@ -146,7 +147,7 @@ func run(ctx context.Context, args []string) error {
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. Turn off the exit node on the iPhone: without reqcove it cannot reach the internet.")
 	if ctx.Err() != nil {
-		return nil // Ctrl-C, or mitmproxy exited (already logged)
+		return nil // Ctrl-C, or mitmproxy failed (already logged)
 	}
 	return err
 }

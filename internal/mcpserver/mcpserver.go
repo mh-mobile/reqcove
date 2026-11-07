@@ -45,7 +45,7 @@ func New(st *capture.Store) *mcp.Server {
 			v, err := st.Get(in.ID, in.Bodies)
 			return nil, v, err
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "Counts of stored flows and of events dropped or rejected, and mitmproxy's versions."},
+	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "mitmproxy's state (ready; restarting after it exited, when nothing is captured; failed), counts of stored flows and of events dropped or rejected, and mitmproxy's versions."},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatsOut, error) {
 			return nil, StatsOut{Stats: st.Stats()}, nil
 		})

@@ -119,6 +119,43 @@ type Store struct {
 	redact        bool              // mask secrets as they arrive (off: --no-redact)
 	outOfScope    int64             // requests to hosts outside allow, seen here
 	addonOOS      int64             // the same, seen by the addon
+	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
+	hellos        int64
+	state         string // starting, ready, restarting, failed
+	stateDetail   string
+	restarts      int64
+}
+
+func (s *Store) setState(state, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state == "restarting" && s.state != "restarting" {
+		s.restarts++
+	}
+	s.state, s.stateDetail = state, detail
+}
+
+func (s *Store) helloCount() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hellos
+}
+
+// mitmdumpExited closes the flows the dead process left open and keeps its
+// counters, since the next process counts from zero.
+// ponytail: lines still buffered from the dead process can land after this; they only reopen nothing (orphans count).
+func (s *Store) mitmdumpExited(why string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.flows {
+		if f.State == "open" {
+			f.State, f.Error = "error", why
+		}
+	}
+	s.earlier[0] += s.addonDropped[0]
+	s.earlier[1] += s.addonDropped[1]
+	s.earlier[2] += s.addonOOS
+	s.addonDropped, s.addonOOS = [2]int64{}, 0
 }
 
 // SetScope sets which hosts are recorded and whether secrets are masked.
@@ -138,7 +175,7 @@ func (s *Store) SetDeviceNames(names map[string]string) {
 
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
-	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, allow: HostRules{All: true}, redact: true}
+	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, allow: HostRules{All: true}, redact: true, state: "starting"}
 }
 
 func (s *Store) Apply(line []byte) {
@@ -158,6 +195,7 @@ func (s *Store) Apply(line []byte) {
 	switch e.Ev {
 	case "hello":
 		s.hello = e
+		s.hellos++
 		return
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
@@ -280,9 +318,10 @@ func (s *Store) Stats() map[string]any {
 	defer s.mu.Unlock()
 	return map[string]any{
 		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted,
-		"addon_dropped_bodies": s.addonDropped[0], "addon_dropped_events": s.addonDropped[1],
+		"state": s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
+		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
-		"out_of_scope": s.outOfScope + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
+		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
 		"tls_failures": len(s.tlsFailures),
 		"mitmproxy":    s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,

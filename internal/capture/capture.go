@@ -41,23 +41,60 @@ type Config struct {
 	MaxBytes     int
 	Log          io.Writer // mitmdump's stdout and stderr; errors only (termlog_verbosity=error)
 	ReadyTimeout time.Duration
-	AllowHosts   HostRules // hosts decrypted and recorded; the zero value records nothing
-	NoRedact     bool      // keep secrets in the records (--no-redact)
+	AllowHosts   HostRules                     // hosts decrypted and recorded; the zero value records nothing
+	NoRedact     bool                          // keep secrets in the records (--no-redact)
+	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
+	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
 }
+
+// mitmdump is restarted when it exits, up to maxRestarts times in a row; a
+// run that stayed up for stableAfter resets the count.
+const (
+	maxRestarts = 5
+	stableAfter = time.Minute
+)
 
 type Capture struct {
 	Store       *Store
-	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener
+	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener; the same across restarts
 	SocksSecret string // the SOCKS5 password; any user name (reqcove sends the device's StableID)
 
-	cmd  *exec.Cmd
-	ln   net.Listener
-	done chan struct{}
-	err  error
+	cfg    Config
+	args   []string
+	ln     net.Listener
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
 }
 
-// Start launches mitmdump and returns once its addon has said hello.
+// proc is one mitmdump process.
+type proc struct {
+	cmd   *exec.Cmd
+	done  chan struct{}
+	err   error
+	ready time.Time
+}
+
+// stop ends mitmdump (and uvx above it): SIGTERM to the group, SIGKILL after 5s.
+func (p *proc) stop() {
+	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
+	select {
+	case <-p.done:
+	case <-time.After(5 * time.Second):
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		<-p.done
+	}
+}
+
+// Start launches mitmdump, returns once its addon has said hello, and keeps
+// restarting it when it exits.
 func Start(ctx context.Context, cfg Config) (*Capture, error) {
+	if cfg.RestartDelay == 0 {
+		cfg.RestartDelay = time.Second
+	}
+	if cfg.Logf == nil {
+		cfg.Logf = func(string, ...any) {}
+	}
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -67,29 +104,32 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err != nil {
 		return nil, err
 	}
+	fail := func(err error) (*Capture, error) {
+		ln.Close()
+		os.Remove(sock)
+		return nil, err
+	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
 	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
-		ln.Close()
-		return nil, err
+		return fail(err)
 	}
 	port, err := freePort()
 	if err != nil {
-		ln.Close()
-		return nil, err
+		return fail(err)
 	}
 	// A new SOCKS5 password each run, in a file (not argv, which ps shows).
 	secret := rand.Text()
 	secretFile := filepath.Join(cfg.Dir, "socks-secret")
 	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
-		ln.Close()
-		return nil, err
+		return fail(err)
 	}
 	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns})
-	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, ln: ln, done: make(chan struct{})}
+	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret,
+		cfg: cfg, ln: ln, done: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
-	args := []string{"--python", cfg.Python, "--from", cfg.MitmSpec, "mitmdump",
+	c.args = []string{"--python", cfg.Python, "--from", cfg.MitmSpec, "mitmdump",
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
 		"--set", "confdir=" + cfg.Confdir,
 		"--set", "proxyauth=any",
@@ -101,56 +141,102 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "reqcove_secret_file=" + secretFile,
 		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
 	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
-		args = append(args, "--allow-hosts", re) // per connection: others pass through undecrypted
+		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted
 	}
 	for _, re := range strings.Split(strings.TrimSpace(appleIgnoreHosts), "\n") {
-		args = append(args, "--ignore-hosts", re)
+		c.args = append(c.args, "--ignore-hosts", re)
 	}
-	c.cmd = exec.Command(cfg.Uvx, args...)
-	c.cmd.Stdout, c.cmd.Stderr = cfg.Log, cfg.Log
-	c.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := c.cmd.Start(); err != nil {
-		ln.Close()
+
+	p, err := c.spawn(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	ctx, c.cancel = context.WithCancel(ctx)
+	go c.supervise(ctx, p)
+	return c, nil
+}
+
+// spawn starts one mitmdump and waits for its addon's hello.
+func (c *Capture) spawn(ctx context.Context) (*proc, error) {
+	before := c.Store.helloCount()
+	p := &proc{cmd: exec.Command(c.cfg.Uvx, c.args...), done: make(chan struct{})}
+	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
+	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
 	go func() {
-		c.err = c.cmd.Wait()
-		close(c.done)
+		p.err = p.cmd.Wait()
+		close(p.done)
 	}()
-
-	deadline := time.After(cfg.ReadyTimeout)
-	for c.Store.Stats()["mitmproxy"] == "" {
+	deadline := time.After(c.cfg.ReadyTimeout)
+	for c.Store.helloCount() == before {
 		select {
 		case <-ctx.Done():
-			c.Stop()
+			p.stop()
 			return nil, ctx.Err()
-		case <-c.done:
-			c.Stop()
-			return nil, fmt.Errorf("mitmdump exited before its addon said hello: %v", c.err)
+		case <-p.done:
+			return nil, fmt.Errorf("mitmdump exited before its addon said hello: %v", p.err)
 		case <-deadline:
-			c.Stop()
+			p.stop()
 			return nil, errors.New("mitmdump's addon never said hello")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return c, nil
+	p.ready = time.Now()
+	c.Store.setState("ready", "")
+	return p, nil
 }
 
-// Done is closed when mitmdump exits; Err then says why.
+// supervise restarts mitmdump until ctx ends or it fails maxRestarts times in a row.
+// While it is down the exit node cannot reach mitmdump, so the iPhone's
+// connections fail; they never go out undecrypted and unrecorded instead.
+func (c *Capture) supervise(ctx context.Context, p *proc) {
+	defer close(c.done)
+	fails := 0
+	for {
+		select {
+		case <-ctx.Done():
+			p.stop()
+			return
+		case <-p.done:
+		}
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would hold the port
+		err := fmt.Errorf("mitmdump exited: %v", p.err)
+		c.Store.mitmdumpExited(err.Error())
+		if time.Since(p.ready) >= stableAfter {
+			fails = 0
+		}
+		for p = nil; p == nil; {
+			if fails++; fails > maxRestarts {
+				c.err = fmt.Errorf("%w; gave up after %d restarts in a row", err, maxRestarts)
+				c.Store.setState("failed", c.err.Error())
+				return
+			}
+			delay := c.cfg.RestartDelay << (fails - 1)
+			c.Store.setState("restarting", err.Error())
+			c.cfg.Logf("%v; restarting it in %v (%d/%d)", err, delay, fails, maxRestarts)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+			if p, err = c.spawn(ctx); err != nil && ctx.Err() != nil {
+				return
+			}
+		}
+		c.cfg.Logf("mitmdump is back")
+	}
+}
+
+// Done is closed when mitmdump is stopped or has failed too often; Err then says why (nil after Stop).
 func (c *Capture) Done() <-chan struct{} { return c.done }
 func (c *Capture) Err() error            { return c.err }
 
-// Stop ends mitmdump (and uvx above it) and closes the socket.
+// Stop ends mitmdump and closes the socket.
 func (c *Capture) Stop() {
-	if c.cmd != nil && c.cmd.Process != nil {
-		syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
-		select {
-		case <-c.done:
-		case <-time.After(5 * time.Second):
-			syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
-			<-c.done
-		}
-	}
+	c.cancel()
+	<-c.done
 	c.ln.Close()
 	os.Remove(c.ln.Addr().String())
 }

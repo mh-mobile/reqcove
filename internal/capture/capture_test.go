@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -260,6 +261,26 @@ func TestEndToEnd(t *testing.T) {
 		t.Error("SOCKS5 accepted a wrong password")
 	}
 	t.Logf("RSS KB: test=%s mitmdump=%s", rss(os.Getpid()), rss(pidOn(":"+h.port())))
+
+	// mitmdump is restarted when it dies, on the same port with the same
+	// secret, and the counts of the dead process are kept.
+	syscall.Kill(pidOn(":"+h.port()), syscall.SIGKILL)
+	for deadline := time.Now().Add(time.Minute); h.stats()["state"] != "ready" || h.stat("restarts") != 1; time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("mitmdump not back: %v", h.stats())
+		}
+	}
+	if r, err := h.client("test-device").Get(backend.URL + "/after-restart"); err != nil {
+		t.Fatalf("after the restart: %v", err)
+	} else {
+		r.Body.Close()
+	}
+	if v := h.doneFlow("/after-restart", true); v.RespBodyText != "ok/after-restart" {
+		t.Errorf("after the restart: body %q", v.RespBodyText)
+	}
+	if h.stat("out_of_scope") != oos+1 {
+		t.Errorf("out_of_scope after the restart = %d, want %d", h.stat("out_of_scope"), oos+1)
+	}
 }
 
 func pidOn(port string) int {
