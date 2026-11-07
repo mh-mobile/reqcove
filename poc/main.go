@@ -1,5 +1,6 @@
-// Command poc is the stage 0–2 prototype of reqcove: a tsnet exit node that
+// Command poc is the stage 0–3 prototype of reqcove: a tsnet exit node that
 // carries TCP and UDP from one allowed device. QUIC is dropped except to Apple.
+// With -socks5, TCP 80/443 (except Apple) goes to mitmproxy's SOCKS5 mode.
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/net/proxy"
 	"tailscale.com/envknob"
 	"tailscale.com/ipn"
 	"tailscale.com/net/tsaddr"
@@ -32,6 +34,7 @@ var (
 	hostname = flag.String("hostname", "reqcove-poc", "tailnet node name")
 	stateDir = flag.String("state", "", "tsnet state directory (default ~/.reqcove-poc/tsnet)")
 	verbose  = flag.Bool("verbose", false, "print tsnet backend logs (DNS, magicsock, ...)")
+	socks5   = flag.String("socks5", "", "mitmproxy SOCKS5 address (e.g. 127.0.0.1:1080); TCP 80/443 goes there")
 )
 
 var current atomic.Pointer[policy]
@@ -66,11 +69,11 @@ func main() {
 	// Registered before Start; until current is set, decideTCP rejects everything.
 	s.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (func(net.Conn), bool) {
 		v := decideTCP(current.Load(), src, dst)
-		if v != direct {
-			logEvent("tcp %v -> %v %v", src, dst, v)
-			return nil, true // RST; socks is stage 3
+		if v == reject {
+			logEvent("tcp %v -> %v reject", src, dst)
+			return nil, true // RST
 		}
-		return func(c net.Conn) { relay(c, src, dst) }, true
+		return func(c net.Conn) { relay(c, src, dst, v) }, true
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -101,20 +104,29 @@ func main() {
 		allowSrc: []netip.Addr{src},
 		self:     []netip.Addr{ip4, ip6},
 		local:    interfaceAddrs(),
+		socks:    *socks5 != "",
 	})
 	log.Printf("up as %s (%v, %v), advertising exit routes, carrying TCP from %v", *hostname, ip4, ip6, src)
 	<-ctx.Done()
 }
 
-func relay(c net.Conn, src, dst netip.AddrPort) {
+func relay(c net.Conn, src, dst netip.AddrPort, v verdict) {
 	defer c.Close()
-	out, err := (&net.Dialer{Timeout: 10 * time.Second}).Dial("tcp", dst.String())
+	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
+	if v == socks {
+		var err error
+		if d, err = proxy.SOCKS5("tcp", *socks5, nil, d); err != nil {
+			logEvent("tcp %v -> %v socks: %v", src, dst, err)
+			return
+		}
+	}
+	out, err := d.Dial("tcp", dst.String())
 	if err != nil {
-		logEvent("tcp %v -> %v direct: %v", src, dst, err)
+		logEvent("tcp %v -> %v %v: %v", src, dst, v, err)
 		return
 	}
 	defer out.Close()
-	logEvent("tcp %v -> %v direct: connected", src, dst)
+	logEvent("tcp %v -> %v %v: connected", src, dst, v)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go pipe(&wg, out, c)
