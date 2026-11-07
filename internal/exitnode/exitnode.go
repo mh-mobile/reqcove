@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"slices"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"tailscale.com/client/local"
 	"tailscale.com/envknob"
 	"tailscale.com/ipn"
@@ -32,6 +32,7 @@ type Config struct {
 	Devices     []string         // --device specs
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
 	SocksSecret string           // its password
+	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
 	Verbose     bool             // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
@@ -96,6 +97,27 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	ip4, ip6 := s.TailscaleIPs()
 	log.Printf("up as %s (%v, %v), advertising exit routes. Approve them in the admin console if this is a new node.", cfg.Hostname, ip4, ip6)
+	if cfg.ProxyPort != 0 {
+		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", cfg.ProxyPort))
+		if err != nil {
+			return fmt.Errorf("remote proxy: %w", err)
+		}
+		srv := &http.Server{
+			Handler: &remoteProxy{
+				policy:  current.Load,
+				resolve: resolver(cfg.DNS),
+				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
+					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
+				},
+			},
+			ReadHeaderTimeout: 30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(ln)
+		defer srv.Close()
+		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
+	}
 	return watchDevices(ctx, lc, cfg, []netip.Addr{ip4, ip6})
 }
 
@@ -145,17 +167,7 @@ func watchDevices(ctx context.Context, lc *local.Client, cfg Config, self []neti
 
 func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr, socksSecret string, verbose bool) {
 	defer c.Close()
-	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
-	if v == socks {
-		// The SOCKS5 user name carries the device's StableID to mitmproxy.
-		auth := &proxy.Auth{User: device, Password: socksSecret}
-		var err error
-		if d, err = proxy.SOCKS5("tcp", socksAddr, auth, d); err != nil {
-			logEvent("tcp %v -> %v socks: %v", src, dst, err)
-			return
-		}
-	}
-	out, err := d.Dial("tcp", dst.String())
+	out, err := dialVia(context.Background(), v, device, socksAddr, socksSecret, dst)
 	if err != nil {
 		logEvent("tcp %v -> %v %v: %v", src, dst, v, err)
 		return

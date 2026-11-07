@@ -70,6 +70,7 @@ func run(ctx context.Context, args []string) error {
 	mitmSpec := fs.String("mitmproxy-spec", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
 	python := fs.String("python", "3.14", "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
+	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
 	fs.Parse(args)
 	if len(devices) == 0 {
@@ -142,7 +143,7 @@ func run(ctx context.Context, args []string) error {
 
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
-		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, Verbose: *verbose,
+		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
 		OnDevices: cap.Store.SetDeviceNames,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. Turn off the exit node on the iPhone: without reqcove it cannot reach the internet.")
