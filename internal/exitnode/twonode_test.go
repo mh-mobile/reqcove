@@ -114,7 +114,15 @@ func TestTwoNodes(t *testing.T) {
 		io.ReadFull(c, b)
 		return string(b)
 	}
-	c, err := dialExit(t, ctx, phone, "203.0.113.5:443")
+	for _, peer := range []*tsnet.Server{phone, outsider} {
+		lc, _ := peer.LocalClient()
+		pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if _, err := lc.Ping(pctx, reqcove.Addresses[0].Addr(), tailcfg.PingTSMP); err != nil {
+			t.Fatalf("ping reqcove: %v", err)
+		}
+		cancel()
+	}
+	c, err := dialExit(t, ctx, phone, "203.0.113.5:443", true)
 	if err != nil {
 		t.Fatalf("phone through the exit node: %v", err)
 	}
@@ -138,7 +146,7 @@ func TestTwoNodes(t *testing.T) {
 	before := socks.count()
 	_, lport, _ := net.SplitHostPort(local.Addr().String())
 	for _, dst := range []string{"127.0.0.1:" + lport, "192.168.1.1:80", "10.0.0.1:443"} {
-		if c, err := dialExit(t, ctx, phone, dst); err == nil {
+		if c, err := dialExit(t, ctx, phone, dst, false); err == nil {
 			c.SetReadDeadline(time.Now().Add(2 * time.Second))
 			if n, _ := c.Read(make([]byte, 1)); n > 0 {
 				t.Errorf("%s answered through the exit node", dst)
@@ -157,7 +165,7 @@ func TestTwoNodes(t *testing.T) {
 	}
 
 	// A peer that is not one of --device: nothing, either way.
-	if c, err := dialExit(t, ctx, outsider, "203.0.113.5:443"); err == nil {
+	if c, err := dialExit(t, ctx, outsider, "203.0.113.5:443", false); err == nil {
 		if got := echo(c); got == "ping" {
 			t.Error("the outsider was carried through the exit node")
 		}
@@ -201,14 +209,17 @@ func startPeer(t *testing.T, ctx context.Context, controlURL, name string) *tsne
 
 var errSystemDial = errors.New("system dial (no exit route yet)")
 
-// dialExit dials through the exit node once its route is installed.
-func dialExit(t *testing.T, ctx context.Context, s *tsnet.Server, dst string) (net.Conn, error) {
+// dialExit dials through the exit node once its route is installed. With
+// untilOK it also retries other errors (the first packets can be lost while
+// the peers' path comes up).
+func dialExit(t *testing.T, ctx context.Context, s *tsnet.Server, dst string, untilOK bool) (net.Conn, error) {
 	t.Helper()
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(300 * time.Millisecond) {
 		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		c, err := s.Dial(dctx, "tcp", dst)
 		cancel()
-		if !errors.Is(err, errSystemDial) || time.Now().After(deadline) {
+		retry := errors.Is(err, errSystemDial) || (untilOK && err != nil)
+		if !retry || time.Now().After(deadline) {
 			return c, err
 		}
 	}
