@@ -1,0 +1,105 @@
+package capture
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestListFiltersAndPages(t *testing.T) {
+	st := NewStore(4, 1<<20) // room for 4: the 6 below evict the 2 oldest
+	st.SetDeviceNames(map[string]string{"nPHONE": "iphone", "nPAD": "ipad"})
+	base := float64(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix())
+	add := func(id, dev, method, host string, status int, start float64) {
+		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "device": dev, "method": method, "host": host,
+			"url": "https://" + host + "/" + id + "?token=abc", "ts": start,
+			"headers": [][2]string{{"User-Agent", "App/1.0"}, {"Origin", "https://app.example"}, {"Referer", "https://app.example/p?key=k1"}}}))
+		if status != 0 {
+			st.Apply(line(t, map[string]any{"ev": "response", "id": id, "status": status, "headers": [][2]string{{"Content-Type", "application/json"}}}))
+			st.Apply(line(t, map[string]any{"ev": "done", "id": id, "ts_end": start + 0.25}))
+		}
+	}
+	add("f1", "nPHONE", "GET", "api.example.com", 200, base)    // evicted
+	add("f2", "nPHONE", "GET", "api.example.com", 200, base+10) // evicted
+	add("f3", "nPHONE", "POST", "api.example.com", 404, base+20)
+	add("f4", "nPAD", "GET", "CDN.Example.com", 500, base+30)
+	add("f5", "nPHONE", "post", "badexample.com", 0, base+40) // no response yet
+	add("f6", "nPHONE", "GET", "example.com", 201, base+50)
+
+	ids := func(q Filter) string {
+		if q.Limit == 0 {
+			q.Limit = 50
+		}
+		fs, _ := st.List(q)
+		var out []string
+		for _, f := range fs {
+			out = append(out, f.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct {
+		q    Filter
+		want string
+	}{
+		{Filter{}, "f6,f5,f4,f3"},
+		{Filter{Host: "example.com"}, "f6,f4,f3"}, // subdomains yes, badexample.com no
+		{Filter{Host: "API.example.com"}, "f3"},
+		{Filter{Device: "ipad"}, "f4"},
+		{Filter{Device: "nPHONE"}, "f6,f5,f3"},
+		{Filter{Method: "post"}, "f5,f3"},
+		{Filter{Status: "4xx"}, "f3"},
+		{Filter{Status: "5xx"}, "f4"},
+		{Filter{Status: "201"}, "f6"},
+		{Filter{Status: "none"}, "f5"},
+		{Filter{Since: base + 30}, "f6,f5,f4"},
+		{Filter{Until: base + 30}, "f4,f3"},
+		{Filter{Since: base + 25, Until: base + 45, Device: "iphone"}, "f5"},
+	} {
+		if got := ids(c.q); got != c.want {
+			t.Errorf("%+v: got %s, want %s", c.q, got, c.want)
+		}
+	}
+
+	// Pages of 2 walk all matches once, and a cursor still works after the
+	// flows around it are evicted.
+	var pages []string
+	q := Filter{Limit: 2}
+	for {
+		fs, next := st.List(q)
+		var p []string
+		for _, f := range fs {
+			p = append(p, f.ID)
+		}
+		pages = append(pages, strings.Join(p, ","))
+		if next == 0 || len(pages) > 5 {
+			break
+		}
+		q.Before = next
+		if len(pages) == 1 {
+			add("f7", "nPHONE", "GET", "example.com", 200, base+60) // evicts f3
+		}
+	}
+	if got := fmt.Sprint(pages); got != "[f6,f5 f4]" {
+		t.Errorf("pages %s, want [f6,f5 f4]", got)
+	}
+
+	fs, _ := st.List(Filter{Host: "cdn.example.com", Limit: 1}) // the record keeps CDN.Example.com
+	f := fs[0]
+	wantTime := time.Unix(int64(base+30), 0).Format("2006-01-02T15:04:05.000Z07:00")
+	if f.Time != wantTime || f.DurationMS != 250 || f.ContentType != "application/json" || f.UserAgent != "App/1.0" ||
+		f.Origin != "https://app.example" || f.DeviceName != "ipad" || f.Status != 500 {
+		t.Errorf("summary: %+v (time want %s)", f, wantTime)
+	}
+	if strings.Contains(f.Referer, "k1") || strings.Contains(f.URL, "abc") {
+		t.Errorf("secrets in the summary: referer %q, url %q", f.Referer, f.URL)
+	}
+}
+
+func TestValidStatus(t *testing.T) {
+	for s, ok := range map[string]bool{"": true, "none": true, "404": true, "4xx": true, "1xx": true, "6xx": false, "x": false, "99": false, "600": false, "4XX": false} {
+		if ValidStatus(s) != ok {
+			t.Errorf("ValidStatus(%q) = %v", s, !ok)
+		}
+	}
+}

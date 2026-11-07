@@ -202,7 +202,7 @@ modify_headers:
 
 	// The injected token never reaches the records or the stats.
 	all, _ := json.Marshal(h.stats())
-	for _, f := range h.c.Store.List("", "", 1000) {
+	for _, f := range listAll(h.c.Store, 1000) {
 		fv, _ := h.c.Store.Get(f.ID, true)
 		b, _ := json.Marshal(fv)
 		all = append(all, b...)

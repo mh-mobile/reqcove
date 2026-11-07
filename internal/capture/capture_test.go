@@ -136,7 +136,7 @@ func (h *harness) doneFlow(sub string, bodies bool) FlowView {
 // flowFor returns the newest flow whose URL contains sub.
 func (h *harness) flowFor(sub string, bodies bool) FlowView {
 	h.t.Helper()
-	for _, f := range h.c.Store.List("", "", 100000) {
+	for _, f := range listAll(h.c.Store, 100000) {
 		if strings.Contains(f.URL, sub) {
 			v, err := h.c.Store.Get(f.ID, bodies)
 			if err != nil {
@@ -245,7 +245,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	time.Sleep(time.Second)
 	for _, host := range []string{"github.com", "apple.com", "mitm.it"} {
-		for _, f := range h.c.Store.List("", host, 10) {
+		for _, f := range listHost(h.c.Store, host) {
 			t.Errorf("%s was recorded: %+v", host, f)
 		}
 	}
@@ -260,7 +260,7 @@ func TestEndToEnd(t *testing.T) {
 		r.Body.Close()
 	}
 	time.Sleep(time.Second)
-	if fs := h.c.Store.List("", "", 100000); len(fs) > 0 && strings.Contains(fs[0].URL, "/coalesced") {
+	if fs := listAll(h.c.Store, 100000); len(fs) > 0 && strings.Contains(fs[0].URL, "/coalesced") {
 		t.Errorf("request to a host outside --allow-hosts was recorded: %+v", fs[0])
 	}
 	if h.stat("out_of_scope") != oos+1 {

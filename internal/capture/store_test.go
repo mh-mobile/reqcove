@@ -70,7 +70,7 @@ func TestStoreBoundsAndRejects(t *testing.T) {
 	if s["flows"] != 1 || s["held_bytes"] != 6 || s["evicted"] != int64(2) {
 		t.Fatalf("byte bound not enforced: %v", s)
 	}
-	if got := st.List("", "", 10); len(got) != 1 || got[0].ID != "3" {
+	if got := listAll(st, 10); len(got) != 1 || got[0].ID != "3" {
 		t.Fatalf("list = %+v, want only 3", got)
 	}
 }
@@ -119,4 +119,10 @@ func TestStoreScopeAndIngestRedaction(t *testing.T) {
 	if v, _ := raw.Get("r", false); v.URL != "https://api.example.net/?token=abc" || v.ReqHeaders[0][1] != "Bearer s3cret" {
 		t.Errorf("--no-redact masked anyway: %+v", v)
 	}
+}
+
+func listAll(st *Store, n int) []Summary { fs, _ := st.List(Filter{Limit: n}); return fs }
+func listHost(st *Store, host string) []Summary {
+	fs, _ := st.List(Filter{Host: host, Limit: 10})
+	return fs
 }

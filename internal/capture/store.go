@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -71,6 +73,7 @@ type Body struct {
 }
 
 type Flow struct {
+	seq         int64       // arrival order; the list cursor
 	ID          string      `json:"id"`
 	Device      string      `json:"device,omitempty"`
 	Client      string      `json:"client,omitempty"`
@@ -127,6 +130,7 @@ type Store struct {
 	addonOOS      int64             // the same, seen by the addon
 	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
+	seq           int64  // last Flow.seq handed out
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
@@ -226,7 +230,8 @@ func (s *Store) Apply(line []byte) {
 			s.outOfScope++ // the addon should have skipped it; this is the second check
 			return
 		}
-		f = &Flow{ID: e.ID, State: "open"}
+		s.seq++
+		f = &Flow{ID: e.ID, State: "open", seq: s.seq}
 		s.flows[e.ID] = f
 		s.order = append(s.order, e.ID)
 	}
@@ -271,31 +276,114 @@ func (s *Store) evictLocked() {
 }
 
 type Summary struct {
-	ID         string `json:"id"`
-	Device     string `json:"device,omitempty"` // StableID
-	DeviceName string `json:"device_name,omitempty"`
-	Method     string `json:"method"`
-	URL        string `json:"url"`
-	State      string `json:"state"`
-	Status     int    `json:"status,omitempty"`
-	RespSize   int64  `json:"response_body_size"`
-	Error      string `json:"error,omitempty"`
+	ID          string `json:"id"`
+	Time        string `json:"time"`                  // request start, local time
+	DurationMS  int64  `json:"duration_ms,omitempty"` // request start to response end
+	Device      string `json:"device,omitempty"`      // StableID
+	DeviceName  string `json:"device_name,omitempty"`
+	Method      string `json:"method"`
+	Host        string `json:"host"`
+	URL         string `json:"url"`
+	State       string `json:"state"`
+	Status      int    `json:"status,omitempty"`
+	ContentType string `json:"content_type,omitempty"` // of the response
+	RespSize    int64  `json:"response_body_size"`
+	UserAgent   string `json:"user_agent,omitempty"`
+	Origin      string `json:"origin,omitempty"`
+	Referer     string `json:"referer,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
-// List returns the newest flows first, filtered by device (StableID or
-// display name) and host substring.
-func (s *Store) List(device, host string, limit int) []Summary {
+// Filter selects flows for List; zero fields match everything.
+type Filter struct {
+	Device       string  // StableID or display name
+	Host         string  // this host or any subdomain of it
+	Since, Until float64 // unix seconds; the request's start
+	Status       string  // "404", "4xx", or "none" (no response: open or failed)
+	Method       string
+	Before       int64 // cursor from a previous page: only older flows
+	Limit        int
+}
+
+// ValidStatus reports whether s is a Status filter List understands.
+func ValidStatus(s string) bool {
+	if s == "" || s == "none" {
+		return true
+	}
+	if len(s) == 3 && strings.HasSuffix(s, "xx") {
+		return s[0] >= '1' && s[0] <= '5'
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 100 && n <= 599
+}
+
+func (q Filter) match(f *Flow, name string) bool {
+	host, fhost := strings.ToLower(q.Host), strings.ToLower(f.Host)
+	switch {
+	case q.Before != 0 && f.seq >= q.Before,
+		q.Device != "" && f.Device != q.Device && name != q.Device,
+		host != "" && fhost != host && !strings.HasSuffix(fhost, "."+host),
+		q.Since != 0 && f.Start < q.Since,
+		q.Until != 0 && f.Start > q.Until,
+		q.Method != "" && !strings.EqualFold(f.Method, q.Method):
+		return false
+	}
+	switch {
+	case q.Status == "":
+	case q.Status == "none":
+		return f.Status == 0
+	case strings.HasSuffix(q.Status, "xx"):
+		return f.Status/100 == int(q.Status[0]-'0')
+	default:
+		return strconv.Itoa(f.Status) == q.Status
+	}
+	return true
+}
+
+// List returns the newest matching flows first, and a cursor for the next
+// (older) page, 0 when there is none.
+func (s *Store) List(q Filter) ([]Summary, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Summary
-	for i := len(s.order) - 1; i >= 0 && len(out) < limit; i-- {
+	var last int64
+	for i := len(s.order) - 1; i >= 0; i-- {
 		f := s.flows[s.order[i]]
-		if device != "" && f.Device != device && s.names[f.Device] != device || host != "" && !strings.Contains(f.Host, host) {
+		if !q.match(f, s.names[f.Device]) {
 			continue
 		}
-		out = append(out, Summary{f.ID, f.Device, s.names[f.Device], f.Method, f.URL, f.State, f.Status, f.RespBody.Size, f.Error})
+		if len(out) == q.Limit {
+			return out, last
+		}
+		out = append(out, s.summary(f))
+		last = f.seq
 	}
-	return out
+	return out, 0
+}
+
+func (s *Store) summary(f *Flow) Summary {
+	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL,
+		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error,
+		ContentType: header(f.RespHeaders, "content-type"), UserAgent: header(f.ReqHeaders, "user-agent"),
+		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}
+	if f.Start > 0 {
+		v.Time = unixTime(f.Start).Format("2006-01-02T15:04:05.000Z07:00")
+	}
+	if f.End > f.Start && f.Start > 0 {
+		v.DurationMS = int64((f.End - f.Start) * 1000)
+	}
+	return v
+}
+
+func unixTime(sec float64) time.Time { return time.UnixMilli(int64(sec * 1000)) }
+
+func header(h [][2]string, name string) string {
+	for _, kv := range h {
+		if strings.EqualFold(kv[0], name) {
+			return kv[1]
+		}
+	}
+	return ""
 }
 
 // FlowView is what get_flow returns: secrets masked, body heads as text when possible.

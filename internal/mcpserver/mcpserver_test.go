@@ -104,3 +104,22 @@ func TestServeAndRelay(t *testing.T) {
 		t.Error("socket left behind after Serve ended")
 	}
 }
+
+func TestListFilterInput(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	q, err := filter(ListIn{Since: "10m", Until: "2026-11-07T21:00:00+09:00", Limit: 9999, Status: "4xx"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Since != float64(now.Add(-10*time.Minute).Unix()) || q.Until != float64(now.Unix()) || q.Limit != 500 || q.Status != "4xx" {
+		t.Errorf("filter = %+v", q)
+	}
+	if q, _ := filter(ListIn{}, now); q.Limit != 50 || q.Since != 0 {
+		t.Errorf("defaults = %+v", q)
+	}
+	for _, in := range []ListIn{{Since: "yesterday"}, {Until: "12:00"}, {Status: "4XX"}, {Status: "abc"}} {
+		if _, err := filter(in, now); err == nil {
+			t.Errorf("%+v accepted", in)
+		}
+	}
+}

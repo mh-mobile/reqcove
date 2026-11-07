@@ -5,22 +5,30 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type ListIn struct {
-	Device string `json:"device,omitempty" jsonschema:"device to filter by: its name or StableID"`
-	Host   string `json:"host,omitempty" jsonschema:"substring of the host to filter by"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"max flows to return, newest first (default 50)"`
+	Device string `json:"device,omitempty" jsonschema:"device name or StableID"`
+	Host   string `json:"host,omitempty" jsonschema:"host; also matches its subdomains (example.com matches api.example.com)"`
+	Since  string `json:"since,omitempty" jsonschema:"only requests started at or after this: RFC 3339 time, or a duration ago such as 10m or 2h"`
+	Until  string `json:"until,omitempty" jsonschema:"only requests started at or before this: RFC 3339 time, or a duration ago"`
+	Status string `json:"status,omitempty" jsonschema:"response status: 404, a class such as 4xx, or none for flows without a response (open or failed)"`
+	Method string `json:"method,omitempty" jsonschema:"HTTP method, such as POST"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"flows per page, newest first (default 50, at most 500)"`
+	Cursor int64  `json:"cursor,omitempty" jsonschema:"next_cursor from the previous page, for older flows"`
 }
 type ListOut struct {
-	Flows []capture.Summary `json:"flows"`
+	Flows      []capture.Summary `json:"flows"`
+	NextCursor int64             `json:"next_cursor,omitempty"` // more, older flows match: pass it as cursor
 }
 type GetIn struct {
 	ID     string `json:"id" jsonschema:"flow id from list_flows"`
@@ -33,12 +41,14 @@ type StatsOut struct {
 // New returns an MCP server with the read-only tools over st.
 func New(st *capture.Store) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "dev"}, nil)
-	mcp.AddTool(s, &mcp.Tool{Name: "list_flows", Description: "List captured HTTP flows, newest first."},
+	mcp.AddTool(s, &mcp.Tool{Name: "list_flows", Description: "List captured HTTP flows, newest first, with their time, duration, status, content type, User-Agent, Origin and Referer. Filters combine. Page with next_cursor. Times are this computer's local time."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in ListIn) (*mcp.CallToolResult, ListOut, error) {
-			if in.Limit <= 0 {
-				in.Limit = 50
+			q, err := filter(in, time.Now())
+			if err != nil {
+				return nil, ListOut{}, err
 			}
-			return nil, ListOut{Flows: st.List(in.Device, in.Host, in.Limit)}, nil
+			flows, next := st.List(q)
+			return nil, ListOut{Flows: flows, NextCursor: next}, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "get_flow", Description: "Get one flow. Authorization and cookie headers are masked. With --rules, url and request_headers are what the app sent, before the rules; mapped_url is where map_remote sent it; response_headers are what the app received; rewrites names the rules applied."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in GetIn) (*mcp.CallToolResult, capture.FlowView, error) {
@@ -50,6 +60,39 @@ func New(st *capture.Store) *mcp.Server {
 			return nil, StatsOut{Stats: st.Stats()}, nil
 		})
 	return s
+}
+
+func filter(in ListIn, now time.Time) (capture.Filter, error) {
+	q := capture.Filter{Device: in.Device, Host: in.Host, Status: in.Status, Method: in.Method, Before: in.Cursor, Limit: min(max(in.Limit, 0), 500)}
+	if q.Limit == 0 {
+		q.Limit = 50
+	}
+	if !capture.ValidStatus(in.Status) {
+		return q, fmt.Errorf("status %q: use a code such as 404, a class such as 4xx, or none", in.Status)
+	}
+	var err error
+	if q.Since, err = when(in.Since, now); err != nil {
+		return q, fmt.Errorf("since: %w", err)
+	}
+	if q.Until, err = when(in.Until, now); err != nil {
+		return q, fmt.Errorf("until: %w", err)
+	}
+	return q, nil
+}
+
+// when reads an RFC 3339 time or a duration ago, as unix seconds; "" is 0.
+func when(v string, now time.Time) (float64, error) {
+	if v == "" {
+		return 0, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return float64(now.Add(-d).UnixMilli()) / 1000, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return 0, fmt.Errorf("%q is neither an RFC 3339 time nor a duration such as 10m", v)
+	}
+	return float64(t.UnixMilli()) / 1000, nil
 }
 
 // Serve accepts agents on the Unix socket at path until ctx ends. The caller
