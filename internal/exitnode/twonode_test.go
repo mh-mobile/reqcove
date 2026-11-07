@@ -141,6 +141,25 @@ func TestTwoNodes(t *testing.T) {
 		t.Errorf("SOCKS5 saw %+v, want user %s to 203.0.113.5:443", r, phoneID)
 	}
 
+	// IPv6 is refused at once (an RST), so Happy Eyeballs falls back to IPv4
+	// without waiting: no delay per new connection.
+	start := time.Now()
+	c6, err6 := phone.Dial(ctx, "tcp", "[2001:db8::1]:443")
+	if err6 == nil {
+		c6.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if n, _ := c6.Read(make([]byte, 1)); n > 0 {
+			t.Error("IPv6 was carried")
+		}
+		c6.Close()
+	}
+	t.Logf("IPv6 dial refused after %v: %v", time.Since(start).Round(time.Millisecond), err6)
+	if errors.Is(err6, errSystemDial) {
+		t.Error("IPv6 never reached the exit node (no route), so this measures nothing")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("IPv6 took %v to fail: new connections would wait for it", d)
+	}
+
 	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.
 	if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err != nil {
 		t.Errorf("phone to the Remote Proxy: %v", err)
@@ -196,6 +215,9 @@ func TestTwoNodes(t *testing.T) {
 	default:
 	}
 	o4, _ := outsider.TailscaleIPs()
+	if l := logBuf.String(); !strings.Contains(l, "-> [2001:db8::1]:443 reject") {
+		t.Error("the IPv6 refusal was not reqcove's")
+	}
 	if l := logBuf.String(); !strings.Contains(l, fmt.Sprintf("tcp %v:", o4)) || !strings.Contains(l, "-> 203.0.113.5:443 reject") {
 		t.Errorf("no reject logged for the outsider (%v)", o4)
 	}

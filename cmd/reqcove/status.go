@@ -47,6 +47,11 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
 	}
 	for _, d := range devices {
+		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && node.ExitApproved {
+			// The PeerAPI port stays the same across restarts (derived from the IP), but a device
+			// that tried DNS while reqcove was down can stay DNS-dead (tailscale/tailscale#20870).
+			steps = append(steps, fmt.Sprintf("no traffic from %s yet: turn on its exit node (%s). If it is on and sites do not load, turn the exit node off and on again: its DNS can stay stuck after reqcove was down", d.Name, node.Node))
+		}
 		if d.Carried && d.TLSFailures > 0 && d.Flows == 0 {
 			steps = append(steps, fmt.Sprintf("%s refuses every certificate so far: install and trust the CA %q on it (open http://mitm.it, typing http://), unless the app pins its certificates", d.Name, ca.Name))
 		}

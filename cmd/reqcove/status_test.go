@@ -36,6 +36,8 @@ func TestNextSteps(t *testing.T) {
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},
 		{"CA not trusted", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3}}, []string{"phone refuses", "Reqcove CA (mac, 2026-11-07)", "http://mitm.it"}},
 		{"CA fine", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3, Flows: 10}}, nil},
+		{"silent device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true}}, []string{"no traffic from phone yet", "reqcove.ts.net", "off and on again"}},
+		{"busy device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, Flows: 1}}, nil},
 	} {
 		got := strings.Join(nextSteps(c.node, c.stats, c.allow, ca, c.devices), "\n")
 		if len(c.want) == 0 && got != "" {
