@@ -603,8 +603,9 @@ type FlowView struct {
 	Flow
 	DeviceName   string `json:"device_name,omitempty"`
 	ReqBodyText  string `json:"request_body_head,omitempty"`
+	ReqBodyEnc   string `json:"request_body_head_encoding,omitempty"` // "base64" when that head is not text
 	RespBodyText string `json:"response_body_head,omitempty"`
-	BodyEncoding string `json:"body_head_encoding,omitempty"` // "base64" when a head is not UTF-8
+	RespBodyEnc  string `json:"response_body_head_encoding,omitempty"`
 }
 
 func (s *Store) Get(id string, bodies bool) (FlowView, error) {
@@ -616,7 +617,8 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 	}
 	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
 	if bodies {
-		v.ReqBodyText, v.RespBodyText, v.BodyEncoding = bodyText(f.ReqBody.Head, f.RespBody.Head)
+		v.ReqBodyText, v.ReqBodyEnc = bodyText(f.ReqBody.Head, f.ReqBody.Truncated)
+		v.RespBodyText, v.RespBodyEnc = bodyText(f.RespBody.Head, f.RespBody.Truncated)
 	}
 	return v, nil
 }
@@ -739,11 +741,23 @@ func maskURLs(v string) string {
 		return m
 	})
 }
-func bodyText(req, resp []byte) (string, string, string) {
-	if isText(req) && isText(resp) {
-		return string(req), string(resp), ""
+
+// bodyText returns a head as text, or as base64 when it is not text. Each
+// body on its own: a binary request must not turn a JSON response into base64.
+// A head cut at the limit may end inside a UTF-8 character; that tail is dropped.
+func bodyText(b []byte, truncated bool) (string, string) {
+	if truncated && !utf8.Valid(b) {
+		for cut := 1; cut < utf8.UTFMax && cut < len(b); cut++ {
+			if utf8.Valid(b[:len(b)-cut]) {
+				b = b[:len(b)-cut]
+				break
+			}
+		}
 	}
-	return base64.StdEncoding.EncodeToString(req), base64.StdEncoding.EncodeToString(resp), "base64"
+	if isText(b) {
+		return string(b), ""
+	}
+	return base64.StdEncoding.EncodeToString(b), "base64"
 }
 
 func isText(b []byte) bool {

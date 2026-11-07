@@ -126,3 +126,28 @@ func listHost(st *Store, host string) []Summary {
 	fs, _ := st.List(Filter{Host: host, Limit: 10})
 	return fs
 }
+
+func TestBodyTextPerBody(t *testing.T) {
+	if s, enc := bodyText([]byte(`{"a":1}`), false); s != `{"a":1}` || enc != "" {
+		t.Errorf("json: %q %q", s, enc)
+	}
+	if _, enc := bodyText([]byte{0x1f, 0x8b, 0, 1}, false); enc != "base64" {
+		t.Errorf("binary: %q", enc)
+	}
+	cut := []byte("日本語")[:7] // the head limit fell inside the third character
+	if s, enc := bodyText(cut, true); s != "日本" || enc != "" {
+		t.Errorf("cut text: %q %q", s, enc)
+	}
+	if s, enc := bodyText(cut, false); enc != "base64" || s == "" {
+		t.Errorf("an untruncated invalid head is not text: %q %q", s, enc)
+	}
+	// One flow: binary request, JSON response.
+	st := NewStore(10, 1<<20)
+	st.Apply(line(t, map[string]any{"ev": "request", "id": "x", "host": "h"}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "request", "head": base64.StdEncoding.EncodeToString([]byte{0x1f, 0x8b, 0}), "size": 3, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "response", "head": b64(`{"ok":true}`), "size": 11, "final": true}))
+	v, _ := st.Get("x", true)
+	if v.ReqBodyEnc != "base64" || v.RespBodyEnc != "" || v.RespBodyText != `{"ok":true}` {
+		t.Errorf("per body: req %q/%q resp %q/%q", v.ReqBodyText, v.ReqBodyEnc, v.RespBodyText, v.RespBodyEnc)
+	}
+}
