@@ -34,6 +34,16 @@ type harness struct {
 
 func startHarness(t *testing.T, ctx context.Context, allow []string, extraEnv ...string) *harness {
 	t.Helper()
+	h, err := tryHarness(t, ctx, allow, nil, extraEnv...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// tryHarness is startHarness with a config tweak, returning Start's error.
+func tryHarness(t *testing.T, ctx context.Context, allow []string, tweak func(*Config), extraEnv ...string) (*harness, error) {
+	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "rcvt-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
 		t.Fatal(err)
@@ -49,12 +59,15 @@ func startHarness(t *testing.T, ctx context.Context, allow []string, extraEnv ..
 		t.Fatal(err)
 	}
 	start := time.Now()
-	h.c, err = Start(ctx, Config{AllowHosts: rules,
+	cfg := Config{AllowHosts: rules,
 		Dir: dir, Confdir: h.confdir, Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1",
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20, Log: os.Stderr, ReadyTimeout: 2 * time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
+	}
+	if tweak != nil {
+		tweak(&cfg)
+	}
+	if h.c, err = Start(ctx, cfg); err != nil {
+		return nil, err
 	}
 	t.Logf("mitmdump ready after %v on %s", time.Since(start).Round(100*time.Millisecond), h.c.SocksAddr)
 	t.Cleanup(func() {
@@ -66,7 +79,7 @@ func startHarness(t *testing.T, ctx context.Context, allow []string, extraEnv ..
 			t.Error("ingest socket left behind")
 		}
 	})
-	return h
+	return h, nil
 }
 
 func (h *harness) port() string { _, p, _ := net.SplitHostPort(h.c.SocksAddr); return p }

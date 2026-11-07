@@ -43,6 +43,7 @@ type Config struct {
 	ReadyTimeout time.Duration
 	AllowHosts   HostRules                     // hosts decrypted and recorded; the zero value records nothing
 	NoRedact     bool                          // keep secrets in the records (--no-redact)
+	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
 }
@@ -140,6 +141,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"-s", addon, "--set", "reqcove_socket=" + sock,
 		"--set", "reqcove_secret_file=" + secretFile,
 		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
+	if cfg.Rules != "" {
+		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
+	}
 	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
 		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted
 	}
@@ -182,6 +186,10 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 			return nil, errors.New("mitmdump's addon never said hello")
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+	if e, _ := c.Store.Stats()["rules_error"].(string); e != "" {
+		p.stop()
+		return nil, fmt.Errorf("--rules: %s", e)
 	}
 	p.ready = time.Now()
 	c.Store.setState("ready", "")

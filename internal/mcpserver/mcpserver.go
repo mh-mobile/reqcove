@@ -40,7 +40,7 @@ func New(st *capture.Store) *mcp.Server {
 			}
 			return nil, ListOut{Flows: st.List(in.Device, in.Host, in.Limit)}, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "get_flow", Description: "Get one flow. Authorization and cookie headers are masked."},
+	mcp.AddTool(s, &mcp.Tool{Name: "get_flow", Description: "Get one flow. Authorization and cookie headers are masked. With --rules, url and request_headers are what the app sent, before the rules; mapped_url is where map_remote sent it; response_headers are what the app received; rewrites names the rules applied."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in GetIn) (*mcp.CallToolResult, capture.FlowView, error) {
 			v, err := st.Get(in.ID, in.Bodies)
 			return nil, v, err

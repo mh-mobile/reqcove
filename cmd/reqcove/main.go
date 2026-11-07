@@ -63,6 +63,7 @@ func run(ctx context.Context, args []string) error {
 		allowSpecs = append(allowSpecs, v)
 		return nil
 	})
+	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), applied to --allow-hosts hosts only")
 	noRedact := fs.Bool("no-redact", false, "keep Authorization, cookies and secret query values in the records")
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
@@ -89,6 +90,17 @@ func run(ctx context.Context, args []string) error {
 		log.Print("WARN: --allow-hosts '*': every decrypted request is recorded, including other apps' and sites'. Agents, and their model providers, can read them.")
 	case len(allow.Patterns) == 0:
 		log.Print("no --allow-hosts: traffic is carried but nothing is decrypted or recorded. Add --allow-hosts api.example.com for your app.")
+	}
+	if *rules != "" {
+		if !allow.All && len(allow.Patterns) == 0 {
+			return fmt.Errorf("--rules needs --allow-hosts: rules apply only to the hosts reqcove decrypts")
+		}
+		if *rules, err = filepath.Abs(*rules); err != nil {
+			return err
+		}
+		if _, err := os.Stat(*rules); err != nil {
+			return fmt.Errorf("--rules: %w", err)
+		}
 	}
 	if *noRedact {
 		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
@@ -118,7 +130,7 @@ func run(ctx context.Context, args []string) error {
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: 64 << 10, MaxFlows: 10000, MaxBytes: 256 << 20,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
-		AllowHosts: allow, NoRedact: *noRedact,
+		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules,
 		Logf: func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
 	if err != nil {
@@ -127,6 +139,9 @@ func run(ctx context.Context, args []string) error {
 	defer cap.Stop()
 	s := cap.Store.Stats()
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
+	if *rules != "" {
+		log.Printf("rules from %s: %v", *rules, s["rules"])
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

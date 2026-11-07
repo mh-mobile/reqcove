@@ -41,12 +41,16 @@ type event struct {
 	FromClient  bool        `json:"from_client"`
 	Conn        string      `json:"conn"`
 	SNI         string      `json:"sni"`
+	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
+	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	// hello
-	Mitmproxy    string `json:"mitmproxy"`
-	Python       string `json:"python"`
-	Brotli       string `json:"brotli"`
-	BrotliDecode bool   `json:"brotli_decode"`
-	ZstdDecode   bool   `json:"zstd_decode"`
+	Mitmproxy    string         `json:"mitmproxy"`
+	Python       string         `json:"python"`
+	Brotli       string         `json:"brotli"`
+	BrotliDecode bool           `json:"brotli_decode"`
+	ZstdDecode   bool           `json:"zstd_decode"`
+	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
+	RulesError   string         `json:"rules_error"` // why --rules could not be loaded
 	// counters the addon attaches to every line
 	DroppedBodies int64 `json:"dropped_bodies"`
 	DroppedEvents int64 `json:"dropped_events"`
@@ -74,7 +78,9 @@ type Flow struct {
 	End         float64     `json:"end,omitempty"`
 	State       string      `json:"state"` // open, done, error
 	Method      string      `json:"method"`
-	URL         string      `json:"url"`
+	URL         string      `json:"url"` // as the app sent it, before --rules
+	MappedURL   string      `json:"mapped_url,omitempty"`
+	Rewrites    []string    `json:"rewrites,omitempty"`
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
 	HTTPVersion string      `json:"http_version"`
@@ -230,8 +236,10 @@ func (s *Store) Apply(line []byte) {
 		f.Device, f.Client, f.Start = e.Device, e.Client, e.TS
 		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, s.mask(e.URL), e.Host, s.mask(e.Path), e.HTTPVersion
 		f.ReqHeaders = s.maskHeaders(e.Headers)
+		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites
 	case "response":
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, s.maskHeaders(e.Headers)
+		f.Rewrites = append(f.Rewrites, e.Rewrites...)
 	case "body":
 		head, _ := base64.StdEncoding.DecodeString(e.Head)
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
@@ -325,6 +333,7 @@ func (s *Store) Stats() map[string]any {
 		"tls_failures": len(s.tlsFailures),
 		"mitmproxy":    s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
+		"rules": s.hello.Rules, "rules_error": s.hello.RulesError,
 	}
 }
 

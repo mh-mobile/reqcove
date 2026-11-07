@@ -26,10 +26,15 @@ import sys
 import threading
 import time
 import zlib
+from pathlib import Path
 
 import brotli
+import ruamel.yaml  # mitmproxy's own dependency
 from mitmproxy import ctx
 from mitmproxy import version as mitmproxy_version
+from mitmproxy.addons import maplocal, mapremote, modifyheaders
+from mitmproxy.utils import strutils
+from mitmproxy.utils.spec import parse_spec
 
 try:  # Python 3.14+; mitmproxy also runs on 3.12/3.13
     from compression import zstd
@@ -153,6 +158,53 @@ class _Head:
         })
 
 
+RULE_KINDS = ("map_remote", "map_local", "modify_headers")
+
+
+def _parse_rule(kind, spec, base):
+    """One rule in mitmproxy's syntax; files are relative to the rules file."""
+    if kind == "map_remote":
+        return mapremote.parse_map_remote_spec(spec)
+    flt, subject, replacement = parse_spec(spec)
+    if kind == "map_local":
+        re.compile(subject)
+        path = (base / Path(replacement).expanduser()).resolve(strict=True)
+        return maplocal.MapLocalSpec(flt, subject, path)
+    if replacement.startswith("@"):
+        replacement = "@" + str(base / Path(replacement[1:]).expanduser())
+    rule = modifyheaders.ModifySpec(flt, strutils.escaped_str_to_bytes(subject), replacement)
+    rule.read_replacement()  # a missing @file fails now, not on the first flow
+    return rule
+
+
+def load_rules(path):
+    """The --rules file as mitmproxy's own rule addons, which reqcove calls
+    from its hooks (so rules never touch skipped flows or mitm.it).
+
+    Errors name the rule by kind and index, never its text: modify_headers
+    rules often carry tokens."""
+    data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
+    if not isinstance(data, dict):
+        raise ValueError("the file must map map_remote, map_local and modify_headers to lists")
+    extra = sorted(str(k) for k in data if k not in RULE_KINDS)
+    if extra:
+        raise ValueError(f"only {', '.join(RULE_KINDS)} are allowed, not {', '.join(extra)}")
+    addons = {"map_remote": mapremote.MapRemote(), "map_local": maplocal.MapLocal(), "modify_headers": modifyheaders.ModifyHeaders()}
+    for kind, addon in addons.items():
+        specs = data.get(kind) or []
+        if not isinstance(specs, list) or not all(isinstance(s, str) for s in specs):
+            raise ValueError(f"{kind} must be a list of strings")
+        for i, spec in enumerate(specs):
+            try:
+                addon.replacements.append(_parse_rule(kind, spec, Path(path).parent))
+            except Exception as e:
+                # map_remote and map_local errors quote a regex or a path; a
+                # modify_headers error could quote the value, so only its kind.
+                why = f"{type(e).__name__}: {e}" if kind != "modify_headers" else type(e).__name__
+                raise ValueError(f"{kind}[{i}]: {why}") from None
+    return addons
+
+
 class Reqcove:
     def __init__(self):
         self.q = queue.Queue()
@@ -167,6 +219,8 @@ class Reqcove:
         self.secret = None  # SOCKS5 password; None rejects every connection
         self.allow_all = False
         self.allow = []
+        self.rules = None  # load_rules(), or None without --rules
+        self.rules_error = ""
         threading.Thread(target=self._writer, daemon=True).start()
 
     def load(self, loader):
@@ -175,6 +229,7 @@ class Reqcove:
         loader.add_option("reqcove_queue_bytes", int, 32 << 20, "Byte budget of the queue to reqcove.")
         loader.add_option("reqcove_secret_file", str, "", "File holding the SOCKS5 password reqcove uses.")
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
+        loader.add_option("reqcove_rules", str, "", "The --rules file.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -190,6 +245,13 @@ class Reqcove:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
+        if "reqcove_rules" in updated:
+            self.rules, self.rules_error = None, ""
+            if ctx.options.reqcove_rules:
+                try:
+                    self.rules = load_rules(ctx.options.reqcove_rules)
+                except Exception as e:  # reqcove reads it from the hello and refuses to start
+                    self.rules_error = str(e) if isinstance(e, ValueError) else type(e).__name__
 
     def socks5_auth(self, data):
         # mitmproxy's proxyauth=any has already accepted any user and password;
@@ -244,30 +306,77 @@ class Reqcove:
             flow.comment = device  # shows the device in mitmweb
         r = flow.request
         peer = flow.client_conn.peername
-        self.put_event({
+        # Recorded as the app sent it: the host is checked again in reqcove,
+        # and a rule may send the request to a host outside --allow-hosts.
+        ev = {
             "v": VERSION, "ev": "request", "id": flow.id, "device": device,
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "ts": r.timestamp_start, "method": r.method, "url": r.pretty_url,
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
             "headers": _headers(r.headers),
-        })
+        }
+        if self.rules:
+            ev["rewrites"] = self._rewrite_request(flow)
+            if r.pretty_url != ev["url"]:
+                ev["mapped_url"] = r.pretty_url
+        self.put_event(ev)
+        if flow.response:
+            # map_local answered. mitmproxy cannot stream a request that already
+            # has a response, so its body is buffered and copied in request().
+            # ponytail: that body is unbounded (body_size_limit would cap every flow, streamed or not).
+            flow.metadata["reqcove_local"] = True
+            return
         r.stream = _Head(self, flow, "request", r.headers)
+
+    def _rewrite_request(self, flow):
+        """Apply --rules in requestheaders, before the body streams: mitmproxy's
+        map_remote and map_local run in request(), after the body, too late."""
+        done = self._modify_headers(flow, flow.request.headers, "request")
+        self.rules["map_local"].request(flow)
+        if flow.response:
+            done.append(f"map_local: {flow.response.status_code}")
+            return done
+        before = flow.request.pretty_url
+        self.rules["map_remote"].request(flow)
+        if flow.request.pretty_url != before:
+            done.append("map_remote")
+        return done
+
+    def _modify_headers(self, flow, headers, direction):
+        mh = self.rules["modify_headers"]
+        names = [s.subject.decode(errors="replace") for s in mh.replacements if s.matches(flow)]
+        mh.run(flow, headers)
+        return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
+
+    def request(self, flow):
+        if flow.metadata.get("reqcove_local"):
+            self._copy_whole(flow, "request", flow.request)
+
+    def _copy_whole(self, flow, direction, msg):
+        h = _Head(self, flow, direction, msg.headers)
+        h(msg.raw_content or b"")
+        h(b"")
 
     def responseheaders(self, flow):
         if flow.metadata.get("reqcove_skip"):
             flow.response.stream = True
             return
         s = flow.response
+        rewrites = self._modify_headers(flow, s.headers, "response") if self.rules else []
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
             "status": s.status_code, "reason": s.reason, "http_version": s.http_version,
-            "headers": _headers(s.headers),
+            "headers": _headers(s.headers), "rewrites": rewrites,  # as the app receives them
         })
+        if flow.metadata.get("reqcove_local"):
+            return  # mitmproxy sends a made response whole, never through .stream
         s.stream = _Head(self, flow, "response", s.headers)
 
     def response(self, flow):
         if flow.metadata.get("reqcove_skip"):
             return
+        if flow.metadata.get("reqcove_local"):
+            self._copy_whole(flow, "response", flow.response)
         self.put_event({"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end})
 
     def error(self, flow):
@@ -303,6 +412,8 @@ class Reqcove:
             "python": sys.version.split()[0], "brotli": getattr(brotli, "__version__", "?"),
             "brotli_decode": BROTLI_OK, "zstd_decode": zstd is not None,
             "dropped_bodies": self.dropped_bodies, "dropped_events": self.dropped_events,
+            "rules": {k: len(a.replacements) for k, a in self.rules.items()} if self.rules else None,
+            "rules_error": self.rules_error,
         }
 
     def _encode(self, msg):
