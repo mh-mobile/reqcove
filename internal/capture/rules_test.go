@@ -224,6 +224,7 @@ func TestRulesRefused(t *testing.T) {
 		"missing file":  {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
 		"bad regex":     {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
 		"not a mapping": {"- a\n", "the file must map"},
+		"yaml typo":     {"map_remote: [\"a\"\n  b: ]\n", " at line "},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")

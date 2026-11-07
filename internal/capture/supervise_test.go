@@ -23,7 +23,10 @@ if n >= int(os.environ["FAKE_DIE_FROM"]):
     sys.exit(3)
 path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("reqcove_socket="))
 s = socket.socket(socket.AF_UNIX); s.connect(path)
-for m in ({"ev": "hello", "mitmproxy": "fake", "dropped_bodies": 2},
+hello = {"ev": "hello", "mitmproxy": "fake", "dropped_bodies": 2}
+if n >= 2:
+    hello["rules_error"] = os.environ.get("FAKE_RULES_ERROR", "")
+for m in (hello,
           {"ev": "request", "id": "open%d" % n, "host": "h"}):
     m["v"] = 2
     s.sendall((json.dumps(m) + "\n").encode())
@@ -107,4 +110,20 @@ func TestGivesUpOnMitmdump(t *testing.T) {
 		t.Fatalf("state %v, err %v", s["state"], c.Err())
 	}
 	c.Stop() // still fine after giving up
+}
+
+// A rules file broken while running must not bring mitmdump back without its rules.
+func TestRestartRefusesBrokenRules(t *testing.T) {
+	t.Setenv("FAKE_RULES_ERROR", "map_remote[0]: ValueError")
+	c, kill := startFake(t, 1000)
+	kill(1)
+	select {
+	case <-c.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("came back with broken rules: %v", c.Store.Stats())
+	}
+	if c.Store.Stats()["state"] != "failed" || c.Err() == nil || !strings.Contains(c.Err().Error(), "--rules") {
+		t.Fatalf("state %v, err %v", c.Store.Stats()["state"], c.Err())
+	}
+	c.Stop()
 }

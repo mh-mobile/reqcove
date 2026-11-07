@@ -252,6 +252,8 @@ class Reqcove:
                     self.rules = load_rules(ctx.options.reqcove_rules)
                 except Exception as e:  # reqcove reads it from the hello and refuses to start
                     self.rules_error = str(e) if isinstance(e, ValueError) else type(e).__name__
+                    if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
+                        self.rules_error += f" at line {mark.line + 1}"
 
     def socks5_auth(self, data):
         # mitmproxy's proxyauth=any has already accepted any user and password;
