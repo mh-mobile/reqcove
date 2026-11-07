@@ -55,6 +55,12 @@ type GetIn struct {
 	ID     string `json:"id" jsonschema:"flow id from list_flows"`
 	Bodies bool   `json:"bodies,omitempty" jsonschema:"include the heads of the request and response bodies (untrusted data written by the remote site)"`
 }
+type DevicesOut struct {
+	Devices []capture.DeviceInfo `json:"devices"`
+}
+type TLSOut struct {
+	Failures []capture.TLSFailureView `json:"failures"`
+}
 type StatsOut struct {
 	Stats map[string]any `json:"stats"`
 }
@@ -101,7 +107,19 @@ func New(st *capture.Store) *mcp.Server {
 			v, err := st.Get(in.ID, in.Bodies)
 			return nil, v, err
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "mitmproxy's state (ready; restarting after it exited, when nothing is captured; failed), counts of stored flows and of events dropped or rejected, and mitmproxy's versions."},
+	mcp.AddTool(s, &mcp.Tool{Name: "list_devices", Description: "Devices reqcove carries (--device) and any other device with records: name, StableID, flow and TLS failure counts, last request time."},
+		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, DevicesOut, error) {
+			return nil, DevicesOut{Devices: st.Devices()}, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "list_tls_failures", Description: "TLS handshakes a client refused, newest first, for hosts in --allow-hosts. These connections never became HTTP flows. A refusal is often certificate pinning, but can also be a CA the device does not trust yet, or other causes; msg is what mitmproxy saw. host is the SNI, or the IP address when the client sent none. Filters: device, host (with subdomains), since, until, limit."},
+		func(_ context.Context, _ *mcp.CallToolRequest, in ListIn) (*mcp.CallToolResult, TLSOut, error) {
+			q, err := filter(in, time.Now())
+			if err != nil {
+				return nil, TLSOut{}, err
+			}
+			return nil, TLSOut{Failures: st.TLSFailures(q)}, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "capture_stats", Description: "mitmproxy's state (ready; restarting after it exited, when nothing is captured; failed), the window the records cover (oldest_flow to newest_flow; older flows were evicted to stay within max_flows and max_bytes), counts of stored flows, truncated bodies and of events dropped or rejected, and mitmproxy's versions."},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatsOut, error) {
 			return nil, StatsOut{Stats: st.Stats()}, nil
 		})

@@ -141,3 +141,57 @@ func TestSummarizeAndSearch(t *testing.T) {
 		t.Errorf("search response header = %+v", fs)
 	}
 }
+
+func TestTLSFailuresAndDevices(t *testing.T) {
+	st := NewStore(100, 1<<20)
+	allow, _ := ParseAllowHosts([]string{"*.example.com", "10.0.0.5"})
+	st.SetScope(allow, true)
+	st.SetDeviceNames(map[string]string{"nPHONE": "iphone", "nPAD": "ipad"})
+	base := float64(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix())
+	fail := func(dev, sni, host string, ts float64) {
+		st.Apply(line(t, map[string]any{"ev": "tls_failed", "conn": "c-" + sni + host, "device": dev, "sni": sni, "host": host, "ts": ts,
+			"msg": "Client TLS handshake failed: https://api.example.com/x?token=leak"}))
+	}
+	fail("nPHONE", "pinned.example.com", "203.0.113.1", base)
+	fail("nPHONE", "", "10.0.0.5", base+10) // no SNI: the address dialed
+	fail("nPAD", "api.example.com", "203.0.113.2", base+20)
+	fail("nPHONE", "elsewhere.net", "203.0.113.3", base+30) // outside --allow-hosts: counted only
+	st.Apply(line(t, map[string]any{"ev": "request", "id": "r1", "device": "nPHONE", "host": "api.example.com", "ts": base + 40}))
+	st.Apply(line(t, map[string]any{"ev": "request", "id": "r2", "device": "nOLD", "host": "api.example.com", "ts": base + 50}))
+
+	hosts := func(q Filter) string {
+		q.Limit = 10
+		var out []string
+		for _, f := range st.TLSFailures(q) {
+			out = append(out, f.Host+"@"+f.DeviceName)
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct {
+		q    Filter
+		want string
+	}{
+		{Filter{}, "api.example.com@ipad,10.0.0.5@iphone,pinned.example.com@iphone"},
+		{Filter{Device: "iphone"}, "10.0.0.5@iphone,pinned.example.com@iphone"},
+		{Filter{Host: "example.com"}, "api.example.com@ipad,pinned.example.com@iphone"},
+		{Filter{Since: base + 5, Until: base + 15}, "10.0.0.5@iphone"},
+	} {
+		if got := hosts(c.q); got != c.want {
+			t.Errorf("%+v: got %s, want %s", c.q, got, c.want)
+		}
+	}
+	f := st.TLSFailures(Filter{Limit: 1})[0]
+	if strings.Contains(f.Msg, "leak") || f.Time == "" || f.Conn == "" {
+		t.Errorf("failure view: %+v", f)
+	}
+	if st.Stats()["out_of_scope"] != int64(1) {
+		t.Errorf("out_of_scope = %v, want 1 (elsewhere.net)", st.Stats()["out_of_scope"])
+	}
+
+	got := fmt.Sprint(st.Devices())
+	want := fmt.Sprintf("[{nPAD ipad true 0 1 } {nPHONE iphone true 1 2 %s} {nOLD  false 1 0 %s}]",
+		unixTime(base+40).Format("2006-01-02T15:04:05.000Z07:00"), unixTime(base+50).Format("2006-01-02T15:04:05.000Z07:00"))
+	if got != want {
+		t.Errorf("devices:\n got %s\nwant %s", got, want)
+	}
+}

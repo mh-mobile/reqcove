@@ -267,6 +267,22 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("out_of_scope = %d, want %d", h.stat("out_of_scope"), oos+1)
 	}
 
+	// A client that does not trust the mitmproxy CA refuses the handshake:
+	// recorded as a TLS failure with its device and host (an IP: no SNI).
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer tlsBackend.Close()
+	if r, err := plain.Get(tlsBackend.URL + "/pinned"); err == nil {
+		r.Body.Close()
+		t.Error("a client without the mitmproxy CA accepted its certificate")
+	}
+	var fails []TLSFailureView
+	for deadline := time.Now().Add(10 * time.Second); len(fails) == 0 && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		fails = h.c.Store.TLSFailures(Filter{Device: "test-device", Host: "127.0.0.1", Limit: 10})
+	}
+	if len(fails) == 0 || fails[0].Time == "" {
+		t.Errorf("TLS failure not recorded with its device: %+v (stats %v)", fails, h.stats())
+	}
+
 	// Only reqcove, which knows the secret, may use the SOCKS5 listener.
 	bad, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: "wrong"}, proxy.Direct)
 	if c, err := bad.Dial("tcp", backend.Listener.Addr().String()); err == nil {

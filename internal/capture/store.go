@@ -101,11 +101,15 @@ type Flow struct {
 
 func (f *Flow) bytes() int { return len(f.ReqBody.Head) + len(f.RespBody.Head) }
 
+// TLSFailure is a client that refused the certificate mitmproxy showed it:
+// often certificate pinning, but also a CA not trusted yet, among others.
 type TLSFailure struct {
-	Conn   string `json:"conn"`
-	Client string `json:"client,omitempty"`
-	SNI    string `json:"sni,omitempty"`
-	Msg    string `json:"msg,omitempty"`
+	Conn   string  `json:"conn"`
+	Device string  `json:"device,omitempty"`
+	Client string  `json:"client,omitempty"`
+	Host   string  `json:"host,omitempty"` // the SNI, or the IP address dialed when there was none
+	Msg    string  `json:"msg,omitempty"`
+	TS     float64 `json:"-"`
 }
 
 // Store keeps the most recent flows in memory, bounded by count and by the
@@ -211,7 +215,15 @@ func (s *Store) Apply(line []byte) {
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "tls_failed":
-		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Client, e.SNI, e.Msg})
+		host := e.SNI
+		if host == "" {
+			host = e.Host
+		}
+		if !s.allow.Match(host) {
+			s.outOfScope++ // only hosts in --allow-hosts are recorded, failures included
+			return
+		}
+		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, s.mask(e.Msg), e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
 		}
@@ -496,6 +508,85 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 	return c
 }
 
+// TLSFailureView is what list_tls_failures returns.
+type TLSFailureView struct {
+	Time       string `json:"time"`
+	Host       string `json:"host,omitempty"` // the SNI, or the IP address dialed
+	Device     string `json:"device,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	Msg        string `json:"msg,omitempty"`
+	Conn       string `json:"conn"`
+}
+
+// TLSFailures returns the newest matching failures first. Of q, it uses
+// Device, Host (the SNI), Since, Until and Limit.
+func (s *Store) TLSFailures(q Filter) []TLSFailureView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []TLSFailureView{}
+	for i := len(s.tlsFailures) - 1; i >= 0 && len(out) < q.Limit; i-- {
+		f := s.tlsFailures[i]
+		if !q.match(&Flow{Device: f.Device, Host: f.Host, Start: f.TS}, s.names[f.Device]) {
+			continue
+		}
+		v := TLSFailureView{Host: f.Host, Device: f.Device, DeviceName: s.names[f.Device], Msg: f.Msg, Conn: f.Conn}
+		if f.TS > 0 {
+			v.Time = unixTime(f.TS).Format("2006-01-02T15:04:05.000Z07:00")
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// DeviceInfo is what list_devices returns.
+type DeviceInfo struct {
+	ID          string `json:"id"` // StableID
+	Name        string `json:"name,omitempty"`
+	Carried     bool   `json:"carried"` // one of --device now
+	Flows       int    `json:"flows"`
+	TLSFailures int    `json:"tls_failures"`
+	LastSeen    string `json:"last_seen,omitempty"` // newest request start
+}
+
+// Devices lists the --device devices and any other device with records.
+func (s *Store) Devices() []DeviceInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byID := map[string]*DeviceInfo{}
+	get := func(id string) *DeviceInfo {
+		if byID[id] == nil {
+			_, carried := s.names[id]
+			byID[id] = &DeviceInfo{ID: id, Name: s.names[id], Carried: carried}
+		}
+		return byID[id]
+	}
+	for id := range s.names {
+		get(id)
+	}
+	last := map[string]float64{}
+	for _, f := range s.flows {
+		if f.Device == "" {
+			continue
+		}
+		get(f.Device).Flows++
+		last[f.Device] = max(last[f.Device], f.Start)
+	}
+	for _, f := range s.tlsFailures {
+		if f.Device != "" {
+			get(f.Device).TLSFailures++
+		}
+	}
+	out := []DeviceInfo{}
+	for id, d := range byID {
+		if last[id] > 0 {
+			d.LastSeen = unixTime(last[id]).Format("2006-01-02T15:04:05.000Z07:00")
+		}
+		out = append(out, *d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name+out[i].ID < out[j].Name+out[j].ID })
+	return out
+}
+
 func unixTime(sec float64) time.Time { return time.UnixMilli(int64(sec * 1000)) }
 
 func header(h [][2]string, name string) string {
@@ -533,9 +624,27 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 func (s *Store) Stats() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The window the records cover: older flows were evicted to stay within the limits.
+	var oldest, newest string
+	if len(s.order) > 0 {
+		if t := s.flows[s.order[0]].Start; t > 0 {
+			oldest = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
+		}
+		if t := s.flows[s.order[len(s.order)-1]].Start; t > 0 {
+			newest = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
+		}
+	}
+	truncated := 0
+	for _, f := range s.flows {
+		if f.ReqBody.Truncated || f.RespBody.Truncated {
+			truncated++
+		}
+	}
 	return map[string]any{
 		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted,
-		"state": s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
+		"oldest_flow": oldest, "newest_flow": newest, "max_flows": s.maxFlows, "max_bytes": s.maxBytes,
+		"flows_with_truncated_bodies": truncated,
+		"state":                       s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,

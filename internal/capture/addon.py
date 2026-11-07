@@ -219,6 +219,7 @@ class Reqcove:
         self.secret = None  # SOCKS5 password; None rejects every connection
         self.allow_all = False
         self.allow = []
+        self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
         self.rules = None  # load_rules(), or None without --rules
         self.rules_error = ""
         threading.Thread(target=self._writer, daemon=True).start()
@@ -260,6 +261,11 @@ class Reqcove:
         # only reqcove, which holds the secret, may use this listener.
         if self.secret is None or not hmac.compare_digest(data.password.encode(), self.secret.encode()):
             data.valid = False
+        else:
+            self.conn_device[data.client_conn.id] = data.username  # for TLS failures, which have no flow
+
+    def client_disconnected(self, client):
+        self.conn_device.pop(client.id, None)
 
     def _in_scope(self, host):
         host = host.lower().rstrip(".")
@@ -403,9 +409,12 @@ class Reqcove:
     def tls_failed_client(self, data):
         peer = data.context.client.peername
         self.put_event({
-            "v": VERSION, "ev": "tls_failed", "conn": data.context.client.id,
+            "v": VERSION, "ev": "tls_failed", "conn": data.context.client.id, "ts": time.time(),
+            "device": self.conn_device.get(data.context.client.id),
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "sni": data.context.client.sni, "msg": str(data.conn.error or ""),
+            # without SNI (an IP address dialed directly), the destination
+            "host": data.context.server.address[0] if data.context.server.address else None,
         })
 
     def _hello(self):

@@ -20,6 +20,7 @@ func testStore(t *testing.T) *capture.Store {
 		`{"v":2,"ev":"response","id":"a","status":200}`,
 		`{"v":2,"ev":"body","id":"a","dir":"response","head":"aGVsbG8=","size":5,"final":true,"decoded":true}`,
 		`{"v":2,"ev":"done","id":"a"}`,
+		`{"v":2,"ev":"tls_failed","conn":"c1","device":"dev-1","sni":"pinned.example.net","ts":1794000000}`,
 	} {
 		st.Apply([]byte(l))
 	}
@@ -88,6 +89,13 @@ func TestTools(t *testing.T) {
 	sum := call[capture.Counts](t, session, "summarize", map[string]any{"device": "iphone-test"})
 	if sum.Flows != 1 || sum.ByHost[0] != (capture.Count{Key: "api.example.net", Count: 1}) || sum.ByStatus[0].Key != "200" || sum.ByDevice[0].Key != "iphone-test" {
 		t.Errorf("summarize = %+v", sum)
+	}
+	devs := call[DevicesOut](t, session, "list_devices", nil)
+	if len(devs.Devices) != 1 || devs.Devices[0].Name != "iphone-test" || devs.Devices[0].Flows != 1 || !devs.Devices[0].Carried {
+		t.Errorf("list_devices = %+v", devs)
+	}
+	if tls := call[TLSOut](t, session, "list_tls_failures", map[string]any{"device": "iphone-test"}); len(tls.Failures) != 1 || tls.Failures[0].Host != "pinned.example.net" {
+		t.Errorf("list_tls_failures = %+v", tls)
 	}
 	// Bad input is an error the agent sees, not a crash.
 	if res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "search_flows", Arguments: map[string]any{}}); err == nil && !res.IsError {
