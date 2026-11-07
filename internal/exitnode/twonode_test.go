@@ -82,12 +82,14 @@ func TestTwoNodes(t *testing.T) {
 		})
 	}()
 	var names map[string]string
-	select {
-	case names = <-matched:
-	case err := <-runErr:
-		t.Fatalf("Run: %v", err)
-	case <-ctx.Done():
-		t.Fatal("reqcove never matched the device")
+	for len(names) == 0 { // the first reports come before login, with no devices
+		select {
+		case names = <-matched:
+		case err := <-runErr:
+			t.Fatalf("Run: %v", err)
+		case <-ctx.Done():
+			t.Fatal("reqcove never matched the device")
+		}
 	}
 	var reqcove *tailcfg.Node
 	for _, n := range control.AllNodes() {
