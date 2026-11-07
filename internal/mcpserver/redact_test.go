@@ -53,7 +53,7 @@ func TestNoSecretInAnyTool(t *testing.T) {
 	st.SetDeviceNames(map[string]string{"dev": "iphone"})
 
 	ct, sst := mcp.NewInMemoryTransports()
-	if _, err := New(st).Connect(context.Background(), sst, nil); err != nil {
+	if _, err := New(st, nil).Connect(context.Background(), sst, nil); err != nil {
 		t.Fatal(err)
 	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)

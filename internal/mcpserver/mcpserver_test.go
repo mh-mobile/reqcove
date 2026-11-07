@@ -44,7 +44,7 @@ func call[T any](t *testing.T, s *mcp.ClientSession, name string, args any) T {
 
 func TestTools(t *testing.T) {
 	ct, st := mcp.NewInMemoryTransports()
-	server := New(testStore(t))
+	server := New(testStore(t), nil)
 	if _, err := server.Connect(context.Background(), st, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestServeAndRelay(t *testing.T) {
 	sock := filepath.Join(dir, "mcp.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Serve(ctx, sock, New(testStore(t)))
+	go Serve(ctx, sock, New(testStore(t), nil))
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		if _, err := os.Stat(sock); err == nil {
 			break

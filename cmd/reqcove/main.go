@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ import (
 func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove mcp")
+		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove mcp")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -37,7 +38,9 @@ func main() {
 	case "run":
 		err = run(ctx, os.Args[2:])
 	case "mcp":
-		err = mcp(ctx, os.Args[2:])
+		err = runMCP(ctx, os.Args[2:])
+	case "status":
+		err = status(ctx, os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -107,6 +110,9 @@ func run(ctx context.Context, args []string) error {
 		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
 	}
 
+	if _, err := exec.LookPath(*uvx); err != nil {
+		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)
+	}
 	if err := os.MkdirAll(*state, 0o700); err != nil {
 		return err
 	}
@@ -162,13 +168,18 @@ func run(ctx context.Context, args []string) error {
 		}
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
-	go mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store))
+	var node nodeState
+	go mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store, func() mcpserver.StatusOut {
+		stats := cap.Store.Stats()
+		n := node.get()
+		return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, cap.CA, cap.Store.Devices())}
+	}))
 	log.Printf("MCP on %s; agents connect with `reqcove mcp`", mcpSock)
 
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
 		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
-		OnDevices: cap.Store.SetDeviceNames,
+		OnDevices: cap.Store.SetDeviceNames, OnStatus: node.set,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	if ctx.Err() != nil {
@@ -221,7 +232,7 @@ func lockState(dir string) (func(), error) {
 	return func() { f.Close() }, nil
 }
 
-func mcp(ctx context.Context, args []string) error {
+func runMCP(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
 	fs.Parse(args)

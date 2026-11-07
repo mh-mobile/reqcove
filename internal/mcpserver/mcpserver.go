@@ -65,9 +65,23 @@ type StatsOut struct {
 	Stats map[string]any `json:"stats"`
 }
 
-// New returns an MCP server with the read-only tools over st.
-func New(st *capture.Store) *mcp.Server {
+// StatusOut is what the status tool returns; `reqcove status` prints it.
+type StatusOut struct {
+	Node      any            `json:"node"`       // exitnode.Status
+	NextSteps []string       `json:"next_steps"` // what the user should do, most urgent first; empty when all is set
+	Capture   map[string]any `json:"capture"`    // capture_stats
+}
+
+// New returns an MCP server with the read-only tools over st; status, when
+// not nil, adds the status tool.
+func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "dev"}, nil)
+	if status != nil {
+		mcp.AddTool(s, &mcp.Tool{Name: "status", Description: "Whether reqcove is ready to carry and record the devices' traffic: its tailnet node (login, Tailnet Lock, exit node approval, devices found), mitmproxy, and the next steps for the user when something is missing. Check it first when no flows arrive."},
+			func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatusOut, error) {
+				return nil, status(), nil
+			})
+	}
 	mcp.AddTool(s, &mcp.Tool{Name: "list_flows", Description: "List captured HTTP flows, newest first, with their time, duration, status, content type, User-Agent, Origin and Referer. Filters combine. Page with next_cursor. Times are this computer's local time."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in ListIn) (*mcp.CallToolResult, ListOut, error) {
 			q, err := filter(in, time.Now())

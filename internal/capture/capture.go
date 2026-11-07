@@ -195,7 +195,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err != nil {
 		return fail(err)
 	}
-	c.CA, _ = readCA(cfg.Confdir) // mitmproxy has made it by now if it was missing
+	c.CA, _ = ReadCA(cfg.Confdir) // mitmproxy has made it by now if it was missing
 	ctx, c.cancel = context.WithCancel(ctx)
 	go c.supervise(ctx, p)
 	return c, nil
@@ -323,7 +323,7 @@ type CA struct {
 	NotAfter time.Time
 }
 
-func readCA(confdir string) (CA, error) {
+func ReadCA(confdir string) (CA, error) {
 	b, err := os.ReadFile(filepath.Join(confdir, "mitmproxy-ca-cert.pem"))
 	if err != nil {
 		return CA{}, err

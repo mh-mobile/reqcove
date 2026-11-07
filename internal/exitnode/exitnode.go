@@ -37,6 +37,24 @@ type Config struct {
 	Verbose     bool             // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
+	// OnStatus is called every few seconds, from start, with where the node stands.
+	OnStatus func(Status)
+}
+
+// Status is where reqcove's node stands with its tailnet: what `reqcove
+// status` reports, with the next step for the user.
+type Status struct {
+	Backend      string            `json:"backend"`            // NeedsLogin, NeedsMachineAuth, Starting, Running, ...
+	AuthURL      string            `json:"auth_url,omitempty"` // to log in
+	Node         string            `json:"node,omitempty"`     // MagicDNS name
+	IPs          []string          `json:"ips,omitempty"`
+	ExitApproved bool              `json:"exit_node_approved"` // the admin approved its exit routes
+	LockEnabled  bool              `json:"tailnet_lock"`
+	LockSigned   bool              `json:"tailnet_lock_signed"`
+	NodeKey      string            `json:"node_key,omitempty"` // to sign under Tailnet Lock
+	Devices      map[string]string `json:"devices"`            // carried: StableID -> name
+	Problems     []string          `json:"device_problems,omitempty"`
+	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
 }
 
 var current atomic.Pointer[policy]
@@ -86,7 +104,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("waiting for %s to log in. Under Tailnet Lock, then run `tailscale lock status` on a signing device and sign the locked-out %s", cfg.Hostname, cfg.Hostname)
+	// From the start, before login: the status is most useful while the node is stuck.
+	go watch(ctx, lc, cfg)
+	log.Printf("waiting for %s to log in (`reqcove status` says what is missing)", cfg.Hostname)
 	if _, err := s.Up(ctx); err != nil {
 		return err
 	}
@@ -120,18 +140,31 @@ func Run(ctx context.Context, cfg Config) error {
 		defer srv.Close()
 		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
 	}
-	return watchDevices(ctx, lc, cfg, []netip.Addr{ip4, ip6})
+	<-ctx.Done()
+	return nil
 }
 
-// watchDevices rebuilds the policy from the netmap every few seconds, so
-// devices that appear late (Tailnet Lock), join later or change IP are found.
-func watchDevices(ctx context.Context, lc *local.Client, cfg Config, self []netip.Addr) error {
-	var lastProblems, lastIDs string
-	t := time.NewTicker(5 * time.Second)
+// watch rebuilds the policy from the netmap every few seconds, so devices
+// that appear late (Tailnet Lock), join later or change IP are found, and
+// reports the node's status.
+func watch(ctx context.Context, lc *local.Client, cfg Config) {
+	var lastProblems, lastIDs, lastStep string
+	t := time.NewTicker(3 * time.Second)
 	defer t.Stop()
 	for {
 		st, err := lc.Status(ctx)
 		if err == nil {
+			status := nodeStatus(ctx, lc, st)
+			if step := FirstStep(status); step != lastStep {
+				lastStep = step
+				if step != "" {
+					log.Print(step)
+				}
+			}
+			var self []netip.Addr
+			for _, ip := range st.TailscaleIPs {
+				self = append(self, ip)
+			}
 			peers := make([]*ipnstate.PeerStatus, 0, len(st.Peer))
 			for _, p := range st.Peer {
 				peers = append(peers, p)
@@ -154,17 +187,56 @@ func watchDevices(ctx context.Context, lc *local.Client, cfg Config, self []neti
 			}
 			if pr := strings.Join(problems, "; "); pr != lastProblems {
 				lastProblems = pr
-				if pr != "" {
-					log.Printf("devices: %s. Peers appear after this node is signed (Tailnet Lock) and approved; see `tailscale status` for names.", pr)
+				if pr != "" && status.Backend == "Running" {
+					log.Printf("devices: %s. See `tailscale status` for names.", pr)
 				}
+			}
+			status.Devices, status.Problems = names, problems
+			if cfg.OnStatus != nil {
+				cfg.OnStatus(status)
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return nil
+			return
 		case <-t.C:
 		}
 	}
+}
+
+func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Status {
+	s := Status{Backend: st.BackendState, AuthURL: st.AuthURL, Health: st.Health}
+	for _, ip := range st.TailscaleIPs {
+		s.IPs = append(s.IPs, ip.String())
+	}
+	if st.Self != nil {
+		s.Node = strings.TrimSuffix(st.Self.DNSName, ".")
+		s.ExitApproved = st.Self.AllowedIPs != nil && tsaddr.ContainsExitRoutes(*st.Self.AllowedIPs)
+	}
+	if ls, err := lc.NetworkLockStatus(ctx); err == nil {
+		s.LockEnabled, s.LockSigned = ls.Enabled, ls.NodeKeySigned
+		if ls.NodeKey != nil {
+			s.NodeKey = ls.NodeKey.String()
+		}
+	}
+	return s
+}
+
+// FirstStep is the one thing the user must do next for the node, or "".
+func FirstStep(s Status) string {
+	switch {
+	case s.Backend == "NeedsLogin" && s.AuthURL != "":
+		return "log in: open " + s.AuthURL
+	case s.Backend == "NeedsLogin":
+		return "" // the login URL comes in a moment
+	case s.Backend == "NeedsMachineAuth":
+		return "approve this device in the admin console (Machines): your tailnet requires device approval"
+	case s.LockEnabled && !s.LockSigned && s.NodeKey != "":
+		return "Tailnet Lock: on a signing device run `tailscale lock sign " + s.NodeKey + "`"
+	case s.Backend == "Running" && !s.ExitApproved:
+		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node"
+	}
+	return ""
 }
 
 func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr, socksSecret string, verbose bool) {
