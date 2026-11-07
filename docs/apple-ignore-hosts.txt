@@ -1,0 +1,3 @@
+(^|\.)(apple\.com|icloud\.com|icloud\.com\.cn|icloud-content\.com|cdn-apple\.com|mzstatic\.com|apple-cloudkit\.com|apple-livephotoskit\.com|apple-mapkit\.com|apple-dns\.net|apzones\.com|itunes\.com|apple|digicert\.com|digicert\.cn)(:\d+)?$
+(^|\.)(apple-relay\.cloudflare\.com|apple-relay\.fastly-edge\.com|cp4\.cloudflare\.com)(:\d+)?$
+^17\.\d+\.\d+\.\d+:
