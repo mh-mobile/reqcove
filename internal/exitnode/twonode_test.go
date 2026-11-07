@@ -1,0 +1,320 @@
+package exitnode
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"tailscale.com/ipn"
+	"tailscale.com/ipn/store/mem"
+	"tailscale.com/net/netns"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/tailcfg"
+	"tailscale.com/tsnet"
+	"tailscale.com/tstest/integration"
+	"tailscale.com/tstest/integration/testcontrol"
+	"tailscale.com/types/logger"
+)
+
+// TestTwoNodes runs reqcove's node against a local control server (testcontrol)
+// with real tsnet peers: the --device peer is carried to SOCKS5 with its
+// StableID, denied destinations are refused, and a peer that is not one of
+// --device gets nothing, on the exit node and on the Remote Proxy.
+func TestTwoNodes(t *testing.T) {
+	netns.SetEnabled(false) // as tailscale's own tsnet tests do
+	t.Cleanup(func() { netns.SetEnabled(true) })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	control := &testcontrol.Server{DERPMap: integration.RunDERPAndSTUN(t, logger.Discard, "127.0.0.1"), MagicDNSDomain: "tail-scale.ts.net"}
+	control.HTTPTestServer = httptest.NewServer(control)
+	t.Cleanup(control.HTTPTestServer.Close)
+	url := control.HTTPTestServer.URL
+
+	// This Mac's own services: nothing must reach them.
+	local, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer local.Close()
+	localHits := make(chan struct{}, 10)
+	go func() {
+		for {
+			c, err := local.Accept()
+			if err != nil {
+				return
+			}
+			localHits <- struct{}{}
+			c.Close()
+		}
+	}()
+	socks := startFakeSOCKS(t)
+
+	// reqcove's verbose log is the evidence of what it refused.
+	var logBuf syncBuffer
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// The device and the outsider join first, so reqcove finds the device on its first look.
+	phone := startPeer(t, ctx, url, "phone")
+	outsider := startPeer(t, ctx, url, "outsider")
+	matched := make(chan map[string]string, 4)
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- Run(ctx, Config{
+			Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: url,
+			DNS: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:53")}, Devices: []string{"phone"},
+			SocksAddr: socks.addr, SocksSecret: "pw", ProxyPort: 8080, Verbose: true,
+			OnDevices: func(m map[string]string) { matched <- m },
+		})
+	}()
+	var names map[string]string
+	select {
+	case names = <-matched:
+	case err := <-runErr:
+		t.Fatalf("Run: %v", err)
+	case <-ctx.Done():
+		t.Fatal("reqcove never matched the device")
+	}
+	var reqcove *tailcfg.Node
+	for _, n := range control.AllNodes() {
+		if strings.HasPrefix(n.Name, "reqcove.") {
+			reqcove = n
+		}
+	}
+	if reqcove == nil {
+		t.Fatal("reqcove's node is not in the tailnet")
+	}
+	control.SetSubnetRoutes(reqcove.Key, tsaddr.ExitRoutes()) // the admin's approval
+	phoneID := useExitNode(t, ctx, phone, reqcove)
+	useExitNode(t, ctx, outsider, reqcove)
+	if names[phoneID] != "phone" || len(names) != 1 {
+		t.Fatalf("matched devices %v, want only phone (%s)", names, phoneID)
+	}
+	rcIP := reqcove.Addresses[0].Addr()
+
+	// TCP 443 through the exit node goes to SOCKS5 as the device.
+	echo := func(c net.Conn) string {
+		defer c.Close()
+		io.WriteString(c, "ping")
+		b := make([]byte, 4)
+		c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		io.ReadFull(c, b)
+		return string(b)
+	}
+	c, err := dialExit(t, ctx, phone, "203.0.113.5:443")
+	if err != nil {
+		t.Fatalf("phone through the exit node: %v", err)
+	}
+	if got := echo(c); got != "ping" {
+		t.Fatalf("echo through the exit node: %q", got)
+	}
+	if r := socks.last(); r.user != phoneID || r.pass != "pw" || r.dst != "203.0.113.5:443" {
+		t.Errorf("SOCKS5 saw %+v, want user %s to 203.0.113.5:443", r, phoneID)
+	}
+
+	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.
+	if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err != nil {
+		t.Errorf("phone to the Remote Proxy: %v", err)
+	} else if code, conn := connect(pc, "203.0.113.6:443"); code != 200 {
+		t.Errorf("CONNECT from phone: %d", code)
+	} else if got := echo(conn); got != "ping" || socks.last().dst != "203.0.113.6:443" || socks.last().user != phoneID {
+		t.Errorf("Remote Proxy: echo %q, SOCKS5 saw %+v", got, socks.last())
+	}
+
+	// Denied destinations from the device: this Mac and the LAN.
+	before := socks.count()
+	_, lport, _ := net.SplitHostPort(local.Addr().String())
+	for _, dst := range []string{"127.0.0.1:" + lport, "192.168.1.1:80", "10.0.0.1:443"} {
+		if c, err := dialExit(t, ctx, phone, dst); err == nil {
+			c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if n, _ := c.Read(make([]byte, 1)); n > 0 {
+				t.Errorf("%s answered through the exit node", dst)
+			}
+			c.Close()
+		}
+	}
+	// On the exit node, tsnet and Tailscale's filter drop most of these before
+	// reqcove; on the Remote Proxy only reqcove's own list stands in the way.
+	for _, dst := range []string{"127.0.0.1:" + lport, "192.168.255.254:80", "10.255.255.254:443", "100.100.100.100:80"} {
+		if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err == nil {
+			if code, _ := connect(pc, dst); code != 403 {
+				t.Errorf("CONNECT to %s: %d, want 403", dst, code)
+			}
+		}
+	}
+
+	// A peer that is not one of --device: nothing, either way.
+	if c, err := dialExit(t, ctx, outsider, "203.0.113.5:443"); err == nil {
+		if got := echo(c); got == "ping" {
+			t.Error("the outsider was carried through the exit node")
+		}
+	} else if errors.Is(err, errSystemDial) {
+		t.Errorf("the outsider never got the exit route: %v", err)
+	}
+	if pc, err := outsider.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err == nil {
+		if code, _ := connect(pc, "203.0.113.6:443"); code != 403 {
+			t.Errorf("CONNECT from the outsider: %d, want 403", code)
+		}
+	}
+
+	time.Sleep(time.Second)
+	if socks.count() != before {
+		t.Errorf("refused flows reached SOCKS5: %+v", socks.all()[before:])
+	}
+	select {
+	case <-localHits:
+		t.Error("a flow reached this Mac's own service")
+	default:
+	}
+	o4, _ := outsider.TailscaleIPs()
+	if l := logBuf.String(); !strings.Contains(l, fmt.Sprintf("tcp %v:", o4)) || !strings.Contains(l, "-> 203.0.113.5:443 reject") {
+		t.Errorf("no reject logged for the outsider (%v)", o4)
+	}
+}
+
+func startPeer(t *testing.T, ctx context.Context, controlURL, name string) *tsnet.Server {
+	t.Helper()
+	s := &tsnet.Server{Dir: filepath.Join(t.TempDir(), name), ControlURL: controlURL, Hostname: name, Store: new(mem.Store), Ephemeral: true, Logf: logger.Discard}
+	t.Cleanup(func() { s.Close() })
+	if _, err := s.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Never the host network: a flow either goes through reqcove or fails.
+	s.Sys().Dialer.Get().SetSystemDialerForTest(func(_ context.Context, _, addr string) (net.Conn, error) {
+		return nil, fmt.Errorf("%w %s", errSystemDial, addr)
+	})
+	return s
+}
+
+var errSystemDial = errors.New("system dial (no exit route yet)")
+
+// dialExit dials through the exit node once its route is installed.
+func dialExit(t *testing.T, ctx context.Context, s *tsnet.Server, dst string) (net.Conn, error) {
+	t.Helper()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(300 * time.Millisecond) {
+		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		c, err := s.Dial(dctx, "tcp", dst)
+		cancel()
+		if !errors.Is(err, errSystemDial) || time.Now().After(deadline) {
+			return c, err
+		}
+	}
+}
+
+// useExitNode points s at the exit node and returns s's StableID.
+func useExitNode(t *testing.T, ctx context.Context, s *tsnet.Server, exit *tailcfg.Node) string {
+	t.Helper()
+	lc, _ := s.LocalClient()
+	if _, err := lc.EditPrefs(ctx, &ipn.MaskedPrefs{Prefs: ipn.Prefs{ExitNodeID: exit.StableID}, ExitNodeIDSet: true}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := lc.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(st.Self.ID)
+}
+
+// connect sends CONNECT on c and returns the status code and the tunnel.
+func connect(c net.Conn, target string) (int, net.Conn) {
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, nil)
+	c.SetReadDeadline(time.Time{})
+	if err != nil {
+		c.Close()
+		return 0, nil
+	}
+	return resp.StatusCode, c // the 200 has no body, so nothing of the tunnel is buffered
+}
+
+type socksReq struct{ user, pass, dst string }
+
+type fakeSOCKS struct {
+	addr string
+	mu   sync.Mutex
+	reqs []socksReq
+}
+
+func (f *fakeSOCKS) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reqs) }
+func (f *fakeSOCKS) all() []socksReq {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]socksReq(nil), f.reqs...)
+}
+func (f *fakeSOCKS) last() (r socksReq) {
+	if a := f.all(); len(a) > 0 {
+		r = a[len(a)-1]
+	}
+	return r
+}
+
+// startFakeSOCKS stands in for mitmproxy: a SOCKS5 server (user/password,
+// RFC 1928 and 1929) that records each request and echoes the stream.
+func startFakeSOCKS(t *testing.T) *fakeSOCKS {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	f := &fakeSOCKS{addr: ln.Addr().String()}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				b := func(n int) []byte { p := make([]byte, n); io.ReadFull(r, p); return p }
+				b(int(b(2)[1])) // version, methods
+				c.Write([]byte{5, 2})
+				b(1)
+				user := string(b(int(b(1)[0])))
+				pass := string(b(int(b(1)[0])))
+				c.Write([]byte{1, 0})
+				var host string
+				switch hdr := b(4); hdr[3] {
+				case 1:
+					host = netip.AddrFrom4([4]byte(b(4))).String()
+				case 3:
+					host = string(b(int(b(1)[0])))
+				}
+				port := binary.BigEndian.Uint16(b(2))
+				f.mu.Lock()
+				f.reqs = append(f.reqs, socksReq{user, pass, net.JoinHostPort(host, fmt.Sprint(port))})
+				f.mu.Unlock()
+				c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+				io.Copy(c, r) // echo
+			}()
+		}
+	}()
+	return f
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

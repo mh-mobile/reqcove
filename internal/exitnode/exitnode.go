@@ -28,6 +28,7 @@ import (
 type Config struct {
 	Dir         string           // tsnet state
 	Hostname    string           // tailnet node name
+	ControlURL  string           // coordination server; empty: Tailscale's (tests use testcontrol)
 	DNS         []netip.AddrPort // exit node DNS upstreams; empty: /etc/resolv.conf
 	Devices     []string         // --device specs
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
@@ -49,6 +50,7 @@ func Run(ctx context.Context, cfg Config) error {
 	s := &tsnet.Server{
 		Dir:         cfg.Dir,
 		Hostname:    cfg.Hostname,
+		ControlURL:  cfg.ControlURL,
 		ExitNodeDNS: cfg.DNS,
 		FallbackUDP: func(src, dst netip.AddrPort) bool {
 			ok := decideUDP(current.Load(), src, dst)
