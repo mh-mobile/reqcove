@@ -121,20 +121,35 @@ func (h *harness) waitFlows(n int64) {
 	}
 }
 
-// doneFlow waits until the newest flow whose URL contains sub has ended.
+// doneFlow waits until the newest flow whose URL contains sub has arrived
+// and ended (the addon's events reach the store a moment after the client
+// has its response).
 func (h *harness) doneFlow(sub string, bodies bool) FlowView {
 	h.t.Helper()
 	var v FlowView
+	found := false
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if v = h.flowFor(sub, bodies); v.State != "open" {
+		if v, found = h.findFlow(sub, bodies); found && v.State != "open" {
 			break
 		}
+	}
+	if !found {
+		h.t.Fatalf("no flow for %q", sub)
 	}
 	return v
 }
 
-// flowFor returns the newest flow whose URL contains sub.
+// flowFor returns the newest flow whose URL contains sub, which must be there.
 func (h *harness) flowFor(sub string, bodies bool) FlowView {
+	h.t.Helper()
+	v, ok := h.findFlow(sub, bodies)
+	if !ok {
+		h.t.Fatalf("no flow for %q", sub)
+	}
+	return v
+}
+
+func (h *harness) findFlow(sub string, bodies bool) (FlowView, bool) {
 	h.t.Helper()
 	for _, f := range listAll(h.c.Store, 100000) {
 		if strings.Contains(f.URL, sub) {
@@ -142,11 +157,10 @@ func (h *harness) flowFor(sub string, bodies bool) FlowView {
 			if err != nil {
 				h.t.Fatal(err)
 			}
-			return v
+			return v, true
 		}
 	}
-	h.t.Fatalf("no flow for %q", sub)
-	return FlowView{}
+	return FlowView{}, false
 }
 
 // TestEndToEnd runs mitmdump with the addon through uvx and checks what the
