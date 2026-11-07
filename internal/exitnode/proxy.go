@@ -103,7 +103,7 @@ func (rp *remoteProxy) reverseProxy(src netip.AddrPort, dev Device) *httputil.Re
 			IdleConnTimeout: 90 * time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			logEvent("proxy %v %s %s: %v", src, r.Method, r.URL.Redacted(), err)
+			logEvent("proxy %v %s %s: %v", src, r.Method, r.Host, err) // never the path or query: they carry secrets
 			http.Error(w, "reqcove: "+err.Error(), statusFor(err))
 		},
 	})
@@ -140,8 +140,10 @@ func statusFor(err error) int {
 	return http.StatusBadGateway
 }
 
-// resolver looks names up with the exit node's DNS upstream, so both entries
-// see the same answers; without one, with the system's resolver.
+// resolver looks names up like any proxy on this Mac: /etc/hosts first (Go
+// reads it even with a custom Dial), then the exit node's DNS upstream, or the
+// system's resolver without one. So a name /etc/hosts maps to 127.0.0.1 is
+// refused here, while on the exit node the iPhone resolves it itself.
 func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (netip.Addr, error) {
 	r := net.DefaultResolver
 	if len(dns) > 0 {

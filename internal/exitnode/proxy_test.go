@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type dialed struct {
@@ -142,5 +144,25 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 	}
 	if pa == rp.reverseProxy(b, Device{ID: "nB"}) {
 		t.Error("two devices share a pool")
+	}
+}
+
+// Failed plain requests are logged by host only: paths and queries carry secrets.
+func TestRemoteProxyLogsNoURL(t *testing.T) {
+	pu, _ := proxyHarness(t, "127.0.0.1")
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	for len(events) > 0 { // lines from earlier tests
+		<-events
+	}
+	if r, err := c.Get("http://nowhere.test/private/path?token=s3cret"); err == nil {
+		r.Body.Close()
+	}
+	select {
+	case line := <-events:
+		if !strings.Contains(line, "nowhere.test") || strings.Contains(line, "s3cret") || strings.Contains(line, "private") {
+			t.Errorf("log line: %q", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no log line")
 	}
 }

@@ -146,7 +146,7 @@ func run(ctx context.Context, args []string) error {
 		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
 		OnDevices: cap.Store.SetDeviceNames,
 	})
-	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. Turn off the exit node on the iPhone: without reqcove it cannot reach the internet.")
+	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	if ctx.Err() != nil {
 		return nil // Ctrl-C, or mitmproxy failed (already logged)
 	}
