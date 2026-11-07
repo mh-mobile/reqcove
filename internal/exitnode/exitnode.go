@@ -224,6 +224,12 @@ func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Stat
 
 // FirstStep is the one thing the user must do next for the node, or "".
 func FirstStep(s Status) string {
+	for _, h := range s.Health {
+		// tsnet stops the node: reqcove keeps logs off (SetNoLogsNoSupport) and never turns them on.
+		if strings.Contains(h, "tailnet requires logging") {
+			return "not supported: this tailnet requires data plane audit logging, and reqcove never sends logs to Tailscale, so tsnet stops the node. Use a tailnet without that setting"
+		}
+	}
 	switch {
 	case s.Backend == "NeedsLogin" && s.AuthURL != "":
 		return "log in: open " + s.AuthURL

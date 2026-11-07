@@ -11,6 +11,7 @@ import (
 
 	"tailscale.com/net/netns"
 	"tailscale.com/net/tsaddr"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tstest/integration"
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/logger"
@@ -93,5 +94,20 @@ func TestStatusExitApproval(t *testing.T) {
 	s = wait("approved", func(s Status) bool { return s.ExitApproved })
 	if step := FirstStep(s); step != "" {
 		t.Errorf("after approval, step %q", step)
+	}
+}
+
+// A tailnet that requires data plane audit logs stops a node that sends no
+// logs; reqcove says so instead of turning logs on.
+func TestStatusAuditLogsRequired(t *testing.T) {
+	control, wait := runAgainst(t, nil)
+	wait("running", func(s Status) bool { return s.Backend == "Running" })
+	for _, n := range control.AllNodes() {
+		control.SetNodeCapMap(n.Key, tailcfg.NodeCapMap{tailcfg.CapabilityDataPlaneAuditLogs: nil})
+		control.SetSubnetRoutes(n.Key, tsaddr.ExitRoutes()) // pushes a new netmap
+	}
+	s := wait("refused for audit logs", func(s Status) bool { return strings.HasPrefix(FirstStep(s), "not supported") })
+	if !strings.Contains(FirstStep(s), "audit logging") {
+		t.Errorf("step %q", FirstStep(s))
 	}
 }
