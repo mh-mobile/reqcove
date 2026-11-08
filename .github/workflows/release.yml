@@ -1,7 +1,9 @@
 name: release
 
-# Push a tag such as v0.1.0. This builds the binaries and makes a DRAFT
-# release; nothing is public until someone publishes the draft.
+# Push a tag such as v0.1.0. This builds the Linux binaries and makes a DRAFT
+# release; nothing is public until someone publishes the draft. The macOS
+# binary is signed and notarized on a Mac by scripts/release-macos.sh, which
+# adds it to the draft (the signing key stays in that Mac's keychain).
 on:
   push:
     tags: ["v*"]
@@ -27,13 +29,13 @@ jobs:
           go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/reqcove --save_path=third_party
           # go-licenses keeps LICENSE files only; Tailscale also has a PATENTS grant.
           cp "$(go list -m -f '{{.Dir}}' tailscale.com)/PATENTS" third_party/tailscale.com/
-          for target in darwin/arm64 linux/amd64 linux/arm64; do
+          for target in linux/amd64 linux/arm64; do
             os=${target%/*} arch=${target#*/}
             name=reqcove_${VERSION#v}_${os}_${arch}
             mkdir -p "build/$name"
             GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
               -ldflags "-s -w -X main.version=$VERSION" -o "build/$name/reqcove" ./cmd/reqcove
-            cp LICENSE README.md "build/$name/"
+            cp LICENSE README.md README.ja.md "build/$name/"
             cp -R third_party "build/$name/third_party_licenses"
             tar -C build -czf "dist/$name.tar.gz" "$name"
           done
