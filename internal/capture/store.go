@@ -56,6 +56,7 @@ type event struct {
 	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
 	RulesError   string         `json:"rules_error"` // why --rules could not be loaded
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
+	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
 	DroppedBodies int64 `json:"dropped_bodies"`
 	DroppedEvents int64 `json:"dropped_events"`
@@ -762,7 +763,7 @@ func (s *Store) Stats() map[string]any {
 		"tls_failures": len(s.tlsFailures),
 		"mitmproxy":    s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
-		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve,
+		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
 	}
 }
 

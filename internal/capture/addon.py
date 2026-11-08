@@ -31,7 +31,7 @@ from pathlib import Path
 
 import brotli
 import ruamel.yaml  # mitmproxy's own dependency
-from mitmproxy import ctx
+from mitmproxy import connection, ctx
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
 from mitmproxy.utils import strutils
@@ -298,6 +298,7 @@ class Reqcove:
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
+        self.upstream = None  # (host, port) of --upstream-proxy
         self.rules_error = ""
         threading.Thread(target=self._writer, daemon=True).start()
 
@@ -308,6 +309,7 @@ class Reqcove:
         loader.add_option("reqcove_secret_file", str, "", "File holding the SOCKS5 password reqcove uses.")
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
         loader.add_option("reqcove_rules", str, "", "The --rules file.")
+        loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -323,6 +325,9 @@ class Reqcove:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
+        if "reqcove_upstream" in updated:
+            host, _, port = ctx.options.reqcove_upstream.rpartition(":")
+            self.upstream = (host, int(port)) if host else None
         if "reqcove_rules" in updated:
             self.rules, self.rules_error = None, ""
             if ctx.options.reqcove_rules:
@@ -349,12 +354,29 @@ class Reqcove:
         for k in [k for k in self.resolve_sni if k[0] == client.id]:
             del self.resolve_sni[k]
 
-    def server_connect(self, data):
+    def tls_start_server(self, data):
         # A connection a resolve rule made: TLS says, and is checked for, the
-        # name the app asked for, not the address.
-        name = self.resolve_sni.get((data.client.id, data.server.address))
+        # name the app asked for, not the address. Here, not in server_connect:
+        # through an upstream proxy, server_connect sees only the proxy's address.
+        name = self.resolve_sni.get((data.context.client.id, data.conn.address))
         if name:
-            data.server.sni = name
+            data.conn.sni = name
+
+    def _via_upstream(self, flow):
+        """Send a request on through --upstream-proxy. HTTPS goes in a CONNECT
+        tunnel to the address (an IP, as the exit node gave it; Burp makes its
+        certificate from the SNI). Plain HTTP goes as a proxy request
+        (absolute-form): Burp does not take plain HTTP inside CONNECT."""
+        if not self.upstream or flow.response:
+            return
+        r = flow.request
+        if r.scheme == "http":
+            r.data.authority = f"{r.data.host}:{r.port}".encode()
+            r.data.host, r.data.port = self.upstream
+            flow.server_conn = connection.Server(address=self.upstream)
+        else:
+            flow.server_conn = connection.Server(address=(r.data.host, r.port))
+            flow.server_conn.via = ("http", self.upstream)
 
     def _in_scope(self, host):
         host = host.lower().rstrip(".")
@@ -407,6 +429,7 @@ class Reqcove:
                 return  # the CA's page: served, never recorded, and not "out of scope" either
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
+            self._via_upstream(flow)  # decrypted all the same: only the upstream's CA may be trusted
             return
         device = _device(flow)
         if device:
@@ -434,6 +457,7 @@ class Reqcove:
             # ponytail: that body is unbounded (body_size_limit would cap every flow, streamed or not).
             flow.metadata["reqcove_local"] = True
             return
+        self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
 
     def _rewrite_request(self, flow):
@@ -558,6 +582,7 @@ class Reqcove:
             "rules": dict({k: len(a.replacements) for k, a in self.rules.items()}, keep_host_header=int(self.rules["map_remote"].keep_host_header)) if self.rules else None,
             "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in self.rules["resolve"].replacements.items()] if self.rules else None,
             "rules_error": self.rules_error,
+            "upstream": "%s:%d" % self.upstream if self.upstream else "",
         }
 
     def _encode(self, msg):

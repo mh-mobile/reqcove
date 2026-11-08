@@ -119,6 +119,23 @@ failed connection fails both for as long as the app's connection lasts.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
 
+## An upstream proxy (`--upstream-proxy`)
+
+Decrypted requests then go on through that proxy, and Reqcove's mitmproxy does
+not connect to their servers itself (connection strategy lazy; a test counts the
+server's connections). What changes:
+
+- The proxy sees the requests and responses unmasked, and Burp, for one, keeps them
+  in its project, on disk. Its own MCP server or extensions give agents what
+  Reqcove's tools hold back, and the ability to send requests.
+- Checking the real server's certificate is the proxy's job: with `--upstream-ca`,
+  Reqcove trusts only that CA, so it checks the proxy, not the server. The
+  `resolve` promise (a request reaches only a server with a certificate for the
+  name) holds only as far as the proxy checks.
+- The CONNECT lines (an IP address and port) and plain HTTP reach the proxy
+  unencrypted: keep it on this computer, or on the tailnet.
+- The flag is read at start; no tool changes it.
+
 ## mitmweb (`--web`)
 
 mitmweb listens on 127.0.0.1 only, with a password made at each start and passed

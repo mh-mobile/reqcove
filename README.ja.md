@@ -84,6 +84,8 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
 | `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
 | `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
+| `--upstream-proxy URL` | 復号したリクエストを、Burp Suite などの HTTP プロキシに回します。`http://127.0.0.1:8080` など（下を参照） |
+| `--upstream-ca FILE` | そのプロキシの CA（PEM か DER）。Burp のように、自分で復号するプロキシのときに渡します |
 | `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（マスクなし。編集とリプレイができ、すべてのフローを保持します） |
 | `--dns` | Exit Node が使う上流 DNS。デフォルトは `1.1.1.1:53`。`system` を指定すると `/etc/resolv.conf` を使います |
 | `--no-redact` | シークレットをマスクせずに記録します |
@@ -109,6 +111,20 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
   - 名前は `--allow-hosts` に入っている必要があります。また、名前ごとに別のアドレス（かポート）にしてください。mitmproxy は、接続をアドレスで使い回すためです。
   - `0.0.0.0/8`、リンクローカル（クラウドのメタデータを含む）、マルチキャスト、Tailscale の 100.100.100.100 は拒みます。
 - 他人が作ったルールのファイルは、中身を読んでから使ってください。ルールは、アプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
+
+### 上流のプロキシ（Burp Suite など）
+
+Reqcove の記録を残したまま、同じリクエストを Burp Suite（や ZAP、Charles など）でも見るには、そちらに回します。
+
+```sh
+curl -s -x http://127.0.0.1:8080 http://burp/cert -o burp.der   # Burp の CA
+reqcove run --device iphone --allow-hosts 'api.example.com' \
+  --upstream-proxy http://127.0.0.1:8080 --upstream-ca burp.der
+```
+
+- 復号したリクエストは、プロキシを通ります（HTTPS は CONNECT のトンネルで、平文の HTTP はプロキシのリクエストとして）。本物のサーバーへ直接つなぐことはありません。`--allow-hosts` の外のホストは、今までどおり直接通ります。Burp の Intercept はオフにしてください。オンだと、リクエストがそこで止まります。
+- `--upstream-ca` を渡すと、プロキシを通る HTTPS では、その CA だけを信じます。渡さなければ、公開の CA で確かめます（自分では復号しないプロキシ向け）。
+- プロキシは、マスクしていない中身を全部見ます。Burp は、それをプロジェクトに残します。Burp Suite Community 2026.10 で試しました。ほかのプロキシは試していません。
 
 ## セキュリティ
 

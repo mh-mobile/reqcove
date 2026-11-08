@@ -107,6 +107,8 @@ setting, so this works on Wi-Fi only.
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
+| `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below) |
+| `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts, as Burp does |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
 | `--dns` | the exit node's DNS upstream, `1.1.1.1:53` by default; `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
@@ -144,6 +146,26 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
   Tailscale's 100.100.100.100 are refused.
 - Read a rules file from someone else before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
+
+### An upstream proxy (Burp Suite and others)
+
+To see the same requests in Burp Suite (or ZAP, Charles, …) while Reqcove keeps its
+records, send them on through it:
+
+```sh
+curl -s -x http://127.0.0.1:8080 http://burp/cert -o burp.der   # Burp's CA
+reqcove run --device iphone --allow-hosts 'api.example.com' \
+  --upstream-proxy http://127.0.0.1:8080 --upstream-ca burp.der
+```
+
+- Decrypted requests go to the proxy (HTTPS in a CONNECT tunnel, plain HTTP as
+  proxy requests), never straight to the server. Hosts outside `--allow-hosts`
+  pass through directly, as always. Turn Burp's Intercept off, or requests wait
+  in it.
+- With `--upstream-ca`, only that CA is trusted for HTTPS through the proxy; without
+  it, the public CAs (for a proxy that does not decrypt).
+- The proxy sees everything unmasked, and Burp keeps it in its project. Tried with
+  Burp Suite Community 2026.10; other proxies have not been tried.
 
 ## What it keeps safe, and what it does not
 

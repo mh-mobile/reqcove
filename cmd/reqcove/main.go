@@ -8,10 +8,15 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -91,6 +96,8 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", "3.14", "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
+	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
+	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -126,6 +133,13 @@ func run(ctx context.Context, args []string) error {
 	if *noRedact {
 		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
 	}
+	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
+		return fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
+	}
+	upstream, err := parseUpstream(*upstreamProxy, *upstreamCA)
+	if err != nil {
+		return err
+	}
 
 	if _, err := exec.LookPath(*uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)
@@ -136,6 +150,12 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer unlock()
 	keepAwake(ctx)
+	var upstreamCAFile string
+	if *upstreamCA != "" {
+		if upstreamCAFile, err = writeUpstreamCA(*upstreamCA, *state); err != nil {
+			return err
+		}
+	}
 
 	mitmLog, err := os.OpenFile(filepath.Join(*state, "mitmproxy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -149,6 +169,7 @@ func run(ctx context.Context, args []string) error {
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, WebPort: webPort(*web),
+		Upstream: upstream, UpstreamCA: upstreamCAFile,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
@@ -161,6 +182,13 @@ func run(ctx context.Context, args []string) error {
 	if ca := cap.CA; ca.Name != "" {
 		log.Printf("CA %q, SHA-256 %s, until %s: iPhones get it from http://mitm.it (the same CA as long as %s is kept)", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"), filepath.Join(*state, "mitmproxy"))
 		printQR(os.Stderr, "http://mitm.it", "to get the CA, scan this with the iPhone's camera while it uses the exit node (Safari opens http://mitm.it)")
+	}
+	if upstream != "" {
+		trust := "the public CAs"
+		if upstreamCAFile != "" {
+			trust = "its CA only (--upstream-ca)"
+		}
+		log.Printf("decrypted requests go on to the upstream proxy %s, which sees them unmasked; HTTPS through it is checked against %s", upstream, trust)
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
@@ -309,4 +337,49 @@ func printQR(w *os.File, url, what string) {
 		return
 	}
 	fmt.Fprintf(w, "%s:\n%s", what, q.ToSmallString(false))
+}
+
+// parseUpstream checks --upstream-proxy (http://HOST:PORT, answering now) and
+// returns HOST:PORT for mitmproxy.
+func parseUpstream(raw, ca string) (string, error) {
+	if raw == "" {
+		if ca != "" {
+			return "", errors.New("--upstream-ca needs --upstream-proxy")
+		}
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
+		return "", fmt.Errorf("--upstream-proxy %q: want http://HOST:PORT", raw)
+	}
+	c, err := net.DialTimeout("tcp", u.Host, 3*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("--upstream-proxy %s does not answer (start it first): %w", u.Host, err)
+	}
+	c.Close()
+	return u.Host, nil
+}
+
+// writeUpstreamCA reads the upstream's CA certificate, PEM or DER, and writes
+// it as PEM into the state directory for mitmproxy (which cannot read DER).
+func writeUpstreamCA(path, state string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("--upstream-ca: %w", err)
+	}
+	if p, _ := pem.Decode(b); p != nil {
+		b = p.Bytes
+	}
+	cert, err := x509.ParseCertificate(b)
+	if err != nil {
+		return "", fmt.Errorf("--upstream-ca %s: not a certificate (PEM or DER): %w", path, err)
+	}
+	if !cert.IsCA {
+		return "", fmt.Errorf("--upstream-ca %s: %q is not a CA certificate", path, cert.Subject.CommonName)
+	}
+	out := filepath.Join(state, "upstream-ca.pem")
+	if err := os.WriteFile(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
+		return "", err
+	}
+	return out, nil
 }
