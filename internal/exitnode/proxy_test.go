@@ -212,6 +212,11 @@ func TestRemoteProxyClosesOutsiders(t *testing.T) {
 
 // answeringDNS answers every A query with 203.0.113.7, or with NXDOMAIN, and counts queries.
 func answeringDNS(t *testing.T, nx bool) (netip.AddrPort, *atomic.Int32) {
+	return answeringDNSAfter(t, nx, 0)
+}
+
+// answeringDNSAfter answers each query after delay (a slow or lossy path).
+func answeringDNSAfter(t *testing.T, nx bool, delay time.Duration) (netip.AddrPort, *atomic.Int32) {
 	c, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +249,7 @@ func answeringDNS(t *testing.T, nx bool) (netip.AddrPort, *atomic.Int32) {
 				b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 60}, dnsmessage.AResource{A: [4]byte{203, 0, 113, 7}})
 			}
 			out, _ := b.Finish()
-			c.WriteTo(out, addr)
+			time.AfterFunc(delay, func() { c.WriteTo(out, addr) })
 		}
 	}()
 	return netip.MustParseAddrPort(c.LocalAddr().String()), &n
@@ -281,6 +286,15 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 	wg.Wait()
 	if d := time.Since(start); d > time.Second {
 		t.Errorf("lookups after the dead upstream was found took %v: it is asked every time", d)
+	}
+
+	// The only upstream (the default, 1.1.1.1) or the last one is not cut short:
+	// a slow answer still counts.
+	slow, _ := answeringDNSAfter(t, false, upstreamTimeout+500*time.Millisecond)
+	for _, ups := range [][]netip.AddrPort{{slow}, {deadAddr, slow}} {
+		if _, err := resolver(ups)(ctx, "slow.example"); err != nil {
+			t.Errorf("slow last upstream %v: %v", ups, err)
+		}
 	}
 
 	nx, _ := answeringDNS(t, true)

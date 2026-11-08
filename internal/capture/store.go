@@ -942,6 +942,9 @@ var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>
 var userinfoRE = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://[^/?#@\s:"'<>]*:)[^/?#@\s"'<>]+@`)
 
 func maskURLs(v string) string {
+	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") {
+		return v // no parameter, no password: skip the regexps (most of a 64 KiB JSON head)
+	}
 	if strings.Contains(v, "://") {
 		v = userinfoRE.ReplaceAllString(v, "${1}REDACTED@")
 	}
@@ -1014,19 +1017,33 @@ func isText(b []byte) bool {
 }
 
 // containsFold reports whether lowerNeedle (already lower case) occurs in b,
-// ignoring ASCII case. It folds a copy, then searches it in linear time: an
-// agent's long query over many heads must not hold the store for minutes.
+// ignoring ASCII case. A short needle (masking's words) is compared in place;
+// a long one (an agent's query) searches a folded copy in linear time, so it
+// cannot hold the store for minutes.
 func containsFold[T string | []byte](b T, lowerNeedle string) bool {
-	if len(lowerNeedle) == 0 {
-		return true
-	}
-	low := make([]byte, len(b))
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if 'A' <= c && c <= 'Z' {
-			c += 'a' - 'A'
+	n := len(lowerNeedle)
+	if n > 16 {
+		low := make([]byte, len(b))
+		for i := 0; i < len(b); i++ {
+			low[i] = lowerASCII(b[i])
 		}
-		low[i] = c
+		return bytes.Contains(low, []byte(lowerNeedle))
 	}
-	return bytes.Contains(low, []byte(lowerNeedle))
+	for i := 0; i+n <= len(b); i++ {
+		j := 0
+		for j < n && lowerASCII(b[i+j]) == lowerNeedle[j] {
+			j++
+		}
+		if j == n {
+			return true
+		}
+	}
+	return false
+}
+
+func lowerASCII(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
 }

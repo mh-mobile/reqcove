@@ -207,7 +207,10 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 		for k := range rs {
 			i := (first + k) % len(rs)
 			var ips []netip.Addr
-			c, cancel := context.WithTimeout(ctx, upstreamTimeout)
+			c, cancel := ctx, context.CancelFunc(func() {})
+			if k < len(rs)-1 { // the last one asked keeps Go's own retries
+				c, cancel = context.WithTimeout(ctx, upstreamTimeout)
+			}
 			ips, err = rs[i].LookupNetIP(c, "ip4", host)
 			cancel()
 			if err == nil {

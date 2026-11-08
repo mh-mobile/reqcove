@@ -64,8 +64,12 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		j = skipSpace(s, j+1)
+		if j >= len(s) || (s[j] != '"' && s[j] != '-' && (s[j] < '0' || s[j] > '9')) {
+			i = j // an object, array, true, false or null: its own keys come next
+			continue
+		}
 		secret := secretKind(jsonKey(s[keyStart+1:keyEnd]), loneCode)
-		if j < len(s) && secret && (s[j] == '-' || '0' <= s[j] && s[j] <= '9') { // {"otp": 123456}
+		if secret && s[j] != '"' { // {"otp": 123456}
 			k := j
 			for k < len(s) && strings.IndexByte("-+.eE0123456789", s[k]) >= 0 {
 				k++
@@ -75,7 +79,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			last, i = k, k
 			continue
 		}
-		if j >= len(s) || s[j] != '"' {
+		if s[j] != '"' {
 			i = j
 			continue
 		}
