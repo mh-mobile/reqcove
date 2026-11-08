@@ -6,23 +6,12 @@
 
 iPhone は、あなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は、Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
 
-```mermaid
-flowchart TB
-    phone["📱 iPhone<br/>Wi-Fi でも 5G でも"]
-    subgraph computer["あなたのコンピュータ（macOS か Linux）"]
-        run["reqcove run<br/>（Tailscale の Exit Node）"]
-        mitm["mitmproxy<br/>許可したホストだけ復号"]
-        rec[("記録<br/>メモリだけ・秘密はマスク")]
-        mcp["reqcove mcp"]
-        run -- "SOCKS5" --> mitm
-        mitm -. "リクエストごとに" .-> rec
-        rec --> mcp
-    end
-    net(("🌐 インターネット"))
-    agent["🤖 AI エージェント<br/>Claude Code など"]
-    phone -- "tailnet" --> run
-    mitm --> net
-    mcp -- "MCP" --> agent
+```
+iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ インターネット
+                                     │                       │
+                                     │                アドオン: フロー
+                                     ▼                       ▼
+                              agent ◀── MCP ── reqcove mcp ◀─ 記録（マスク済み）
 ```
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。

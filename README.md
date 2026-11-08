@@ -10,23 +10,12 @@ decrypt the hosts you allow, and serves the flows to your agent over
 [MCP](https://modelcontextprotocol.io). Nothing to configure on the phone beyond
 choosing the exit node and trusting a CA once, and it works over 5G as well as Wi-Fi.
 
-```mermaid
-flowchart TB
-    phone["📱 iPhone<br/>Wi-Fi or 5G"]
-    subgraph computer["Your computer (macOS or Linux)"]
-        run["reqcove run<br/>(a Tailscale exit node)"]
-        mitm["mitmproxy<br/>decrypts the hosts you allow"]
-        rec[("records<br/>in memory, secrets masked")]
-        mcp["reqcove mcp"]
-        run -- "SOCKS5" --> mitm
-        mitm -. "each request" .-> rec
-        rec --> mcp
-    end
-    net(("🌐 Internet"))
-    agent["🤖 AI agent<br/>Claude Code and others"]
-    phone -- "tailnet" --> run
-    mitm --> net
-    mcp -- "MCP" --> agent
+```
+iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ internet
+                                     │                       │
+                                     │                 addon: flows
+                                     ▼                       ▼
+                              agent ◀── MCP ── reqcove mcp ◀─ records (masked)
 ```
 
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
