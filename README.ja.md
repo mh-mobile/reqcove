@@ -35,11 +35,7 @@ go build -o reqcove ./cmd/reqcove
 
 `go install …@version` は使えません。Reqcove は Tailscale の tsnet の fork を `replace` ディレクティブで使っているためです。
 
-リリースに含まれる macOS のバイナリは、Developer ID で署名されておらず、公証（notarization）も受けていません。`curl` でダウンロードしたものはそのまま動きますが、ブラウザでダウンロードしたものは、隔離属性を外すまで起動時に macOS に強制終了されます（終了ステータス 137）。
-
-```sh
-xattr -dr com.apple.quarantine reqcove_*_darwin_arm64
-```
+リリースに含まれる macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
 
 ## 使い方
 

@@ -8,6 +8,7 @@
 # Needs: a "Developer ID Application" identity in the keychain, and notary
 # credentials stored with
 #   xcrun notarytool store-credentials reqcove-notary --apple-id … --team-id …
+# (or any profile of the same team: REQCOVE_NOTARY_PROFILE=<profile>).
 set -euo pipefail
 version=${1:?usage: release-macos.sh vX.Y.Z}
 identity=${REQCOVE_SIGN_IDENTITY:-Developer ID Application}
