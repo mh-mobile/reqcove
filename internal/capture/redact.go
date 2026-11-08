@@ -98,6 +98,15 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteString(m)
 				last = valEnd + 1
 			}
+		case !valClosed && depth == 0 && strings.Contains(s[j:], `\"`):
+			// Cut before its closing quote, so not decodable: undo the common
+			// escapes and, if a secret shows, mask the rest of the head.
+			inner := strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(s[j+1:])
+			if maskJSON(inner, loneCode, 1) != inner {
+				b.WriteString(s[last : j+1])
+				b.WriteString("[redacted]")
+				last = len(s)
+			}
 		}
 		if !valClosed {
 			break
@@ -123,8 +132,11 @@ func maskInJSONString(lit string, loneCode bool) (string, bool) {
 	if m == inner {
 		return "", false
 	}
-	out, _ := json.Marshal(m)
-	return string(out), true
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
+	enc.Encode(m)
+	return strings.TrimSuffix(out.String(), "\n"), true
 }
 
 // jsonStringEnd returns the index of the quote closing the string that opens
@@ -183,7 +195,7 @@ func maskForm(s string, request bool) string {
 		}
 		if secretName(formName(name)) {
 			parts[i] = name + "=[redacted]"
-		} else if v, err := url.QueryUnescape(val); err == nil && strings.ContainsAny(v[:min(len(v), 1)], "{[") {
+		} else if v := unescapeCut(val); strings.ContainsAny(v[:min(len(v), 1)], "{[") {
 			if m := maskJSON(v, request, 1); m != v {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}

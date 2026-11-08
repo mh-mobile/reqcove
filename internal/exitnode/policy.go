@@ -83,6 +83,12 @@ func carried(p *policy, src, dst netip.AddrPort) bool {
 	return true
 }
 
+// decidePing reports whether netstack may answer a ping by pinging dst from
+// this Mac: where TCP and UDP may go, from the same devices.
+func decidePing(p *policy, src, dst netip.Addr) bool {
+	return carried(p, netip.AddrPortFrom(src, 0), netip.AddrPortFrom(dst, 0))
+}
+
 // decideUDP reports whether netstack should forward a UDP flow. It runs
 // inside netstack's packet processing, so it must stay a pure table lookup.
 func decideUDP(p *policy, src, dst netip.AddrPort) bool {

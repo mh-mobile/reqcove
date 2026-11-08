@@ -99,6 +99,25 @@ func TestDecideUDP(t *testing.T) {
 }
 
 // Any peer's UDP reaches logUDPOnce (with --verbose), so what it remembers stays bounded.
+func TestDecidePing(t *testing.T) {
+	iphone := netip.MustParseAddr("100.101.0.1")
+	p := &policy{allowSrc: []netip.Addr{iphone}, local: []netip.Addr{netip.MustParseAddr("192.168.1.10")}}
+	for _, tt := range []struct {
+		src, dst string
+		want     bool
+	}{
+		{"100.101.0.1", "1.1.1.1", true},
+		{"100.101.0.2", "1.1.1.1", false}, // not a --device
+		{"100.101.0.1", "127.0.0.1", false},
+		{"100.101.0.1", "192.168.1.1", false},
+		{"100.101.0.1", "2606:4700::1111", false},
+	} {
+		if got := decidePing(p, netip.MustParseAddr(tt.src), netip.MustParseAddr(tt.dst)); got != tt.want {
+			t.Errorf("decidePing(%s, %s) = %v, want %v", tt.src, tt.dst, got, tt.want)
+		}
+	}
+}
+
 func TestLogUDPOnceBounded(t *testing.T) {
 	for i := range 3 * maxSeen {
 		logUDPOnce(netip.MustParseAddrPort("100.101.0.2:1"), netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, byte(i >> 8), byte(i)}), uint16(i)), false)

@@ -146,7 +146,7 @@ or a cloud server's subnet with its neighbours, is refused too), loopback, priva
 and link-local ranges, the tailnet's range, multicast and the other special-purpose
 ranges, and all of IPv6, on the exit node and on the Remote Proxy. Public networks
 reached only through a route (behind a router, not on an interface's subnet) are
-not refused (from reading code). Two things it does not catch:
+not refused (from reading code). What it does not catch:
 
 - **Your network's public address.** It is not an address of this computer's
   interfaces. A device that connects to it may reach what the router forwards

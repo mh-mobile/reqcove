@@ -782,7 +782,8 @@ func (s *Store) maskError(v string) string {
 }
 
 // Python's repr of bytes, b'…' or b"…", not the b' of a word such as "job's".
-var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")`)
+// One cut before its closing quote (the addon cuts messages at 1 KiB) runs to the end.
+var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*(?:'|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
 func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	if !s.redact {
@@ -876,7 +877,9 @@ var everydayWords = map[string]bool{
 }
 
 // notSecretNames look secret but carry what debugging needs (letters and digits only).
-var notSecretNames = map[string]bool{"tokentype": true}
+var notSecretNames = map[string]bool{
+	"tokentype": true, "authenticationtype": true, "authenticationmethod": true,
+}
 
 // nameWords splits a name at non-alphanumerics and case changes, in lower
 // case: "X-Amz-Signature" -> x amz signature, "accessToken" -> access token,
@@ -938,17 +941,22 @@ func maskCookies(v, sep string, oneCookie bool) string {
 // attributes, JSON strings), and JSON may write & as \u0026.
 var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>\\]*)`)
 
-// A URL's password (https://user:pass@host).
-var userinfoRE = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://[^/?#@\s:"'<>]*:)[^/?#@\s"'<>]+@`)
+// A URL's password (https://user:pass@host), also with JSON's escaped slashes
+// (https:\/\/user:pass@host, as PHP writes it).
+var userinfoRE = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*:\\?/\\?/[^/?#@\s:"'<>\\]*:)[^/?#@\s"'<>]+@`)
+
+func maskUserinfo(v string) string {
+	if strings.Contains(v, ":/") || strings.Contains(v, `:\/`) {
+		return userinfoRE.ReplaceAllString(v, "${1}REDACTED@")
+	}
+	return v
+}
 
 func maskURLs(v string) string {
 	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") {
 		return v // no parameter, no password: skip the regexps (most of a 64 KiB JSON head)
 	}
-	if strings.Contains(v, "://") {
-		v = userinfoRE.ReplaceAllString(v, "${1}REDACTED@")
-	}
-	return maskURLsAt(v, 0)
+	return maskURLsAt(maskUserinfo(v), 0)
 }
 
 // maskURLsAt is maskURLs for a URL found depth levels inside another's value.
@@ -960,38 +968,63 @@ func maskURLsAt(v string, depth int) string {
 			name = sub[2]
 		}
 		if secretName(name) {
+			if sub[3] == "[redacted]" {
+				return m // masked already (a form field)
+			}
 			return sub[1] + sub[2] + "=REDACTED"
 		}
-		val, rest := sub[3], ""
-		if k := strings.IndexByte(val, ';'); k >= 0 {
-			val, rest = val[:k], maskURLsAt(val[k:], depth)
+		// The value up to ';' is this name's; each ';name=value' after it is
+		// looked at once, in one pass (recursing on the rest was quadratic).
+		pieces := strings.Split(sub[3], ";")
+		if nestedSecret(pieces[0], depth) {
+			pieces[0] = "REDACTED"
 		}
-		if nestedSecret(val, depth) {
-			return sub[1] + sub[2] + "=REDACTED" + rest
+		for i := 1; i < len(pieces); i++ {
+			n, v, ok := strings.Cut(pieces[i], "=")
+			if !ok {
+				continue
+			}
+			if secretName(unescapeCut(n)) {
+				pieces[i] = n + "=REDACTED"
+				pieces = pieces[:i+1] // a secret's value is masked whole, ';' included
+				break
+			}
+			if nestedSecret(v, depth) {
+				pieces[i] = n + "=REDACTED"
+			}
 		}
-		return sub[1] + sub[2] + "=" + val + rest
+		return sub[1] + sub[2] + "=" + strings.Join(pieces, ";")
 	})
 }
 
+// unescapeCut is url.QueryUnescape for text that may be cut inside a %XX
+// escape (a head ends anywhere): the cut escape is dropped.
+func unescapeCut(v string) string {
+	for cut := 0; cut <= 2 && cut <= len(v); cut++ {
+		if u, err := url.QueryUnescape(v[:len(v)-cut]); err == nil {
+			return u
+		}
+	}
+	return v
+}
+
 // nestedSecret: does a value hold a URL or parameters (?redirect=https://x/cb?token=…,
-// also percent-encoded) with a secret in them? Two levels are looked into; a
-// deeper or longer one that could hold parameters counts as secret, so a crafted
-// value cannot make this slow.
+// also percent-encoded, a URL's password included) with a secret in them? Two
+// levels are looked into, and a deeper one that could hold parameters counts
+// as secret; each level scans its own part of the text once, so the cost stays
+// linear in the text whatever its length.
 func nestedSecret(v string, depth int) bool {
-	if !strings.ContainsAny(v, "?=%") {
+	if !strings.ContainsAny(v, "?=%@") {
 		return false
 	}
-	inner := v
-	if u, err := url.QueryUnescape(v); err == nil {
-		inner = u
-	}
-	if !strings.ContainsAny(inner, "?=") {
+	inner := unescapeCut(v)
+	if !strings.ContainsAny(inner, "?=@") {
 		return false
 	}
-	if depth >= 2 || len(inner) > 8<<10 {
+	if depth >= 2 {
 		return true
 	}
-	return maskTokens(maskURLsAt(inner, depth+1)) != inner
+	return maskTokens(maskURLsAt(maskUserinfo(inner), depth+1)) != inner
 }
 
 // bodyText returns a head as text, or as base64 when it is not text. Each

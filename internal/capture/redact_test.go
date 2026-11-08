@@ -2,6 +2,7 @@ package capture
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -268,5 +269,55 @@ func TestSearchLongQueryIsLinear(t *testing.T) {
 	st.List(Filter{Query: strings.Repeat("a", 2000) + "b", QueryBodies: true, Limit: 100})
 	if d := time.Since(start); d > time.Second {
 		t.Errorf("search took %v", d)
+	}
+}
+
+// Fourth review: what the wider masking broke or still missed.
+func TestFourthReview(t *testing.T) {
+	// ';name=value' chains stay linear (a site sends them in a header or a body).
+	chain := strings.Repeat(";a=1", 16<<10) // 64 KiB
+	start := time.Now()
+	maskBody([]byte("x?q=1"+chain), "text/plain", false)
+	maskURLs("https://h/x?q=1" + chain + chain + chain + chain) // 256 KiB, a header's bound
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("';' chains took %v", d)
+	}
+
+	keep := map[string]string{
+		// long values that only hold ordinary parameters are not masked for their length
+		"long encoded json": "a=1&payload=" + url.QueryEscape(`{"next":"https://h/p?x=1","pad":"`+strings.Repeat("p", 12<<10)+`"}`),
+		"long base64":       "name=x&image=" + strings.Repeat("QUJD", 3<<10) + "==",
+		"names":             `{"authentication_type":"sms","authentication_method":"password"}`,
+		"html in json":      `{"msg":"{\"html\":\"<b>&</b>\",\"password\":\"S3CRET\"}"}`,
+	}
+	for name, in := range keep {
+		got := string(maskBody([]byte(in), "", true))
+		if strings.Contains(got, "S3CRET") || strings.Count(got, "REDACTED")+strings.Count(got, "[redacted]") > strings.Count(in, "S3CRET") {
+			t.Errorf("%s: %.200q", name, got)
+		}
+	}
+	if got := string(maskBody([]byte(keep["html in json"]), "", true)); !strings.Contains(got, `<b>&</b>`) {
+		t.Errorf("HTML escaped when written back: %q", got)
+	}
+
+	leak := map[string]string{
+		"cut json in json": `{"event":"login","payload":"{\"user\":\"u\",\"password\":\"S3CRET\",\"pad\":\"xxx`,
+		"form cut in %XX":  `a=1&data=%7B%22user%22%3A%22u%22%2C%22password%22%3A%22S3CRET%22%7`,
+		"escaped slashes":  `{"url":"https:\/\/user:S3CRET@h\/x"}`,
+		"encoded userinfo": `{"u":"https://h/?redirect=https%3A%2F%2Fuser%3AS3CRET%40h%2Fx"}`,
+	}
+	for name, in := range leak {
+		if got := string(maskBody([]byte(in), "", true)); strings.Contains(got, "S3CRET") {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	// A form's secret fields read the same, first or not.
+	if got := string(maskBody([]byte("password=S3CRET&a=1&pass=S3CRET"), "application/x-www-form-urlencoded", true)); got != "password=[redacted]&a=1&pass=[redacted]" {
+		t.Errorf("form: %q", got)
+	}
+	// An error message cut inside mitmproxy's b'…' is masked to its end.
+	st := NewStore(10, 1<<20)
+	if got := st.maskError("Invalid header line: b'Set-Cookie sid=S3CRET; " + strings.Repeat("x", 1000)); strings.Contains(got, "S3CRET") || !strings.HasPrefix(got, "Invalid header line: ") {
+		t.Errorf("cut b'…': %.120q", got)
 	}
 }

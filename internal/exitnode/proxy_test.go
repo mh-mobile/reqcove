@@ -256,23 +256,17 @@ func answeringDNSAfter(t *testing.T, nx bool, delay time.Duration) (netip.AddrPo
 }
 
 // The Remote Proxy's lookups go on to the next --dns when one is dead, for
-// every lookup, concurrent ones included; a name that does not exist does not.
+// every lookup, concurrent ones included, and wait for a slow one in any
+// position, lookup after lookup; a name that does not exist is an answer.
 func TestResolverTriesEveryUpstream(t *testing.T) {
 	good, goodQueries := answeringDNS(t, false)
 	dead, _ := net.ListenPacket("udp", "127.0.0.1:0") // open, never answers, like a server that is down
 	defer dead.Close()
 	deadAddr := netip.MustParseAddrPort(dead.LocalAddr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	resolve := resolver([]netip.AddrPort{deadAddr, good})
 	start := time.Now()
-	if _, err := resolve(context.Background(), "first.example"); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d > upstreamTimeout+time.Second {
-		t.Errorf("first lookup past a silent upstream took %v", d)
-	}
-	start = time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Add(1)
@@ -284,16 +278,22 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if d := time.Since(start); d > time.Second {
-		t.Errorf("lookups after the dead upstream was found took %v: it is asked every time", d)
+	if d := time.Since(start); d > upstreamStagger+time.Second {
+		t.Errorf("20 lookups past a silent first upstream took %v", d)
 	}
 
-	// The only upstream (the default, 1.1.1.1) or the last one is not cut short:
-	// a slow answer still counts.
-	slow, _ := answeringDNSAfter(t, false, upstreamTimeout+500*time.Millisecond)
-	for _, ups := range [][]netip.AddrPort{{slow}, {deadAddr, slow}} {
-		if _, err := resolver(ups)(ctx, "slow.example"); err != nil {
-			t.Errorf("slow last upstream %v: %v", ups, err)
+	// A slow upstream (2.5 s, past Go's first retry would not help) is waited for,
+	// first or last, alone or not, on every lookup.
+	slow, _ := answeringDNSAfter(t, false, 2500*time.Millisecond)
+	for _, ups := range [][]netip.AddrPort{{slow}, {deadAddr, slow}, {slow, deadAddr}} {
+		r := resolver(ups)
+		for n := range 3 {
+			start := time.Now()
+			if _, err := r(ctx, fmt.Sprintf("slow%d.example", n)); err != nil {
+				t.Errorf("slow upstream in %v, lookup %d: %v", ups, n, err)
+			} else if d := time.Since(start); d > 5*time.Second {
+				t.Errorf("slow upstream in %v, lookup %d took %v", ups, n, d)
+			}
 		}
 	}
 
@@ -304,5 +304,11 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 	}
 	if goodQueries.Load() != before {
 		t.Error("NXDOMAIN from the first upstream: asked the next one")
+	}
+	// A dead upstream's error names it, not this computer's resolv.conf server.
+	short, cancelShort := context.WithTimeout(ctx, time.Second)
+	defer cancelShort()
+	if _, err := resolver([]netip.AddrPort{deadAddr})(short, "x.example"); err == nil || !strings.Contains(err.Error(), deadAddr.String()) {
+		t.Errorf("dead upstream error: %v", err)
 	}
 }

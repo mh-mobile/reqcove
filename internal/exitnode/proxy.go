@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -177,9 +176,9 @@ func statusFor(err error) int {
 // reads it even with a custom Dial), then the exit node's DNS upstream, or the
 // system's resolver without one. So a name /etc/hosts maps to 127.0.0.1 is
 // refused here, while on the exit node the iPhone resolves it itself.
-// upstreamTimeout is how long one --dns upstream has to answer a lookup
-// before the next is asked (Go's resolver alone would wait 5 s per attempt).
-var upstreamTimeout = 2 * time.Second
+// upstreamStagger is how long each --dns upstream gets alone before the next
+// is asked too, as the exit node's own DNS proxy does (200 ms there).
+var upstreamStagger = 500 * time.Millisecond
 
 func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (netip.Addr, error) {
 	rs := []*net.Resolver{net.DefaultResolver}
@@ -191,7 +190,6 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 			}})
 		}
 	}
-	var good atomic.Int32 // the upstream that answered last
 	return func(ctx context.Context, host string) (netip.Addr, error) {
 		if ip, err := netip.ParseAddr(host); err == nil {
 			return ip.Unmap(), nil
@@ -199,29 +197,47 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 		if !strings.HasSuffix(host, ".") {
 			host += "." // absolute: this computer's search domains are not appended (and sent upstream)
 		}
-		// Upstreams in turn, from the last one that answered: the next one only
-		// when this one did not answer in time (a name that does not exist is an
-		// answer). So a dead upstream costs its timeout once, not every lookup.
-		var err error
-		first := int(good.Load())
-		for k := range rs {
-			i := (first + k) % len(rs)
-			var ips []netip.Addr
-			c, cancel := ctx, context.CancelFunc(func() {})
-			if k < len(rs)-1 { // the last one asked keeps Go's own retries
-				c, cancel = context.WithTimeout(ctx, upstreamTimeout)
+		// Upstream i joins after i staggers; the first answer wins, and a name
+		// that does not exist is an answer. Each keeps Go's own retries, so a
+		// slow upstream is waited for while a dead one costs one stagger.
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		type result struct {
+			ip  netip.Addr
+			err error
+		}
+		out := make(chan result, len(rs))
+		for i, r := range rs {
+			go func() {
+				select {
+				case <-time.After(time.Duration(i) * upstreamStagger):
+				case <-ctx.Done():
+					out <- result{err: ctx.Err()}
+					return
+				}
+				ips, err := r.LookupNetIP(ctx, "ip4", host)
+				if err != nil {
+					if len(dns) > 0 {
+						err = fmt.Errorf("%v: %w", dns[i], err) // Go names resolv.conf's server, not this one
+					}
+					out <- result{err: err}
+					return
+				}
+				out <- result{ip: ips[0].Unmap()}
+			}()
+		}
+		var first error
+		for range rs {
+			r := <-out
+			var de *net.DNSError
+			if r.err == nil || errors.As(r.err, &de) && de.IsNotFound {
+				return r.ip, r.err
 			}
-			ips, err = rs[i].LookupNetIP(c, "ip4", host)
-			cancel()
-			if err == nil {
-				good.Store(int32(i))
-				return ips[0].Unmap(), nil
-			}
-			if de, ok := err.(*net.DNSError); ok && de.IsNotFound || ctx.Err() != nil {
-				break
+			if first == nil || errors.Is(first, context.Canceled) {
+				first = r.err
 			}
 		}
-		return netip.Addr{}, err
+		return netip.Addr{}, first
 	}
 }
 
