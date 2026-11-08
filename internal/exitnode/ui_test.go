@@ -1,6 +1,9 @@
 package exitnode
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -41,5 +44,33 @@ func TestUIGuard(t *testing.T) {
 	}
 	if code := ask("GET", "reqcove", "100.64.0.7:5000"); code != http.StatusForbidden || got != "" {
 		t.Errorf("not a --device: %d", code)
+	}
+}
+
+// A phone on the Remote Proxy sends the page's requests to it: requests for the
+// node's port 80 reach the page, others to the node are still not carried.
+func TestRemoteProxyServesPage(t *testing.T) {
+	phone := netip.MustParseAddr("100.64.0.1")
+	p := &policy{devices: map[netip.Addr]Device{phone: {"nPHONE", "phone"}}, allowSrc: []netip.Addr{phone},
+		self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}
+	var got string
+	rp := &remoteProxy{policy: func() *policy { return p },
+		resolve: func(_ context.Context, h string) (netip.Addr, error) { return netip.ParseAddr(h) },
+		dial: func(context.Context, verdict, string, netip.AddrPort) (net.Conn, error) {
+			return nil, errors.New("no dialing in this test")
+		},
+		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) { got = id + " " + r.URL.RequestURI() }}}
+	for _, c := range []struct {
+		url  string
+		page bool
+	}{{"http://100.64.0.9/?k=x", true}, {"http://reqcove/flow?id=1", true}, {"http://100.64.0.9:80/", true}, {"http://100.64.0.9:8081/", false}} {
+		got = ""
+		r := httptest.NewRequest("GET", c.url, nil)
+		r.RemoteAddr = "100.64.0.1:5000"
+		w := httptest.NewRecorder()
+		rp.ServeHTTP(w, r)
+		if (got != "") != c.page {
+			t.Errorf("%s: page %q, status %d", c.url, got, w.Code)
+		}
 	}
 }

@@ -158,14 +158,14 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
 
 `reqcove run --ui` serves a read-only page of the flows on its tailnet node and
 prints a link to it with a QR code. Scan it with the iPhone's camera: Safari opens
-the list, which follows new flows every 3 seconds, beside the app in split view if
-you like. Tap a flow for its headers and bodies, masked as the MCP tools return
-them.
+the list, which follows new flows every second (pause stops it), beside the app in
+split view if you like. Tap a flow for its headers and bodies, masked as the MCP
+tools return them. Not tried on an iPhone yet: the tests use a browser stand-in.
 
 - Only the `--device` devices reach it, each sees only its own flows, and only the
   browser that opened the link (a token new at each start) can read it.
-- Tailscale must be on, the exit node need not be. The page's own requests are not
-  recorded.
+- Tailscale must be on; it works with the exit node or the Remote Proxy, or
+  neither. The page's own requests are not recorded.
 
 ### An upstream proxy (Burp Suite and others)
 

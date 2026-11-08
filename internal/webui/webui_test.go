@@ -113,3 +113,35 @@ func TestOwnFlowsOnly(t *testing.T) {
 		t.Errorf("devB's own flow: %d", r.StatusCode)
 	}
 }
+
+// A body of deep nesting is not indented into something huge.
+func TestPrettyBounded(t *testing.T) {
+	deep := "[" + strings.Repeat("[", 9998) + strings.Repeat("]", 9998) + "]"
+	if got := pretty(deep); len(got) > 4*len(deep)+4096 {
+		t.Errorf("indented to %d bytes from %d", len(got), len(deep))
+	}
+	if got := pretty(`{"a":1}`); got != "{\n  \"a\": 1\n}" {
+		t.Errorf("small JSON: %q", got)
+	}
+}
+
+// The header counts and the next steps are this device's: not the others',
+// nor their names. A display name equal to another device's ID changes nothing.
+func TestOwnCountsAndSteps(t *testing.T) {
+	st := store(t)
+	st.SetDeviceNames(map[string]string{"devA": "alice-phone", "devB": "devA"})
+	u := New(st, func() []string { return []string{"no traffic from alice-phone yet", "approve the exit node"} })
+	page := body(get(u, "devB", "/", u.Token()))
+	if strings.Contains(page, "alice-phone") || !strings.Contains(page, "approve the exit node") {
+		t.Errorf("devB's steps:\n%s", page)
+	}
+	if !strings.Contains(page, " 1 flows") {
+		t.Errorf("devB's count:\n%s", page)
+	}
+	if list := body(get(u, "devA", "/", u.Token())); strings.Contains(list, "other.example.com") {
+		t.Errorf("devB, named devA, in devA's list:\n%s", list)
+	}
+	if !strings.Contains(page, `http-equiv="refresh" content="1"`) || !strings.Contains(page, "telephone=no") {
+		t.Errorf("refresh or format detection:\n%s", page)
+	}
+}

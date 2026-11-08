@@ -139,8 +139,13 @@ func Run(ctx context.Context, cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("remote proxy: %w", err)
 		}
+		var page http.Handler
+		if cfg.UI != nil {
+			page = uiGuard{policy: current.Load, serve: cfg.UI}
+		}
 		srv := &http.Server{
 			Handler: &remoteProxy{
+				ui:      page,
 				policy:  current.Load,
 				resolve: resolver(cfg.DNS),
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
@@ -163,6 +168,7 @@ func Run(ctx context.Context, cfg Config) error {
 		srv := &http.Server{
 			Handler:           uiGuard{policy: current.Load, serve: cfg.UI},
 			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      time.Minute, // a slow reader does not hold a page's memory longer
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}

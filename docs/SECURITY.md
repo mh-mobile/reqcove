@@ -157,17 +157,21 @@ MCP tools return, masked the same way. Who can read it (each a test):
 
 - Only the `--device` devices, checked when a connection opens and on every
   request; others get nothing.
-- Each device sees only its own flows, in the list and by ID.
+- Each device sees only its own flows, in the list and by ID, and its own counts
+  and next steps (not the other devices', nor their names).
 - Only a browser holding the token of this start: the link `run` prints sets it
   as an HttpOnly, SameSite=Strict cookie. Another app on the same iPhone can reach
   the port, but not read the page without the token.
 - Only requests that name the node (its MagicDNS name or tailnet address) in
   `Host`: a site the iPhone visits cannot point its own name at the node and read
   the page as its own (DNS rebinding).
-- GET only. The page has no script (its Content-Security-Policy allows none), so
+- GET and HEAD only, also when the request comes through the Remote Proxy. The
+  page has no script (its Content-Security-Policy allows none), so
   what sites wrote into headers and bodies stays text; it is not cached
   (`no-store`). Pages still go through Safari: its history may keep the URLs of
-  the flow pages viewed.
+  the flow pages viewed, and the first link with the token (useless without the
+  device, and changed at each start). A JSON body is indented only as long as that
+  stays within a few times its size.
 
 The token appears only in `run`'s terminal, as the login URL does: never in the
 MCP tools.

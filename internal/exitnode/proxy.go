@@ -26,6 +26,7 @@ type remoteProxy struct {
 	policy  func() *policy
 	resolve func(ctx context.Context, host string) (netip.Addr, error)
 	dial    func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error)
+	ui      http.Handler // the node's own page (--ui), for requests to the node's port 80
 
 	// One per device: a pooled connection carries one device's SOCKS user.
 	// ponytail: never pruned; bounded by the devices seen in this run.
@@ -83,6 +84,12 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Scheme != "http" || r.URL.Host == "" {
 		http.Error(w, "reqcove is a proxy: send absolute http:// URLs, or CONNECT", http.StatusBadRequest)
 		return
+	}
+	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
+		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
+			rp.ui.ServeHTTP(w, r) // a phone on the Remote Proxy sends the page's requests here too
+			return
+		}
 	}
 	rp.reverseProxy(src, dev).ServeHTTP(w, r)
 }
