@@ -31,7 +31,7 @@ from pathlib import Path
 
 import brotli
 import ruamel.yaml  # mitmproxy's own dependency
-from mitmproxy import connection, ctx
+from mitmproxy import connection, ctx, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
 from mitmproxy.utils import strutils
@@ -333,6 +333,9 @@ class Reqcove:
             if ctx.options.reqcove_rules:
                 try:
                     self.rules = load_rules(ctx.options.reqcove_rules)
+                    if self.upstream and self.rules["resolve"].replacements:
+                        # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
+                        raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
                     for i, name in enumerate(self.rules["resolve"].replacements):
                         if not self._in_scope(name):  # would never apply: a typo
                             raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
@@ -371,6 +374,15 @@ class Reqcove:
             return
         r = flow.request
         if r.scheme == "http":
+            if r.is_http2 or r.is_http3:
+                # mitmproxy would turn it into HTTP/1.1 itself and drop the
+                # authority, so the proxy would get "GET /path" alone. Do it
+                # here, keeping the Host the app sent (or keep_host_header's).
+                host, cookies = r.host_header, r.headers.get_all("Cookie")
+                r.http_version = "HTTP/1.1"
+                r.headers["Host"] = host
+                if len(cookies) > 1:
+                    r.headers["Cookie"] = "; ".join(cookies)
             r.data.authority = f"{r.data.host}:{r.port}".encode()
             r.data.host, r.data.port = self.upstream
             flow.server_conn = connection.Server(address=self.upstream)
@@ -447,7 +459,13 @@ class Reqcove:
             "headers": headers, "note": note,
         }
         if self.rules:
-            ev["rewrites"] = self._rewrite_request(flow)
+            try:
+                ev["rewrites"] = self._rewrite_request(flow)
+            except Exception as e:
+                # A rule that fails (map_remote making a bad URL) must not let the
+                # request go on unrewritten, around the rule or the upstream proxy.
+                flow.response = http.Response.make(502, f"reqcove: a --rules rule failed on this request ({type(e).__name__})".encode())
+                ev["rewrites"] = [f"rules failed: {type(e).__name__}"]
             if "reqcove_mapped" in flow.metadata:
                 ev["mapped_url"] = flow.metadata["reqcove_mapped"]  # whatever Host says (keep_host_header)
         self.put_event(ev)

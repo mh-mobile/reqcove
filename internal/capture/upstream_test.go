@@ -3,7 +3,6 @@ package capture
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -129,14 +128,6 @@ func TestUpstream(t *testing.T) {
 		fmt.Fprintf(w, "plain %s %s", r.Host, r.URL.Path)
 	}))
 	defer plain.Close()
-	sni := make(chan string, 4)
-	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	target.TLS = &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
-		sni <- h.ServerName
-		return nil, nil
-	}}
-	target.StartTLS()
-	defer target.Close()
 	up := startUpstream(t)
 	defer up.ln.Close()
 
@@ -144,10 +135,15 @@ func TestUpstream(t *testing.T) {
 	dir := t.TempDir()
 	caFile := filepath.Join(dir, "upstream-ca.pem")
 	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: origin.Certificate().Raw}), 0o600)
+	o, p := origin.Listener.Addr().String(), plain.Listener.Addr().String()
 	rules := filepath.Join(dir, "rules.yaml")
-	os.WriteFile(rules, []byte(fmt.Sprintf("resolve:\n  - \"tls.resolved.test=127.0.0.1:%d\"\n", target.Listener.Addr().(*net.TCPAddr).Port)), 0o600)
+	os.WriteFile(rules, []byte(fmt.Sprintf(`keep_host_header: true
+map_remote:
+  - "|https://%[1]s/maph2/|http://%[2]s/landed/"
+  - "|//%[1]s/badport/|//127.0.0.1:99999/"
+`, o, p)), 0o600)
 
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1", "tls.resolved.test"}, func(c *Config) {
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
 		c.Upstream, c.UpstreamCA, c.Rules = up.ln.Addr().String(), caFile, rules
 	})
 	if err != nil {
@@ -172,7 +168,6 @@ func TestUpstream(t *testing.T) {
 		return r.StatusCode, string(b)
 	}
 
-	o := origin.Listener.Addr().String()
 	if code, body := get("https://"+o+"/tls", ""); code != 200 || body != "origin "+o+" /tls" {
 		t.Errorf("HTTPS through the upstream: %d %q", code, body)
 	}
@@ -186,7 +181,6 @@ func TestUpstream(t *testing.T) {
 		t.Errorf("record: status %d host %q", v.Status, v.Host)
 	}
 
-	p := plain.Listener.Addr().String()
 	if code, body := get("http://"+p+"/plain", ""); code != 200 || body != "plain "+p+" /plain" {
 		t.Errorf("plain HTTP through the upstream: %d %q", code, body)
 	}
@@ -203,32 +197,38 @@ func TestUpstream(t *testing.T) {
 		t.Errorf("the out-of-scope request did not go through the upstream: %v", up.all())
 	}
 
-	// resolve: through the upstream, the target is still asked for the name.
-	tc := h.client("dev")
-	tc.Transport.(*http.Transport).TLSClientConfig.ServerName = "tls.resolved.test"
-	req, _ := http.NewRequest("GET", "https://"+o+"/resolved", nil)
-	req.Host = "tls.resolved.test"
-	if r, err := tc.Do(req); err != nil {
-		t.Errorf("resolve through the upstream: %v", err)
+	// An HTTP/2 app whose request map_remote sends to a plain http:// server:
+	// the proxy gets a whole proxy request, with the app's Host kept.
+	tr := hc.Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	h2 := &http.Client{Transport: tr, Timeout: time.Minute}
+	if r, err := h2.Get("https://" + o + "/maph2/x"); err != nil {
+		t.Errorf("HTTP/2 map_remote to http: %v", err)
 	} else {
+		b, _ := io.ReadAll(r.Body)
 		r.Body.Close()
-	}
-	select {
-	case got := <-sni:
-		if got != "tls.resolved.test" {
-			t.Errorf("resolve through the upstream: SNI %q", got)
+		if r.ProtoMajor != 2 || string(b) != "plain "+o+" /landed/x" {
+			t.Errorf("HTTP/2 map_remote to http: HTTP/%d %q", r.ProtoMajor, b)
 		}
-	case <-time.After(30 * time.Second):
-		t.Error("resolve through the upstream never reached the target")
 	}
-	if want := fmt.Sprintf("CONNECT 127.0.0.1:%d", target.Listener.Addr().(*net.TCPAddr).Port); !slices.Contains(up.all(), want) {
-		t.Errorf("resolve went around the upstream: %v", up.all())
+	if want := "GET http://" + p + "/landed/x Host:" + o; !slices.Contains(up.all(), want) {
+		t.Errorf("the upstream did not get %q: %v", want, up.all())
+	}
+
+	// A rule that fails on a request (a bad port) stops it: it does not go on
+	// to the server around the rule and the upstream.
+	before := tlsConns.Load()
+	if code, body := get("https://"+o+"/badport/y", ""); code != 502 || !strings.Contains(body, "rule failed") {
+		t.Errorf("failed rule: %d %q", code, body)
+	}
+	if tlsConns.Load() != before {
+		t.Error("a failed rule let the request go to the server")
 	}
 
 	// The upstream down: an error, and the server is not reached around it
 	// (a new connection from the app: an open tunnel would still carry it).
 	up.ln.Close()
-	before := tlsConns.Load()
+	before = tlsConns.Load()
 	hc = h.client("dev")
 	if code, _ := get("https://"+o+"/down", ""); code != 502 {
 		t.Errorf("upstream down: %d, want 502", code)
@@ -276,5 +276,21 @@ func TestUpstreamIPv6(t *testing.T) {
 	r.Body.Close()
 	if r.StatusCode != 200 || !slices.ContainsFunc(up.all(), func(s string) bool { return strings.Contains(s, "/v6") }) {
 		t.Errorf("through [::1]: %d, upstream saw %v", r.StatusCode, up.all())
+	}
+}
+
+// resolve and an upstream proxy do not go together: Burp connects by the name
+// in the SNI, looked up on this computer, so the rule would silently not apply.
+func TestUpstreamRefusesResolve(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	os.WriteFile(rules, []byte("resolve: [\"127.0.0.1=192.0.2.1\"]\n"), 0o600)
+	_, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules, c.Upstream = rules, "127.0.0.1:9" })
+	if err == nil || !strings.Contains(err.Error(), "resolve does not go with --upstream-proxy") {
+		t.Errorf("Start: %v", err)
 	}
 }

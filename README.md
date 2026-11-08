@@ -162,19 +162,26 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   proxy requests), never straight to the server. Hosts outside `--allow-hosts`
   pass through directly, as always. Turn Burp's Intercept off, or requests wait
   in it.
-- Requests go to the address the iPhone connected to, not a name for the proxy to
-  look up again (that could lead it into this computer's LAN). Burp names HTTPS
-  hosts from the SNI; plain HTTP shows up under the IP address, with the name in
-  its `Host` header.
+- Reqcove hands the proxy the address the iPhone connected to, but Burp connects to
+  HTTPS hosts by the name in the SNI, looked up again on this computer (tried). So
+  the exit node's refusal of this computer and its LAN does not cover where Burp
+  connects: keep `--allow-hosts` to the hosts you test. For the same reason,
+  `resolve` rules are refused with `--upstream-proxy`; use the proxy's own
+  overrides (Burp's Hostname resolution overrides). Plain HTTP shows up in Burp
+  under the IP address, with the name in its `Host` header.
 - With `--upstream-ca`, only that CA is trusted for HTTPS through the proxy; without
   it, the public CAs (for a proxy that does not decrypt).
-- Only HTTP(S) goes through the proxy. Another protocol over TLS to an allowed host
-  (MQTT, say) goes straight to its server, and with `--upstream-ca` it fails: the
+- Only HTTP(S) goes through the proxy. Other protocols to an allowed host (MQTT,
+  say) go straight to their servers; over TLS with `--upstream-ca` they fail: the
   server's certificate is checked against that CA. HTTPS without a server name
   (SNI), to a bare IP address, fails through Burp, which names its certificate
   after the address the way mitmproxy does not accept.
 - The proxy sees everything unmasked, and Burp keeps it in its project. Tried with
-  Burp Suite Community 2026.10; other proxies have not been tried.
+  Burp Suite Community 2026.10; other proxies have not been tried. Seen with Burp:
+  it holds a request body until the whole of it has come, and server-sent events
+  to an HTTP/1.1 client fail (to HTTP/2 clients, as iOS apps mostly are, they
+  stream). With `--web`, replaying a plain HTTP request from mitmweb sends it to
+  the proxy itself.
 
 ## What it keeps safe, and what it does not
 
