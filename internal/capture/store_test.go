@@ -147,8 +147,13 @@ func TestBodyTextPerBody(t *testing.T) {
 	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "request", "head": base64.StdEncoding.EncodeToString([]byte{0x1f, 0x8b, 0}), "size": 3, "final": true}))
 	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "response", "head": b64(`{"ok":true}`), "size": 11, "final": true}))
 	v, _ := st.Get("x", true)
-	if v.ReqBodyEnc != "base64" || v.RespBodyEnc != "" || v.RespBodyText != `{"ok":true}` {
+	// While masking, a head that is not text cannot be checked, so it is omitted.
+	if v.ReqBodyText != "" || v.ReqBodyEnc != omittedBody || v.RespBodyEnc != "" || v.RespBodyText != `{"ok":true}` {
 		t.Errorf("per body: req %q/%q resp %q/%q", v.ReqBodyText, v.ReqBodyEnc, v.RespBodyText, v.RespBodyEnc)
+	}
+	st.SetScope(HostRules{All: true}, false) // --no-redact
+	if v, _ := st.Get("x", true); v.ReqBodyEnc != "base64" || v.ReqBodyText == "" {
+		t.Errorf("--no-redact: req %q/%q", v.ReqBodyText, v.ReqBodyEnc)
 	}
 }
 

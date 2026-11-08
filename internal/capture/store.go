@@ -276,6 +276,13 @@ func (s *Store) Apply(line []byte) {
 		f.Rewrites = append(f.Rewrites, e.Rewrites...)
 	case "body":
 		head, _ := base64.StdEncoding.DecodeString(e.Head)
+		if s.redact {
+			h := f.RespHeaders
+			if e.Dir == "request" {
+				h = f.ReqHeaders
+			}
+			head = maskBody(head, header(h, "content-type"))
+		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
 		if e.Dir == "request" {
 			f.ReqBody = b
@@ -334,6 +341,7 @@ type Filter struct {
 	Query        string // case-insensitive text in the URL or header names and values (as stored, masked)
 	QueryBodies  bool   // Query also looks in the kept body heads
 	Before       int64  // cursor from a previous page: only older flows
+	textOnly     bool   // set by the store while masking: bodies that are not text are not searched
 	Limit        int
 }
 
@@ -372,10 +380,12 @@ func (q Filter) matchedIn(f *Flow) []string {
 		where = append(where, "response_headers")
 	}
 	if q.QueryBodies {
-		if bytes.Contains(bytes.ToLower(f.ReqBody.Head), []byte(needle)) {
+		// While masking, a head that is not text is never handed out, so it is
+		// not searched either: a match would tell what is in it.
+		if (!q.textOnly || isText(f.ReqBody.Head)) && containsFold(f.ReqBody.Head, needle) {
 			where = append(where, "request_body")
 		}
-		if bytes.Contains(bytes.ToLower(f.RespBody.Head), []byte(needle)) {
+		if (!q.textOnly || isText(f.RespBody.Head)) && containsFold(f.RespBody.Head, needle) {
 			where = append(where, "response_body")
 		}
 	}
@@ -391,9 +401,6 @@ func (q Filter) match(f *Flow, name string) bool {
 		q.Since != 0 && f.Start < q.Since,
 		q.Until != 0 && f.Start > q.Until,
 		q.Method != "" && !strings.EqualFold(f.Method, q.Method):
-		return false
-	}
-	if q.Query != "" && len(q.matchedIn(f)) == 0 {
 		return false
 	}
 	switch {
@@ -413,6 +420,7 @@ func (q Filter) match(f *Flow, name string) bool {
 func (s *Store) List(q Filter) ([]Summary, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	q.textOnly = s.redact
 	var out []Summary
 	var last int64
 	for i := len(s.order) - 1; i >= 0; i-- {
@@ -420,13 +428,17 @@ func (s *Store) List(q Filter) ([]Summary, int64) {
 		if !q.match(f, s.names[f.Device]) {
 			continue
 		}
+		var where []string
+		if q.Query != "" {
+			if where = q.matchedIn(f); len(where) == 0 {
+				continue
+			}
+		}
 		if len(out) == q.Limit {
 			return out, last
 		}
 		v := s.summary(f)
-		if q.Query != "" {
-			v.MatchedIn = q.matchedIn(f)
-		}
+		v.MatchedIn = where
 		out = append(out, v)
 		last = f.seq
 	}
@@ -633,10 +645,22 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 	}
 	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
 	if bodies {
-		v.ReqBodyText, v.ReqBodyEnc = bodyText(f.ReqBody.Head, f.ReqBody.Truncated)
-		v.RespBodyText, v.RespBodyEnc = bodyText(f.RespBody.Head, f.RespBody.Truncated)
+		v.ReqBodyText, v.ReqBodyEnc = s.bodyOut(f.ReqBody)
+		v.RespBodyText, v.RespBodyEnc = s.bodyOut(f.RespBody)
 	}
 	return v, nil
+}
+
+// omittedBody is what a head that is not text says instead: nothing in it can
+// be checked for secrets, so it is not handed out while masking is on.
+const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
+
+func (s *Store) bodyOut(b Body) (string, string) {
+	text, enc := bodyText(b.Head, b.Truncated)
+	if enc == "base64" && s.redact {
+		return "", omittedBody
+	}
+	return text, enc
 }
 
 func (s *Store) Stats() map[string]any {
@@ -677,7 +701,7 @@ func (s *Store) mask(v string) string {
 	if !s.redact {
 		return v
 	}
-	return maskURLs(v)
+	return maskTokens(maskURLs(v))
 }
 
 // maskError is mask for error messages, which can also quote raw bytes from
@@ -686,7 +710,7 @@ func (s *Store) maskError(v string) string {
 	if !s.redact {
 		return v
 	}
-	return quotedBytesRE.ReplaceAllString(maskURLs(v), "b'[redacted]'")
+	return quotedBytesRE.ReplaceAllString(maskTokens(maskURLs(v)), "b'[redacted]'")
 }
 
 var quotedBytesRE = regexp.MustCompile(`b'(?:[^'\\]|\\.)*'|b"(?:[^"\\]|\\.)*"`)
@@ -706,7 +730,9 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 		case secretName(name): // not WWW-Authenticate: its words are www and authenticate, a challenge that says why a 401 came
 			out[i][1] = "[redacted]"
 		case name == "referer" || name == "location" || name == "content-location":
-			out[i][1] = maskURLs(kv[1])
+			out[i][1] = maskTokens(maskURLs(kv[1]))
+		default:
+			out[i][1] = maskTokens(kv[1]) // a credential by its shape, under any header name
 		}
 	}
 	return out
@@ -820,4 +846,29 @@ func bodyText(b []byte, truncated bool) (string, string) {
 
 func isText(b []byte) bool {
 	return utf8.Valid(b) && !bytes.Contains(b, []byte{0})
+}
+
+// containsFold reports whether lowerNeedle (already lower case) occurs in b,
+// ignoring ASCII case, without copying b.
+func containsFold(b []byte, lowerNeedle string) bool {
+	n := len(lowerNeedle)
+	if n == 0 {
+		return true
+	}
+	for i := 0; i+n <= len(b); i++ {
+		j := 0
+		for ; j < n; j++ {
+			c := b[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != lowerNeedle[j] {
+				break
+			}
+		}
+		if j == n {
+			return true
+		}
+	}
+	return false
 }

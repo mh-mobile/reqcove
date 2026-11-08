@@ -40,8 +40,22 @@ Copying the directory to another computer copies the key.
   wherever a URL appears (`Referer`, `Location`, fragments such as
   `#/callback?access_token=`, error messages). Raw bytes that mitmproxy quotes in
   an error message (`b'…'`) are masked whole. `--no-redact` turns this off.
-- **Bodies are not masked.** They are kept up to 64 KiB each, in memory only, and
-  returned only when a tool is asked for them (`bodies`).
+- Bodies are masked as they arrive too, as far as they can be recognised: in JSON,
+  the string values of fields whose names are secret by the same words (except
+  `code` alone, which in a body is usually an error code); in forms, such fields'
+  values (`code` included: it carries OAuth authorization codes). Anywhere in a
+  header value, URL, body or error message, credentials recognisable by their
+  shape are masked: `Bearer`/`Basic`/`Token` values, JWTs, and keys with
+  well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs, Google API keys).
+  A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
+  a value cut before its closing quote is masked too.
+- **What this does not catch:** a secret under a name that does not say so
+  (`{"data": "…"}`), in arrays, or in formats other than JSON, forms and text
+  (protobuf, multipart, XML attributes). Personal data, such as e-mail addresses
+  and names, is not masked: debugging needs it. Bodies that are not text (or could
+  not be decompressed) cannot be checked, so they are neither handed out nor
+  searched while masking is on; `--no-redact` returns them.
+- Bodies are returned only when a tool is asked for them (`bodies`).
 - Records live in memory (at most 10,000 flows and 64 MiB of bodies) and are gone
   when `reqcove run` stops; no flow is written to disk. `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
@@ -100,6 +114,13 @@ Remote Proxy. Two things it does not catch:
 - **Replies to UDP.** While a device's UDP flow lasts (2 minutes after its last
   packet, 30 seconds for DNS), whatever arrives at the port it went out from, from
   any sender, is handed to the device, as with a full-cone NAT. (From reading code.)
+
+## The login URL
+
+While the node is not logged in, `reqcove run` prints a login URL. Whoever opens it
+first puts this node in their own tailnet, so it is printed in `run`'s terminal
+only: the `status` tool, and with it the agent and its model provider, says where
+to find it but does not carry it.
 
 ## Logs to Tailscale
 

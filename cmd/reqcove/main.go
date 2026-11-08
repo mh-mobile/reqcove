@@ -180,9 +180,7 @@ func run(ctx context.Context, args []string) error {
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
 	if err := mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store, func() mcpserver.StatusOut {
-		stats := cap.Store.Stats()
-		n := node.get()
-		return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, cap.CA, cap.Store.Devices())}
+		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
 	})); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}

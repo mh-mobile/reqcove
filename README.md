@@ -116,8 +116,12 @@ setting, so this works on Wi-Fi only.
 - Secrets are masked as they arrive: headers and query parameters whose names
   contain words such as authorization, token, secret, key or signature
   (`accessToken` and `X-Amz-Signature` too), cookie values, and the same
-  parameters in fragments, `Referer`, `Location` and error messages. **Bodies are
-  not masked.**
+  parameters in fragments, `Referer`, `Location` and error messages. In bodies,
+  the values of such JSON and form fields are masked, and so are credentials
+  recognisable by their shape (`Bearer …`, JWTs, keys such as `ghp_…`, `sk-…`,
+  `AKIA…`) anywhere. **Other secrets in a body, under names that do not say so,
+  are not found**, and personal data such as e-mail addresses is not masked.
+  Bodies that are not text cannot be checked, so they are not handed out.
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent; the tools say so.
 - Only reqcove may use mitmproxy's SOCKS5 port (a password made each run). The MCP

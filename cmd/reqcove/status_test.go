@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -195,5 +196,18 @@ func TestStrayArgument(t *testing.T) {
 	}
 	if err := cleanup([]string{"--state", t.TempDir(), "extra"}); err == nil {
 		t.Error("cleanup with a stray argument: no error")
+	}
+}
+
+// The login URL never reaches the status tool, and so never the agent.
+func TestStatusOutHidesLoginURL(t *testing.T) {
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	out := statusOut(exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.tailscale.com/a/S3CRET"}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil)
+	b, _ := json.Marshal(out)
+	if strings.Contains(string(b), "S3CRET") || strings.Contains(string(b), "login.tailscale.com") {
+		t.Errorf("login URL in the status tool: %s", b)
+	}
+	if !strings.Contains(strings.Join(out.NextSteps, "\n"), "prints in its terminal") {
+		t.Errorf("steps do not say where to log in: %v", out.NextSteps)
 	}
 }

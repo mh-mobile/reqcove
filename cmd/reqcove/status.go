@@ -14,6 +14,7 @@ import (
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
+	"github.com/mh-mobile/reqcove/internal/mcpserver"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -25,6 +26,14 @@ type nodeState struct {
 
 func (n *nodeState) set(s exitnode.Status) { n.mu.Lock(); n.s = s; n.mu.Unlock() }
 func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); return n.s }
+
+// statusOut is what the status tool returns. The login URL is left out: it
+// would reach the agent and its model provider, and whoever opens it first
+// puts this node in their own tailnet. The steps point at run's terminal instead.
+func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
+	n.AuthURL = ""
+	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices)}
+}
 
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {

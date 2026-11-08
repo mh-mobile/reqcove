@@ -235,7 +235,8 @@ func FirstStep(s Status) string {
 	case s.Backend == "NeedsLogin" && s.AuthURL != "":
 		return "log in: open " + s.AuthURL
 	case s.Backend == "NeedsLogin":
-		return "" // the login URL comes in a moment
+		// No URL yet, or left out on purpose (the status tool never carries it).
+		return "log in: open the login URL that `reqcove run` prints in its terminal"
 	case s.Backend == "NeedsMachineAuth":
 		return "approve this device in the admin console (Machines): your tailnet requires device approval"
 	case s.LockEnabled && !s.LockSigned && s.NodeKey != "":
