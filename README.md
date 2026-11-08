@@ -75,8 +75,8 @@ through a `replace` directive.
 2. On the iPhone, in the Tailscale app, choose the exit node `reqcove`.
 3. Still on the iPhone, with the exit node on, scan the QR code `reqcove run`
    prints with the Camera, or open `http://mitm.it` in Safari (type the `http://`
-   yourself; Safari may try HTTPS otherwise and warn); install the iOS profile,
-   and trust it in Settings › General › About › Certificate Trust Settings. The
+   yourself; Safari may try HTTPS otherwise and warn); install the iOS profile
+   (Settings › Profile Downloaded), and trust it in Settings › General › About › Certificate Trust Settings. The
    CA is named `Reqcove CA (<computer>, <date>)`.
 4. Give your agent the tools. For Claude Code:
 
@@ -113,9 +113,9 @@ setting, so this works on Wi-Fi only.
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
-| `--ui` | a read-only page of the flows on the iPhone itself (see below; after v0.1.0) |
+| `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
-| `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for `/etc/resolv.conf` |
+| `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out, after v0.1.0); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |
 
@@ -180,8 +180,10 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 ```
 
 - Decrypted requests go to the proxy (HTTPS in a CONNECT tunnel, plain HTTP as
-  proxy requests), never straight to the server. Hosts outside `--allow-hosts`
-  pass through directly, as always. Turn Burp's Intercept off, or requests wait
+  proxy requests), never straight to the server. Connections to hosts outside
+  `--allow-hosts` pass through directly, as always; but a request to another host
+  that rides on a decrypted connection to an allowed one (HTTP/2 connection
+  reuse) goes through the proxy too, unrecorded. Turn Burp's Intercept off, or requests wait
   in it.
 - Reqcove hands the proxy the address the iPhone connected to, but Burp connects to
   HTTPS hosts by the name in the SNI, looked up again on this computer (tried). So
@@ -196,8 +198,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   `--upstream-ca FILE` (PEM or DER). Otherwise the public CAs are used (for a
   proxy that does not decrypt).
 - Only HTTP(S) goes through the proxy. Other protocols to an allowed host (MQTT,
-  say) go straight to their servers; over TLS with the proxy's CA in use they
-  fail: the server's certificate is checked against that CA. HTTPS without a server name
+  say) go straight to their servers (from reading code); over TLS with the
+  proxy's CA in use they fail: the server's certificate is checked against that CA. HTTPS without a server name
   (SNI), to a bare IP address, fails through Burp, which names its certificate
   after the address the way mitmproxy does not accept.
 - The proxy sees everything unmasked, and Burp keeps it in its project. Tried with
@@ -243,7 +245,8 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   so apps fall back to TCP.
 - Phone calls through the exit node have not been tried.
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
-  can use a lot of memory (if mitmproxy runs out, reqcove restarts it).
+  can use a lot of memory (if mitmproxy runs out, reqcove restarts it; when it is down again within a minute
+  after 5 restarts in a row, `run` stops).
 - `map_local` answers only requests whose body is at most 1 MiB and of known length;
   others go on to the real destination (the record says so). An HTTP/2 GET without
   a length is answered too, and a body the device sends with it anyway is held

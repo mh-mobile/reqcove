@@ -2,7 +2,9 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so.
+come from reading code rather than from a test say so. It describes `main`:
+`--upstream-proxy`, `--ui`, and the 502 for a request a rule fails on are not in
+v0.1.0.
 
 ## Trust
 

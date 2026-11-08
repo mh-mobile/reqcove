@@ -109,7 +109,7 @@ func run(ctx context.Context, args []string) error {
 	})
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump, its UI on http://127.0.0.1:8081 (no masking, can edit and replay)")
-	noRedact := fs.Bool("no-redact", false, "keep Authorization, cookies and secret query values in the records")
+	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
@@ -157,7 +157,7 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	if *noRedact {
-		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
+		log.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
 	}
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
