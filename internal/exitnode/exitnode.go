@@ -87,6 +87,10 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.Verbose {
 		s.Logf = log.Printf
+	} else {
+		// tsnet's own lines (state paths, and the login URL every 5 s with
+		// advice about TS_AUTHKEY): reqcove says what to do itself, in watch.
+		s.UserLogf = func(string, ...any) {}
 	}
 	go logLoop()
 	// Registered before Start; until current is set, decideTCP rejects everything.
@@ -166,7 +170,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			status := nodeStatus(ctx, lc, st)
 			wasRunning = wasRunning || status.Backend == "Running"
 			status.WasRunning = wasRunning
-			if step := FirstStep(status); step != lastStep {
+			if step := runStep(status); step != lastStep {
 				lastStep = step
 				if step != "" {
 					log.Print(step)
@@ -232,6 +236,16 @@ func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Stat
 		}
 	}
 	return s
+}
+
+// runStep is FirstStep for `reqcove run`'s own terminal: while the login URL
+// is still on its way (a few seconds), nothing, rather than "open the URL that
+// `reqcove run` prints".
+func runStep(s Status) string {
+	if s.Backend == "NeedsLogin" && s.AuthURL == "" && !s.WasRunning {
+		return ""
+	}
+	return FirstStep(s)
 }
 
 // FirstStep is the one thing the user must do next for the node, or "".

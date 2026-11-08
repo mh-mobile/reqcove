@@ -2,8 +2,10 @@ package exitnode
 
 import (
 	"context"
+	"log"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,9 +62,30 @@ func runAgainst(t *testing.T, prep func(*testcontrol.Server)) (*testcontrol.Serv
 	return control, wait
 }
 
+// run's terminal shows the login URL once it is there, not the status tool's
+// "open the URL that reqcove run prints" while it is on its way.
+func TestRunStep(t *testing.T) {
+	if step := runStep(Status{Backend: "NeedsLogin"}); step != "" {
+		t.Errorf("before the URL: %q", step)
+	}
+	if step := runStep(Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}); !strings.Contains(step, "https://login.example/a/1") {
+		t.Errorf("with the URL: %q", step)
+	}
+	if step := runStep(Status{Backend: "NeedsLogin", WasRunning: true}); !strings.Contains(step, "start it again") {
+		t.Errorf("after the key expired: %q", step)
+	}
+}
+
 func TestStatusLoginNeeded(t *testing.T) {
+	var logs syncBuffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	control, wait := runAgainst(t, func(c *testcontrol.Server) { c.RequireAuth = true })
 	s := wait("asked to log in", func(s Status) bool { return s.Backend == "NeedsLogin" && s.AuthURL != "" })
+	time.Sleep(6 * time.Second) // tsnet would print its own login line every 5 s
+	if got := logs.String(); !strings.Contains(got, "log in: open "+s.AuthURL) || strings.Contains(got, "TS_AUTHKEY") || strings.Contains(got, "prints in its terminal") {
+		t.Errorf("run's log:\n%s", got)
+	}
 	if step := FirstStep(s); !strings.HasPrefix(step, "log in: open "+s.AuthURL) {
 		t.Errorf("step %q", step)
 	}
