@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,20 @@ func TestSecretName(t *testing.T) {
 		if got := secretName(name); got != want {
 			t.Errorf("secretName(%q) = %v, want %v (words %q)", name, got, want, nameWords(name))
 		}
+	}
+}
+
+// Headers count toward the byte bound, not only body heads: a site can send big ones.
+func TestHeadersCountTowardBytes(t *testing.T) {
+	st := NewStore(1000, 64<<10) // 64 KiB
+	big := strings.Repeat("h", 16<<10)
+	for i := range 20 {
+		id := fmt.Sprint(i)
+		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "host": "h", "url": "https://h/" + id}))
+		st.Apply(line(t, map[string]any{"ev": "response", "id": id, "status": 200, "headers": [][2]string{{"X-Big", big}}}))
+	}
+	s := st.Stats()
+	if s["held_bytes"].(int) > 64<<10 || s["evicted"].(int64) == 0 {
+		t.Errorf("20 x 16 KiB of headers under a 64 KiB bound: %v", s)
 	}
 }

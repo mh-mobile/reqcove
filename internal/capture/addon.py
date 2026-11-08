@@ -159,6 +159,7 @@ class _Head:
 
 
 RULE_KINDS = ("map_remote", "map_local", "modify_headers")
+MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
 
 
 def _parse_rule(kind, spec, base):
@@ -289,7 +290,10 @@ class Reqcove:
         if self.q.qsize() > 100000:
             self.dropped_events += 1
             return
-        self._put(msg, 512)
+        # Headers and URLs count toward the queue's byte budget too: a site can
+        # send large ones.
+        size = 512 + len(msg.get("url") or "") + sum(len(k) + len(v) for k, v in msg.get("headers") or [])
+        self._put(msg, size)
 
     def put_body(self, msg):
         size = len(msg["head"]) + 512
@@ -342,7 +346,12 @@ class Reqcove:
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
         map_remote and map_local run in request(), after the body, too late."""
         done = self._modify_headers(flow, flow.request.headers, "request")
-        self.rules["map_local"].request(flow)
+        if self._small_body(flow.request):
+            self.rules["map_local"].request(flow)
+        elif any(s.matches(flow) for s in self.rules["map_local"].replacements):
+            # A local answer would make mitmproxy buffer the whole request body
+            # (it cannot stream one that already has a response): only for small ones.
+            done.append("map_local: skipped, request body over 1 MiB or of unknown length")
         if flow.response:
             done.append(f"map_local: {flow.response.status_code}")
             return done
@@ -351,6 +360,18 @@ class Reqcove:
         if flow.request.pretty_url != before:
             done.append("map_remote")
         return done
+
+    @staticmethod
+    def _small_body(r):
+        """Whether a request's body is known to be at most MAP_LOCAL_BODY bytes."""
+        cl = r.headers.get("content-length")
+        if cl is not None:
+            try:
+                return int(cl) <= MAP_LOCAL_BODY
+            except ValueError:
+                return False
+        # No length: a body may follow (chunked, HTTP/2) unless the method takes none.
+        return r.method in ("GET", "HEAD", "OPTIONS", "DELETE") and "transfer-encoding" not in r.headers
 
     def _modify_headers(self, flow, headers, direction):
         mh = self.rules["modify_headers"]

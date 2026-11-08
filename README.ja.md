@@ -104,6 +104,8 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
 - IPv6 は拒否します（アプリはすぐに IPv4 にフォールバックします）。QUIC は Apple 宛て以外をドロップするので、アプリは TCP にフォールバックします。
 - Exit Node 経由の通話は試していません。
+- mitmproxy は WebSocket のメッセージを、届ききるまで1つずつ溜めます。巨大なメッセージが来るとメモリを多く使います（mitmproxy が落ちたら、reqcove が起動し直します）。
+- `map_local` が答えるのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。
 - iPhone が使用中に reqcove が停止すると、reqcove が復帰したあとも iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。その場合は Exit Node を一度オフにして、オンに戻してください。
 - コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません。
 

@@ -101,7 +101,17 @@ type Flow struct {
 	Error       string      `json:"error,omitempty"`
 }
 
-func (f *Flow) bytes() int { return len(f.ReqBody.Head) + len(f.RespBody.Head) }
+// bytes is what a flow holds that a site or an app controls the size of: the
+// body heads, and the headers, URLs and error text.
+func (f *Flow) bytes() int {
+	n := len(f.ReqBody.Head) + len(f.RespBody.Head) + len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error)
+	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
+		for _, kv := range h {
+			n += len(kv[0]) + len(kv[1])
+		}
+	}
+	return n
+}
 
 // TLSFailure is a client that refused the certificate mitmproxy showed it:
 // often certificate pinning, but also a CA not trusted yet, among others.

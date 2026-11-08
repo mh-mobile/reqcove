@@ -139,6 +139,10 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 - IPv6 is refused (apps fall back to IPv4 at once). QUIC is dropped except to Apple,
   so apps fall back to TCP.
 - Phone calls through the exit node have not been tried.
+- mitmproxy holds each WebSocket message until it is complete, so one huge message
+  can use a lot of memory (if mitmproxy runs out, reqcove restarts it).
+- `map_local` answers only requests whose body is at most 1 MiB and of known length;
+  others go on to the real destination (the record says so).
 - If reqcove stops while the iPhone uses it, the iPhone's DNS can stay stuck after
   reqcove is back ([tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)):
   turn the exit node off and on again.

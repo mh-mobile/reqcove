@@ -182,6 +182,14 @@ modify_headers:
 	if leaked {
 		t.Error("map_local still went to the origin")
 	}
+	// A large request body would be buffered whole for a local answer: such a
+	// request goes on to the origin instead, streamed.
+	if _, body := do("POST", "http://"+o+"/local/hello.json?big=1", strings.Repeat("u", 2<<20)); body != "origin /local/hello.json" {
+		t.Errorf("map_local with a 2 MiB body: %q", body)
+	}
+	if bv := h.doneFlow("/local/hello.json?big=1", false); !slices.Contains(bv.Rewrites, "map_local: skipped, request body over 1 MiB or of unknown length") {
+		t.Errorf("rewrites for the big body: %v", bv.Rewrites)
+	}
 
 	// Outside --allow-hosts (Host elsewhere.example on an allowed connection):
 	// no rule applies (the second map_remote would match), nothing is recorded.

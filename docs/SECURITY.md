@@ -56,7 +56,8 @@ Copying the directory to another computer copies the key.
   not be decompressed) cannot be checked, so they are neither handed out nor
   searched while masking is on; `--no-redact` returns them.
 - Bodies are returned only when a tool is asked for them (`bodies`).
-- Records live in memory (at most 10,000 flows and 64 MiB of bodies) and are gone
+- Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
+  URLs and error text together) and are gone
   when `reqcove run` stops; no flow is written to disk. `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
   sent in failing and malformed requests do not reach it).
