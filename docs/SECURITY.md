@@ -170,8 +170,9 @@ MCP tools return, masked the same way. Who can read it (each a test):
   what sites wrote into headers and bodies stays text; it is not cached
   (`no-store`). Pages still go through Safari: its history may keep the URLs of
   the flow pages viewed, and the first link with the token (useless without the
-  device, and changed at each start). A JSON body is indented only as long as that
-  stays within a few times its size.
+  device, and changed at each start). A JSON body nested deeper than 32 levels is
+  shown as it is, not indented (indenting deep nesting takes memory that grows
+  with the square of the depth).
 
 The token appears only in `run`'s terminal, as the login URL does: never in the
 MCP tools.
