@@ -116,6 +116,9 @@ so names sharing one would share one name's check, and are refused. A
 `map_remote` to a `resolve` target's address shares its connections, both ways:
 a request of one can ride on a connection made, and checked, for the other, and a
 failed connection fails both for as long as the app's connection lasts.
+A request a rule fails on (say, a `map_remote` making a bad port) is answered with
+a 502 rather than sent on as it was (a test), and a `map_remote` whose replacement
+cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
 
@@ -129,16 +132,15 @@ straight to their servers (from reading code; a review saw it). What changes:
 - The proxy sees the requests and responses unmasked, and Burp, for one, keeps them
   in its project, on disk. Its own MCP server or extensions give agents what
   Reqcove's tools hold back, and the ability to send requests.
-- Checking the real server's certificate is the proxy's job: with `--upstream-ca`,
-  Reqcove trusts only that CA, so it checks the proxy, not the server. Burp, by
+- Checking the real server's certificate is the proxy's job: with the proxy's CA
+  (`--upstream-ca`, or Burp's fetched at start), Reqcove trusts only that CA, so it
+  checks the proxy, not the server. Burp, by
   default, did not check (tried, a review).
 - Where the proxy connects is the proxy's choice. Reqcove hands it the address the
   exit node allowed, but Burp connects by the name in the SNI, looked up again on
   this computer (tried, a review): a name that resolves into this computer's LAN
   reaches it, past the exit node's refusal. `resolve` rules are refused with
   `--upstream-proxy` for this reason.
-- A request a rule fails on (say, map_remote making a bad port) is answered with a
-  502 rather than sent on as it was (a test).
 - The CONNECT lines (an IP address and port) and plain HTTP reach the proxy
   unencrypted: keep it on this computer, or on the tailnet.
 - The flag is read at start; no tool changes it.

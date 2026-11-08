@@ -188,7 +188,9 @@ MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known 
 def _parse_rule(kind, spec, base):
     """One rule in mitmproxy's syntax; files are relative to the rules file."""
     if kind == "map_remote":
-        return mapremote.parse_map_remote_spec(spec)
+        rule = mapremote.parse_map_remote_spec(spec)
+        re.sub(rule.subject, rule.replacement, "")  # a bad group reference (\\2) fails now, not on every request
+        return rule
     flt, subject, replacement = parse_spec(spec)
     if kind == "map_local":
         re.compile(subject)
@@ -340,6 +342,7 @@ class Reqcove:
                         if not self._in_scope(name):  # would never apply: a typo
                             raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
                 except Exception as e:  # reqcove reads it from the hello and refuses to start
+                    self.rules = None  # and none of it applies meanwhile
                     self.rules_error = str(e) if isinstance(e, ValueError) else type(e).__name__
                     if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
                         self.rules_error += f" at line {mark.line + 1}"
@@ -359,8 +362,8 @@ class Reqcove:
 
     def tls_start_server(self, data):
         # A connection a resolve rule made: TLS says, and is checked for, the
-        # name the app asked for, not the address. Here, not in server_connect:
-        # through an upstream proxy, server_connect sees only the proxy's address.
+        # name the app asked for, not the address. tls_start_server sees the
+        # server connection itself; server_connect, behind a tunnel, would not.
         name = self.resolve_sni.get((data.context.client.id, data.conn.address))
         if name:
             data.conn.sni = name
@@ -378,12 +381,19 @@ class Reqcove:
                 # mitmproxy would turn it into HTTP/1.1 itself and drop the
                 # authority, so the proxy would get "GET /path" alone. Do it
                 # here, keeping the Host the app sent (or keep_host_header's).
-                host, cookies = r.host_header, r.headers.get_all("Cookie")
+                host, cookies = r.host_header or r.pretty_host, r.headers.get_all("Cookie")
                 r.http_version = "HTTP/1.1"
                 r.headers["Host"] = host
                 if len(cookies) > 1:
                     r.headers["Cookie"] = "; ".join(cookies)
-            r.data.authority = f"{r.data.host}:{r.port}".encode()
+                # As mitmproxy does for a converted request: one request per
+                # connection (the app's HTTP/2 stream cannot reuse it, and
+                # left open, a proxy that keeps them alive runs out at five).
+                r.headers["Connection"] = "close"
+                if "content-length" not in r.headers and r.method not in ("GET", "HEAD", "OPTIONS", "DELETE", "TRACE"):
+                    r.headers["Transfer-Encoding"] = "chunked"  # a body of unknown length needs framing in HTTP/1.1
+            host = r.data.host
+            r.data.authority = (f"[{host}]" if ":" in host else host).encode() + f":{r.port}".encode()
             r.data.host, r.data.port = self.upstream
             flow.server_conn = connection.Server(address=self.upstream)
         else:

@@ -178,8 +178,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   `--upstream-ca FILE` (PEM or DER). Otherwise the public CAs are used (for a
   proxy that does not decrypt).
 - Only HTTP(S) goes through the proxy. Other protocols to an allowed host (MQTT,
-  say) go straight to their servers; over TLS with `--upstream-ca` they fail: the
-  server's certificate is checked against that CA. HTTPS without a server name
+  say) go straight to their servers; over TLS with the proxy's CA in use they
+  fail: the server's certificate is checked against that CA. HTTPS without a server name
   (SNI), to a bare IP address, fails through Burp, which names its certificate
   after the address the way mitmproxy does not accept.
 - The proxy sees everything unmasked, and Burp keeps it in its project. Tried with

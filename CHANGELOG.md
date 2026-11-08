@@ -15,8 +15,9 @@
   Tailscale CLI, when there is one), and it prints the `claude mcp add` command.
 - A request a `--rules` rule fails on (such as a `map_remote` making a bad port)
   is answered with a 502 instead of going on unrewritten.
-- `resolve` sets the SNI in `tls_start_server`, so it also holds through a proxy;
-  `resolve` and `--upstream-proxy` are refused together (Burp connects by name).
+- `resolve` and `--upstream-proxy` are refused together: Burp connects by the
+  name, so a `resolve` rule would not apply. A `map_remote` whose replacement
+  cannot work (a missing group) stops `run` at start.
 - Dependencies: klauspost/compress v1.20.2 (GO-2026-6865), golang.org/x/net
   v0.62.0.
 - CI runs every end-to-end test, `staticcheck` and `govulncheck`.

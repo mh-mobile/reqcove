@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/pem"
 	"fmt"
@@ -9,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/textproto"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,19 +61,25 @@ func startUpstream(t *testing.T) *upstreamProxy {
 	return u
 }
 
-// serve notes the request line and the Host header as they came: Go's
-// parser replaces Host with the URL's host for a proxy request.
+// serve notes the request line and the Host header as they came (Go's
+// parser replaces Host with the URL's host for a proxy request). Like a real
+// proxy, it keeps a connection alive for the next proxy request.
 func (u *upstreamProxy) serve(c net.Conn) {
 	defer c.Close()
 	br := bufio.NewReader(c)
+	for u.serveOne(c, br) {
+	}
+}
+
+func (u *upstreamProxy) serveOne(c net.Conn, br *bufio.Reader) (again bool) {
 	tp := textproto.NewReader(br)
 	line, err := tp.ReadLine()
 	if err != nil {
-		return
+		return false
 	}
 	hdr, err := tp.ReadMIMEHeader()
 	if err != nil {
-		return
+		return false
 	}
 	method, target, _ := strings.Cut(line, " ")
 	target, _, _ = strings.Cut(target, " ")
@@ -85,21 +94,38 @@ func (u *upstreamProxy) serve(c net.Conn) {
 		fmt.Fprint(c, "HTTP/1.1 200 Connection established\r\n\r\n")
 		go io.Copy(s, br)
 		io.Copy(c, s)
-		return
+		return false
 	}
-	u.note(method + " " + target + " Host:" + hdr.Get("Host"))
-	req, err := http.NewRequest(method, target, nil) // GET only, in these tests
+	u.note(method + " " + target + " Host:" + hdr.Get("Host") + " Cookie:" + strings.Join(hdr.Values("Cookie"), "|"))
+	var body io.Reader
+	switch {
+	case strings.EqualFold(hdr.Get("Transfer-Encoding"), "chunked"):
+		body = httputil.NewChunkedReader(br)
+	case hdr.Get("Content-Length") != "":
+		n, _ := strconv.Atoi(hdr.Get("Content-Length"))
+		body = io.LimitReader(br, int64(n))
+	}
+	var b []byte
+	if body != nil {
+		b, _ = io.ReadAll(body)
+		if body != nil && strings.EqualFold(hdr.Get("Transfer-Encoding"), "chunked") {
+			textproto.NewReader(br).ReadMIMEHeader() // the trailer's end
+		}
+	}
+	req, err := http.NewRequest(method, target, bytes.NewReader(b))
 	if err != nil {
-		return
+		fmt.Fprint(c, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+		return false
 	}
 	req.Host = hdr.Get("Host")
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
-		fmt.Fprint(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
-		return
+		fmt.Fprint(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+		return false
 	}
 	defer resp.Body.Close()
 	resp.Write(c)
+	return !strings.EqualFold(hdr.Get("Connection"), "close")
 }
 
 // TestUpstream: with --upstream-proxy, decrypted requests go on through it
@@ -125,6 +151,11 @@ func TestUpstream(t *testing.T) {
 	origin.StartTLS()
 	defer origin.Close()
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			b, _ := io.ReadAll(r.Body)
+			fmt.Fprintf(w, "plain got %q", b)
+			return
+		}
 		fmt.Fprintf(w, "plain %s %s", r.Host, r.URL.Path)
 	}))
 	defer plain.Close()
@@ -184,7 +215,7 @@ map_remote:
 	if code, body := get("http://"+p+"/plain", ""); code != 200 || body != "plain "+p+" /plain" {
 		t.Errorf("plain HTTP through the upstream: %d %q", code, body)
 	}
-	if want := "GET http://" + p + "/plain Host:" + p; !slices.Contains(up.all(), want) {
+	if want := "GET http://" + p + "/plain Host:" + p + " "; !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, want) }) {
 		t.Errorf("the upstream did not get %q as a proxy request: %v", want, up.all())
 	}
 
@@ -193,7 +224,7 @@ map_remote:
 	if code, _ := get("http://"+p+"/oos", "elsewhere.example"); code != 200 {
 		t.Errorf("out-of-scope request through the upstream: %d", code)
 	}
-	if want := "GET http://" + p + "/oos Host:elsewhere.example"; !slices.Contains(up.all(), want) {
+	if want := "GET http://" + p + "/oos Host:elsewhere.example "; !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, want) }) {
 		t.Errorf("the out-of-scope request did not go through the upstream: %v", up.all())
 	}
 
@@ -211,8 +242,38 @@ map_remote:
 			t.Errorf("HTTP/2 map_remote to http: HTTP/%d %q", r.ProtoMajor, b)
 		}
 	}
-	if want := "GET http://" + p + "/landed/x Host:" + o; !slices.Contains(up.all(), want) {
-		t.Errorf("the upstream did not get %q: %v", want, up.all())
+	if !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, "GET http://"+p+"/landed/x Host:"+o+" ") }) {
+		t.Errorf("the upstream did not get the HTTP/2 request as a proxy request: %v", up.all())
+	}
+	// More than five on one HTTP/2 connection, through a proxy that keeps
+	// connections alive: none waits for a connection left open.
+	for i := range 8 {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://%s/maph2/many%d", o, i), nil)
+		if r, err := h2.Do(req); err != nil {
+			t.Errorf("HTTP/2 request %d through a keep-alive proxy: %v", i, err)
+		} else {
+			r.Body.Close()
+		}
+		cancel()
+	}
+	// A body of unknown length, and two cookies, from an HTTP/2 app.
+	req, _ := http.NewRequest("POST", "https://"+o+"/maph2/post", io.MultiReader(strings.NewReader("hello world")))
+	req.Header.Add("Cookie", "a=1")
+	req.Header.Add("Cookie", "b=2")
+	if r, err := h2.Do(req); err != nil {
+		t.Errorf("HTTP/2 POST of unknown length: %v", err)
+	} else {
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if string(b) != `plain got "hello world"` {
+			t.Errorf("HTTP/2 POST of unknown length: the server got %q", b)
+		}
+	}
+	if !slices.ContainsFunc(up.all(), func(s string) bool {
+		return strings.Contains(s, "/landed/post ") && strings.HasSuffix(s, "Cookie:a=1; b=2")
+	}) {
+		t.Errorf("cookies not joined into one header: %v", up.all())
 	}
 
 	// A rule that fails on a request (a bad port) stops it: it does not go on
@@ -223,6 +284,9 @@ map_remote:
 	}
 	if tlsConns.Load() != before {
 		t.Error("a failed rule let the request go to the server")
+	}
+	if v := h.doneFlow("/badport/y", false); v.Status != 502 || !slices.ContainsFunc(v.Rewrites, func(s string) bool { return strings.HasPrefix(s, "rules failed") }) {
+		t.Errorf("failed rule, record: status %d rewrites %v", v.Status, v.Rewrites)
 	}
 
 	// The upstream down: an error, and the server is not reached around it
@@ -263,9 +327,16 @@ func TestUpstreamIPv6(t *testing.T) {
 	defer ln.Close()
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
 	defer plain.Close()
+	// and a server on [::1] that map_remote sends a request to
+	v6, _ := net.Listen("tcp", "[::1]:0")
+	v6srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "v6 "+r.URL.Path) })}
+	go v6srv.Serve(v6)
+	defer v6srv.Close()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf("map_remote:\n  - \"|//%s/v6map/|//%s/\"\n", plain.Listener.Addr(), v6.Addr())), 0o600)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream = ln.Addr().String() })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream, c.Rules = ln.Addr().String(), rules })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +347,16 @@ func TestUpstreamIPv6(t *testing.T) {
 	r.Body.Close()
 	if r.StatusCode != 200 || !slices.ContainsFunc(up.all(), func(s string) bool { return strings.Contains(s, "/v6") }) {
 		t.Errorf("through [::1]: %d, upstream saw %v", r.StatusCode, up.all())
+	}
+	// To an IPv6 server: the proxy request names it in brackets.
+	r, err = h.client("dev").Get(plain.URL + "/v6map/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if string(b) != "v6 /x" {
+		t.Errorf("map_remote to [::1] through the upstream: %d %q, upstream saw %v", r.StatusCode, b, up.all())
 	}
 }
 

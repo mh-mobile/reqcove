@@ -324,6 +324,7 @@ func TestRulesRefused(t *testing.T) {
 		"resolve metadata":            {"resolve: [\"127.0.0.1=169.254.169.254\"]\n", "resolve[0]: 127.0.0.1: 169.254.169.254 cannot be a target"},
 		"resolve name target":         {"resolve: [\"127.0.0.1=localhost\"]\n", "resolve[0]: 127.0.0.1: the target must be an IPv4 address"},
 		"resolve wildcard":            {"resolve: [\"*.example=192.0.2.1\"]\n", "resolve[0]: write name=IPv4"},
+		"map_remote bad group":        {"map_remote: [\"|//a.example/|//b.example/\\\\2\"]\n", "map_remote[0]: "},
 		"keep host not bool":          {"keep_host_header: \"yes\"\n", "keep_host_header must be true or false"},
 		"resolve shared ip, one port": {"resolve: [\"127.0.0.1=192.0.2.1:8443\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
 		"resolve shared target":       {"resolve: [\"127.0.0.1=192.0.2.1\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
