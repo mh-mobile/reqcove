@@ -14,6 +14,7 @@ identity=${REQCOVE_SIGN_IDENTITY:-Developer ID Application}
 profile=${REQCOVE_NOTARY_PROFILE:-reqcove-notary}
 cd "$(dirname "$0")/.."
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "$version^{commit}")" ] || { echo "check out $version first" >&2; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "uncommitted or untracked files: the build must be exactly $version" >&2; exit 1; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -26,7 +27,15 @@ codesign --verify --strict "$work/$name/reqcove"
 
 # Notarize. A bare binary cannot be stapled; Gatekeeper looks the ticket up online.
 ditto -c -k "$work/$name/reqcove" "$work/notarize.zip"
-xcrun notarytool submit "$work/notarize.zip" --keychain-profile "$profile" --wait
+# notarytool exits 0 for Invalid and Rejected too; only Accepted goes on.
+xcrun notarytool submit "$work/notarize.zip" --keychain-profile "$profile" --wait --output-format json > "$work/notary.json"
+status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$work/notary.json")
+if [ "$status" != "Accepted" ]; then
+  id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$work/notary.json")
+  echo "notarization: $status" >&2
+  [ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$profile" >&2
+  exit 1
+fi
 
 go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/reqcove --save_path="$work/$name/third_party_licenses"
 cp "$(go list -m -f '{{.Dir}}' tailscale.com)/PATENTS" "$work/$name/third_party_licenses/tailscale.com/"
