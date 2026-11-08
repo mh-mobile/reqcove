@@ -42,6 +42,14 @@ go build -o reqcove ./cmd/reqcove
 `go install …@version` does not work: Reqcove uses a fork of Tailscale's tsnet
 through a `replace` directive.
 
+The macOS binaries in releases are not signed with a Developer ID or notarized.
+Downloaded with `curl` they run; downloaded with a browser, macOS kills them
+on start (exit status 137) until you remove the download mark:
+
+```sh
+xattr -dr com.apple.quarantine reqcove_*_darwin_arm64
+```
+
 ## Use
 
 1. Start it on the computer, naming the iPhone (as in `tailscale status`) and the
