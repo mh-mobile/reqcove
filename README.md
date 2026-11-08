@@ -113,10 +113,11 @@ setting, so this works on Wi-Fi only.
 - Only the hosts in `--allow-hosts` are decrypted and recorded; requests to other
   hosts on the same connection are counted, not recorded. Apple's hosts always pass
   through undecrypted.
-- Secrets are masked as they arrive: `Authorization`, `Proxy-Authorization`,
-  headers whose names say key, token or secret, cookie values, secret-looking
-  query parameters (also in fragments, `Referer` and `Location`), and error
-  messages. **Bodies are not masked.**
+- Secrets are masked as they arrive: headers and query parameters whose names
+  contain words such as authorization, token, secret, key or signature
+  (`accessToken` and `X-Amz-Signature` too), cookie values, and the same
+  parameters in fragments, `Referer`, `Location` and error messages. **Bodies are
+  not masked.**
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent; the tools say so.
 - Only reqcove may use mitmproxy's SOCKS5 port (a password made each run). The MCP

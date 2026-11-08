@@ -28,6 +28,8 @@ func TestNoSecretInAnyTool(t *testing.T) {
 		{"cookie", "other=S3CRET-5"},
 		{"X-Api-Key", "S3CRET-6"},
 		{"X-Auth-Token", "S3CRET-7"},
+		{"Ocp-Apim-Subscription-Key", "S3CRET-21"},
+		{"X-Client-Key", "S3CRET-22"},
 		{"Referer", "https://app.example/cb?code=S3CRET-8&state=ok"},
 		{"Origin", "https://app.example"},
 		{"User-Agent", "App/1.0"},
@@ -39,15 +41,19 @@ func TestNoSecretInAnyTool(t *testing.T) {
 		"https://api.example.com/a?x=1&api_key=S3CRET-12#frag",     // before a fragment
 		"https://api.example.com/cb#access_token=S3CRET-13&type=x", // OAuth implicit flow: in the fragment
 		"https://api.example.com/a;sessionid=S3CRET-14",
+		"https://api.example.com/a?accessToken=S3CRET-23&authToken=S3CRET-24&oauth_token=S3CRET-25&session_id=S3CRET-26",
+		"https://bucket.s3.example.com/f?X-Amz-Signature=S3CRET-27&X-Amz-Security-Token=S3CRET-28&X-Goog-Signature=S3CRET-29&jsessionid=S3CRET-30",
+		"https://api.example.com/a?view=1;token=S3CRET-31",
 	}
 	for i, u := range urls {
 		id := string(rune('a' + i))
 		ev(map[string]any{"ev": "request", "id": id, "device": "dev", "method": "GET", "host": "api.example.com", "url": u, "path": u[len("https://api.example.com"):], "ts": 1794000000 + i, "headers": headers})
 		ev(map[string]any{"ev": "response", "id": id, "status": 302, "headers": [][2]string{
 			{"Set-Cookie", "sid=S3CRET-15; HttpOnly"}, {"set-cookie", "x=S3CRET-16"},
-			{"Location", "https://app.example/next?token=S3CRET-17"}, {"Content-Location", "/c?key=S3CRET-18"},
+			{"Location", "https://app.example/#/callback?access_token=S3CRET-17"}, {"Content-Location", "/c?key=S3CRET-18"},
+			{"WWW-Authenticate", `Bearer realm="api", error="invalid_token"`},
 		}})
-		ev(map[string]any{"ev": "error", "id": id, "msg": "connection to https://api.example.com/a?token=S3CRET-19 failed"})
+		ev(map[string]any{"ev": "error", "id": id, "msg": "connection to https://api.example.com/a?token=S3CRET-19 failed; HTTP/1 protocol error: Invalid header line: b'Set-Cookie sid=S3CRET-32'"})
 	}
 	ev(map[string]any{"ev": "tls_failed", "conn": "c1", "device": "dev", "sni": "api.example.com", "ts": 1794000100, "msg": "handshake for https://api.example.com/?key=S3CRET-20"})
 	st.SetDeviceNames(map[string]string{"dev": "iphone"})
@@ -89,7 +95,7 @@ func TestNoSecretInAnyTool(t *testing.T) {
 		}
 	}
 	// The masking must not eat what is not secret.
-	for _, keep := range []string{"state=ok", "page=2", "theme", "App/1.0", "https://app.example", "type=x"} {
+	for _, keep := range []string{"state=ok", "page=2", "theme", "App/1.0", "https://app.example", "type=x", "view=1", `error=\"invalid_token\"`} {
 		if !strings.Contains(out, keep) {
 			t.Errorf("over-masked: %q is gone", keep)
 		}

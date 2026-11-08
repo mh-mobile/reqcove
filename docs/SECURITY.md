@@ -30,11 +30,15 @@ Copying the directory to another computer copies the key.
   requests to others, as with HTTP/2 connection reuse). Requests and TLS failures
   outside the list are counted, never recorded.
 - Apple's hosts always pass through undecrypted.
-- Secrets are masked as they arrive, so no tool can return them: `Authorization`,
-  `Proxy-Authorization`, headers whose names say auth, token, secret, password,
-  api-key, session, credential or signature, cookie values (names stay),
-  secret-looking query parameters (in URLs, fragments, `Referer`, `Location` and
-  error messages). `--no-redact` turns this off.
+- Secrets are masked as they arrive, so no tool can return them: the values of
+  headers and of query parameters whose names contain one of the words
+  authorization, auth, token, secret, password, session, signature, credential,
+  key, jwt or code (names are split into words, so `accessToken`,
+  `X-Amz-Signature` and `Ocp-Apim-Subscription-Key` count, while `author` and
+  `keyword` do not); cookie values (names stay); and the same query parameters
+  wherever a URL appears (`Referer`, `Location`, fragments such as
+  `#/callback?access_token=`, error messages). Raw bytes that mitmproxy quotes in
+  an error message (`b'…'`) are masked whole. `--no-redact` turns this off.
 - **Bodies are not masked.** They are kept up to 64 KiB each, in memory only, and
   returned only when a tool is asked for them (`bodies`).
 - Records live in memory (at most 10,000 flows and 64 MiB of bodies) and are gone

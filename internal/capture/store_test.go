@@ -151,3 +151,17 @@ func TestBodyTextPerBody(t *testing.T) {
 		t.Errorf("per body: req %q/%q resp %q/%q", v.ReqBodyText, v.ReqBodyEnc, v.RespBodyText, v.RespBodyEnc)
 	}
 }
+
+func TestSecretName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Authorization": true, "X-Auth-Token": true, "accessToken": true, "oauth_token": true, "session_id": true,
+		"X-Amz-Signature": true, "X-Amz-Credential": true, "Ocp-Apim-Subscription-Key": true, "apiKey": true, "api-key": true,
+		"jsessionid": true, "PHPSESSID": true, "code": true, "jwt": true, "client_secret": true,
+		"author": false, "keyword": false, "monkey": false, "page": false, "state": false, "User-Agent": false,
+		"Content-Type": false, "Accept": false, "view": false, "type": false, "codec": false,
+	} {
+		if got := secretName(name); got != want {
+			t.Errorf("secretName(%q) = %v, want %v (words %q)", name, got, want, nameWords(name))
+		}
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -238,7 +239,7 @@ func (s *Store) Apply(line []byte) {
 			s.outOfScope++ // only hosts in --allow-hosts are recorded, failures included
 			return
 		}
-		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, s.mask(e.Msg), e.TS})
+		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, s.maskError(e.Msg), e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
 		}
@@ -284,7 +285,7 @@ func (s *Store) Apply(line []byte) {
 	case "done":
 		f.End, f.State = e.TSEnd, "done"
 	case "error":
-		f.Error, f.State = s.mask(e.Msg), "error"
+		f.Error, f.State = s.maskError(e.Msg), "error"
 	case "ws":
 		f.WSMessages++
 		f.WSBytes += e.Size
@@ -679,6 +680,17 @@ func (s *Store) mask(v string) string {
 	return maskURLs(v)
 }
 
+// maskError is mask for error messages, which can also quote raw bytes from
+// the wire (mitmproxy: "Invalid header line: b'Set-Cookie sid=…'").
+func (s *Store) maskError(v string) string {
+	if !s.redact {
+		return v
+	}
+	return quotedBytesRE.ReplaceAllString(maskURLs(v), "b'[redacted]'")
+}
+
+var quotedBytesRE = regexp.MustCompile(`b'(?:[^'\\]|\\.)*'|b"(?:[^"\\]|\\.)*"`)
+
 func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	if !s.redact {
 		return h
@@ -691,7 +703,7 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
 			out[i][1] = maskCookies(kv[1], ";", true)
-		case secretHeader(name):
+		case secretName(name): // not WWW-Authenticate: its words are www and authenticate, a challenge that says why a 401 came
 			out[i][1] = "[redacted]"
 		case name == "referer" || name == "location" || name == "content-location":
 			out[i][1] = maskURLs(kv[1])
@@ -700,17 +712,54 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	return out
 }
 
-// secretHeader reports whether a header's whole value is a secret: the
-// authorization headers and any whose name says it carries a key or token
-// (X-Api-Key, X-Auth-Token, X-Amz-Security-Token, ...). Masking a harmless
-// header by mistake costs little; missing a key does not.
-func secretHeader(name string) bool {
-	for _, w := range []string{"auth", "token", "secret", "password", "passwd", "api-key", "api_key", "apikey", "session", "credential", "signature"} {
-		if strings.Contains(name, w) {
+// secretName reports whether a header or parameter name says it carries a
+// secret. Names are split into words (accessToken, X-Amz-Signature,
+// oauth_token, Ocp-Apim-Subscription-Key), so the words, not substrings,
+// decide: author and keyword are not secrets. Masking a harmless value by
+// mistake costs little; missing a key does not.
+func secretName(name string) bool {
+	for _, w := range nameWords(name) {
+		if secretWords[w] {
 			return true
 		}
 	}
 	return false
+}
+
+var secretWords = map[string]bool{
+	"authorization": true, "auth": true, "token": true, "secret": true, "password": true, "passwd": true, "pwd": true,
+	"session": true, "sessionid": true, "jsessionid": true, "phpsessid": true, "sid": true,
+	"signature": true, "sig": true, "credential": true, "credentials": true,
+	"key": true, "apikey": true, "jwt": true, "code": true,
+}
+
+// nameWords splits a name at non-alphanumerics and lower-to-upper case
+// changes, in lower case: "X-Amz-Signature" -> x amz signature, "accessToken" -> access token.
+func nameWords(name string) []string {
+	var words []string
+	var w []rune
+	flush := func() {
+		if len(w) > 0 {
+			words = append(words, strings.ToLower(string(w)))
+			w = w[:0]
+		}
+	}
+	prevLower := false
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if unicode.IsUpper(r) && prevLower {
+				flush()
+			}
+			w = append(w, r)
+			prevLower = unicode.IsLower(r) || unicode.IsDigit(r)
+		default:
+			flush()
+			prevLower = false
+		}
+	}
+	flush()
+	return words
 }
 
 // maskCookies keeps each cookie's name, so it shows which cookies went, and
@@ -731,16 +780,10 @@ func maskCookies(v, sep string, oneCookie bool) string {
 	return strings.Join(parts, sep)
 }
 
-// secretParams are query parameters whose values are masked.
-var secretParams = map[string]bool{
-	"token": true, "access_token": true, "refresh_token": true, "id_token": true,
-	"api_key": true, "apikey": true, "key": true, "secret": true, "client_secret": true,
-	"password": true, "passwd": true, "session": true, "sessionid": true, "sid": true,
-	"auth": true, "code": true, "signature": true, "sig": true,
-}
-
-// A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the fragment).
-var queryRE = regexp.MustCompile(`([?&;#])([^=&#\s]+)=([^&#\s]*)`)
+// A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the
+// fragment, sometimes after a route: #/callback?access_token=). Names stop at
+// / and ?, values at ;, so "#/cb?token=" and "?view=1;token=" are both seen.
+var queryRE = regexp.MustCompile(`([?&;#])([^=&#;?/\s]+)=([^&#;\s]*)`)
 
 // maskURLs masks the values of secret query parameters anywhere in v.
 func maskURLs(v string) string {
@@ -750,7 +793,7 @@ func maskURLs(v string) string {
 		if err != nil {
 			name = sub[2]
 		}
-		if secretParams[strings.ToLower(name)] {
+		if secretName(name) {
 			return sub[1] + sub[2] + "=REDACTED"
 		}
 		return m
