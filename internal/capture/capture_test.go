@@ -183,6 +183,11 @@ func TestEndToEnd(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "a=1")
 		w.Header().Add("Set-Cookie", "b=2")
+		if r.URL.Path == "/many-headers" { // a site can send many: the record keeps a bounded number
+			for i := range 600 {
+				w.Header().Add(fmt.Sprintf("X-H%d", i), "v")
+			}
+		}
 		fmt.Fprintf(w, "ok%s", r.URL.Path)
 	}))
 	defer backend.Close()
@@ -307,6 +312,14 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if len(fails) == 0 || fails[0].Time == "" {
 		t.Errorf("TLS failure not recorded with its device: %+v (stats %v)", fails, h.stats())
+	}
+
+	if r, err := hc.Get(backend.URL + "/many-headers"); err == nil {
+		r.Body.Close()
+		v := h.doneFlow("/many-headers", false)
+		if n := len(v.RespHeaders); n > 257 || header(v.RespHeaders, "x-reqcove-note") == "" {
+			t.Errorf("600 response headers recorded as %d, note %q", n, header(v.RespHeaders, "x-reqcove-note"))
+		}
 	}
 
 	// Only reqcove, which knows the secret, may use the SOCKS5 listener.

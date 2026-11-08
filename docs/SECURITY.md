@@ -59,9 +59,12 @@ Copying the directory to another computer copies the key.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`), in arrays, or in formats other than JSON, forms and text
   (protobuf, multipart, XML attributes). Personal data, such as e-mail addresses
-  and names, is not masked: debugging needs it. Bodies that are not text (or could
-  not be decompressed) cannot be checked, so they are neither handed out nor
-  searched while masking is on; `--no-redact` returns them.
+  and names, is not masked: debugging needs it. A body is handed out and searched
+  only if masking could look at it: decoded (not wire bytes of an encoding it
+  could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
+  with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
+  included, are neither handed out nor searched while masking is on;
+  `--no-redact` returns them.
 - Bodies are returned only when a tool is asked for them (`bodies`).
 - Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
   URLs and error text together) and are gone

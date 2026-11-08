@@ -107,7 +107,7 @@ func (f *Flow) bytes() int {
 	n := len(f.ReqBody.Head) + len(f.RespBody.Head) + len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error) + len(f.Reason)
 	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
 		for _, kv := range h {
-			n += len(kv[0]) + len(kv[1])
+			n += len(kv[0]) + len(kv[1]) + 64 // and the strings' and slot's own overhead
 		}
 	}
 	return n
@@ -399,10 +399,10 @@ func (q Filter) matchedIn(f *Flow) []string {
 		}, q.Query)
 		// While masking, a head that is not text is never handed out, so it is
 		// not searched either: a match would tell what is in it.
-		if (!q.textOnly || isText(f.ReqBody.Head)) && containsFold(f.ReqBody.Head, needle) {
+		if (!q.textOnly || checkable(f.ReqBody, f.ReqHeaders)) && containsFold(f.ReqBody.Head, needle) {
 			where = append(where, "request_body")
 		}
-		if (!q.textOnly || isText(f.RespBody.Head)) && containsFold(f.RespBody.Head, needle) {
+		if (!q.textOnly || checkable(f.RespBody, f.RespHeaders)) && containsFold(f.RespBody.Head, needle) {
 			where = append(where, "response_body")
 		}
 	}
@@ -662,8 +662,8 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 	}
 	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
 	if bodies {
-		v.ReqBodyText, v.ReqBodyEnc = s.bodyOut(f.ReqBody)
-		v.RespBodyText, v.RespBodyEnc = s.bodyOut(f.RespBody)
+		v.ReqBodyText, v.ReqBodyEnc = s.bodyOut(f.ReqBody, f.ReqHeaders)
+		v.RespBodyText, v.RespBodyEnc = s.bodyOut(f.RespBody, f.RespHeaders)
 	}
 	return v, nil
 }
@@ -672,12 +672,48 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 // be checked for secrets, so it is not handed out while masking is on.
 const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
 
-func (s *Store) bodyOut(b Body) (string, string) {
-	text, enc := bodyText(b.Head, b.Truncated)
-	if enc == "base64" && s.redact {
+func (s *Store) bodyOut(b Body, headers [][2]string) (string, string) {
+	if s.redact && !checkable(b, headers) {
 		return "", omittedBody
 	}
-	return text, enc
+	return bodyText(b.Head, b.Truncated)
+}
+
+// checkable: masking can only have looked at a head that was decoded (not
+// wire bytes of an encoding it could not undo) and is text by its content
+// type (or, with none, by its bytes alone). A protobuf can be valid UTF-8.
+func checkable(b Body, headers [][2]string) bool {
+	if len(b.Head) == 0 {
+		return true
+	}
+	if !b.Decoded {
+		return false
+	}
+	head := trimCutRune(b.Head)
+	ct, _, _ := strings.Cut(strings.ToLower(header(headers, "content-type")), ";")
+	ct = strings.TrimSpace(ct)
+	switch {
+	case ct == "":
+		return strictText(head)
+	case strings.HasPrefix(ct, "text/"), strings.HasSuffix(ct, "+json"), strings.HasSuffix(ct, "+xml"),
+		ct == "application/json", ct == "application/xml", ct == "application/javascript",
+		ct == "application/x-www-form-urlencoded", ct == "application/graphql", ct == "application/x-ndjson":
+		return isText(head)
+	}
+	return false
+}
+
+// strictText: UTF-8 with no control characters but tab, newline and return.
+func strictText(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for _, c := range b {
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) Stats() map[string]any {
@@ -745,7 +781,10 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
 			out[i][1] = maskCookies(kv[1], ";", true)
-		case secretName(name): // not WWW-Authenticate: its words are www and authenticate, a challenge that says why a 401 came
+		case strings.HasSuffix(name, "-authenticate"):
+			// WWW-Authenticate, Proxy-Authenticate: a challenge (scheme, realm, error),
+			// not a credential, and what says why a 401 came
+		case secretName(kv[0]): // the name as sent: X-ClientKey splits into client and key
 			out[i][1] = "[redacted]"
 		case name == "referer" || name == "location" || name == "content-location":
 			out[i][1] = maskTokens(maskURLs(kv[1]))
@@ -875,11 +914,15 @@ func maskCookies(v, sep string, oneCookie bool) string {
 
 // A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the
 // fragment, sometimes after a route: #/callback?access_token=). Names stop at
-// / and ?, values at ;, so "#/cb?token=" and "?view=1;token=" are both seen.
-var queryRE = regexp.MustCompile(`([?&;#])([^=&#;?/\s]+)=([^&#;\s]*)`)
+// / and ?. A value runs to & or #: a secret's is masked whole, ';' included
+// (some servers keep it in the value); another's is split at ';', so
+// "?view=1;token=" is seen too.
+var queryRE = regexp.MustCompile(`([?&;#])([^=&#;?/\s]+)=([^&#\s]*)`)
 
-// maskURLs masks the values of secret query parameters anywhere in v.
-func maskURLs(v string) string {
+func maskURLs(v string) string { return maskURLsAt(v, 0) }
+
+// maskURLsAt is maskURLs for a URL found depth levels inside another's value.
+func maskURLsAt(v string, depth int) string {
 	return queryRE.ReplaceAllStringFunc(v, func(m string) string {
 		sub := queryRE.FindStringSubmatch(m)
 		name, err := url.QueryUnescape(sub[2])
@@ -889,19 +932,36 @@ func maskURLs(v string) string {
 		if secretName(name) {
 			return sub[1] + sub[2] + "=REDACTED"
 		}
-		// A URL inside a value (?redirect=https://x/cb?token=…, also percent-encoded):
-		// if anything in it would be masked, mask the whole value.
-		if v := sub[3]; strings.ContainsAny(v, "?=%") {
-			inner := v
-			if u, err := url.QueryUnescape(v); err == nil {
-				inner = u
-			}
-			if maskTokens(maskURLs(inner)) != inner {
-				return sub[1] + sub[2] + "=REDACTED"
-			}
+		val, rest := sub[3], ""
+		if k := strings.IndexByte(val, ';'); k >= 0 {
+			val, rest = val[:k], maskURLsAt(val[k:], depth)
 		}
-		return m
+		if nestedSecret(val, depth) {
+			return sub[1] + sub[2] + "=REDACTED" + rest
+		}
+		return sub[1] + sub[2] + "=" + val + rest
 	})
+}
+
+// nestedSecret: does a value hold a URL or parameters (?redirect=https://x/cb?token=…,
+// also percent-encoded) with a secret in them? Two levels are looked into; a
+// deeper or longer one that could hold parameters counts as secret, so a crafted
+// value cannot make this slow.
+func nestedSecret(v string, depth int) bool {
+	if !strings.ContainsAny(v, "?=%") {
+		return false
+	}
+	inner := v
+	if u, err := url.QueryUnescape(v); err == nil {
+		inner = u
+	}
+	if !strings.ContainsAny(inner, "?=") {
+		return false
+	}
+	if depth >= 2 || len(inner) > 8<<10 {
+		return true
+	}
+	return maskTokens(maskURLsAt(inner, depth+1)) != inner
 }
 
 // bodyText returns a head as text, or as base64 when it is not text. Each
@@ -928,7 +988,7 @@ func isText(b []byte) bool {
 
 // containsFold reports whether lowerNeedle (already lower case) occurs in b,
 // ignoring ASCII case, without copying b.
-func containsFold(b []byte, lowerNeedle string) bool {
+func containsFold[T string | []byte](b T, lowerNeedle string) bool {
 	n := len(lowerNeedle)
 	if n == 0 {
 		return true

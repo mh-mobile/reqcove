@@ -171,7 +171,8 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				peers = append(peers, p)
 			}
 			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
-			p := &policy{devices: devices, self: self, local: interfaceAddrs(), socks: cfg.SocksAddr != ""}
+			local, onLink := interfaceAddrs()
+			p := &policy{devices: devices, self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
 			names := map[string]string{}
 			for ip, d := range devices {
 				p.allowSrc = append(p.allowSrc, ip)
@@ -325,16 +326,25 @@ func logLoop() {
 	}
 }
 
-func interfaceAddrs() []netip.Addr {
+// interfaceAddrs returns this Mac's addresses and the IPv4 networks they are
+// on (not single-address ones such as a tunnel's /32, and not wider than /8).
+func interfaceAddrs() ([]netip.Addr, []netip.Prefix) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var out []netip.Addr
+	var nets []netip.Prefix
 	for _, a := range addrs {
-		if p, err := netip.ParsePrefix(a.String()); err == nil {
-			out = append(out, p.Addr().Unmap())
+		p, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			continue
+		}
+		addr := p.Addr().Unmap()
+		out = append(out, addr)
+		if addr.Is4() && p.Bits() >= 8 && p.Bits() < 32 && !addr.IsLoopback() {
+			nets = append(nets, netip.PrefixFrom(addr, p.Bits()).Masked())
 		}
 	}
-	return slices.Clip(out)
+	return slices.Clip(out), nets
 }

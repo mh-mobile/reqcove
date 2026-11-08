@@ -30,6 +30,7 @@ type policy struct {
 	devices  map[netip.Addr]Device // the same IPs, with who they are
 	self     []netip.Addr          // this tsnet node's tailnet IPs
 	local    []netip.Addr          // this Mac's interface addresses
+	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range
 	socks    bool                  // send TCP 80/443 to mitmproxy
 }
 
@@ -68,6 +69,11 @@ func carried(p *policy, src, dst netip.AddrPort) bool {
 		return false // IPv6: the Linux setup rejected it too; this Mac has no IPv6 uplink
 	case slices.Contains(p.self, d), slices.Contains(p.local, d):
 		return false
+	}
+	for _, pfx := range p.onLink {
+		if pfx.Contains(d) {
+			return false // a LAN numbered from public space is still this Mac's LAN
+		}
 	}
 	for _, pfx := range denied {
 		if pfx.Contains(d) {

@@ -3,6 +3,7 @@ package capture
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMaskBody(t *testing.T) {
@@ -55,11 +56,11 @@ func TestMaskBody(t *testing.T) {
 func TestBodiesMaskedOnArrival(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "request", "id": "a", "host": "h", "url": "https://h/login", "headers": [][2]string{{"Content-Type", "application/json"}}}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "request", "head": b64(`{"user":"u","password":"S3CRET-1"}`), "size": 30, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "request", "head": b64(`{"user":"u","password":"S3CRET-1"}`), "size": 30, "final": true, "decoded": true}))
 	st.Apply(line(t, map[string]any{"ev": "response", "id": "a", "status": 200, "headers": [][2]string{{"Content-Type", "application/octet-stream"}, {"X-Debug", "Bearer S3CRET2abcdefgh"}}}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "response", "head": b64("\x00\x01binary S3CRET-3"), "size": 20, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "response", "head": b64("\x00\x01binary S3CRET-3"), "size": 20, "final": true, "decoded": true}))
 	st.Apply(line(t, map[string]any{"ev": "request", "id": "b", "host": "h", "url": "https://h/upload"}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "b", "dir": "request", "head": b64("\x00\x02protobuf S3CRET-4"), "size": 20, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "b", "dir": "request", "head": b64("\x00\x02protobuf S3CRET-4"), "size": 20, "final": true, "decoded": true}))
 	v, _ := st.Get("a", true)
 	if strings.Contains(v.ReqBodyText, "S3CRET") || !strings.Contains(v.ReqBodyText, `"user":"u"`) {
 		t.Errorf("request body: %q", v.ReqBodyText)
@@ -109,7 +110,7 @@ func TestMaskErrorAndReason(t *testing.T) {
 func TestBodySearchNonASCII(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "request", "id": "a", "host": "h", "url": "https://h/"}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "response", "head": b64(`{"city":"ÉCOLE Zürich"}`), "size": 20, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "a", "dir": "response", "head": b64(`{"city":"ÉCOLE Zürich"}`), "size": 20, "final": true, "decoded": true}))
 	for _, q := range []string{"ÉCOLE", "Zürich", "zürich"} {
 		if fs, _ := st.List(Filter{Query: q, QueryBodies: true, Limit: 10}); len(fs) != 1 {
 			t.Errorf("search %q found nothing", q)
@@ -126,5 +127,52 @@ func BenchmarkMaskBody64K(b *testing.B) {
 	b.SetBytes(int64(len(head)))
 	for b.Loop() {
 		maskBody(head, "application/json")
+	}
+}
+
+// From the second review (Codex): each way a secret still got out.
+func TestSecondReviewLeaks(t *testing.T) {
+	st := NewStore(100, 1<<20)
+	ev := func(m map[string]any) { st.Apply(line(t, m)) }
+	// A head not decoded (wire bytes of an encoding not undone) or a protobuf
+	// that happens to be valid UTF-8: neither handed out nor searched.
+	ev(map[string]any{"ev": "request", "id": "a", "host": "h", "url": "https://h/a"})
+	ev(map[string]any{"ev": "response", "id": "a", "status": 200, "headers": [][2]string{{"Content-Encoding", "br"}}})
+	ev(map[string]any{"ev": "body", "id": "a", "dir": "response", "head": b64("U0VDUkVUX1dJUkU= S3CRET-1"), "size": 30, "decoded": false})
+	ev(map[string]any{"ev": "request", "id": "b", "host": "h", "url": "https://h/b", "headers": [][2]string{{"Content-Type", "application/x-protobuf"}}})
+	ev(map[string]any{"ev": "body", "id": "b", "dir": "request", "head": b64("\n\nBIN S3CRET-2"), "size": 20, "decoded": true})
+	for _, id := range []string{"a", "b"} {
+		v, _ := st.Get(id, true)
+		if strings.Contains(v.ReqBodyText+v.RespBodyText, "S3CRET") {
+			t.Errorf("%s: body handed out: %q %q", id, v.ReqBodyText, v.RespBodyText)
+		}
+	}
+	for _, q := range []string{"S3CRET-1", "S3CRET-2"} {
+		if fs, _ := st.List(Filter{Query: q, QueryBodies: true, Limit: 10}); len(fs) != 0 {
+			t.Errorf("search %q found it", q)
+		}
+	}
+	// Valid JSON escapes in a key: \/ and a surrogate-free \u.
+	if got := string(maskBody([]byte(`{"password\/":"S3CRET-3","n":1}`), "application/json")); strings.Contains(got, "S3CRET") {
+		t.Errorf("escaped key: %s", got)
+	}
+	// Header names in their own case, schemes in any case, challenges kept.
+	h := st.maskHeaders([][2]string{{"X-ClientKey", "S3CRET-4"}, {"X-Debug", "BEARER Abcdefgh0123456789"}, {"WWW-Authenticate", `Bearer realm=production, error="invalid_token"`}})
+	if h[0][1] != "[redacted]" || strings.Contains(h[1][1], "Abcdefgh0123") || h[2][1] != `Bearer realm=production, error="invalid_token"` {
+		t.Errorf("headers: %q", h)
+	}
+	// A secret value with ';' in it is masked whole.
+	if got := maskURLs("https://h/x?password=prefix;S3CRET-5&page=2"); strings.Contains(got, "S3CRET") || !strings.Contains(got, "page=2") {
+		t.Errorf("semicolon value: %s", got)
+	}
+}
+
+// A crafted value nested many times over cannot make masking slow.
+func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
+	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
+	start := time.Now()
+	maskURLs(v)
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Errorf("8192 levels took %v", d)
 	}
 }

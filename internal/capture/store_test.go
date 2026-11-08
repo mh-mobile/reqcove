@@ -61,7 +61,7 @@ func TestStoreBoundsAndRejects(t *testing.T) {
 	st.Apply(line(t, map[string]any{"ev": "done", "id": "nope"}))
 	for _, id := range []string{"1", "2", "3"} {
 		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "host": "h"}))
-		st.Apply(line(t, map[string]any{"ev": "body", "id": id, "dir": "response", "head": b64("abcdef"), "size": 6}))
+		st.Apply(line(t, map[string]any{"ev": "body", "id": id, "dir": "response", "head": b64("abcdef"), "size": 6, "decoded": true}))
 	}
 	s := st.Stats()
 	if s["bad_lines"] != int64(1) || s["unknown_version"] != int64(1) || s["orphan_updates"] != int64(1) {
@@ -145,8 +145,8 @@ func TestBodyTextPerBody(t *testing.T) {
 	// One flow: binary request, JSON response.
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "request", "id": "x", "host": "h"}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "request", "head": base64.StdEncoding.EncodeToString([]byte{0x1f, 0x8b, 0}), "size": 3, "final": true}))
-	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "response", "head": b64(`{"ok":true}`), "size": 11, "final": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "request", "head": base64.StdEncoding.EncodeToString([]byte{0x1f, 0x8b, 0}), "size": 3, "final": true, "decoded": true}))
+	st.Apply(line(t, map[string]any{"ev": "body", "id": "x", "dir": "response", "head": b64(`{"ok":true}`), "size": 11, "final": true, "decoded": true}))
 	v, _ := st.Get("x", true)
 	// While masking, a head that is not text cannot be checked, so it is omitted.
 	if v.ReqBodyText != "" || v.ReqBodyEnc != omittedBody || v.RespBodyEnc != "" || v.RespBodyText != `{"ok":true}` {
@@ -187,5 +187,15 @@ func TestHeadersCountTowardBytes(t *testing.T) {
 	s := st.Stats()
 	if s["held_bytes"].(int) > 64<<10 || s["evicted"].(int64) == 0 {
 		t.Errorf("20 x 16 KiB of headers under a 64 KiB bound: %v", s)
+	}
+	// Many small headers cost more than their text: each counts its overhead too.
+	st2 := NewStore(1000, 1<<20)
+	var many [][2]string
+	for i := range 4096 {
+		many = append(many, [2]string{"h", fmt.Sprint(i % 10)})
+	}
+	st2.Apply(line(t, map[string]any{"ev": "request", "id": "m", "host": "h", "url": "https://h/", "headers": many}))
+	if n := st2.Stats()["held_bytes"].(int); n < 4096*64 {
+		t.Errorf("4096 small headers held as %d bytes", n)
 	}
 }

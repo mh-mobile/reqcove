@@ -142,7 +142,9 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
   can use a lot of memory (if mitmproxy runs out, reqcove restarts it).
 - `map_local` answers only requests whose body is at most 1 MiB and of known length;
-  others go on to the real destination (the record says so).
+  others go on to the real destination (the record says so). An HTTP/2 GET without
+  a length is answered too, and a body the device sends with it anyway is held
+  whole; only your own devices send these requests.
 - If reqcove stops while the iPhone uses it, the iPhone's DNS can stay stuck after
   reqcove is back ([tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)):
   turn the exit node off and on again.

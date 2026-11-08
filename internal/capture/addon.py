@@ -60,8 +60,27 @@ def _device(flow):
     return auth[0] if auth else None
 
 
+MAX_HEADERS = 256           # per message, as recorded
+MAX_HEADER_BYTES = 256 << 10  # names and values together, as recorded
+
+
 def _headers(h):
-    return [[k, v] for k, v in h.items(multi=True)]  # keeps repeated Set-Cookie
+    """The headers as [name, value] pairs (repeated Set-Cookie kept), bounded:
+    a site can send many or huge ones, and they are queued and kept."""
+    out, total = [], 0
+    for k, v in h.items(multi=True):
+        if len(out) == MAX_HEADERS:
+            out.append(["X-Reqcove-Note", "more headers not recorded"])
+            break
+        room = MAX_HEADER_BYTES - total - len(k)
+        if room <= 0:
+            out.append(["X-Reqcove-Note", "more header bytes not recorded"])
+            break
+        if len(v) > room:
+            v = v[:room] + " [cut]"
+        out.append([k, v])
+        total += len(k) + len(v)
+    return out
 
 
 class _Decoder:
@@ -292,7 +311,12 @@ class Reqcove:
             return
         # Headers and URLs count toward the queue's byte budget too: a site can
         # send large ones.
-        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + sum(len(k) + len(v) for k, v in msg.get("headers") or [])
+        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + sum(len(k) + len(v) + 64 for k, v in msg.get("headers") or [])
+        with self.lock:
+            over = self.queued_bytes + size > 2 * self.queue_limit  # bodies give way first, at the plain limit
+        if over:
+            self.dropped_events += 1
+            return
         self._put(msg, size)
 
     def put_body(self, msg):

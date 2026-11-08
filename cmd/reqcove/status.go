@@ -194,7 +194,7 @@ func cleanup(args []string) error {
 		return err
 	}
 	if !isState(dir) {
-		return fmt.Errorf("%s does not look like reqcove's state (a lock file and tsnet/ or mitmproxy/); not deleting it", dir)
+		return fmt.Errorf("%s does not look like reqcove's state (no %s marker, nor lock and tsnet/tailscaled.state); not deleting it", dir, stateMarker)
 	}
 	unlock, err := lockState(dir) // refuses while `reqcove run` holds it
 	if err != nil {
@@ -210,17 +210,15 @@ func cleanup(args []string) error {
 }
 
 // isState reports whether dir is a state directory `reqcove run` used: its
-// lock file, and the node's or mitmproxy's files.
+// marker, or (from before the marker) its lock with the node's state file.
 func isState(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, "lock")); err != nil {
-		return false
+	if _, err := os.Stat(filepath.Join(dir, stateMarker)); err == nil {
+		return true
 	}
-	for _, sub := range []string{"tsnet", "mitmproxy"} {
-		if fi, err := os.Stat(filepath.Join(dir, sub)); err == nil && fi.IsDir() {
-			return true
-		}
-	}
-	return false
+	// Made before the marker existed: reqcove's lock and the node's own state file.
+	_, lockErr := os.Stat(filepath.Join(dir, "lock"))
+	_, nodeErr := os.Stat(filepath.Join(dir, "tsnet", "tailscaled.state"))
+	return lockErr == nil && nodeErr == nil
 }
 
 func orDash(s string) string {

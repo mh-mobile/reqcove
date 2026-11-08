@@ -250,14 +250,21 @@ func openState(dir string) (func(), error) {
 		return nil, err
 	}
 	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool { return e.Name() == ".DS_Store" }) // Finder leaves it in folders it opened
-	if _, err := os.Stat(filepath.Join(dir, "lock")); len(ents) > 0 && err != nil {
+	if len(ents) > 0 && !isState(dir) {
 		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
+	// The marker is what makes a directory reqcove's (for this check and for
+	// cleanup), not a file with a name as common as "lock".
+	if err := os.WriteFile(filepath.Join(dir, stateMarker), []byte("reqcove state directory\n"), 0o600); err != nil {
+		return nil, err
+	}
 	return lockState(dir)
 }
+
+const stateMarker = ".reqcove-state"
 
 // lockState makes sure only one reqcove uses the state directory: two tsnet
 // processes with the same node key would fight.

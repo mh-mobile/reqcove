@@ -112,3 +112,37 @@ func TestLogUDPOnceBounded(t *testing.T) {
 		<-events
 	}
 }
+
+// A LAN numbered from public space (11.22.33.0/24 here) is refused like any
+// other LAN: its neighbours, not only this Mac's own address.
+func TestOnLinkNetworksRefused(t *testing.T) {
+	iphone := netip.MustParseAddr("100.101.0.1")
+	p := &policy{
+		allowSrc: []netip.Addr{iphone},
+		local:    []netip.Addr{netip.MustParseAddr("11.22.33.10")},
+		onLink:   []netip.Prefix{netip.MustParsePrefix("11.22.33.0/24")},
+		socks:    true,
+	}
+	src := netip.AddrPortFrom(iphone, 50000)
+	for _, dst := range []string{"11.22.33.10:80", "11.22.33.20:80", "11.22.33.20:22", "11.22.33.255:53"} {
+		d := netip.MustParseAddrPort(dst)
+		if v := decideTCP(p, src, d); v != reject {
+			t.Errorf("TCP to %s: %v", dst, v)
+		}
+		if decideUDP(p, src, d) {
+			t.Errorf("UDP to %s carried", dst)
+		}
+	}
+	if v := decideTCP(p, src, netip.MustParseAddrPort("11.22.34.20:443")); v != socks {
+		t.Errorf("the next network over: %v, want socks", v)
+	}
+}
+
+func TestInterfaceAddrsOnLink(t *testing.T) {
+	_, nets := interfaceAddrs()
+	for _, n := range nets {
+		if !n.Addr().Is4() || n.Bits() < 8 || n.Bits() >= 32 || n.Addr().IsLoopback() || n != n.Masked() {
+			t.Errorf("unexpected on-link network %v", n)
+		}
+	}
+}

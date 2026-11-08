@@ -100,7 +100,11 @@ func captureStdout(t *testing.T, f func() error) string {
 
 func TestCleanup(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	os.MkdirAll(filepath.Join(dir, "tsnet"), 0o700)
+	if unlock, err := openState(dir); err != nil { // as run makes it
+		t.Fatal(err)
+	} else {
+		unlock()
+	}
 	out := captureStdout(t, func() error { return cleanup([]string{"--state", dir}) })
 	if !strings.Contains(out, "Exit Node, None") || !strings.Contains(out, `remove "reqcove"`) {
 		t.Errorf("steps:\n%s", out)
@@ -122,6 +126,33 @@ func TestCleanup(t *testing.T) {
 		t.Error("state still there after --delete-state")
 	}
 
+	// A directory with a generic "lock" file (and later a tsnet/) is not taken for
+	// reqcove's: neither used by run nor deleted by cleanup.
+	generic := filepath.Join(t.TempDir(), "generic")
+	os.MkdirAll(filepath.Join(generic, "tsnet"), 0o700)
+	os.WriteFile(filepath.Join(generic, "lock"), nil, 0o644)
+	os.WriteFile(filepath.Join(generic, "notes.txt"), []byte("mine"), 0o644)
+	if unlock, err := openState(generic); err == nil {
+		unlock()
+		t.Error("run took a directory with a generic lock file")
+	}
+	if err := cleanup([]string{"--state", generic, "--delete-state"}); err == nil {
+		t.Error("cleanup deleted a directory with a generic lock file")
+	}
+	// A state directory from before the marker: lock and the node's state file.
+	legacy := filepath.Join(t.TempDir(), "legacy")
+	os.MkdirAll(filepath.Join(legacy, "tsnet"), 0o700)
+	os.WriteFile(filepath.Join(legacy, "lock"), nil, 0o600)
+	os.WriteFile(filepath.Join(legacy, "tsnet", "tailscaled.state"), []byte("{}"), 0o600)
+	if unlock, err := openState(legacy); err != nil {
+		t.Errorf("run refused an older state directory: %v", err)
+	} else {
+		unlock()
+	}
+	if _, err := os.Stat(filepath.Join(legacy, stateMarker)); err != nil {
+		t.Error("no marker written into the older state directory")
+	}
+
 	// A --state that is not reqcove's (a typo, a project) is never deleted.
 	foreign := filepath.Join(t.TempDir(), "project")
 	os.MkdirAll(filepath.Join(foreign, "src"), 0o755)
@@ -137,6 +168,7 @@ func TestCleanup(t *testing.T) {
 	real := filepath.Join(t.TempDir(), "real")
 	os.MkdirAll(filepath.Join(real, "mitmproxy"), 0o700)
 	os.WriteFile(filepath.Join(real, "lock"), nil, 0o600)
+	os.WriteFile(filepath.Join(real, stateMarker), nil, 0o600)
 	os.WriteFile(filepath.Join(real, "mitmproxy", "mitmproxy-ca.pem"), []byte("KEY"), 0o600)
 	link := filepath.Join(t.TempDir(), "link")
 	os.Symlink(real, link)

@@ -1,9 +1,9 @@
 package capture
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -114,7 +114,8 @@ func jsonKey(raw string) string {
 	if !strings.Contains(raw, `\`) {
 		return raw
 	}
-	if k, err := strconv.Unquote(`"` + raw + `"`); err == nil {
+	var k string
+	if json.Unmarshal([]byte(`"`+raw+`"`), &k) == nil { // JSON's escapes: \/, \uXXXX, surrogate pairs
 		return k
 	}
 	return raw
@@ -175,7 +176,7 @@ var tokenShapes = []tokenShape{
 
 // An HTTP credential: the scheme, then a value that looks like one (not the
 // next word of a sentence: "Basic information" stays).
-var schemeRE = regexp.MustCompile(`\b([Bb]earer|[Bb]asic|[Tt]oken)(\s+)([A-Za-z0-9._~+/=-]{8,})`)
+var schemeRE = regexp.MustCompile(`(?i)\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]{8,})`)
 
 func credentialLike(v string) bool {
 	var digitOrSym, upper, lower bool
@@ -193,7 +194,7 @@ func credentialLike(v string) bool {
 }
 
 func maskTokens(s string) string {
-	if strings.Contains(s, "earer") || strings.Contains(s, "asic") || strings.Contains(s, "oken") {
+	if containsFold(s, "bearer") || containsFold(s, "basic") || containsFold(s, "token") {
 		s = schemeRE.ReplaceAllStringFunc(s, func(m string) string {
 			sub := schemeRE.FindStringSubmatch(m)
 			if !credentialLike(sub[3]) {
