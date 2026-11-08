@@ -2,6 +2,8 @@
 /NOTES.md
 /docs/poc-plan.ja.md
 /docs/plan.ja.md
+/docs/exit-node-howto.ja.md
+/docs/study-from-roamrun.ja.md
 
 # 秘密：mitmproxy の CA（秘密鍵を含む）、鍵、環境変数
 mitmproxy-ca*.pem
