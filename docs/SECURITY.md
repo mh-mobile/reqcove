@@ -10,8 +10,7 @@ come from reading code rather than from a test say so.
   the MCP socket in it are open to that user only. Any process running as that user
   can read the records, and the CA's private key. Reqcove promises nothing stronger.
 - **The devices you name are trusted to use the exit node**, nothing else. Traffic
-  from other tailnet devices is refused, on the exit node and on the Remote Proxy
-  (pings aside: see below).
+  from other tailnet devices is refused, on the exit node and on the Remote Proxy.
   A device name is what each device calls itself, so `--device` takes one only from
   your own user's devices, and only while neither it nor Reqcove's node is tagged
   (a tagged node keeps the user ID of whoever tagged it); name other devices by
@@ -162,19 +161,21 @@ or a cloud server's subnet with its neighbours, is refused too), loopback, priva
 and link-local ranges, the tailnet's range, multicast and the other special-purpose
 ranges, and all of IPv6, on the exit node and on the Remote Proxy. Public networks
 reached only through a route (behind a router, not on an interface's subnet) are
-not refused (from reading code). What it does not catch:
+not refused (from reading code). Pings (ICMP echo) follow the same rules: one
+from a device not in `--device`, or to a refused address, is dropped (tests send
+pings to 127.0.0.1 from both); a listed device's ping to a public address is
+answered by pinging from this computer (from reading code).
+
+While a device's UDP flow lasts (2 minutes after its last packet, 30 seconds for
+DNS), only the address and port it was sent to can answer through it; datagrams
+from anyone else that reach its port on this computer are dropped (a test sends
+one from this computer).
+
+What it does not catch:
 
 - **Your network's public address.** It is not an address of this computer's
   interfaces. A device that connects to it may reach what the router forwards
   (port forwarding), or, on a cloud server, this computer. Not tested.
-- **Pings.** An ICMP echo request routed through the exit node, from any device
-  the tailnet lets use exit nodes (not only `--device`), is answered by pinging
-  from this computer. When tried, pings to a public address and to 127.0.0.1
-  were answered; private ranges and this computer's LAN were not (Tailscale's
-  own filter). A ping tells whether an address answers, nothing more.
-- **Replies to UDP.** While a device's UDP flow lasts (2 minutes after its last
-  packet, 30 seconds for DNS), whatever arrives at the port it went out from, from
-  any sender, is handed to the device, as with a full-cone NAT. (From reading code.)
 
 ## The login URL
 

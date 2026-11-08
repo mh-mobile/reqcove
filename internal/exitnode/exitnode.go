@@ -80,6 +80,10 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 			return ok
 		},
+		// A ping is answered by pinging dst from this Mac: only where TCP and UDP may go.
+		FallbackPing: func(src, dst netip.Addr) bool {
+			return decidePing(current.Load(), src, dst)
+		},
 	}
 	if cfg.Verbose {
 		s.Logf = log.Printf

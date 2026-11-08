@@ -146,8 +146,8 @@ github.com/mdlayher/sdnotify v1.0.0 h1:Ma9XeLVN/l0qpyx1tNeMSeTjCPH6NtuD6/N9XdTlQ
 github.com/mdlayher/sdnotify v1.0.0/go.mod h1:HQUmpM4XgYkhDLtd+Uad8ZFK1T9D5+pNxnXQjCeJlGE=
 github.com/mdlayher/socket v0.7.0 h1:qVREPVwtUMg17pwvveQxpurq0PVisMxi3FGgpsorMYQ=
 github.com/mdlayher/socket v0.7.0/go.mod h1:f7iKql2EK/rfsWYDKofKjk2Ig7I+6HQWdMIdn1tO4A4=
-github.com/mh-mobile/tailscale v0.0.0-20261107081331-e0c229886844 h1:pdD6WNPGz1bNfjBpV8BbT5ZpAKrQbECd4UJhdoPv95I=
-github.com/mh-mobile/tailscale v0.0.0-20261107081331-e0c229886844/go.mod h1:Hq4zB8UpaxMW1fvqO30CLVQo3A7Ith0t9MnvEyiuoSA=
+github.com/mh-mobile/tailscale v0.0.0-20261108055237-ad7adf3d0982 h1:En2uqNUrvEaFdWy2M0JmpqIeSAQF/0mf/BLPJoD3R3U=
+github.com/mh-mobile/tailscale v0.0.0-20261108055237-ad7adf3d0982/go.mod h1:Hq4zB8UpaxMW1fvqO30CLVQo3A7Ith0t9MnvEyiuoSA=
 github.com/miekg/dns v1.1.73 h1:uhT8nJxmTrPJYClxVxTCX+CVn6qnzSiybRk72Z6DgrE=
 github.com/miekg/dns v1.1.73/go.mod h1:RW2Obtfd5NZHvOFe3zYG0W8koWOQtAzyHaLo8vASBuQ=
 github.com/mitchellh/go-ps v1.0.0 h1:i6ampVEEF4wQFF+bkYfwYgY+F/uYJDktmvLPf7qIgjc=

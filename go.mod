@@ -110,6 +110,7 @@ require (
 	honnef.co/go/tools v0.8.1 // indirect
 )
 
-// tsnet fork: upstream v1.104.5 plus FallbackUDP, ExitNodeDNS and exit node
-// DNS query IDs. Branch reqcove/v1.104.5 at github.com/mh-mobile/tailscale.
-replace tailscale.com => github.com/mh-mobile/tailscale v0.0.0-20261107081331-e0c229886844
+// tsnet fork: upstream v1.104.5 plus FallbackUDP, ExitNodeDNS, exit node DNS
+// query IDs, UDP replies only from a flow's destination, and FallbackPing.
+// Branch reqcove/v1.104.5 at github.com/mh-mobile/tailscale.
+replace tailscale.com => github.com/mh-mobile/tailscale v0.0.0-20261108055237-ad7adf3d0982

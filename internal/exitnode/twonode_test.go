@@ -246,6 +246,49 @@ func TestTwoNodes(t *testing.T) {
 		t.Errorf("%d UDP flows forwarded, want 1 (the device's to 203.0.113.9:9)", n)
 	}
 
+	// A forwarded flow's host socket listens on all addresses, at the device's
+	// source port. Only the flow's destination may answer through it: a
+	// datagram from anyone else that reaches the port must not reach the device.
+	if uc, err := phone.Dial(ctx, "udp", "203.0.113.9:10"); err == nil {
+		_, port, _ := net.SplitHostPort(uc.LocalAddr().String())
+		// Wait for the flow's host socket at the device's port: without it the
+		// forged datagram goes nowhere and the check proves nothing.
+		inUse := false
+		uc.Write([]byte("x"))
+		time.Sleep(300 * time.Millisecond) // let the flow bind first: probing races its bind
+		for deadline := time.Now().Add(5 * time.Second); !inUse && time.Now().Before(deadline); {
+			uc.Write([]byte("x"))
+			time.Sleep(100 * time.Millisecond)
+			l, err := net.ListenPacket("udp", ":"+port)
+			if inUse = err != nil; !inUse {
+				l.Close()
+			}
+		}
+		if !inUse {
+			t.Errorf("no host socket at the device's port %s: the forged-reply check is void", port)
+		}
+		if forger, err := net.Dial("udp", "127.0.0.1:"+port); err == nil {
+			forger.Write([]byte("forged-reply"))
+			forger.Close()
+		}
+		uc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if n, err := uc.Read(make([]byte, 64)); err == nil {
+			t.Errorf("a datagram from another sender reached the device as a reply (%d bytes)", n)
+		}
+		uc.Close()
+	}
+
+	// A ping is answered by pinging from this Mac: never to where TCP and UDP
+	// may not go (loopback here), from anyone. Before the hook it came back.
+	for _, peer := range []*tsnet.Server{phone, outsider} {
+		lc, _ := peer.LocalClient()
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if pr, err := lc.Ping(pctx, netip.MustParseAddr("127.0.0.1"), tailcfg.PingICMP); err == nil && pr.Err == "" {
+			t.Errorf("%s: a ping to 127.0.0.1 through the exit node was answered", peer.Hostname)
+		}
+		cancel()
+	}
+
 	time.Sleep(time.Second)
 	if socks.count() != before {
 		t.Errorf("refused flows reached SOCKS5: %+v", socks.all()[before:])
