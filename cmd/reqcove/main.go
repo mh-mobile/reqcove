@@ -133,7 +133,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	allow, err := capture.ParseAllowHosts(allowSpecs)
+	allow, err := capture.ParseAllowHosts(hostsOnly(allowSpecs))
 	if err != nil {
 		return err
 	}
@@ -500,4 +500,28 @@ func iosDevices() []string {
 	slices.Sort(online)
 	slices.Sort(offline)
 	return append(online, offline...)
+}
+
+// hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
+// a port, saying so: only hosts are matched, not schemes, paths or ports.
+func hostsOnly(specs []string) []string {
+	var out []string
+	for _, spec := range specs {
+		var hosts []string
+		for _, h := range strings.Split(spec, ",") {
+			h = strings.TrimSpace(h)
+			host := h
+			if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
+				host = u.Hostname()
+			} else if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
+				host = hh
+			}
+			if host != h {
+				log.Printf("--allow-hosts: %q taken as %q (hosts are matched, not paths or ports)", h, host)
+			}
+			hosts = append(hosts, host)
+		}
+		out = append(out, strings.Join(hosts, ","))
+	}
+	return out
 }

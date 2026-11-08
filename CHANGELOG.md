@@ -9,6 +9,8 @@
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
 - `--dns 1.1.1.1` works without the port (53).
+- `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);
+  `.example.com` is refused with the right spelling, `*.example.com`.
 - Without `--device`, `run` suggests your iPhones and iPads on the tailnet (from the
   Tailscale CLI, when there is one), and it prints the `claude mcp add` command.
 - A request a `--rules` rule fails on (such as a `map_remote` making a bad port)

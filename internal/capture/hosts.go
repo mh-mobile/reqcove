@@ -36,6 +36,8 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
 				}
 				r.Patterns = append(r.Patterns, `^(.+\.)?`+regexp.QuoteMeta(h[2:])+`$`)
+			case strings.HasPrefix(h, "."):
+				return r, fmt.Errorf("--allow-hosts: bad host %q (for the domain and its subdomains, write *%s)", h, h)
 			default:
 				if !validHost(h) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)

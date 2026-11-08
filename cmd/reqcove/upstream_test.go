@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +166,13 @@ func TestParseDNS(t *testing.T) {
 		if _, err := parseDNS(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+// --allow-hosts values pasted as URLs or with a port become their hosts.
+func TestHostsOnly(t *testing.T) {
+	got := hostsOnly([]string{"https://API.example.com/v1?x=1, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
+	if want := []string{"API.example.com,api2.example.com", "*.example.org", "2001:db8::1"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
