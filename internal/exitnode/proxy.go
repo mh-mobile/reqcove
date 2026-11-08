@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -178,15 +177,14 @@ func statusFor(err error) int {
 // system's resolver without one. So a name /etc/hosts maps to 127.0.0.1 is
 // refused here, while on the exit node the iPhone resolves it itself.
 func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (netip.Addr, error) {
-	r := net.DefaultResolver
+	rs := []*net.Resolver{net.DefaultResolver}
 	if len(dns) > 0 {
-		// Each attempt Go's resolver makes goes to the next upstream, so a dead
-		// first one does not fail every lookup.
-		var next atomic.Uint32
-		r = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			server := dns[int(next.Add(1)-1)%len(dns)]
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, server.String())
-		}}
+		rs = nil
+		for _, server := range dns {
+			rs = append(rs, &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, server.String())
+			}})
+		}
 	}
 	return func(ctx context.Context, host string) (netip.Addr, error) {
 		if ip, err := netip.ParseAddr(host); err == nil {
@@ -195,11 +193,19 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 		if !strings.HasSuffix(host, ".") {
 			host += "." // absolute: this computer's search domains are not appended (and sent upstream)
 		}
-		ips, err := r.LookupNetIP(ctx, "ip4", host)
-		if err != nil {
-			return netip.Addr{}, err
+		// Upstreams in order: the next one only when this one did not answer
+		// (a name that does not exist is an answer).
+		var err error
+		for _, r := range rs {
+			var ips []netip.Addr
+			if ips, err = r.LookupNetIP(ctx, "ip4", host); err == nil {
+				return ips[0].Unmap(), nil
+			}
+			if de, ok := err.(*net.DNSError); ok && de.IsNotFound || ctx.Err() != nil {
+				break
+			}
 		}
-		return ips[0].Unmap(), nil
+		return netip.Addr{}, err
 	}
 }
 

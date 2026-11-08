@@ -55,6 +55,9 @@ type Status struct {
 	Devices      map[string]string `json:"devices"`            // carried: StableID -> name
 	Problems     []string          `json:"device_problems,omitempty"`
 	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
+	// WasRunning: logged out after running (key expired, removed). tsnet prints
+	// a login URL only while starting, so only a restart brings one.
+	WasRunning bool `json:"-"`
 }
 
 var current atomic.Pointer[policy]
@@ -149,6 +152,7 @@ func Run(ctx context.Context, cfg Config) error {
 // reports the node's status.
 func watch(ctx context.Context, lc *local.Client, cfg Config) {
 	var lastProblems, lastStep string
+	var wasRunning bool
 	lastIDs := fmt.Sprint(map[string]string{}) // no "carrying traffic from map[]" before login
 	t := time.NewTicker(3 * time.Second)
 	defer t.Stop()
@@ -156,6 +160,8 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 		st, err := lc.Status(ctx)
 		if err == nil {
 			status := nodeStatus(ctx, lc, st)
+			wasRunning = wasRunning || status.Backend == "Running"
+			status.WasRunning = wasRunning
 			if step := FirstStep(status); step != lastStep {
 				lastStep = step
 				if step != "" {
@@ -233,6 +239,8 @@ func FirstStep(s Status) string {
 		}
 	}
 	switch {
+	case s.Backend == "NeedsLogin" && s.WasRunning:
+		return "log in again (the node's key expired or it was logged out): stop `reqcove run`, start it again, and open the login URL it prints"
 	case s.Backend == "NeedsLogin" && s.AuthURL != "":
 		return "log in: open " + s.AuthURL
 	case s.Backend == "NeedsLogin":

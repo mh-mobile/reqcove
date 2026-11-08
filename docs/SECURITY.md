@@ -12,7 +12,9 @@ come from reading code rather than from a test say so.
 - **The devices you name are trusted to use the exit node**, nothing else. Traffic
   from other tailnet devices is refused, on the exit node and on the Remote Proxy.
   A device name is what each device calls itself, so `--device` takes one only from
-  your own user's devices; name other users' devices by machine name, IP or StableID.
+  your own user's devices, and only while neither it nor Reqcove's node is tagged
+  (a tagged node keeps the user ID of whoever tagged it); name other devices by
+  machine name, IP or StableID.
 
 ## The CA's private key
 
@@ -115,9 +117,12 @@ peer the tailnet policy lets use an exit node.) Reqcove does not record DNS.
 ## What the devices can reach
 
 Public IPv4 addresses. Reqcove refuses this computer's own addresses (those of every
-interface), loopback, private and link-local ranges, the tailnet's range, multicast
-and the other special-purpose ranges, and all of IPv6, on the exit node and on the
-Remote Proxy. Two things it does not catch:
+interface) and the networks those interfaces are on (so a LAN with public addresses,
+or a cloud server's subnet with its neighbours, is refused too), loopback, private
+and link-local ranges, the tailnet's range, multicast and the other special-purpose
+ranges, and all of IPv6, on the exit node and on the Remote Proxy. Public networks
+reached only through a route (behind a router, not on an interface's subnet) are
+not refused (from reading code). Two things it does not catch:
 
 - **Your network's public address.** It is not an address of this computer's
   interfaces. A device that connects to it may reach what the router forwards

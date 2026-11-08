@@ -7,6 +7,7 @@ import (
 
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
 )
 
 func TestMatchDevices(t *testing.T) {
@@ -60,6 +61,22 @@ func TestMatchDevices(t *testing.T) {
 		if got, _ := matchDevices([]string{spec}, self, []*ipnstate.PeerStatus{shared}); got[netip.MustParseAddr("100.101.9.8")].ID != "nSHARED" {
 			t.Errorf("spec %q: %v", spec, got)
 		}
+	}
+	// A tagged node keeps its tagger's UserID but is no one's device: its
+	// self-chosen name is not taken, and neither are names when reqcove is tagged.
+	tags := views.SliceOf([]string{"tag:ci"})
+	tagged := peer("nTAG", "ci-box.tail.ts.net.", "Taro's iPhone", 1, "100.101.9.7")
+	tagged.Tags = &tags
+	if got, _ := matchDevices([]string{"Taro's iPhone"}, self, []*ipnstate.PeerStatus{tagged}); len(got) != 0 {
+		t.Errorf("a tagged node matched by the name it gives itself: %v", got)
+	}
+	taggedSelf := *self
+	taggedSelf.Tags = &tags
+	if got, _ := matchDevices([]string{"Taro's iPhone"}, &taggedSelf, peers); len(got) != 0 {
+		t.Errorf("reqcove tagged: a device matched by the name it gives itself: %v", got)
+	}
+	if got, _ := matchDevices([]string{"ci-box"}, self, []*ipnstate.PeerStatus{tagged}); len(got) != 1 {
+		t.Errorf("a tagged node by machine name: %v", got)
 	}
 	if got, _ := matchDevices([]string{"iphone-test"}, nil, peers); len(got) != 0 {
 		t.Errorf("before login (no self), a name matched: %v", got)

@@ -210,45 +210,74 @@ func TestRemoteProxyClosesOutsiders(t *testing.T) {
 	}
 }
 
-// The Remote Proxy's lookups go on to the next --dns when one is dead.
-func TestResolverTriesEveryUpstream(t *testing.T) {
-	good, err := net.ListenPacket("udp", "127.0.0.1:0")
+// answeringDNS answers every A query with 203.0.113.7, or with NXDOMAIN, and counts queries.
+func answeringDNS(t *testing.T, nx bool) (netip.AddrPort, *atomic.Int32) {
+	c, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer good.Close()
-	go func() { // answers every A query with 203.0.113.7
+	t.Cleanup(func() { c.Close() })
+	var n atomic.Int32
+	go func() {
 		buf := make([]byte, 1500)
 		for {
-			n, addr, err := good.ReadFrom(buf)
+			m, addr, err := c.ReadFrom(buf)
 			if err != nil {
 				return
 			}
 			var p dnsmessage.Parser
-			h, err := p.Start(buf[:n])
+			h, err := p.Start(buf[:m])
 			if err != nil {
 				continue
 			}
+			n.Add(1)
 			q, _ := p.Question()
-			b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: h.ID, Response: true, RecursionAvailable: true})
+			rh := dnsmessage.Header{ID: h.ID, Response: true, RecursionAvailable: true}
+			if nx {
+				rh.RCode = dnsmessage.RCodeNameError
+			}
+			b := dnsmessage.NewBuilder(nil, rh)
 			b.StartQuestions()
 			b.Question(q)
-			if q.Type == dnsmessage.TypeA {
+			if q.Type == dnsmessage.TypeA && !nx {
 				b.StartAnswers()
 				b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 60}, dnsmessage.AResource{A: [4]byte{203, 0, 113, 7}})
 			}
 			out, _ := b.Finish()
-			good.WriteTo(out, addr)
+			c.WriteTo(out, addr)
 		}
 	}()
+	return netip.MustParseAddrPort(c.LocalAddr().String()), &n
+}
+
+// The Remote Proxy's lookups go on to the next --dns when one is dead, for
+// every lookup, concurrent ones included; a name that does not exist does not.
+func TestResolverTriesEveryUpstream(t *testing.T) {
+	good, goodQueries := answeringDNS(t, false)
 	dead, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	deadAddr := netip.MustParseAddrPort(dead.LocalAddr().String())
 	dead.Close()
-	resolve := resolver([]netip.AddrPort{deadAddr, netip.MustParseAddrPort(good.LocalAddr().String())})
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	resolve := resolver([]netip.AddrPort{deadAddr, good})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ip, err := resolve(ctx, "app.example")
-	if err != nil || ip != netip.MustParseAddr("203.0.113.7") {
-		t.Fatalf("resolve with a dead first upstream: %v %v", ip, err)
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ip, err := resolve(ctx, fmt.Sprintf("app%d.example", i)); err != nil || ip != netip.MustParseAddr("203.0.113.7") {
+				t.Errorf("lookup %d with a dead first upstream: %v %v", i, ip, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	nx, _ := answeringDNS(t, true)
+	before := goodQueries.Load()
+	if _, err := resolver([]netip.AddrPort{nx, good})(ctx, "missing.example"); err == nil {
+		t.Error("NXDOMAIN from the first upstream: no error")
+	}
+	if goodQueries.Load() != before {
+		t.Error("NXDOMAIN from the first upstream: asked the next one")
 	}
 }

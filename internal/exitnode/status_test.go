@@ -71,6 +71,17 @@ func TestStatusLoginNeeded(t *testing.T) {
 	}
 }
 
+// After the key expires, tsnet prints no new login URL: the step says to restart.
+func TestStatusKeyExpired(t *testing.T) {
+	control, wait := runAgainst(t, nil)
+	wait("running", func(s Status) bool { return s.Backend == "Running" })
+	control.SetExpireAllNodes(true)
+	s := wait("logged out", func(s Status) bool { return s.Backend == "NeedsLogin" })
+	if step := FirstStep(s); !strings.Contains(step, "start it again") {
+		t.Errorf("step %q", step)
+	}
+}
+
 func TestStatusDeviceApproval(t *testing.T) {
 	_, wait := runAgainst(t, func(c *testcontrol.Server) { c.RequireMachineAuth = true })
 	s := wait("asked for device approval", func(s Status) bool { return s.Backend == "NeedsMachineAuth" })

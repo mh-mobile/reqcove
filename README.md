@@ -100,7 +100,7 @@ setting, so this works on Wi-Fi only.
 
 | | |
 |---|---|
-| `--device NAME` | a device to carry: machine name, device name (your own devices only), tailnet IP or StableID; repeat for more |
+| `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML with `map_remote`, `map_local` and `modify_headers` (mitmproxy's syntax), applied to allowed hosts only |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |

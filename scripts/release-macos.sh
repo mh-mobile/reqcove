@@ -20,7 +20,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 name=reqcove_${version#v}_darwin_arm64
 mkdir -p "$work/$name"
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+# GOWORK=off: a go.work above this checkout (say, with a local tailscale) is not built in.
+GOWORK=off GOFLAGS=-mod=readonly CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
   -ldflags "-s -w -X main.version=$version" -o "$work/$name/reqcove" ./cmd/reqcove
 codesign --force --options runtime --timestamp --sign "$identity" "$work/$name/reqcove"
 codesign --verify --strict "$work/$name/reqcove"

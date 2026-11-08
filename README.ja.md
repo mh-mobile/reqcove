@@ -79,7 +79,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 
 | | |
 |---|---|
-| `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
+| `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
 | `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
 | `--rules FILE` | `map_remote`、`map_local`、`modify_headers` を書いた YAML（mitmproxy の書式）。許可したホストにのみ適用されます |
 | `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（マスクなし。編集とリプレイができ、すべてのフローを保持します） |

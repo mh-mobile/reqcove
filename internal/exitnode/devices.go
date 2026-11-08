@@ -62,7 +62,13 @@ func matches(spec string, self, p *ipnstate.PeerStatus) bool {
 	if _, t, _ := strings.Cut(p.DNSName, "."); tailnet == "" || t != tailnet {
 		return false // not this tailnet's node
 	}
-	return strings.EqualFold(spec, machineName(p)) || (p.UserID == self.UserID && strings.EqualFold(spec, p.HostName))
+	return strings.EqualFold(spec, machineName(p)) || (sameUser(p, self) && strings.EqualFold(spec, p.HostName))
+}
+
+// sameUser: a tagged node keeps the UserID of whoever tagged it, yet is not
+// that user's device, so device names count only between untagged nodes.
+func sameUser(p, self *ipnstate.PeerStatus) bool {
+	return p.UserID == self.UserID && !p.IsTagged() && !self.IsTagged()
 }
 
 // machineName is the first label of the MagicDNS name: lowercase, digits and hyphens.
