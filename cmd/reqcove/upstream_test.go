@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -184,5 +185,13 @@ func TestHostsOnly(t *testing.T) {
 	got := hostsOnly([]string{"https://API.example.com/v1?x=1, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
 	if want := []string{"API.example.com,api2.example.com", "*.example.org", "2001:db8::1"}; !slices.Equal(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// The page and the Remote Proxy cannot share the node's port 80.
+func TestUIPortClash(t *testing.T) {
+	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--ui", "--proxy-port", "80", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
+	if err == nil || !strings.Contains(err.Error(), "--ui uses the node's port 80") {
+		t.Errorf("got %v", err)
 	}
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/mh-mobile/reqcove/internal/webui"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -116,6 +117,7 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", "3.14", "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
+	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80, for the --device devices (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
@@ -156,6 +158,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *noRedact {
 		log.Print("WARN: --no-redact: Authorization, cookies and secret query values are kept in the records")
+	}
+	if *uiFlag && *proxyPort == 80 {
+		return errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
 	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
 		return fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
@@ -256,10 +261,30 @@ func run(ctx context.Context, args []string) error {
 	}
 	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: claude mcp add reqcove -- reqcove mcp)", mcpSock)
 
+	onStatus := node.set
+	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string)
+	if *uiFlag {
+		page := webui.New(cap.Store, func() []string {
+			return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps
+		})
+		pageFn = page.Serve
+		var shown bool
+		onStatus = func(s exitnode.Status) {
+			node.set(s)
+			if ip := firstIPv4(s.IPs); !shown && s.Backend == "Running" && ip != "" {
+				shown = true
+				// The token stays in this terminal, as the login URL does: never in the MCP tools.
+				link := "http://" + ip + "/?k=" + page.Token()
+				log.Printf("the page of the flows, for the --device devices: %s", link)
+				printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
+			}
+		}
+	}
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
 		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
-		OnDevices: cap.Store.SetDeviceNames, OnStatus: node.set,
+		UI:        pageFn,
+		OnDevices: cap.Store.SetDeviceNames, OnStatus: onStatus,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	if ctx.Err() != nil {
@@ -544,4 +569,13 @@ func hostsOnly(specs []string) []string {
 		out = append(out, strings.Join(hosts, ","))
 	}
 	return out
+}
+
+func firstIPv4(ips []string) string {
+	for _, s := range ips {
+		if ip, err := netip.ParseAddr(s); err == nil && ip.Is4() {
+			return s
+		}
+	}
+	return ""
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `run --ui`: a read-only page of the flows for the `--device` devices, on the
+  tailnet node, opened from a QR code; each device sees its own flows.
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.

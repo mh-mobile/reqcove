@@ -113,6 +113,7 @@ setting, so this works on Wi-Fi only.
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
+| `--ui` | a read-only page of the flows on the iPhone itself (see below; after v0.1.0) |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
 | `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
@@ -150,6 +151,21 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
   Tailscale's 100.100.100.100 are refused.
 - Read a rules file from someone else before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
+
+### The flows on the iPhone (`--ui`)
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+`reqcove run --ui` serves a read-only page of the flows on its tailnet node and
+prints a link to it with a QR code. Scan it with the iPhone's camera: Safari opens
+the list, which follows new flows every 3 seconds, beside the app in split view if
+you like. Tap a flow for its headers and bodies, masked as the MCP tools return
+them.
+
+- Only the `--device` devices reach it, each sees only its own flows, and only the
+  browser that opened the link (a token new at each start) can read it.
+- Tailscale must be on, the exit node need not be. The page's own requests are not
+  recorded.
 
 ### An upstream proxy (Burp Suite and others)
 

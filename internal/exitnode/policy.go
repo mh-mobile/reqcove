@@ -32,6 +32,7 @@ type policy struct {
 	local    []netip.Addr          // this Mac's interface addresses
 	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range
 	socks    bool                  // send TCP 80/443 to mitmproxy
+	names    []string              // this node's MagicDNS name and its first label, lower case
 }
 
 // Never carried: unspecified, loopback, tailnet, link-local, private LANs,

@@ -79,6 +79,7 @@ func TestTwoNodes(t *testing.T) {
 			Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: url,
 			DNS: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:53")}, Devices: []string{"phone"},
 			SocksAddr: socks.addr, SocksSecret: "pw", ProxyPort: 8080, Verbose: true,
+			UI:        func(w http.ResponseWriter, r *http.Request, id string) { fmt.Fprint(w, "page for "+id) },
 			OnDevices: func(m map[string]string) { matched <- m },
 		})
 	}()
@@ -159,6 +160,29 @@ func TestTwoNodes(t *testing.T) {
 	}
 	if d := time.Since(start); d > time.Second {
 		t.Errorf("IPv6 took %v to fail: new connections would wait for it", d)
+	}
+
+	// The page on the node's port 80: the device gets it, as itself, and the
+	// request is not carried (nothing reaches SOCKS5); the outsider gets nothing.
+	pageVia := func(n *tsnet.Server) (string, error) {
+		hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: n.Dial}}
+		r, err := hc.Get(fmt.Sprintf("http://%v/", rcIP))
+		if err != nil {
+			return "", err
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return string(b), nil
+	}
+	socksBefore := socks.count()
+	if got, err := pageVia(phone); err != nil || got != "page for "+phoneID {
+		t.Errorf("phone to the page: %q %v", got, err)
+	}
+	if socks.count() != socksBefore {
+		t.Error("the page's request was carried to SOCKS5")
+	}
+	if got, err := pageVia(outsider); err == nil {
+		t.Errorf("outsider got the page: %q", got)
 	}
 
 	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.

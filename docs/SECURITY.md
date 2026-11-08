@@ -150,6 +150,28 @@ straight to their servers (from reading code; a review saw it). What changes:
   unencrypted: keep it on this computer, or on the tailnet.
 - The flag is read at start; no tool changes it.
 
+## The page (`--ui`)
+
+`--ui` serves a read-only page of the records on the node's port 80, with what the
+MCP tools return, masked the same way. Who can read it (each a test):
+
+- Only the `--device` devices, checked when a connection opens and on every
+  request; others get nothing.
+- Each device sees only its own flows, in the list and by ID.
+- Only a browser holding the token of this start: the link `run` prints sets it
+  as an HttpOnly, SameSite=Strict cookie. Another app on the same iPhone can reach
+  the port, but not read the page without the token.
+- Only requests that name the node (its MagicDNS name or tailnet address) in
+  `Host`: a site the iPhone visits cannot point its own name at the node and read
+  the page as its own (DNS rebinding).
+- GET only. The page has no script (its Content-Security-Policy allows none), so
+  what sites wrote into headers and bodies stays text; it is not cached
+  (`no-store`). Pages still go through Safari: its history may keep the URLs of
+  the flow pages viewed.
+
+The token appears only in `run`'s terminal, as the login URL does: never in the
+MCP tools.
+
 ## mitmweb (`--web`)
 
 mitmweb listens on 127.0.0.1 only, with a password made at each start and passed

@@ -35,7 +35,10 @@ type Config struct {
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
 	SocksSecret string           // its password
 	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
-	Verbose     bool             // log tsnet's backend and every flow decision
+	// UI, if set, serves Reqcove's own page on the node's port 80 to the
+	// --device devices, with the asking device's StableID.
+	UI      func(w http.ResponseWriter, r *http.Request, deviceID string)
+	Verbose bool // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
 	// OnStatus is called every few seconds, from start, with where the node stands.
@@ -152,6 +155,20 @@ func Run(ctx context.Context, cfg Config) error {
 		defer srv.Close()
 		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
 	}
+	if cfg.UI != nil {
+		ln, err := s.Listen("tcp", ":80")
+		if err != nil {
+			return fmt.Errorf("page: %w", err)
+		}
+		srv := &http.Server{
+			Handler:           uiGuard{policy: current.Load, serve: cfg.UI},
+			ReadHeaderTimeout: 30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(onlyDevices{ln, current.Load})
+		defer srv.Close()
+	}
 	<-ctx.Done()
 	return nil
 }
@@ -185,6 +202,12 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
 			local, onLink := interfaceAddrs()
 			p := &policy{devices: devices, self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
+			if st.Self != nil {
+				if fqdn := strings.ToLower(strings.TrimSuffix(st.Self.DNSName, ".")); fqdn != "" {
+					short, _, _ := strings.Cut(fqdn, ".")
+					p.names = []string{fqdn, short}
+				}
+			}
 			names := map[string]string{}
 			for ip, d := range devices {
 				p.allowSrc = append(p.allowSrc, ip)
