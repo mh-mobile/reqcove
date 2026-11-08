@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -122,7 +123,11 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(devices) == 0 {
-		return fmt.Errorf("--device is required (see `tailscale status` for names)")
+		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
+		if names := iosDevices(); len(names) > 0 {
+			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
+		}
+		return errors.New(msg)
 	}
 	dns, err := parseDNS(*dnsFlag)
 	if err != nil {
@@ -245,7 +250,7 @@ func run(ctx context.Context, args []string) error {
 	})); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
-	log.Printf("MCP on %s; agents connect with `reqcove mcp`", mcpSock)
+	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: claude mcp add reqcove -- reqcove mcp)", mcpSock)
 
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
@@ -444,4 +449,51 @@ func saveUpstreamCA(b []byte, path, state string) (string, error) {
 		return "", err
 	}
 	return out, nil
+}
+
+// tailscaleStatus is `tailscale status --json` from the Tailscale CLI, if any
+// (on macOS the app's binary works as one).
+var tailscaleStatus = func() ([]byte, error) {
+	bin, err := exec.LookPath("tailscale")
+	if err != nil {
+		bin = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, bin, "status", "--json").Output()
+}
+
+// iosDevices names this user's iPhones and iPads on the tailnet, online ones
+// first, for a missing --device: nothing if the CLI is not there.
+func iosDevices() []string {
+	out, err := tailscaleStatus()
+	if err != nil {
+		return nil
+	}
+	var st struct {
+		Self struct{ UserID int64 }
+		Peer map[string]struct {
+			DNSName, OS string
+			UserID      int64
+			Online      bool
+		}
+	}
+	if json.Unmarshal(out, &st) != nil {
+		return nil
+	}
+	var online, offline []string
+	for _, p := range st.Peer {
+		name, _, _ := strings.Cut(p.DNSName, ".")
+		if p.OS != "iOS" || p.UserID != st.Self.UserID || name == "" {
+			continue
+		}
+		if p.Online {
+			online = append(online, name+" (online)")
+		} else {
+			offline = append(offline, name)
+		}
+	}
+	slices.Sort(online)
+	slices.Sort(offline)
+	return append(online, offline...)
 }

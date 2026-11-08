@@ -8,6 +8,8 @@
 - Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- Without `--device`, `run` suggests your iPhones and iPads on the tailnet (from the
+  Tailscale CLI, when there is one), and it prints the `claude mcp add` command.
 - A request a `--rules` rule fails on (such as a `map_remote` making a bad port)
   is answered with a 502 instead of going on unrewritten.
 - `resolve` sets the SNI in `tls_start_server`, so it also holds through a proxy;

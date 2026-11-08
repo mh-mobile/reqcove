@@ -130,3 +130,23 @@ func TestFetchBurpCA(t *testing.T) {
 		t.Errorf("remote proxy: %v", err)
 	}
 }
+
+// A missing --device suggests this user's iPhones and iPads, online first.
+func TestIOSDevices(t *testing.T) {
+	old := tailscaleStatus
+	defer func() { tailscaleStatus = old }()
+	tailscaleStatus = func() ([]byte, error) {
+		return []byte(`{"Self":{"UserID":1},"Peer":{
+			"a":{"DNSName":"ipad-old.tail.ts.net.","OS":"iOS","UserID":1,"Online":false},
+			"b":{"DNSName":"iphone-duo.tail.ts.net.","OS":"iOS","UserID":1,"Online":true},
+			"c":{"DNSName":"mac.tail.ts.net.","OS":"macOS","UserID":1,"Online":true},
+			"d":{"DNSName":"their-iphone.tail.ts.net.","OS":"iOS","UserID":2,"Online":true}}}`), nil
+	}
+	if got := strings.Join(iosDevices(), ", "); got != "iphone-duo (online), ipad-old" {
+		t.Errorf("got %q", got)
+	}
+	tailscaleStatus = func() ([]byte, error) { return nil, os.ErrNotExist }
+	if got := iosDevices(); got != nil {
+		t.Errorf("without the CLI: %v", got)
+	}
+}
