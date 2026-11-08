@@ -1,14 +1,20 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"math/big"
 	"net"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseUpstream(t *testing.T) {
@@ -72,5 +78,24 @@ func TestWriteUpstreamCA(t *testing.T) {
 	os.WriteFile(junk, []byte("not a certificate"), 0o600)
 	if _, err := writeUpstreamCA(junk, t.TempDir()); err == nil {
 		t.Error("junk accepted")
+	}
+
+	// A key before the certificate in one PEM file: the certificate is found.
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	both := filepath.Join(dir, "key-and-ca.pem")
+	os.WriteFile(both, append(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...), 0o600)
+	if _, err := writeUpstreamCA(both, t.TempDir()); err != nil {
+		t.Errorf("key, then CA: %v", err)
+	}
+	// A leaf (not a CA) is refused.
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "leaf.example"},
+		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+	leafDER, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	leaf := filepath.Join(dir, "leaf.der")
+	os.WriteFile(leaf, leafDER, 0o600)
+	if _, err := writeUpstreamCA(leaf, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not a CA") {
+		t.Errorf("leaf: %v", err)
 	}
 }

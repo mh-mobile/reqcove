@@ -121,9 +121,10 @@ and tokens included, anywhere.
 
 ## An upstream proxy (`--upstream-proxy`)
 
-Decrypted requests then go on through that proxy, and Reqcove's mitmproxy does
-not connect to their servers itself (connection strategy lazy; a test counts the
-server's connections). What changes:
+Decrypted HTTP(S) requests then go on through that proxy, and Reqcove's mitmproxy
+does not connect to their servers itself (connection strategy lazy; a test counts
+the server's connections). Other protocols over TLS to an allowed host still go
+straight to their servers (from reading code; a review saw it). What changes:
 
 - The proxy sees the requests and responses unmasked, and Burp, for one, keeps them
   in its project, on disk. Its own MCP server or extensions give agents what

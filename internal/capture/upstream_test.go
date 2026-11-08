@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,16 +59,25 @@ func startUpstream(t *testing.T) *upstreamProxy {
 	return u
 }
 
+// serve notes the request line and the Host header as they came: Go's
+// parser replaces Host with the URL's host for a proxy request.
 func (u *upstreamProxy) serve(c net.Conn) {
 	defer c.Close()
 	br := bufio.NewReader(c)
-	req, err := http.ReadRequest(br)
+	tp := textproto.NewReader(br)
+	line, err := tp.ReadLine()
 	if err != nil {
 		return
 	}
-	if req.Method == "CONNECT" {
-		u.note("CONNECT " + req.Host)
-		s, err := net.Dial("tcp", req.Host)
+	hdr, err := tp.ReadMIMEHeader()
+	if err != nil {
+		return
+	}
+	method, target, _ := strings.Cut(line, " ")
+	target, _, _ = strings.Cut(target, " ")
+	if method == "CONNECT" {
+		u.note("CONNECT " + target)
+		s, err := net.Dial("tcp", target)
 		if err != nil {
 			fmt.Fprint(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 			return
@@ -78,8 +88,12 @@ func (u *upstreamProxy) serve(c net.Conn) {
 		io.Copy(c, s)
 		return
 	}
-	u.note(req.Method + " " + req.URL.String() + " Host:" + req.Host)
-	req.RequestURI = ""
+	u.note(method + " " + target + " Host:" + hdr.Get("Host"))
+	req, err := http.NewRequest(method, target, nil) // GET only, in these tests
+	if err != nil {
+		return
+	}
+	req.Host = hdr.Get("Host")
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
 		fmt.Fprint(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -185,7 +199,7 @@ func TestUpstream(t *testing.T) {
 	if code, _ := get("http://"+p+"/oos", "elsewhere.example"); code != 200 {
 		t.Errorf("out-of-scope request through the upstream: %d", code)
 	}
-	if !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, "GET http://"+p+"/oos ") }) {
+	if want := "GET http://" + p + "/oos Host:elsewhere.example"; !slices.Contains(up.all(), want) {
 		t.Errorf("the out-of-scope request did not go through the upstream: %v", up.all())
 	}
 
@@ -194,7 +208,9 @@ func TestUpstream(t *testing.T) {
 	tc.Transport.(*http.Transport).TLSClientConfig.ServerName = "tls.resolved.test"
 	req, _ := http.NewRequest("GET", "https://"+o+"/resolved", nil)
 	req.Host = "tls.resolved.test"
-	if r, err := tc.Do(req); err == nil {
+	if r, err := tc.Do(req); err != nil {
+		t.Errorf("resolve through the upstream: %v", err)
+	} else {
 		r.Body.Close()
 	}
 	select {
@@ -204,6 +220,9 @@ func TestUpstream(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Error("resolve through the upstream never reached the target")
+	}
+	if want := fmt.Sprintf("CONNECT 127.0.0.1:%d", target.Listener.Addr().(*net.TCPAddr).Port); !slices.Contains(up.all(), want) {
+		t.Errorf("resolve went around the upstream: %v", up.all())
 	}
 
 	// The upstream down: an error, and the server is not reached around it
@@ -217,7 +236,45 @@ func TestUpstream(t *testing.T) {
 	if tlsConns.Load() != before {
 		t.Error("with the upstream down, mitmproxy went to the server itself")
 	}
-	if v := h.doneFlow("/down", false); !strings.Contains(v.Error+fmt.Sprint(v.Status), "502") && v.Error == "" {
+	if v := h.doneFlow("/down", false); v.Status != 502 && v.Error == "" {
 		t.Errorf("upstream down, record: status %d error %q", v.Status, v.Error)
+	}
+}
+
+// An upstream on an IPv6 address ([::1]:PORT) works as written in the flag.
+func TestUpstreamIPv6(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skip("no IPv6 loopback")
+	}
+	up := &upstreamProxy{ln: ln}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go up.serve(c)
+		}
+	}()
+	defer ln.Close()
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer plain.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream = ln.Addr().String() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := h.client("dev").Get(plain.URL + "/v6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != 200 || !slices.ContainsFunc(up.all(), func(s string) bool { return strings.Contains(s, "/v6") }) {
+		t.Errorf("through [::1]: %d, upstream saw %v", r.StatusCode, up.all())
 	}
 }

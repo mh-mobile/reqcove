@@ -327,7 +327,7 @@ class Reqcove:
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
         if "reqcove_upstream" in updated:
             host, _, port = ctx.options.reqcove_upstream.rpartition(":")
-            self.upstream = (host, int(port)) if host else None
+            self.upstream = (host.strip("[]"), int(port)) if host else None  # [::1]:8080
         if "reqcove_rules" in updated:
             self.rules, self.rules_error = None, ""
             if ctx.options.reqcove_rules:

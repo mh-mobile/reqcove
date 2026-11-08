@@ -189,6 +189,9 @@ func run(ctx context.Context, args []string) error {
 			trust = "its CA only (--upstream-ca)"
 		}
 		log.Printf("decrypted requests go on to the upstream proxy %s, which sees them unmasked; HTTPS through it is checked against %s", upstream, trust)
+		if upstreamCAFile == "" {
+			log.Print("if the proxy decrypts (Burp, ZAP and Charles do), pass its CA with --upstream-ca, or HTTPS through it fails with 'unable to get local issuer certificate'")
+		}
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
@@ -367,8 +370,16 @@ func writeUpstreamCA(path, state string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--upstream-ca: %w", err)
 	}
-	if p, _ := pem.Decode(b); p != nil {
-		b = p.Bytes
+	// PEM: the first certificate (a file may hold a key first); else DER.
+	for rest := b; ; {
+		var p *pem.Block
+		if p, rest = pem.Decode(rest); p == nil {
+			break
+		}
+		if p.Type == "CERTIFICATE" {
+			b = p.Bytes
+			break
+		}
 	}
 	cert, err := x509.ParseCertificate(b)
 	if err != nil {
