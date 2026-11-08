@@ -13,8 +13,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
@@ -36,10 +38,24 @@ import (
 // version is set at release builds: -ldflags "-X main.version=v0.1.0".
 var version = "dev"
 
+const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
+
+Usage:
+  reqcove run --device NAME --allow-hosts HOSTS [flags]
+                     carry the device's traffic as a Tailscale exit node and record
+                     the allowed hosts; prints what is left to set up
+  reqcove status     what reqcove is doing, and the next steps
+  reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
+  reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
+  reqcove version
+
+"reqcove run -h" lists run's flags. More: https://github.com/mh-mobile/reqcove
+`
+
 func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: reqcove run --device NAME [...] | reqcove status | reqcove cleanup | reqcove mcp | reqcove version")
+		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
 	mcpserver.Version = version
@@ -60,6 +76,9 @@ func main() {
 		err = cleanup(os.Args[2:])
 	case "version", "--version", "-version":
 		fmt.Println("reqcove", version)
+		return
+	case "help", "-h", "-help", "--help":
+		fmt.Print(usage)
 		return
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -155,6 +174,12 @@ func run(ctx context.Context, args []string) error {
 		if upstreamCAFile, err = writeUpstreamCA(*upstreamCA, *state); err != nil {
 			return err
 		}
+	} else if upstream != "" {
+		if b, err := fetchBurpCA(upstream); err == nil {
+			if upstreamCAFile, err = saveUpstreamCA(b, "http://burp/cert", *state); err == nil {
+				log.Printf("using the upstream proxy's CA from http://burp/cert (--upstream-ca to choose one)")
+			}
+		}
 	}
 
 	mitmLog, err := os.OpenFile(filepath.Join(*state, "mitmproxy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -190,7 +215,7 @@ func run(ctx context.Context, args []string) error {
 		}
 		log.Printf("decrypted requests go on to the upstream proxy %s, which sees them unmasked; HTTPS through it is checked against %s", upstream, trust)
 		if upstreamCAFile == "" {
-			log.Print("if the proxy decrypts (Burp, ZAP and Charles do), pass its CA with --upstream-ca, or HTTPS through it fails with 'unable to get local issuer certificate'")
+			log.Print("if the proxy decrypts (ZAP and Charles do), pass its CA with --upstream-ca, or HTTPS through it fails with 'unable to get local issuer certificate'")
 		}
 	}
 	if *rules != "" {
@@ -370,6 +395,32 @@ func writeUpstreamCA(path, state string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--upstream-ca: %w", err)
 	}
+	return saveUpstreamCA(b, path, state)
+}
+
+// fetchBurpCA gets Burp's CA the way its docs say, http://burp/cert through
+// the proxy, when the proxy is on this computer: over a network, plain HTTP
+// could hand back someone else's CA. Other proxies answer with an error.
+func fetchBurpCA(upstream string) ([]byte, error) {
+	host, _, _ := net.SplitHostPort(upstream)
+	if ip, err := netip.ParseAddr(host); (err != nil || !ip.IsLoopback()) && host != "localhost" {
+		return nil, errors.New("not on this computer")
+	}
+	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: upstream})}}
+	resp, err := c.Get("http://burp/cert")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http://burp/cert: %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+}
+
+// saveUpstreamCA checks a CA certificate (PEM or DER) from src and writes it as
+// PEM into the state directory for mitmproxy.
+func saveUpstreamCA(b []byte, path, state string) (string, error) {
 	// PEM: the first certificate (a file may hold a key first); else DER.
 	for rest := b; ; {
 		var p *pem.Block

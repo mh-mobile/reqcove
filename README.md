@@ -112,7 +112,7 @@ setting, so this works on Wi-Fi only.
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below) |
-| `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts, as Burp does |
+| `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
 | `--dns` | the exit node's DNS upstream, `1.1.1.1:53` by default; `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
@@ -157,9 +157,8 @@ To see the same requests in Burp Suite (or ZAP, Charles, …) while Reqcove keep
 records, send them on through it:
 
 ```sh
-curl -s -x http://127.0.0.1:8080 http://burp/cert -o burp.der   # Burp's CA
 reqcove run --device iphone --allow-hosts 'api.example.com' \
-  --upstream-proxy http://127.0.0.1:8080 --upstream-ca burp.der
+  --upstream-proxy http://127.0.0.1:8080
 ```
 
 - Decrypted requests go to the proxy (HTTPS in a CONNECT tunnel, plain HTTP as
@@ -173,8 +172,11 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   `resolve` rules are refused with `--upstream-proxy`; use the proxy's own
   overrides (Burp's Hostname resolution overrides). Plain HTTP shows up in Burp
   under the IP address, with the name in its `Host` header.
-- With `--upstream-ca`, only that CA is trusted for HTTPS through the proxy; without
-  it, the public CAs (for a proxy that does not decrypt).
+- HTTPS through the proxy is checked against the proxy's CA only. A proxy on this
+  computer that serves `http://burp/cert`, as Burp does, has it fetched from there
+  at start; for another proxy that decrypts (ZAP, Charles), pass its CA with
+  `--upstream-ca FILE` (PEM or DER). Otherwise the public CAs are used (for a
+  proxy that does not decrypt).
 - Only HTTP(S) goes through the proxy. Other protocols to an allowed host (MQTT,
   say) go straight to their servers; over TLS with `--upstream-ca` they fail: the
   server's certificate is checked against that CA. HTTPS without a server name

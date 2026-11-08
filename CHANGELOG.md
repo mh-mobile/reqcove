@@ -5,6 +5,9 @@
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.
+- Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
+  computer, so `--upstream-ca` is needed only for other proxies that decrypt.
+- `reqcove help` (also `-h`, `--help`) shows the commands.
 - A request a `--rules` rule fails on (such as a `map_remote` making a bad port)
   is answered with a 502 instead of going on unrewritten.
 - `resolve` sets the SNI in `tls_start_server`, so it also holds through a proxy;

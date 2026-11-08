@@ -89,7 +89,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
 | `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
 | `--upstream-proxy URL` | 復号したリクエストを、Burp Suite などの HTTP プロキシに回します。`http://127.0.0.1:8080` など（下を参照） |
-| `--upstream-ca FILE` | そのプロキシの CA（PEM か DER）。Burp のように、自分で復号するプロキシのときに渡します |
+| `--upstream-ca FILE` | そのプロキシの CA（PEM か DER）。自分で復号するプロキシのときに渡します。この Mac の Burp なら、自動で取ってきます |
 | `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（マスクなし。編集とリプレイができ、すべてのフローを保持します） |
 | `--dns` | Exit Node が使う上流 DNS。デフォルトは `1.1.1.1:53`。`system` を指定すると `/etc/resolv.conf` を使います |
 | `--no-redact` | シークレットをマスクせずに記録します |
@@ -121,14 +121,13 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
 Reqcove の記録を残したまま、同じリクエストを Burp Suite（や ZAP、Charles など）でも見るには、そちらに回します。
 
 ```sh
-curl -s -x http://127.0.0.1:8080 http://burp/cert -o burp.der   # Burp の CA
 reqcove run --device iphone --allow-hosts 'api.example.com' \
-  --upstream-proxy http://127.0.0.1:8080 --upstream-ca burp.der
+  --upstream-proxy http://127.0.0.1:8080
 ```
 
 - 復号したリクエストは、プロキシを通ります（HTTPS は CONNECT のトンネルで、平文の HTTP はプロキシのリクエストとして）。本物のサーバーへ直接つなぐことはありません。`--allow-hosts` の外のホストは、今までどおり直接通ります。Burp の Intercept はオフにしてください。オンだと、リクエストがそこで止まります。
 - Reqcove は、iPhone がつないだアドレス（IP）をプロキシに渡します。ただ、Burp は HTTPS では、SNI の名前をこの Mac で引き直して、そちらにつなぎます（試して確かめました）。そのため、Exit Node が「この Mac と LAN は宛先にしない」と拒んでいても、Burp のつなぐ先には効きません。`--allow-hosts` は、試すホストだけにしてください。同じ理由で、`resolve` のルールは `--upstream-proxy` と一緒には使えません。プロキシ自身の設定（Burp の Hostname resolution overrides）を使ってください。平文の HTTP は、Burp では IP で表示され、名前は `Host` ヘッダーで分かります。
-- `--upstream-ca` を渡すと、プロキシを通る HTTPS では、その CA だけを信じます。渡さなければ、公開の CA で確かめます（自分では復号しないプロキシ向け）。
+- プロキシを通る HTTPS は、プロキシの CA だけで確かめます。この Mac で動いていて、Burp のように `http://burp/cert` で CA を配るプロキシなら、起動のときに自動で取ってきます。ほかの、自分で復号するプロキシ（ZAP、Charles など）は、`--upstream-ca FILE`（PEM か DER）で CA を渡してください。どちらでもなければ、公開の CA で確かめます（自分では復号しないプロキシ向け）。
 - プロキシを通るのは HTTP(S) だけです。許可したホストへの、ほかのプロトコル（MQTT など）は、本物のサーバーへ直接つながります。TLS の上のものは、`--upstream-ca` を渡していると、サーバーの証明書をその CA で確かめることになるので、失敗します。また、サーバーの名前（SNI）を送らない、IP アドレスへの HTTPS は、Burp を通すと失敗します。Burp が、そのアドレスを mitmproxy の受け付けない形で証明書に入れるためです。
 - プロキシは、マスクしていない中身を全部見ます。Burp は、それをプロジェクトに残します。Burp Suite Community 2026.10 で試しました。ほかのプロキシは試していません。Burp で見えたこと：リクエストの本文は、全部届くまで Burp が溜めます。HTTP/1.1 のクライアントへの SSE（サーバーから流すイベント）は失敗します（iOS のアプリの多くが使う HTTP/2 なら流れます）。`--web` と一緒に使うと、mitmweb から平文の HTTP のリクエストを送り直したときに、プロキシ自身に送られます。
 

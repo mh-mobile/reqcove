@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -97,5 +98,35 @@ func TestWriteUpstreamCA(t *testing.T) {
 	os.WriteFile(leaf, leafDER, 0o600)
 	if _, err := writeUpstreamCA(leaf, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not a CA") {
 		t.Errorf("leaf: %v", err)
+	}
+}
+
+// Burp's CA is fetched from http://burp/cert through the proxy, when the proxy
+// is on this computer; another proxy's error, or a remote proxy, gives none.
+func TestFetchBurpCA(t *testing.T) {
+	ca := httptest.NewTLSServer(nil)
+	defer ca.Close()
+	burp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host == "burp" && r.URL.Path == "/cert" {
+			w.Write(ca.Certificate().Raw) // DER, as Burp serves it
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer burp.Close()
+	b, err := fetchBurpCA(burp.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveUpstreamCA(b, "http://burp/cert", t.TempDir()); err != nil {
+		t.Errorf("fetched CA: %v", err)
+	}
+	other := httptest.NewServer(http.NotFoundHandler()) // a proxy without http://burp/cert
+	defer other.Close()
+	if _, err := fetchBurpCA(other.Listener.Addr().String()); err == nil {
+		t.Error("a proxy answering 404 gave a CA")
+	}
+	if _, err := fetchBurpCA("192.0.2.1:8080"); err == nil || !strings.Contains(err.Error(), "not on this computer") {
+		t.Errorf("remote proxy: %v", err)
 	}
 }
