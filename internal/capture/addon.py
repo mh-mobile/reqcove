@@ -259,13 +259,13 @@ def load_rules(path):
     """The --rules file as mitmproxy's own rule addons, which reqcove calls
     from its hooks (so rules never touch skipped flows or mitm.it).
 
-    Errors name the rule by kind and index, never its text: modify_headers
-    rules often carry tokens."""
+    Errors name the rule by kind and index, never its text (filters, regexes
+    and values can carry tokens); only resolve's names and addresses are said."""
     data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
         raise ValueError("the file must map map_remote, map_local, modify_headers and resolve to lists")
-    extra = sorted(str(k) for k in data if k not in RULE_KINDS + RULE_SETTINGS)
-    if extra:
+    extra = sorted(str(k) if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", str(k)) else "(a key that is not a name)" for k in data if k not in RULE_KINDS + RULE_SETTINGS)
+    if extra:  # a key that is not a name is not quoted: it may be a misplaced rule
         raise ValueError(f"only {', '.join(RULE_KINDS + RULE_SETTINGS)} are allowed, not {', '.join(extra)}")
     keep = data.get("keep_host_header", False)
     if not isinstance(keep, bool):
@@ -375,7 +375,8 @@ class Reqcove:
             return None, why
 
     async def _watch_rules(self, path):
-        """--rules-reload: once a second, take the file again when it changed.
+        """--rules-reload: once a second, look at the file; take it again when it
+        changed and then looked the same twice in a row (not mid-save).
         A file that does not load leaves the rules before it in place, and says
         why. On the event loop, as the hooks, so a swap never lands mid-hook."""
         seen = self.rules_stamp

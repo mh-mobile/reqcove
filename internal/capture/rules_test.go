@@ -316,6 +316,7 @@ func TestRulesRefused(t *testing.T) {
 	defer cancel()
 	for name, c := range map[string]struct{ yaml, want string }{
 		"other option":                {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
+		"misplaced rule as a key":     {"'|~q|Authorization|Bearer sekrit': 1\n", "not (a key that is not a name)"},
 		"missing file":                {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
 		"bad regex":                   {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
 		"not a mapping":               {"- a\n", "the file must map"},

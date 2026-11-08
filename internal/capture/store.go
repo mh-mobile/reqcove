@@ -205,8 +205,9 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.allow, s.redact = allow, redact
 }
 
-// SetRulesLog has f told of each --rules-reload: the rules now in force, and
-// why the file did not load when it did not (the rules before it then stay).
+// SetRulesLog has f told of each --rules-reload: the rules now in force (counts
+// by kind, and resolve's targets), and why the file did not load when it did not
+// (the rules before it then stay).
 func (s *Store) SetRulesLog(f func(rules map[string]int, resolve []string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
