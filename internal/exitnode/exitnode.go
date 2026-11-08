@@ -177,10 +177,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 					log.Print(step)
 				}
 			}
-			var self []netip.Addr
-			for _, ip := range st.TailscaleIPs {
-				self = append(self, ip)
-			}
+			self := slices.Clone(st.TailscaleIPs)
 			peers := make([]*ipnstate.PeerStatus, 0, len(st.Peer))
 			for _, p := range st.Peer {
 				peers = append(peers, p)
@@ -230,7 +227,7 @@ func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Stat
 		s.Node = strings.TrimSuffix(st.Self.DNSName, ".")
 		s.ExitApproved = st.Self.AllowedIPs != nil && tsaddr.ContainsExitRoutes(*st.Self.AllowedIPs)
 	}
-	if ls, err := lc.NetworkLockStatus(ctx); err == nil {
+	if ls, err := lc.TailnetLockStatus(ctx); err == nil {
 		s.LockEnabled, s.LockSigned = ls.Enabled, ls.NodeKeySigned
 		if ls.NodeKey != nil {
 			s.NodeKey = ls.NodeKey.String()
