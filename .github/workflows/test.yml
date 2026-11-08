@@ -27,9 +27,25 @@ jobs:
         run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
       - run: go test -race ./...
-      # Real mitmproxy through uvx. The memory trial (REQCOVE_TRIAL2) stays local:
-      # its RSS budgets depend on the machine.
+      # Every test gated on REQCOVE_E2E, with real mitmproxy through uvx. The
+      # memory trial (REQCOVE_TRIAL2) and the soak (REQCOVE_SOAK) stay local:
+      # their budgets depend on the machine.
       - name: end to end with mitmproxy
         env:
           REQCOVE_E2E: "1"
-        run: go test -count=1 -run 'TestEndToEnd|TestRules|TestLogsHoldNoSecrets|TestWeb|TestCANamed' ./internal/capture/
+        run: go test -count=1 ./internal/capture/
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      # Fails on a known vulnerability the code can reach.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

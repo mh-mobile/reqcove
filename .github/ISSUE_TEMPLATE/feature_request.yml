@@ -1,0 +1,15 @@
+name: Feature request
+description: Something Reqcove could do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The problem, more than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How Reqcove could help

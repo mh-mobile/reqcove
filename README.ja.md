@@ -1,5 +1,9 @@
 # Reqcove
 
+[![test](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml/badge.svg)](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/mh-mobile/reqcove)](https://github.com/mh-mobile/reqcove/releases)
+[![license](https://img.shields.io/github/license/mh-mobile/reqcove)](LICENSE)
+
 手元の iPhone でも、遠くにある iPhone でも、その HTTP(S) 通信を AI エージェントに渡します。
 
 [English](README.md)

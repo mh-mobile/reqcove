@@ -1,5 +1,9 @@
 # Reqcove
 
+[![test](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml/badge.svg)](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/mh-mobile/reqcove)](https://github.com/mh-mobile/reqcove/releases)
+[![license](https://img.shields.io/github/license/mh-mobile/reqcove)](LICENSE)
+
 Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent.
 
 [日本語](README.ja.md)
