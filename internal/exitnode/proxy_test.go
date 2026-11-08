@@ -254,10 +254,18 @@ func answeringDNS(t *testing.T, nx bool) (netip.AddrPort, *atomic.Int32) {
 // every lookup, concurrent ones included; a name that does not exist does not.
 func TestResolverTriesEveryUpstream(t *testing.T) {
 	good, goodQueries := answeringDNS(t, false)
-	dead, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	dead, _ := net.ListenPacket("udp", "127.0.0.1:0") // open, never answers, like a server that is down
+	defer dead.Close()
 	deadAddr := netip.MustParseAddrPort(dead.LocalAddr().String())
-	dead.Close()
 	resolve := resolver([]netip.AddrPort{deadAddr, good})
+	start := time.Now()
+	if _, err := resolve(context.Background(), "first.example"); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > upstreamTimeout+time.Second {
+		t.Errorf("first lookup past a silent upstream took %v", d)
+	}
+	start = time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -271,6 +279,9 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("lookups after the dead upstream was found took %v: it is asked every time", d)
+	}
 
 	nx, _ := answeringDNS(t, true)
 	before := goodQueries.Load()

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -176,6 +177,10 @@ func statusFor(err error) int {
 // reads it even with a custom Dial), then the exit node's DNS upstream, or the
 // system's resolver without one. So a name /etc/hosts maps to 127.0.0.1 is
 // refused here, while on the exit node the iPhone resolves it itself.
+// upstreamTimeout is how long one --dns upstream has to answer a lookup
+// before the next is asked (Go's resolver alone would wait 5 s per attempt).
+var upstreamTimeout = 2 * time.Second
+
 func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (netip.Addr, error) {
 	rs := []*net.Resolver{net.DefaultResolver}
 	if len(dns) > 0 {
@@ -186,6 +191,7 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 			}})
 		}
 	}
+	var good atomic.Int32 // the upstream that answered last
 	return func(ctx context.Context, host string) (netip.Addr, error) {
 		if ip, err := netip.ParseAddr(host); err == nil {
 			return ip.Unmap(), nil
@@ -193,12 +199,19 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 		if !strings.HasSuffix(host, ".") {
 			host += "." // absolute: this computer's search domains are not appended (and sent upstream)
 		}
-		// Upstreams in order: the next one only when this one did not answer
-		// (a name that does not exist is an answer).
+		// Upstreams in turn, from the last one that answered: the next one only
+		// when this one did not answer in time (a name that does not exist is an
+		// answer). So a dead upstream costs its timeout once, not every lookup.
 		var err error
-		for _, r := range rs {
+		first := int(good.Load())
+		for k := range rs {
+			i := (first + k) % len(rs)
 			var ips []netip.Addr
-			if ips, err = r.LookupNetIP(ctx, "ip4", host); err == nil {
+			c, cancel := context.WithTimeout(ctx, upstreamTimeout)
+			ips, err = rs[i].LookupNetIP(c, "ip4", host)
+			cancel()
+			if err == nil {
+				good.Store(int32(i))
 				return ips[0].Unmap(), nil
 			}
 			if de, ok := err.(*net.DNSError); ok && de.IsNotFound || ctx.Err() != nil {

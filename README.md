@@ -116,7 +116,8 @@ setting, so this works on Wi-Fi only.
 - Secrets are masked as they arrive: headers and query parameters whose names
   contain words such as authorization, token, secret, key or signature
   (`accessToken` and `X-Amz-Signature` too), cookie values, and the same
-  parameters in fragments, `Referer`, `Location` and error messages. In bodies,
+  parameters wherever a URL appears (fragments, `Referer`, `Location`, other
+  headers, bodies, error messages), along with a URL's password. In bodies,
   the values of such JSON and form fields are masked, and so are credentials
   recognisable by their shape (`Bearer …`, JWTs, keys such as `ghp_…`, `sk-…`,
   `AKIA…`) anywhere. **Other secrets in a body, under names that do not say so,

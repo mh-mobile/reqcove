@@ -64,23 +64,25 @@ MAX_HEADERS = 256           # per message, as recorded
 MAX_HEADER_BYTES = 256 << 10  # names and values together, as recorded
 
 
+SHORT = 1024  # other text a site sends (reason, encoding, error), as recorded
+
+
 def _headers(h):
     """The headers as [name, value] pairs (repeated Set-Cookie kept), bounded:
-    a site can send many or huge ones, and they are queued and kept."""
+    a site can send many or huge ones, and they are queued and kept. The note
+    says what was left out; it goes apart from the headers, which a site names."""
     out, total = [], 0
     for k, v in h.items(multi=True):
         if len(out) == MAX_HEADERS:
-            out.append(["X-Reqcove-Note", "more headers not recorded"])
-            break
+            return out, "more headers not recorded"
         room = MAX_HEADER_BYTES - total - len(k)
         if room <= 0:
-            out.append(["X-Reqcove-Note", "more header bytes not recorded"])
-            break
+            return out, "more header bytes not recorded"
         if len(v) > room:
             v = v[:room] + " [cut]"
         out.append([k, v])
         total += len(k) + len(v)
-    return out
+    return out, ""
 
 
 class _Decoder:
@@ -126,7 +128,7 @@ class _Head:
         self.size = 0  # bytes on the wire
         self.truncated = False
         self.decoding = True
-        self.encoding = headers.get("content-encoding", "").strip().lower()
+        self.encoding = headers.get("content-encoding", "").strip().lower()[:64]
         self.note = ""
         self.sent_len = -1
         self.last_flush = time.monotonic()
@@ -135,7 +137,7 @@ class _Head:
                 raise ValueError("chained content-encoding")
             self.dec = _Decoder(self.encoding)
         except Exception as e:
-            self.dec, self.note = None, str(e)  # copy the head as it is on the wire
+            self.dec, self.note = None, str(e)[:SHORT]  # copy the head as it is on the wire
 
     def __call__(self, data):
         try:
@@ -146,7 +148,7 @@ class _Head:
                     out = self.dec.feed(data, room) if self.dec else data[:room]
                     self.head += out[:room]
                 except Exception as e:
-                    self.decoding, self.note = False, "decode error: " + str(e)
+                    self.decoding, self.note = False, ("decode error: " + str(e))[:SHORT]
                 if len(self.head) >= self.limit:
                     self.truncated = True
                     self.decoding = False  # stop decoding once the head is full
@@ -311,7 +313,7 @@ class Reqcove:
             return
         # Headers and URLs count toward the queue's byte budget too: a site can
         # send large ones.
-        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + sum(len(k) + len(v) + 64 for k, v in msg.get("headers") or [])
+        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + len(msg.get("msg") or "") + sum(len(k) + len(v) + 64 for k, v in msg.get("headers") or [])
         with self.lock:
             over = self.queued_bytes + size > 2 * self.queue_limit  # bodies give way first, at the plain limit
         if over:
@@ -320,7 +322,7 @@ class Reqcove:
         self._put(msg, size)
 
     def put_body(self, msg):
-        size = len(msg["head"]) + 512
+        size = len(msg["head"]) + len(msg["encoding"]) + len(msg["note"]) + 512
         with self.lock:
             over = self.queued_bytes + size > self.queue_limit
         if over:
@@ -344,6 +346,7 @@ class Reqcove:
             flow.comment = device  # shows the device in mitmweb
         r = flow.request
         peer = flow.client_conn.peername
+        headers, note = _headers(r.headers)
         # Recorded as the app sent it: the host is checked again in reqcove,
         # and a rule may send the request to a host outside --allow-hosts.
         ev = {
@@ -351,7 +354,7 @@ class Reqcove:
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "ts": r.timestamp_start, "method": r.method, "url": r.pretty_url,
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
-            "headers": _headers(r.headers),
+            "headers": headers, "note": note,
         }
         if self.rules:
             ev["rewrites"] = self._rewrite_request(flow)
@@ -418,10 +421,11 @@ class Reqcove:
             return
         s = flow.response
         rewrites = self._modify_headers(flow, s.headers, "response") if self.rules else []
+        headers, note = _headers(s.headers)
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
-            "status": s.status_code, "reason": s.reason, "http_version": s.http_version,
-            "headers": _headers(s.headers), "rewrites": rewrites,  # as the app receives them
+            "status": s.status_code, "reason": s.reason[:SHORT], "http_version": s.http_version[:SHORT],
+            "headers": headers, "note": note, "rewrites": rewrites,  # as the app receives them
         })
         if flow.metadata.get("reqcove_local"):
             return  # mitmproxy sends a made response whole, never through .stream
@@ -437,7 +441,7 @@ class Reqcove:
     def error(self, flow):
         if flow.metadata.get("reqcove_skip"):
             return
-        self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg})
+        self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg[:SHORT]})
 
     def websocket_message(self, flow):
         if flow.metadata.get("reqcove_skip"):
@@ -459,7 +463,7 @@ class Reqcove:
             "v": VERSION, "ev": "tls_failed", "conn": data.context.client.id, "ts": time.time(),
             "device": self.conn_device.get(data.context.client.id),
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
-            "sni": data.context.client.sni, "msg": str(data.conn.error or ""),
+            "sni": data.context.client.sni, "msg": str(data.conn.error or "")[:SHORT],
             # without SNI (an IP address dialed directly), the destination
             "host": data.context.server.address[0] if data.context.server.address else None,
         })

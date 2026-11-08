@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestMaskBody(t *testing.T) {
 		{"sentences stay", "text/html", `<p>Basic information about the token provided</p>`, nil, []string{"Basic information about the token provided"}},
 		{"Basic credentials", "text/plain", `Authorization header was Basic dXNlcjpwYXNzd29yZA==`, []string{"dXNlcjpwYXNz"}, []string{"Basic [redacted]"}},
 	} {
-		got := string(maskBody([]byte(c.in), c.ctype))
+		got := string(maskBody([]byte(c.in), c.ctype, false))
 		for _, g := range c.gone {
 			if strings.Contains(got, g) {
 				t.Errorf("%s: %q survived: %s", c.name, g, got)
@@ -46,7 +47,7 @@ func TestMaskBody(t *testing.T) {
 		}
 	}
 	bin := []byte{0x1f, 0x8b, 0, 'p', 'a', 's', 's'}
-	if string(maskBody(bin, "application/json")) != string(bin) {
+	if string(maskBody(bin, "application/json", false)) != string(bin) {
 		t.Error("a head that is not text was changed")
 	}
 }
@@ -126,7 +127,7 @@ func BenchmarkMaskBody64K(b *testing.B) {
 	head := []byte(sb.String()[:64<<10])
 	b.SetBytes(int64(len(head)))
 	for b.Loop() {
-		maskBody(head, "application/json")
+		maskBody(head, "application/json", false)
 	}
 }
 
@@ -153,7 +154,7 @@ func TestSecondReviewLeaks(t *testing.T) {
 		}
 	}
 	// Valid JSON escapes in a key: \/ and a surrogate-free \u.
-	if got := string(maskBody([]byte(`{"password\/":"S3CRET-3","n":1}`), "application/json")); strings.Contains(got, "S3CRET") {
+	if got := string(maskBody([]byte(`{"password\/":"S3CRET-3","n":1}`), "application/json", false)); strings.Contains(got, "S3CRET") {
 		t.Errorf("escaped key: %s", got)
 	}
 	// Header names in their own case, schemes in any case, challenges kept.
@@ -174,5 +175,98 @@ func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	maskURLs(v)
 	if d := time.Since(start); d > 200*time.Millisecond {
 		t.Errorf("8192 levels took %v", d)
+	}
+}
+
+// Third review: secrets whose names say so, in places masking did not look.
+func TestThirdReviewLeaks(t *testing.T) {
+	st := NewStore(100, 1<<20)
+	ev := func(m map[string]any) { st.Apply(line(t, m)) }
+	body := func(id, dir, ctype, text string) {
+		ev(map[string]any{"ev": "request", "id": id, "host": "h", "url": "https://h/" + id, "headers": [][2]string{{"Content-Type", ctype}}})
+		ev(map[string]any{"ev": "response", "id": id, "status": 200, "headers": [][2]string{{"Content-Type", ctype}}})
+		ev(map[string]any{"ev": "body", "id": id, "dir": dir, "head": b64(text), "size": len(text), "decoded": true})
+	}
+	cases := map[string]struct{ dir, ctype, text, keep string }{
+		"json in json":      {"request", "application/json", `{"event":"login","payload":"{\"user\":\"u\",\"password\":\"S3CRET\"}"}`, `\"user\":\"u\"`},
+		"json in form":      {"request", "application/x-www-form-urlencoded", `a=1&data=%7B%22password%22%3A%22S3CRET%22%7D`, "a=1"},
+		"names":             {"request", "application/json", `{"pass":"S3CRET-a","totp":"S3CRET-b","pw":"S3CRET-c","csrf":"S3CRET-d","authentication":"S3CRET-e","xsrf_value":"S3CRET-f"}`, ""},
+		"lone code request": {"request", "application/json", `{"phone":"+1555","code":"S3CRET"}`, "+1555"},
+		"numbers":           {"request", "application/json", `{"otp": 914253, "pin":-1234, "n": 7}`, `"n": 7`},
+		"url in json":       {"response", "application/json", `{"upload_url":"https://s3.example/x?X-Amz-Signature=S3CRET&X-Amz-Security-Token=S3CRET","next":"https://h/p?page=2\u0026access_token=S3CRET"}`, "page=2"},
+		"url in html":       {"response", "text/html", `<a href="/cb?code=S3CRET">go</a> <a href='https://user:S3CRET@h/x'>`, `">go</a>`},
+	}
+	for name, c := range cases {
+		body(name, c.dir, c.ctype, c.text)
+		v, _ := st.Get(name, true)
+		got := v.ReqBodyText + v.RespBodyText
+		if strings.Contains(got, "S3CRET") || !strings.Contains(got, c.keep) {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	if v, _ := st.Get("numbers", true); strings.Contains(v.ReqBodyText, "914253") || strings.Contains(v.ReqBodyText, "1234") {
+		t.Errorf("numeric OTP or PIN kept: %q", v.ReqBodyText)
+	}
+	// In a response, a lone code stays: it is an error code.
+	body("lone code response", "response", "application/json", `{"code":"invalid_grant"}`)
+	if v, _ := st.Get("lone code response", true); !strings.Contains(v.RespBodyText, "invalid_grant") {
+		t.Errorf("response error code masked: %q", v.RespBodyText)
+	}
+
+	ev(map[string]any{"ev": "request", "id": "hd", "host": "h", "url": "https://h/hd"})
+	ev(map[string]any{"ev": "response", "id": "hd", "status": 401, "headers": [][2]string{
+		{"WWW-Authenticate", `Bearer realm="api", error_description="token eyJhbGciOiJI.eyJzdWIiOiIx.S3CRETsig expired"`},
+		{"Link", `<https://h/x?access_token=S3CRET>; rel="next"`},
+		{"Refresh", "0; url=https://h/cb?code=S3CRET"},
+		{"X-Original-URL", "/cb?token=S3CRET"},
+		{"Location", "https://user:S3CRET@h/"},
+	}})
+	v, _ := st.Get("hd", false)
+	all := fmt.Sprint(v.RespHeaders)
+	if strings.Contains(all, "S3CRET") || !strings.Contains(all, `realm="api"`) || !strings.Contains(all, `rel="next"`) {
+		t.Errorf("headers: %s", all)
+	}
+}
+
+// Text a site sends besides headers and bodies counts toward the bound, and
+// a dead mitmdump's error on open flows too: held_bytes stays the sum.
+func TestOtherTextCountsTowardBytes(t *testing.T) {
+	st := NewStore(1000, 64<<10)
+	big := strings.Repeat("e", 16<<10)
+	for i := range 20 {
+		id := fmt.Sprint(i)
+		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "host": "h", "url": "https://h/" + id}))
+		st.Apply(line(t, map[string]any{"ev": "body", "id": id, "dir": "response", "head": b64("x"), "size": 1, "encoding": big, "note": "cannot decode " + big}))
+	}
+	if s := st.Stats(); s["held_bytes"].(int) > 64<<10 || s["evicted"].(int64) == 0 {
+		t.Errorf("20 x 32 KiB of encoding and note under a 64 KiB bound: %v", s)
+	}
+	st2 := NewStore(1000, 1<<20)
+	for i := range 3 {
+		st2.Apply(line(t, map[string]any{"ev": "request", "id": fmt.Sprint(i), "host": "h", "url": "https://h/"}))
+	}
+	st2.mitmdumpExited("mitmdump exited: signal: killed")
+	sum := 0
+	for _, f := range st2.flows {
+		sum += f.bytes()
+	}
+	if held := st2.Stats()["held_bytes"].(int); held != sum {
+		t.Errorf("held_bytes %d, flows hold %d", held, sum)
+	}
+}
+
+// A long query over many full heads stays fast (it holds the store).
+func TestSearchLongQueryIsLinear(t *testing.T) {
+	st := NewStore(1000, 64<<20)
+	head := b64(strings.Repeat("a", 60<<10))
+	for i := range 64 {
+		id := fmt.Sprint(i)
+		st.Apply(line(t, map[string]any{"ev": "request", "id": id, "host": "h", "url": "https://h/" + id, "headers": [][2]string{{"Content-Type", "text/plain"}}}))
+		st.Apply(line(t, map[string]any{"ev": "body", "id": id, "dir": "request", "head": head, "size": 60 << 10, "decoded": true}))
+	}
+	start := time.Now()
+	st.List(Filter{Query: strings.Repeat("a", 2000) + "b", QueryBodies: true, Limit: 100})
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("search took %v", d)
 	}
 }

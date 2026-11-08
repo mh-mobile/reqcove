@@ -36,31 +36,37 @@ Copying the directory to another computer copies the key.
 - Secrets are masked as they arrive, so no tool can return them. A header, query
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,
-  jwt, apikey, privatekey or authorization, even run together (`accesstoken`,
-  `X-AuthToken`), or having auth, key, sid, sig, pwd, otp, pin or code as a whole
-  word (names split at punctuation and case changes, so `apiKey`, `XAuth` and
-  `X-Amz-Signature` count, while `author` and `keyword` do not). `code` and `key`
-  next to an everyday word (`country_code`, `error_code`, `sort_key`) and
-  `token_type` are not secrets. Cookie values are masked (names stay), and query
-  parameters wherever a URL appears (`Referer`, `Location`, fragments such as
-  `#/callback?access_token=`, a URL inside another parameter, error messages),
-  as is the response's reason text. Raw bytes that mitmproxy quotes in an error
-  message (`b'…'`) are masked whole. `--no-redact` turns this off.
+  jwt, apikey, privatekey, authorization, authentication, csrf or xsrf, even run
+  together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, pwd,
+  pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
+  and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
+  `author` and `keyword` do not). `code` and `key` next to an everyday word
+  (`country_code`, `error_code`, `sort_key`) and `token_type` are not secrets.
+  Cookie values are masked (names stay), and query parameters wherever a URL
+  appears (any header, such as `Referer`, `Location` or `Link`; fragments such
+  as `#/callback?access_token=`; a URL inside another parameter; bodies; error
+  messages), as is a URL's password (`https://user:…@host`) and the response's
+  reason text. Raw bytes that mitmproxy quotes in an error message (`b'…'`) are
+  masked whole. `--no-redact` turns this off.
 - Bodies are masked as they arrive too, as far as they can be recognised: in JSON
-  (whatever the content type says), the string values of fields whose names are
-  secret by the same rule, except a lone `code`, which in a body is usually an
-  error code (`verification_code` and `device_code` are masked); in forms (or
-  bodies that look like one), such fields' values, a lone `code` included: it
-  carries OAuth authorization codes. Anywhere in a
-  header value, URL, body or error message, credentials recognisable by their
-  shape are masked: `Bearer`/`Basic`/`Token` values that look like credentials
-  (not the next word of a sentence), JWTs, and keys with
-  well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs, Google API keys).
+  (whatever the content type says), the string and number values of fields
+  whose names are secret by the same rule, also in JSON sent as a string inside
+  JSON or as a form field (one level deep). In a response a lone `code` is
+  kept, as it is usually an error code (`verification_code` and `device_code`
+  are masked); in a request it is masked, as it carries one-time and OAuth
+  codes. In forms (or bodies that look like one), such fields' values, a lone
+  `code` included. Anywhere in a header value, URL, body or error message,
+  credentials recognisable by their shape are masked: `Bearer`/`Basic`/`Token`
+  values that look like credentials (not the next word of a sentence), JWTs,
+  and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
+  Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
+  error), with only such shapes masked.
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
   a value cut before its closing quote is masked too.
 - **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`), in arrays, or in formats other than JSON, forms and text
-  (protobuf, multipart, XML attributes). Personal data, such as e-mail addresses
+  (`{"data": "…"}`), in arrays, in GraphQL arguments written into the query
+  text (`login(password: "…")`), or in formats other than JSON, forms and text
+  (protobuf, multipart, XML elements and attributes). Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
@@ -69,7 +75,8 @@ Copying the directory to another computer copies the key.
   `--no-redact` returns them.
 - Bodies are returned only when a tool is asked for them (`bodies`).
 - Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
-  URLs and error text together) and are gone
+  URLs and other text together; a site's reason text, `Content-Encoding` and
+  error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
   when `reqcove run` stops; no flow is written to disk. `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
   sent in failing and malformed requests do not reach it).
@@ -102,7 +109,23 @@ reuse): the per-request check keeps those out of Reqcove's records only.
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
 start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device.
+another local process can neither use the proxy nor pose as a device. One gap,
+from reading code: when mitmdump dies, reqcove starts it again on the same port
+(visible in `ps`), and until it is listening (up to about 30 seconds) another
+user's process on this computer could take the port. Reqcove would then send it
+the SOCKS password and the devices' TCP traffic: plain HTTP readable, HTTPS not.
+On a computer shared with users you do not trust, keep that in mind.
+
+The state directory is checked itself, not the directories above it. Keep it
+(and `--state`) under directories only you can write: someone who can rename
+entries in a parent can swap the state directory for their own.
+
+## mitmproxy's own code
+
+mitmproxy runs through `uvx` at a fixed version, with its dependencies resolved
+only from releases before a fixed date (`--exclude-newer`), so a dependency
+released later, a compromised one included, is not picked up. They are not
+pinned by hash.
 
 ## The exit node's DNS
 

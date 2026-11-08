@@ -15,13 +15,18 @@ profile=${REQCOVE_NOTARY_PROFILE:-reqcove-notary}
 cd "$(dirname "$0")/.."
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "$version^{commit}")" ] || { echo "check out $version first" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "uncommitted or untracked files: the build must be exactly $version" >&2; exit 1; }
+# The pushed tag, which the Linux binaries were built from (^{} is an annotated tag's commit).
+remote=$(git ls-remote origin "refs/tags/$version" "refs/tags/$version^{}" | tail -1 | cut -f1)
+[ "$remote" = "$(git rev-parse HEAD)" ] || { echo "$version on origin is ${remote:-missing}, not this commit" >&2; exit 1; }
+# A go.work above this checkout (say, with a local tailscale) is not built in,
+# nor go.mod changed by the build.
+export GOWORK=off GOFLAGS=-mod=readonly
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 name=reqcove_${version#v}_darwin_arm64
 mkdir -p "$work/$name"
-# GOWORK=off: a go.work above this checkout (say, with a local tailscale) is not built in.
-GOWORK=off GOFLAGS=-mod=readonly CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
   -ldflags "-s -w -X main.version=$version" -o "$work/$name/reqcove" ./cmd/reqcove
 codesign --force --options runtime --timestamp --sign "$identity" "$work/$name/reqcove"
 codesign --verify --strict "$work/$name/reqcove"
@@ -45,6 +50,7 @@ tar -C "$work" -czf "$work/$name.tar.gz" "$name"
 
 # Add it to the draft, with its checksum.
 gh release download "$version" --pattern checksums.txt --dir "$work"
-(cd "$work" && shasum -a 256 "$name.tar.gz" >> checksums.txt)
+# A rerun replaces its own line, not adds a second one.
+(cd "$work" && grep -v "  $name.tar.gz\$" checksums.txt > sums || true; shasum -a 256 "$name.tar.gz" >> sums; mv sums checksums.txt)
 gh release upload "$version" "$work/$name.tar.gz" "$work/checksums.txt" --clobber
 echo "added $name.tar.gz to the draft release $version"

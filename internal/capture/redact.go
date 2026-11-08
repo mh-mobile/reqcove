@@ -12,20 +12,22 @@ import (
 // arrives: the string values of JSON fields whose names are secret (any
 // content type: a JSON body may come labelled as a form), the values of such
 // form fields (when the body is, or looks like, a form), and anywhere,
-// values whose shape gives them away (maskTokens). The head may be cut
-// anywhere, so it is scanned as text, not parsed: a value cut before its
-// closing quote is masked to the end. Heads that are not text are left alone
-// here and never handed out while masking (Store.bodyOut). Secrets under
-// names that do not say so are not found.
-func maskBody(head []byte, contentType string) []byte {
+// values whose shape gives them away (maskTokens) and secret parameters of
+// URLs in it (maskURLs). The head may be cut anywhere, so it is scanned as
+// text, not parsed: a value cut before its closing quote is masked to the end.
+// Heads that are not text are left alone here and never handed out while
+// masking (Store.bodyOut). Secrets under names that do not say so are not
+// found. In a request, a lone "code" is a secret (an OTP, an OAuth code); in
+// a response it is usually an error code.
+func maskBody(head []byte, contentType string, request bool) []byte {
 	if len(head) == 0 || !utf8.Valid(trimCutRune(head)) {
 		return head
 	}
-	s := maskJSON(string(head))
+	s := maskJSON(string(head), request, 0)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
-		s = maskForm(s)
+		s = maskForm(s, request)
 	}
-	return []byte(maskTokens(s))
+	return []byte(maskTokens(maskURLs(s)))
 }
 
 // trimCutRune drops a UTF-8 character cut at the end of a head, for the check.
@@ -38,11 +40,12 @@ func trimCutRune(b []byte) []byte {
 	return b
 }
 
-// maskJSON replaces the string value of every "name": "value" pair whose name
-// is secret (secretBodyName) with [redacted], in one pass over the text. A
-// value that runs to the end of the head (cut, even right after a backslash)
-// is masked to the end.
-func maskJSON(s string) string {
+// maskJSON replaces the string or number value of every "name": value pair
+// whose name is secret with [redacted], in one pass over the text. A value
+// that runs to the end of the head (cut, even right after a backslash) is
+// masked to the end. A string that holds JSON itself ("{\"password\":…}") is
+// looked into, one level deep.
+func maskJSON(s string, loneCode bool, depth int) string {
 	var b strings.Builder
 	last := 0
 	for i := 0; i < len(s); {
@@ -61,18 +64,36 @@ func maskJSON(s string) string {
 			continue
 		}
 		j = skipSpace(s, j+1)
+		secret := secretKind(jsonKey(s[keyStart+1:keyEnd]), loneCode)
+		if j < len(s) && secret && (s[j] == '-' || '0' <= s[j] && s[j] <= '9') { // {"otp": 123456}
+			k := j
+			for k < len(s) && strings.IndexByte("-+.eE0123456789", s[k]) >= 0 {
+				k++
+			}
+			b.WriteString(s[last:j])
+			b.WriteString(`"[redacted]"`)
+			last, i = k, k
+			continue
+		}
 		if j >= len(s) || s[j] != '"' {
 			i = j
 			continue
 		}
 		valEnd, valClosed := jsonStringEnd(s, j)
-		if secretBodyName(jsonKey(s[keyStart+1 : keyEnd])) {
+		switch {
+		case secret:
 			b.WriteString(s[last : j+1])
 			b.WriteString("[redacted]")
 			if valClosed {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
+		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\"`):
+			if m, ok := maskInJSONString(s[j:valEnd+1], loneCode); ok {
+				b.WriteString(s[last:j])
+				b.WriteString(m)
+				last = valEnd + 1
+			}
 		}
 		if !valClosed {
 			break
@@ -86,6 +107,20 @@ func maskJSON(s string) string {
 		b.WriteString(s[last:])
 	}
 	return b.String()
+}
+
+// maskInJSONString masks a JSON string literal whose text is JSON itself.
+func maskInJSONString(lit string, loneCode bool) (string, bool) {
+	var inner string
+	if json.Unmarshal([]byte(lit), &inner) != nil || !strings.ContainsAny(inner[:min(len(inner), 1)], "{[") {
+		return "", false
+	}
+	m := maskJSON(inner, loneCode, 1)
+	if m == inner {
+		return "", false
+	}
+	out, _ := json.Marshal(m)
+	return string(out), true
 }
 
 // jsonStringEnd returns the index of the quote closing the string that opens
@@ -121,11 +156,6 @@ func jsonKey(raw string) string {
 	return raw
 }
 
-// secretBodyName is the rule for JSON fields: a lone code is usually an error
-// code ({"code": "invalid_token"}), which debugging needs, so it does not
-// count; verification_code, device_code and auth_code do.
-func secretBodyName(name string) bool { return secretKind(name, false) }
-
 // looksLikeForm: no JSON, XML or HTML, one line, and name=value at the start.
 func looksLikeForm(s string) bool {
 	t := strings.TrimLeft(s, " \t\r\n")
@@ -137,14 +167,22 @@ func looksLikeForm(s string) bool {
 	return eq > 0 && !strings.ContainsAny(head[:eq], " \t\r\n") && !strings.Contains(head, "\n")
 }
 
-// maskForm masks the values of secret fields in a form body (a=1&password=x).
+// maskForm masks the values of secret fields in a form body (a=1&password=x),
+// and secret fields of JSON sent as a field's value (data={"password":…}).
 // A lone code counts here: a form is how an OAuth authorization code is sent.
-func maskForm(s string) string {
+func maskForm(s string, request bool) string {
 	parts := strings.Split(s, "&")
 	for i, p := range parts {
-		name, _, ok := strings.Cut(p, "=")
-		if ok && secretName(formName(name)) {
+		name, val, ok := strings.Cut(p, "=")
+		if !ok {
+			continue
+		}
+		if secretName(formName(name)) {
 			parts[i] = name + "=[redacted]"
+		} else if v, err := url.QueryUnescape(val); err == nil && strings.ContainsAny(v[:min(len(v), 1)], "{[") {
+			if m := maskJSON(v, request, 1); m != v {
+				parts[i] = name + "=" + url.QueryEscape(m)
+			}
 		}
 	}
 	return strings.Join(parts, "&")
@@ -203,6 +241,11 @@ func maskTokens(s string) string {
 			return sub[1] + sub[2] + "[redacted]"
 		})
 	}
+	return maskShapes(s)
+}
+
+// maskShapes masks the tokenShapes only.
+func maskShapes(s string) string {
 	for _, t := range tokenShapes {
 		for _, p := range t.prefixes {
 			if strings.Contains(s, p) {

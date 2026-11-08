@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -187,6 +188,14 @@ func TestEndToEnd(t *testing.T) {
 			for i := range 600 {
 				w.Header().Add(fmt.Sprintf("X-H%d", i), "v")
 			}
+			w.Header().Set("X-Reqcove-Note", "posing as reqcove") // a site's header, kept as one
+		}
+		if r.URL.Path == "/huge-text" { // a site sends huge text outside the headers' bound
+			c, buf, _ := w.(http.Hijacker).Hijack()
+			fmt.Fprintf(buf, "HTTP/1.1 200 %s\r\nContent-Encoding: %s\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok", strings.Repeat("r", 1<<20), strings.Repeat("e", 1<<20))
+			buf.Flush()
+			c.Close()
+			return
 		}
 		fmt.Fprintf(w, "ok%s", r.URL.Path)
 	}))
@@ -317,9 +326,19 @@ func TestEndToEnd(t *testing.T) {
 	if r, err := hc.Get(backend.URL + "/many-headers"); err == nil {
 		r.Body.Close()
 		v := h.doneFlow("/many-headers", false)
-		if n := len(v.RespHeaders); n > 257 || header(v.RespHeaders, "x-reqcove-note") == "" {
-			t.Errorf("600 response headers recorded as %d, note %q", n, header(v.RespHeaders, "x-reqcove-note"))
+		if n := len(v.RespHeaders); n > 256 || !slices.Contains(v.Notes, "response headers: more headers not recorded") {
+			t.Errorf("600 response headers recorded as %d, notes %q", n, v.Notes)
 		}
+	}
+	// Reason and Content-Encoding are cut, so a site cannot hold memory past the bound with them.
+	if r, err := hc.Get(backend.URL + "/huge-text"); err == nil {
+		r.Body.Close()
+		v := h.doneFlow("/huge-text", false)
+		if len(v.Reason) > 1024 || len(v.RespBody.Encoding) > 64 || len(v.RespBody.Note) > 1024 {
+			t.Errorf("reason %d, encoding %d, note %d bytes recorded", len(v.Reason), len(v.RespBody.Encoding), len(v.RespBody.Note))
+		}
+	} else {
+		t.Errorf("huge reason: %v", err)
 	}
 
 	// Only reqcove, which knows the secret, may use the SOCKS5 listener.

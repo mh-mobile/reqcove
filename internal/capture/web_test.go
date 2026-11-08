@@ -79,3 +79,23 @@ func TestWeb(t *testing.T) {
 		t.Error("the mitmweb password is left in config.yaml after Stop")
 	}
 }
+
+// A config.yml left in the confdir by someone else is removed before mitmdump
+// starts: mitmproxy reads it, and options in it could undo reqcove's.
+func TestStrayConfigYmlRemoved(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var path string
+	if _, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
+		path = filepath.Join(c.Confdir, "config.yml")
+		os.WriteFile(path, []byte("ssl_insecure: true\n"), 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(path) {
+		t.Error("config.yml is still in the confdir")
+	}
+}

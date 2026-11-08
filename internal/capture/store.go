@@ -99,12 +99,19 @@ type Flow struct {
 	WSMessages  int         `json:"websocket_messages,omitempty"`
 	WSBytes     int64       `json:"websocket_bytes,omitempty"`
 	Error       string      `json:"error,omitempty"`
+	Notes       []string    `json:"notes,omitempty"` // reqcove's, about what it left out
 }
 
 // bytes is what a flow holds that a site or an app controls the size of: the
 // body heads, and the headers, URLs and error text.
 func (f *Flow) bytes() int {
-	n := len(f.ReqBody.Head) + len(f.RespBody.Head) + len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error) + len(f.Reason)
+	n := len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error) + len(f.Reason) + len(f.HTTPVersion)
+	for _, b := range []Body{f.ReqBody, f.RespBody} {
+		n += len(b.Head) + len(b.Encoding) + len(b.Note)
+	}
+	for _, note := range f.Notes {
+		n += len(note) + 16
+	}
 	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
 		for _, kv := range h {
 			n += len(kv[0]) + len(kv[1]) + 64 // and the strings' and slot's own overhead
@@ -176,7 +183,9 @@ func (s *Store) mitmdumpExited(why string) {
 	defer s.mu.Unlock()
 	for _, f := range s.flows {
 		if f.State == "open" {
+			before := f.bytes()
 			f.State, f.Error = "error", why
+			s.heldBytes += f.bytes() - before
 		}
 	}
 	s.earlier[0] += s.addonDropped[0]
@@ -280,10 +289,16 @@ func (s *Store) Apply(line []byte) {
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, s.mask(e.URL), e.Host, s.mask(e.Path), e.HTTPVersion
 		f.ReqHeaders = s.maskHeaders(e.Headers)
+		if e.Note != "" {
+			f.Notes = append(f.Notes, "request headers: "+e.Note)
+		}
 		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites
 	case "response":
 		f.Status, f.Reason, f.RespHeaders = e.Status, s.mask(e.Reason), s.maskHeaders(e.Headers) // a reason is free text from the site
 		f.Rewrites = append(f.Rewrites, e.Rewrites...)
+		if e.Note != "" {
+			f.Notes = append(f.Notes, "response headers: "+e.Note)
+		}
 	case "body":
 		head, _ := base64.StdEncoding.DecodeString(e.Head)
 		if s.redact {
@@ -291,7 +306,7 @@ func (s *Store) Apply(line []byte) {
 			if e.Dir == "request" {
 				h = f.ReqHeaders
 			}
-			head = maskBody(head, header(h, "content-type"))
+			head = maskBody(head, header(h, "content-type"), e.Dir == "request")
 		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
 		if e.Dir == "request" {
@@ -783,13 +798,13 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			out[i][1] = maskCookies(kv[1], ";", true)
 		case strings.HasSuffix(name, "-authenticate"):
 			// WWW-Authenticate, Proxy-Authenticate: a challenge (scheme, realm, error),
-			// not a credential, and what says why a 401 came
+			// not a credential, and what says why a 401 came; a token it quotes still goes
+			out[i][1] = maskShapes(maskURLs(kv[1]))
 		case secretName(kv[0]): // the name as sent: X-ClientKey splits into client and key
 			out[i][1] = "[redacted]"
-		case name == "referer" || name == "location" || name == "content-location":
-			out[i][1] = maskTokens(maskURLs(kv[1]))
 		default:
-			out[i][1] = maskTokens(kv[1]) // a credential by its shape, under any header name
+			// a credential by its shape, or a URL's (Referer, Location, Link, Refresh, …), under any name
+			out[i][1] = maskTokens(maskURLs(kv[1]))
 		}
 	}
 	return out
@@ -844,10 +859,12 @@ func secretKind(name string, loneCode bool) bool {
 var strongSecretParts = []string{
 	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
 	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
+	"authentication", "csrf", "xsrf",
 }
 
 var shortSecretWords = map[string]bool{
-	"auth": true, "key": true, "sid": true, "sig": true, "pwd": true, "otp": true, "pin": true, "code": true,
+	"auth": true, "key": true, "sid": true, "sig": true, "pwd": true, "otp": true, "totp": true,
+	"pin": true, "code": true, "pass": true, "pw": true,
 }
 
 // everydayWords next to code or key make them ordinary values.
@@ -917,9 +934,19 @@ func maskCookies(v, sep string, oneCookie bool) string {
 // / and ?. A value runs to & or #: a secret's is masked whole, ';' included
 // (some servers keep it in the value); another's is split at ';', so
 // "?view=1;token=" is seen too.
-var queryRE = regexp.MustCompile(`([?&;#])([^=&#;?/\s]+)=([^&#\s]*)`)
+// In bodies, a value also stops at a quote, < or > and a backslash (HTML
+// attributes, JSON strings), and JSON may write & as \u0026.
+var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>\\]*)`)
 
-func maskURLs(v string) string { return maskURLsAt(v, 0) }
+// A URL's password (https://user:pass@host).
+var userinfoRE = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://[^/?#@\s:"'<>]*:)[^/?#@\s"'<>]+@`)
+
+func maskURLs(v string) string {
+	if strings.Contains(v, "://") {
+		v = userinfoRE.ReplaceAllString(v, "${1}REDACTED@")
+	}
+	return maskURLsAt(v, 0)
+}
 
 // maskURLsAt is maskURLs for a URL found depth levels inside another's value.
 func maskURLsAt(v string, depth int) string {
@@ -987,26 +1014,19 @@ func isText(b []byte) bool {
 }
 
 // containsFold reports whether lowerNeedle (already lower case) occurs in b,
-// ignoring ASCII case, without copying b.
+// ignoring ASCII case. It folds a copy, then searches it in linear time: an
+// agent's long query over many heads must not hold the store for minutes.
 func containsFold[T string | []byte](b T, lowerNeedle string) bool {
-	n := len(lowerNeedle)
-	if n == 0 {
+	if len(lowerNeedle) == 0 {
 		return true
 	}
-	for i := 0; i+n <= len(b); i++ {
-		j := 0
-		for ; j < n; j++ {
-			c := b[i+j]
-			if 'A' <= c && c <= 'Z' {
-				c += 'a' - 'A'
-			}
-			if c != lowerNeedle[j] {
-				break
-			}
+	low := make([]byte, len(b))
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
 		}
-		if j == n {
-			return true
-		}
+		low[i] = c
 	}
-	return false
+	return bytes.Contains(low, []byte(lowerNeedle))
 }
