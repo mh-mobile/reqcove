@@ -26,7 +26,15 @@ Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデ�
 
 ## インストール
 
-リリースが出るまでは、ソースからビルドしてください（Go 1.27）。
+Homebrew で入れます（macOS と Linux。ソースからビルドし、uv も一緒に入ります）。
+
+```sh
+brew install mh-mobile/tap/reqcove
+```
+
+[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリを落として使うこともできます（macOS の Apple silicon、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
+
+ソースからビルドすることもできます（Go 1.27）。
 
 ```sh
 git clone https://github.com/mh-mobile/reqcove && cd reqcove
@@ -34,8 +42,6 @@ go build -o reqcove ./cmd/reqcove
 ```
 
 `go install …@version` は使えません。Reqcove は Tailscale の tsnet の fork を `replace` ディレクティブで使っているためです。
-
-リリースに含まれる macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
 
 ## 使い方
 

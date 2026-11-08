@@ -34,7 +34,18 @@ and does not read its traffic.
 
 ## Install
 
-Until there is a release, build from source (Go 1.27):
+With Homebrew (macOS or Linux; it builds from source and installs uv too):
+
+```sh
+brew install mh-mobile/tap/reqcove
+```
+
+Or download a binary from [Releases](https://github.com/mh-mobile/reqcove/releases)
+(macOS on Apple silicon, Linux amd64 and arm64), and install uv yourself. The macOS
+binary is signed with a Developer ID and notarized by Apple, so it runs when
+downloaded with a browser too.
+
+Or build from source (Go 1.27):
 
 ```sh
 git clone https://github.com/mh-mobile/reqcove && cd reqcove
@@ -43,9 +54,6 @@ go build -o reqcove ./cmd/reqcove
 
 `go install …@version` does not work: Reqcove uses a fork of Tailscale's tsnet
 through a `replace` directive.
-
-The macOS binaries in releases are signed with a Developer ID and notarized by
-Apple, so they run when downloaded with a browser too.
 
 ## Use
 
