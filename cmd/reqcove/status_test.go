@@ -13,6 +13,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"tailscale.com/health/healthmsg"
 )
 
 func TestNextSteps(t *testing.T) {
@@ -30,7 +31,9 @@ func TestNextSteps(t *testing.T) {
 	}{
 		{"all set", ok, ready, allow, nil, nil},
 		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"log in: open https://login.example/a/1"}},
-		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab"}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
+		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
+		// Just after start the key looks unsigned until the netmap is checked: no step yet.
+		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
 		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net"}},
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},

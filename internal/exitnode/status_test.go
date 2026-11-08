@@ -64,6 +64,30 @@ func runAgainst(t *testing.T, prep func(*testcontrol.Server)) (*testcontrol.Serv
 
 // run's terminal shows the login URL once it is there, not the status tool's
 // "open the URL that reqcove run prints" while it is on its way.
+// A step shows once two polls agree on it, and once only.
+func TestSettledStep(t *testing.T) {
+	var s settled
+	for i, c := range []struct {
+		in, want string
+		show     bool
+	}{
+		{"sign", "", false}, // first sight: may be the start-up moment
+		{"approve", "", false},
+		{"", "", false}, // all done, seen once
+		{"", "", false}, // all done, settled: nothing to show (shown starts empty)
+		{"approve", "", false},
+		{"approve", "approve", true},
+		{"approve", "", false}, // once only
+		{"", "", false},
+		{"", "", true}, // back to nothing to do: shown as such
+	} {
+		got, show := s.next(c.in)
+		if got != c.want || show != c.show {
+			t.Errorf("step %d (%q): %q %v, want %q %v", i, c.in, got, show, c.want, c.show)
+		}
+	}
+}
+
 func TestRunStep(t *testing.T) {
 	if step := runStep(Status{Backend: "NeedsLogin"}); step != "" {
 		t.Errorf("before the URL: %q", step)

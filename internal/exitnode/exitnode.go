@@ -19,6 +19,7 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/envknob"
+	"tailscale.com/health/healthmsg"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/tsaddr"
@@ -159,7 +160,8 @@ func Run(ctx context.Context, cfg Config) error {
 // that appear late (Tailnet Lock), join later or change IP are found, and
 // reports the node's status.
 func watch(ctx context.Context, lc *local.Client, cfg Config) {
-	var lastProblems, lastStep string
+	var lastProblems string
+	var steps settled
 	var wasRunning bool
 	lastIDs := fmt.Sprint(map[string]string{}) // no "carrying traffic from map[]" before login
 	t := time.NewTicker(3 * time.Second)
@@ -170,8 +172,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			status := nodeStatus(ctx, lc, st)
 			wasRunning = wasRunning || status.Backend == "Running"
 			status.WasRunning = wasRunning
-			if step := runStep(status); step != lastStep {
-				lastStep = step
+			if step, changed := steps.next(runStep(status)); changed {
 				if step != "" {
 					log.Print(step)
 				}
@@ -238,6 +239,21 @@ func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Stat
 	return s
 }
 
+// settled reports a step once two polls in a row agree on it: just after
+// start, before the netmap and Tailnet Lock status arrive, a node already
+// signed and approved looks unsigned and unapproved for a moment.
+type settled struct{ shown, seen string }
+
+func (s *settled) next(step string) (string, bool) {
+	stable := step == s.seen
+	s.seen = step
+	if !stable || step == s.shown {
+		return "", false
+	}
+	s.shown = step
+	return step, true
+}
+
 // runStep is FirstStep for `reqcove run`'s own terminal: while the login URL
 // is still on its way (a few seconds), nothing, rather than "open the URL that
 // `reqcove run` prints".
@@ -246,6 +262,12 @@ func runStep(s Status) string {
 		return ""
 	}
 	return FirstStep(s)
+}
+
+// lockedOut: Tailscale's own warning, raised once the netmap was checked
+// against Tailnet Lock (until then the key looks unsigned even when it is).
+func lockedOut(health []string) bool {
+	return slices.ContainsFunc(health, func(h string) bool { return strings.Contains(h, healthmsg.LockedOut) })
 }
 
 // FirstStep is the one thing the user must do next for the node, or "".
@@ -266,7 +288,7 @@ func FirstStep(s Status) string {
 		return "log in: open the login URL that `reqcove run` prints in its terminal"
 	case s.Backend == "NeedsMachineAuth":
 		return "approve this device in the admin console (Machines): your tailnet requires device approval"
-	case s.LockEnabled && !s.LockSigned && s.NodeKey != "":
+	case s.LockEnabled && s.NodeKey != "" && lockedOut(s.Health):
 		return "Tailnet Lock: on a signing device run `tailscale lock sign " + s.NodeKey + "`"
 	case s.Backend == "Running" && !s.ExitApproved:
 		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node"
