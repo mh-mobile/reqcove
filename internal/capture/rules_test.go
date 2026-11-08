@@ -466,3 +466,45 @@ func TestRulesReload(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesReloadSettles: a file still being written (here, changed every
+// 200 ms, faster than the 1 s look) is not taken; once it stays, it is, once.
+func TestRulesReloadSettles(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	write := func(n int) {
+		t.Helper()
+		var b strings.Builder
+		b.WriteString("modify_headers:\n")
+		for i := 0; i <= n%5; i++ {
+			fmt.Fprintf(&b, "  - \"|~q|X-R%d|%d\"\n", i, n)
+		}
+		if err := os.WriteFile(rules, []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(0)
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules, c.RulesReload = rules, true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	taken := 0
+	h.c.Store.SetRulesLog(func(map[string]int, []string, string) { mu.Lock(); taken++; mu.Unlock() })
+	count := func() int { mu.Lock(); defer mu.Unlock(); return taken }
+	for i := 1; i <= 15; i++ { // 3 s of changes
+		write(i)
+		time.Sleep(200 * time.Millisecond)
+	}
+	if n := count(); n != 0 {
+		t.Errorf("taken %d times while it was changing", n)
+	}
+	time.Sleep(3 * time.Second)
+	if n := count(); n != 1 {
+		t.Errorf("taken %d times once it stayed, want 1", n)
+	}
+}
