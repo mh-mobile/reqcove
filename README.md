@@ -171,6 +171,9 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 - Apps that pin certificates cannot be decrypted (`list_tls_failures` shows them).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
+- The exit node refuses this computer and its LAN as destinations, so the phone
+  cannot reach a development server there directly; a rule can send an allowed
+  host's requests to it (`map_remote` with `keep_host_header`, see Rules).
 - IPv6 is refused (apps fall back to IPv4 at once). QUIC is dropped except to Apple,
   so apps fall back to TCP.
 - Phone calls through the exit node have not been tried.

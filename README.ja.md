@@ -123,6 +123,7 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
 
 - 証明書ピンニングを行うアプリは復号できません（`list_tls_failures` に表示されます）。
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
+- Exit Node は、この Mac と LAN を宛先として拒むので、iPhone からそこにある開発サーバーへは直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます（`map_remote` と `keep_host_header`。「ルール」を参照）。
 - IPv6 は拒否します（アプリはすぐに IPv4 にフォールバックします）。QUIC は Apple 宛て以外をドロップするので、アプリは TCP にフォールバックします。
 - Exit Node 経由の通話は試していません。
 - mitmproxy は WebSocket のメッセージを、届ききるまで1つずつ溜めます。巨大なメッセージが来るとメモリを多く使います（mitmproxy が落ちたら、reqcove が起動し直します）。
