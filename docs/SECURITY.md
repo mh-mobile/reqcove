@@ -10,7 +10,8 @@ come from reading code rather than from a test say so.
   the MCP socket in it are open to that user only. Any process running as that user
   can read the records, and the CA's private key. Reqcove promises nothing stronger.
 - **The devices you name are trusted to use the exit node**, nothing else. Traffic
-  from other tailnet devices is refused, on the exit node and on the Remote Proxy.
+  from other tailnet devices is refused, on the exit node and on the Remote Proxy
+  (pings aside: see below).
   A device name is what each device calls itself, so `--device` takes one only from
   your own user's devices, and only while neither it nor Reqcove's node is tagged
   (a tagged node keeps the user ID of whoever tagged it); name other devices by
@@ -150,6 +151,11 @@ not refused (from reading code). Two things it does not catch:
 - **Your network's public address.** It is not an address of this computer's
   interfaces. A device that connects to it may reach what the router forwards
   (port forwarding), or, on a cloud server, this computer. Not tested.
+- **Pings.** An ICMP echo request routed through the exit node, from any device
+  the tailnet lets use exit nodes (not only `--device`), is answered by pinging
+  from this computer. When tried, pings to a public address and to 127.0.0.1
+  were answered; private ranges and this computer's LAN were not (Tailscale's
+  own filter). A ping tells whether an address answers, nothing more.
 - **Replies to UDP.** While a device's UDP flow lasts (2 minutes after its last
   packet, 30 seconds for DNS), whatever arrives at the port it went out from, from
   any sender, is handed to the device, as with a full-cone NAT. (From reading code.)
