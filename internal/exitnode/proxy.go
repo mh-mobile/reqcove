@@ -69,6 +69,9 @@ func deviceAt(p *policy, addr string) (Device, bool) {
 	return d, ok
 }
 
+// pageWriteTimeout bounds writing the page to a slow reader (a variable for tests).
+var pageWriteTimeout = time.Minute
+
 func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	src, _ := netip.ParseAddrPort(r.RemoteAddr)
 	dev, ok := deviceAt(rp.policy(), r.RemoteAddr)
@@ -88,13 +91,11 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
 		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
 			// A phone on the Remote Proxy sends the page's requests here too. As on port 80, a
-			// slow reader does not hold a page's memory longer. The deadline is lifted after, as
-			// the server has no WriteTimeout to reset it: a CONNECT later on this connection is
-			// a tunnel, with no such limit.
-			rc := http.NewResponseController(w)
-			rc.SetWriteDeadline(time.Now().Add(time.Minute))
+			// slow reader does not hold a page's memory longer. net/http lifts the deadline
+			// once the response is written, before the next request on the connection (read in
+			// Go 1.27's conn.serve; TestRemoteProxyPageDeadline checks it).
+			http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pageWriteTimeout))
 			rp.ui.ServeHTTP(w, r)
-			rc.SetWriteDeadline(time.Time{})
 			return
 		}
 	}

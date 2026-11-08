@@ -168,7 +168,7 @@ func Run(ctx context.Context, cfg Config) error {
 		srv := &http.Server{
 			Handler:           uiGuard{policy: current.Load, serve: cfg.UI},
 			ReadHeaderTimeout: 30 * time.Second,
-			WriteTimeout:      time.Minute, // a slow reader does not hold a page's memory longer
+			WriteTimeout:      pageWriteTimeout, // a slow reader does not hold a page's memory longer
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}

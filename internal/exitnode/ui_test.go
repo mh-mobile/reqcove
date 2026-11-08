@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestUIGuard(t *testing.T) {
@@ -72,5 +74,60 @@ func TestRemoteProxyServesPage(t *testing.T) {
 		if (got != "") != c.page || c.method == "POST" && w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: page %q, status %d", c.method, c.url, got, w.Code)
 		}
+	}
+}
+
+// The page on the Remote Proxy has a write deadline, and it does not outlast
+// the page: the next request on the same keep-alive connection, not a page and
+// past that deadline, still gets its answer.
+func TestRemoteProxyPageDeadline(t *testing.T) {
+	old := pageWriteTimeout
+	pageWriteTimeout = 50 * time.Millisecond
+	defer func() { pageWriteTimeout = old }()
+	me := netip.MustParseAddr("127.0.0.1")
+	p := &policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}, allowSrc: []netip.Addr{me},
+		self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}}
+	rp := &remoteProxy{policy: func() *policy { return p },
+		resolve: func(_ context.Context, h string) (netip.Addr, error) { return netip.ParseAddr(h) },
+		dial: func(context.Context, verdict, string, netip.AddrPort) (net.Conn, error) {
+			return nil, errors.New("no dialing in this test")
+		},
+		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) {
+			if r.URL.Path == "/slow" {
+				time.Sleep(4 * pageWriteTimeout)
+			}
+			w.Write([]byte("page"))
+		}}}
+	srv := httptest.NewServer(rp)
+	defer srv.Close()
+	ask := func(c net.Conn, br *bufio.Reader, url string) error {
+		if _, err := c.Write([]byte("GET " + url + " HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+			return err
+		}
+		r, err := http.ReadResponse(br, nil)
+		if err == nil {
+			r.Body.Close()
+		}
+		return err
+	}
+	dial := func() (net.Conn, *bufio.Reader) {
+		c, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c, bufio.NewReader(c)
+	}
+	c, br := dial()
+	if err := ask(c, br, "http://100.64.0.9/slow"); err == nil {
+		t.Error("a page written past its deadline was answered")
+	}
+	c, br = dial()
+	if err := ask(c, br, "http://100.64.0.9/"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * pageWriteTimeout)
+	if err := ask(c, br, "http://192.0.2.1/"); err != nil {
+		t.Errorf("the next request on the connection: %v", err)
 	}
 }
