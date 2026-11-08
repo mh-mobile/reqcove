@@ -21,6 +21,8 @@ REQCOVE_E2E=1 go test -count=1 ./internal/capture/   # real mitmproxy through uv
 ```
 
 CI runs these on macOS and Linux, with `gofmt`, `staticcheck` and `govulncheck`.
+The end-to-end tests use local servers, except `TestEndToEnd`, which also checks
+that github.com and www.apple.com pass through undecrypted: it needs the internet.
 Tests that need a real tailnet, an iPhone or hours (`REQCOVE_TRIAL2`,
 `REQCOVE_SOAK`, `REQCOVE_UDP_MEASURE`) run only by hand.
 
@@ -31,8 +33,7 @@ Reqcove uses a fork of Tailscale's tsnet
 ## What a change needs
 
 - **A test that fails without it.** For a fix, check that the test fails when the
-  fix is taken out. Tests that need network access outside this computer should
-  be avoided; end-to-end tests use local servers.
+  fix is taken out. Prefer local servers to the internet in tests.
 - **Docs that say only what was checked.** README and docs/SECURITY.md describe
   what was tried; when something comes from reading code or has not been tried,
   they say so. Update both READMEs (English and Japanese) when behaviour changes.

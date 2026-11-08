@@ -106,11 +106,14 @@ func TestWriteUpstreamCA(t *testing.T) {
 // Burp's CA is fetched from http://burp/cert through the proxy, when the proxy
 // is on this computer; another proxy's error, or a remote proxy, gives none.
 func TestFetchBurpCA(t *testing.T) {
-	ca := httptest.NewTLSServer(nil)
-	defer ca.Close()
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "PortSwigger CA"},
+		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	burpCA, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	served := burpCA
 	burp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Host == "burp" && r.URL.Path == "/cert" {
-			w.Write(ca.Certificate().Raw) // DER, as Burp serves it
+			w.Write(served) // DER, as Burp serves it
 			return
 		}
 		http.NotFound(w, r)
@@ -122,6 +125,13 @@ func TestFetchBurpCA(t *testing.T) {
 	}
 	if _, err := saveUpstreamCA(b, "http://burp/cert", t.TempDir()); err != nil {
 		t.Errorf("fetched CA: %v", err)
+	}
+	// A proxy that is not Burp, fetching some other CA for "http://burp/cert": refused.
+	ca := httptest.NewTLSServer(nil)
+	defer ca.Close()
+	served = ca.Certificate().Raw
+	if _, err := fetchBurpCA(burp.Listener.Addr().String()); err == nil || !strings.Contains(err.Error(), "not Burp's CA") {
+		t.Errorf("another CA at http://burp/cert: %v", err)
 	}
 	other := httptest.NewServer(http.NotFoundHandler()) // a proxy without http://burp/cert
 	defer other.Close()

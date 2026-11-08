@@ -85,7 +85,10 @@ Copying the directory to another computer copies the key.
 
 Whatever a tool returns is sent to the agent's model provider. Choose
 `--allow-hosts` with that in mind; `--allow-hosts '*'` sends other apps' and sites'
-traffic too, and Reqcove warns when it starts.
+traffic too, and Reqcove warns when it starts. Besides the traffic, the `status`
+and `list_devices` tools carry the node's MagicDNS name (which includes the
+tailnet's name), its tailnet addresses and the devices' machine names; not your
+login (from reading code).
 
 ## Prompt injection
 
@@ -134,7 +137,9 @@ straight to their servers (from reading code; a review saw it). What changes:
   Reqcove's tools hold back, and the ability to send requests.
 - Checking the real server's certificate is the proxy's job: with the proxy's CA
   (`--upstream-ca`, or Burp's fetched at start), Reqcove trusts only that CA, so it
-  checks the proxy, not the server. Burp, by
+  checks the proxy, not the server. Burp's is fetched over plain HTTP from
+  `http://burp/cert` through the proxy, only when the proxy is on this computer,
+  and only a CA named "PortSwigger CA" is taken (a test). Burp, by
   default, did not check (tried, a review).
 - Where the proxy connects is the proxy's choice. Reqcove hands it the address the
   exit node allowed, but Burp connects by the name in the SNI, looked up again on

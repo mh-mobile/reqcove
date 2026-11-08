@@ -180,10 +180,14 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 	} else if upstream != "" {
-		if b, err := fetchBurpCA(upstream); err == nil {
-			if upstreamCAFile, err = saveUpstreamCA(b, "http://burp/cert", *state); err == nil {
-				log.Printf("using the upstream proxy's CA from http://burp/cert (--upstream-ca to choose one)")
-			}
+		b, err := fetchBurpCA(upstream)
+		if err == nil {
+			upstreamCAFile, err = saveUpstreamCA(b, "http://burp/cert", *state)
+		}
+		if err == nil {
+			log.Printf("using Burp's CA from http://burp/cert (--upstream-ca to choose one)")
+		} else {
+			log.Printf("no Burp CA from http://burp/cert (%v): the public CAs are trusted through the proxy", err)
 		}
 	}
 
@@ -216,7 +220,7 @@ func run(ctx context.Context, args []string) error {
 	if upstream != "" {
 		trust := "the public CAs"
 		if upstreamCAFile != "" {
-			trust = "its CA only (--upstream-ca)"
+			trust = "its CA only"
 		}
 		log.Printf("decrypted requests go on to the upstream proxy %s, which sees them unmasked; HTTPS through it is checked against %s", upstream, trust)
 		if upstreamCAFile == "" {
@@ -424,7 +428,16 @@ func fetchBurpCA(upstream string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http://burp/cert: %s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	// Burp's own CA only: a proxy that is not Burp may fetch "http://burp/cert"
+	// from wherever the name leads, and that must not become the CA trusted.
+	if c, err := x509.ParseCertificate(b); err != nil || c.Subject.CommonName != "PortSwigger CA" {
+		return nil, errors.New("not Burp's CA (PortSwigger CA)")
+	}
+	return b, nil
 }
 
 // saveUpstreamCA checks a CA certificate (PEM or DER) from src and writes it as
@@ -458,13 +471,20 @@ func saveUpstreamCA(b []byte, path, state string) (string, error) {
 // tailscaleStatus is `tailscale status --json` from the Tailscale CLI, if any
 // (on macOS the app's binary works as one).
 var tailscaleStatus = func() ([]byte, error) {
-	bin, err := exec.LookPath("tailscale")
-	if err != nil {
-		bin = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, bin, "status", "--json").Output()
+	bins := []string{"/Applications/Tailscale.app/Contents/MacOS/Tailscale"}
+	if bin, err := exec.LookPath("tailscale"); err == nil {
+		bins = append([]string{bin}, bins...) // one that cannot reach tailscaled gives way to the app's
+	}
+	var err error
+	for _, bin := range bins {
+		var out []byte
+		if out, err = exec.CommandContext(ctx, bin, "status", "--json").Output(); err == nil {
+			return out, nil
+		}
+	}
+	return nil, err
 }
 
 // iosDevices names this user's iPhones and iPads on the tailnet, online ones
