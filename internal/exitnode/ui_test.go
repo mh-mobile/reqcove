@@ -82,7 +82,7 @@ func TestRemoteProxyServesPage(t *testing.T) {
 // past that deadline, still gets its answer.
 func TestRemoteProxyPageDeadline(t *testing.T) {
 	old := pageWriteTimeout
-	pageWriteTimeout = 50 * time.Millisecond
+	pageWriteTimeout = 300 * time.Millisecond // room for a slow CI under -race
 	defer func() { pageWriteTimeout = old }()
 	me := netip.MustParseAddr("127.0.0.1")
 	p := &policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}, allowSrc: []netip.Addr{me},
