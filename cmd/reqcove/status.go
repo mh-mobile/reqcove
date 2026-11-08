@@ -35,6 +35,19 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices)}
 }
 
+// pageSteps are the next steps the --ui page shows the device id: built from it
+// alone, so no other device's name or problem gets into them.
+func pageSteps(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo, id string) []string {
+	n.Problems = nil
+	var mine []capture.DeviceInfo
+	for _, d := range devices {
+		if d.ID == id {
+			mine = append(mine, d)
+		}
+	}
+	return statusOut(n, stats, allow, ca, mine).NextSteps
+}
+
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string

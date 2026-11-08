@@ -61,16 +61,16 @@ func TestRemoteProxyServesPage(t *testing.T) {
 		},
 		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) { got = id + " " + r.URL.RequestURI() }}}
 	for _, c := range []struct {
-		url  string
-		page bool
-	}{{"http://100.64.0.9/?k=x", true}, {"http://reqcove/flow?id=1", true}, {"http://100.64.0.9:80/", true}, {"http://100.64.0.9:8081/", false}} {
+		method, url string
+		page        bool
+	}{{"GET", "http://100.64.0.9/?k=x", true}, {"GET", "http://reqcove/flow?id=1", true}, {"GET", "http://100.64.0.9:80/", true}, {"GET", "http://100.64.0.9:8081/", false}, {"POST", "http://reqcove/", false}} {
 		got = ""
-		r := httptest.NewRequest("GET", c.url, nil)
+		r := httptest.NewRequest(c.method, c.url, nil)
 		r.RemoteAddr = "100.64.0.1:5000"
 		w := httptest.NewRecorder()
 		rp.ServeHTTP(w, r)
-		if (got != "") != c.page {
-			t.Errorf("%s: page %q, status %d", c.url, got, w.Code)
+		if (got != "") != c.page || c.method == "POST" && w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: page %q, status %d", c.method, c.url, got, w.Code)
 		}
 	}
 }

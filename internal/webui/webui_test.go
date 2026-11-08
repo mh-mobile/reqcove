@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestToken(t *testing.T) {
 }
 
 func TestPageEscapesAndHeaders(t *testing.T) {
-	u := New(store(t), func() []string { return []string{"<b>step</b>"} })
+	u := New(store(t), func(string) []string { return []string{"<b>step</b>"} })
 	for _, path := range []string{"/", "/flow?id=fa"} {
 		r := get(u, "devA", path, u.Token())
 		page := body(r)
@@ -114,26 +115,35 @@ func TestOwnFlowsOnly(t *testing.T) {
 	}
 }
 
-// A body of deep nesting is not indented into something huge.
+// A body of deep nesting is not indented: json.Indent would build gigabytes
+// before returning, whatever is kept of it.
 func TestPrettyBounded(t *testing.T) {
-	deep := "[" + strings.Repeat("[", 9998) + strings.Repeat("]", 9998) + "]"
-	if got := pretty(deep); len(got) > 4*len(deep)+4096 {
-		t.Errorf("indented to %d bytes from %d", len(got), len(deep))
+	deep := strings.Repeat("[", 3000) + strings.Repeat("]", 3000)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got := pretty(deep)
+	runtime.ReadMemStats(&after)
+	if got != deep || after.TotalAlloc-before.TotalAlloc > 1<<20 {
+		t.Errorf("deep JSON: %d bytes allocated, indented %v", after.TotalAlloc-before.TotalAlloc, got != deep)
+	}
+	if got := pretty(`{"s":"\"` + strings.Repeat("[", 40) + `"}`); !strings.Contains(got, "\n  ") {
+		t.Errorf("brackets in a string count as nesting: %q", got)
 	}
 	if got := pretty(`{"a":1}`); got != "{\n  \"a\": 1\n}" {
 		t.Errorf("small JSON: %q", got)
 	}
 }
 
-// The header counts and the next steps are this device's: not the others',
-// nor their names. A display name equal to another device's ID changes nothing.
+// The header counts and the steps are this device's. A display name equal to
+// another device's ID changes nothing. (Which steps: pageSteps in cmd/reqcove.)
 func TestOwnCountsAndSteps(t *testing.T) {
 	st := store(t)
 	st.SetDeviceNames(map[string]string{"devA": "alice-phone", "devB": "devA"})
-	u := New(st, func() []string { return []string{"no traffic from alice-phone yet", "approve the exit node"} })
+	var asked string
+	u := New(st, func(id string) []string { asked = id; return []string{"approve the exit node"} })
 	page := body(get(u, "devB", "/", u.Token()))
-	if strings.Contains(page, "alice-phone") || !strings.Contains(page, "approve the exit node") {
-		t.Errorf("devB's steps:\n%s", page)
+	if asked != "devB" || !strings.Contains(page, "approve the exit node") {
+		t.Errorf("steps asked for %q:\n%s", asked, page)
 	}
 	if !strings.Contains(page, " 1 flows") {
 		t.Errorf("devB's count:\n%s", page)

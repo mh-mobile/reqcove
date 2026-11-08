@@ -264,8 +264,8 @@ func run(ctx context.Context, args []string) error {
 	onStatus := node.set
 	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string)
 	if *uiFlag {
-		page := webui.New(cap.Store, func() []string {
-			return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps
+		page := webui.New(cap.Store, func(id string) []string {
+			return pageSteps(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices(), id)
 		})
 		pageFn = page.Serve
 		var shown bool

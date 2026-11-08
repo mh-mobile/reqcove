@@ -16,6 +16,22 @@ import (
 	"tailscale.com/health/healthmsg"
 )
 
+// The page's steps are the viewing device's: names that overlap (iphone,
+// iphone-1) keep its own, and another device's problem or step is not there.
+func TestPageSteps(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, Problems: []string{`"ipad": no such device`}}
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true}, {ID: "b", Name: "iphone-1", Carried: true, TLSFailures: 2}}
+	got := strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "a"), "\n")
+	if !strings.Contains(got, "no traffic from iphone yet") || strings.Contains(got, "iphone-1") || strings.Contains(got, "ipad") {
+		t.Errorf("a's steps: %q", got)
+	}
+	got = strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "b"), "\n")
+	if !strings.Contains(got, "iphone-1 refuses") || strings.Contains(got, "no traffic") {
+		t.Errorf("b's steps: %q", got)
+	}
+}
+
 func TestNextSteps(t *testing.T) {
 	ready := map[string]any{"state": "ready"}
 	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})

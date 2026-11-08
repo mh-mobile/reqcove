@@ -24,11 +24,11 @@ const cookie = "reqcove"
 
 type UI struct {
 	store *capture.Store
-	steps func() []string // the next steps, as the status tool gives them (no login URL)
+	steps func(deviceID string) []string // the next steps for one device, as the status tool words them (no login URL)
 	token string
 }
 
-func New(st *capture.Store, steps func() []string) *UI {
+func New(st *capture.Store, steps func(deviceID string) []string) *UI {
 	return &UI{store: st, steps: steps, token: rand.Text()}
 }
 
@@ -86,25 +86,14 @@ func (u *UI) list(w http.ResponseWriter, r *http.Request, deviceID string) {
 	}
 	// This device's counts and steps only: not the others', nor their names.
 	var me capture.DeviceInfo
-	var others []string
 	for _, d := range u.store.Devices() {
 		if d.ID == deviceID {
 			me = d
-		} else if d.Name != "" {
-			others = append(others, d.Name)
 		}
 	}
 	var steps []string
 	if u.steps != nil {
-	step:
-		for _, s := range u.steps() {
-			for _, n := range others {
-				if strings.Contains(s, n) {
-					continue step
-				}
-			}
-			steps = append(steps, s)
-		}
+		steps = u.steps(deviceID)
 	}
 	render(w, listPage, map[string]any{
 		"Flows": flows, "Host": f.Host, "Status": f.Status, "Paused": q.Get("pause") != "",
@@ -122,14 +111,41 @@ func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string) {
 }
 
 // pretty indents a JSON body; anything else is shown as it is. Deep nesting
-// makes indenting grow with its square (a 60 KB head of "[[[…" became 600 MB),
-// so a result past a few times the body's size is dropped for the body itself.
+// makes indenting grow with its square (a 60 KB head of "[[[…" took gigabytes
+// in json.Indent, which builds all of it before returning), so a body nested
+// deeper than maxDepth is shown as it is, checked before indenting.
 func pretty(s string) string {
-	var b bytes.Buffer
-	if t := strings.TrimSpace(s); (strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) && json.Indent(&b, []byte(t), "", "  ") == nil && b.Len() <= 4*len(t)+4096 {
-		return b.String()
+	t := strings.TrimSpace(s)
+	if !(strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) || depth(t) > maxDepth {
+		return s
 	}
-	return s
+	var b bytes.Buffer
+	if json.Indent(&b, []byte(t), "", "  ") != nil {
+		return s
+	}
+	return b.String()
+}
+
+const maxDepth = 32
+
+// depth is how deep JSON nests, outside strings.
+func depth(s string) int {
+	d, most, inString := 0, 0, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case inString && c == '\\':
+			i++
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '{' || c == '[':
+			d++
+			most = max(most, d)
+		case c == '}' || c == ']':
+			d--
+		}
+	}
+	return most
 }
 
 func render(w http.ResponseWriter, t *template.Template, data any) {

@@ -87,7 +87,14 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
 		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
-			rp.ui.ServeHTTP(w, r) // a phone on the Remote Proxy sends the page's requests here too
+			// A phone on the Remote Proxy sends the page's requests here too. As on port 80, a
+			// slow reader does not hold a page's memory longer. The deadline is lifted after, as
+			// the server has no WriteTimeout to reset it: a CONNECT later on this connection is
+			// a tunnel, with no such limit.
+			rc := http.NewResponseController(w)
+			rc.SetWriteDeadline(time.Now().Add(time.Minute))
+			rp.ui.ServeHTTP(w, r)
+			rc.SetWriteDeadline(time.Time{})
 			return
 		}
 	}
