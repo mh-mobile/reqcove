@@ -70,7 +70,7 @@ func defaultState() string {
 func run(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
-	fs.Func("device", "device whose traffic is carried: machine name, device name, tailnet IP or StableID (repeatable)", func(v string) error {
+	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
 		devices = append(devices, v)
 		return nil
 	})
@@ -90,7 +90,9 @@ func run(ctx context.Context, args []string) error {
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
-	fs.Parse(args)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
 	if len(devices) == 0 {
 		return fmt.Errorf("--device is required (see `tailscale status` for names)")
 	}
@@ -126,13 +128,7 @@ func run(ctx context.Context, args []string) error {
 	if _, err := exec.LookPath(*uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)
 	}
-	if err := os.MkdirAll(*state, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(*state, 0o700); err != nil {
-		return err
-	}
-	unlock, err := lockState(*state)
+	unlock, err := openState(*state)
 	if err != nil {
 		return err
 	}
@@ -182,11 +178,13 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
-	go mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store, func() mcpserver.StatusOut {
+	if err := mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store, func() mcpserver.StatusOut {
 		stats := cap.Store.Stats()
 		n := node.get()
 		return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, cap.CA, cap.Store.Devices())}
-	}))
+	})); err != nil {
+		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
+	}
 	log.Printf("MCP on %s; agents connect with `reqcove mcp`", mcpSock)
 
 	err = exitnode.Run(ctx, exitnode.Config{
@@ -231,6 +229,36 @@ func parseDNS(v string) ([]netip.AddrPort, error) {
 	return out, nil
 }
 
+// parseFlags parses args and refuses leftovers: flag stops at the first one,
+// so `--device Taro's iPhone --allow-hosts x` would drop the --allow-hosts.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q (quote values with spaces, such as --device \"Taro's iPhone\")", fs.Arg(0))
+	}
+	return nil
+}
+
+// openState makes the state directory (0700) and locks it. It refuses a
+// directory that holds other files and was never reqcove's (no lock file), so
+// that neither its chmod nor `cleanup --delete-state` reaches someone else's files.
+func openState(dir string) (func(), error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lock")); len(ents) > 0 && err != nil {
+		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return lockState(dir)
+}
+
 // lockState makes sure only one reqcove uses the state directory: two tsnet
 // processes with the same node key would fight.
 func lockState(dir string) (func(), error) {
@@ -248,7 +276,9 @@ func lockState(dir string) (func(), error) {
 func runMCP(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
-	fs.Parse(args)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
 	sock := filepath.Join(*state, "mcp.sock")
 	if err := mcpserver.Relay(ctx, sock, os.Stdin, os.Stdout); err != nil {
 		return fmt.Errorf("is `reqcove run` running? %w", err)

@@ -34,8 +34,10 @@ type policy struct {
 }
 
 // Never carried: unspecified, loopback, tailnet, link-local, private LANs,
-// multicast, reserved. Tailscale's filter drops most of these before us,
-// but 0.0.0.0 and 127.0.0.1 reach us, and they lead to this Mac's own services.
+// special purpose (RFC 6890: never routed on the internet, so whatever answers
+// is local), multicast, reserved. Tailscale's filter drops most of these before
+// us, but 0.0.0.0 and 127.0.0.1 reach us, and they lead to this Mac's own services.
+// The TEST-NETs are left out: nothing answers there, and the tests use them.
 var denied = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("127.0.0.0/8"),
@@ -44,6 +46,9 @@ var denied = []netip.Prefix{
 	netip.MustParsePrefix("10.0.0.0/8"),
 	netip.MustParsePrefix("172.16.0.0/12"),
 	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("192.0.0.0/24"),   // IETF protocol assignments
+	netip.MustParsePrefix("192.88.99.0/24"), // 6to4 relay anycast, deprecated (RFC 7526)
+	netip.MustParsePrefix("198.18.0.0/15"),  // benchmarking (RFC 2544)
 	netip.MustParsePrefix("224.0.0.0/4"),
 	netip.MustParsePrefix("240.0.0.0/4"),
 }

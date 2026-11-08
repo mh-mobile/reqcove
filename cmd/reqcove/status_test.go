@@ -63,14 +63,11 @@ func TestStatusCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	st := capture.NewStore(10, 1<<20)
-	go mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Node: exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", IPs: []string{"100.1.2.3"}},
 			Capture: st.Stats(), NextSteps: []string{"approve the exit node: admin console"}}
-	}))
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if _, err := os.Stat(filepath.Join(dir, "mcp.sock")); err == nil || time.Now().After(deadline) {
-			break
-		}
+	})); err != nil {
+		t.Fatal(err)
 	}
 	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
 	for _, w := range []string{"reqcove is running", "reqcove.ts.net 100.1.2.3 Running", "next:", "- approve the exit node"} {
@@ -122,5 +119,73 @@ func TestCleanup(t *testing.T) {
 	captureStdout(t, func() error { return cleanup([]string{"--state", dir, "--delete-state"}) })
 	if _, err := os.Stat(dir); err == nil {
 		t.Error("state still there after --delete-state")
+	}
+
+	// A --state that is not reqcove's (a typo, a project) is never deleted.
+	foreign := filepath.Join(t.TempDir(), "project")
+	os.MkdirAll(filepath.Join(foreign, "src"), 0o755)
+	os.WriteFile(filepath.Join(foreign, "src", "main.go"), []byte("package main"), 0o644)
+	if err := cleanup([]string{"--state", foreign, "--delete-state"}); err == nil {
+		t.Error("--delete-state on a directory that is not reqcove's: no error")
+	}
+	if _, err := os.Stat(filepath.Join(foreign, "src", "main.go")); err != nil {
+		t.Errorf("deleted a directory that is not reqcove's: %v", err)
+	}
+
+	// A symlinked state: the directory and its CA key go, not just the link.
+	real := filepath.Join(t.TempDir(), "real")
+	os.MkdirAll(filepath.Join(real, "mitmproxy"), 0o700)
+	os.WriteFile(filepath.Join(real, "lock"), nil, 0o600)
+	os.WriteFile(filepath.Join(real, "mitmproxy", "mitmproxy-ca.pem"), []byte("KEY"), 0o600)
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(real, link)
+	captureStdout(t, func() error { return cleanup([]string{"--state", link, "--delete-state"}) })
+	if _, err := os.Stat(filepath.Join(real, "mitmproxy", "mitmproxy-ca.pem")); err == nil {
+		t.Error("the CA key is still there after --delete-state through a symlink")
+	}
+	if _, err := os.Lstat(link); err == nil {
+		t.Error("the symlink is still there")
+	}
+}
+
+// `run` never takes over a directory holding someone else's files (it would
+// chmod it, and cleanup would later delete it); an empty or earlier state is fine.
+func TestOpenState(t *testing.T) {
+	foreign := t.TempDir()
+	os.WriteFile(filepath.Join(foreign, "notes.txt"), nil, 0o644)
+	os.Chmod(foreign, 0o755)
+	if unlock, err := openState(foreign); err == nil {
+		unlock()
+		t.Error("openState took a directory with other files")
+	}
+	if fi, _ := os.Stat(foreign); fi.Mode().Perm() != 0o755 {
+		t.Errorf("mode changed to %v", fi.Mode().Perm())
+	}
+	fresh := filepath.Join(t.TempDir(), "state")
+	unlock, err := openState(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	os.MkdirAll(filepath.Join(fresh, "tsnet"), 0o700)
+	if unlock, err := openState(fresh); err != nil {
+		t.Errorf("openState on its own earlier state: %v", err)
+	} else {
+		unlock()
+	}
+	if fi, _ := os.Stat(fresh); fi.Mode().Perm() != 0o700 {
+		t.Errorf("state mode %v, want 0700", fi.Mode().Perm())
+	}
+}
+
+// Flags after a stray argument would be dropped silently, so a stray argument is an error.
+func TestStrayArgument(t *testing.T) {
+	// --state and --uvx first: should the check go missing, run stops at uvx, far from ~/.reqcove.
+	err := run(context.Background(), []string{"--state", t.TempDir(), "--uvx", "/nonexistent/uvx", "--device", "Taro's", "iPhone", "--allow-hosts", "api.example.com"})
+	if err == nil || !strings.Contains(err.Error(), `"iPhone"`) {
+		t.Errorf("run with a stray argument: %v", err)
+	}
+	if err := cleanup([]string{"--state", t.TempDir(), "extra"}); err == nil {
+		t.Error("cleanup with a stray argument: no error")
 	}
 }

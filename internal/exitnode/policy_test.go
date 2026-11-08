@@ -44,6 +44,9 @@ func TestDecideTCP(t *testing.T) {
 		{p, iphone, "169.254.1.1:80", reject},          // link-local
 		{p, iphone, "224.0.0.251:5353", reject},        // multicast
 		{p, iphone, "255.255.255.255:9", reject},       // broadcast
+		{p, iphone, "198.18.0.1:80", reject},           // benchmarking: never on the internet
+		{p, iphone, "192.0.0.192:80", reject},          // IETF protocol assignments
+		{p, iphone, "192.88.99.1:80", reject},          // deprecated 6to4 relay
 		{p, iphone, "[2606:4700::1111]:443", reject},   // IPv6
 		{p, iphone, "[::ffff:127.0.0.1]:8081", reject}, // IPv4-mapped loopback
 		{&withSocks, other, "1.1.1.1:443", reject},
@@ -84,6 +87,7 @@ func TestDecideUDP(t *testing.T) {
 		{p, iphone, "192.168.1.1:53", false},   // home router
 		{p, iphone, "203.0.113.7:5353", false}, // this Mac, outside RFC 1918
 		{p, iphone, "224.0.0.251:5353", false},
+		{p, iphone, "198.18.0.1:53", false},
 		{p, iphone, "[2606:4700::1111]:53", false},
 	}
 	for _, tt := range tests {
@@ -91,5 +95,20 @@ func TestDecideUDP(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("decideUDP(src=%v, dst=%v) = %v, want %v", tt.src, tt.dst, got, tt.want)
 		}
+	}
+}
+
+// Any peer's UDP reaches logUDPOnce (with --verbose), so what it remembers stays bounded.
+func TestLogUDPOnceBounded(t *testing.T) {
+	for i := range 3 * maxSeen {
+		logUDPOnce(netip.MustParseAddrPort("100.101.0.2:1"), netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, byte(i >> 8), byte(i)}), uint16(i)), false)
+	}
+	n := int64(0)
+	seen.Range(func(_, _ any) bool { n++; return true })
+	if n > maxSeen {
+		t.Errorf("remembers %d flows, want at most %d", n, maxSeen)
+	}
+	for len(events) > 0 { // drop the lines this made
+		<-events
 	}
 }

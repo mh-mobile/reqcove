@@ -176,31 +176,35 @@ func when(v string, now time.Time) (float64, error) {
 	return float64(t.UnixMilli()) / 1000, nil
 }
 
-// Serve accepts agents on the Unix socket at path until ctx ends. The caller
-// holds the state directory lock and has made its directory 0700.
+// Serve listens on the Unix socket at path and accepts agents there until ctx
+// ends. It returns once listening, or with what kept it from listening (such
+// as a path longer than a socket allows). The caller holds the state
+// directory lock and has made its directory 0700.
 func Serve(ctx context.Context, path string, server *mcp.Server) error {
 	os.Remove(path) // stale: we hold the lock
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(path)
-	go func() { <-ctx.Done(); ln.Close() }()
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			return nil
-		}
-		go func() {
-			ss, err := server.Connect(ctx, &mcp.IOTransport{Reader: c, Writer: c}, nil)
+	go func() { <-ctx.Done(); ln.Close(); os.Remove(path) }()
+	go func() {
+		for {
+			c, err := ln.Accept()
 			if err != nil {
-				log.Print(err)
-				c.Close()
 				return
 			}
-			ss.Wait()
-		}()
-	}
+			go func() {
+				ss, err := server.Connect(ctx, &mcp.IOTransport{Reader: c, Writer: c}, nil)
+				if err != nil {
+					log.Print(err)
+					c.Close()
+					return
+				}
+				ss.Wait()
+			}()
+		}
+	}()
+	return nil
 }
 
 // Relay connects stdin and stdout to the MCP socket at path.

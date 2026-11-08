@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -168,6 +169,19 @@ func TestTwoNodes(t *testing.T) {
 	} else if got := echo(conn); got != "ping" || socks.last().dst != "203.0.113.6:443" || socks.last().user != phoneID {
 		t.Errorf("Remote Proxy: echo %q, SOCKS5 saw %+v", got, socks.last())
 	}
+	// Plain http:// on the Remote Proxy: to SOCKS5 as the device too. (The fake
+	// SOCKS5 echoes the request back, so the answer itself is a 502.)
+	if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err != nil {
+		t.Errorf("phone to the Remote Proxy: %v", err)
+	} else {
+		fmt.Fprint(pc, "GET http://203.0.113.7/x HTTP/1.1\r\nHost: 203.0.113.7\r\n\r\n")
+		pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+		http.ReadResponse(bufio.NewReader(pc), nil)
+		pc.Close()
+		if r := socks.last(); r.dst != "203.0.113.7:80" || r.user != phoneID {
+			t.Errorf("plain HTTP on the Remote Proxy: SOCKS5 saw %+v", r)
+		}
+	}
 
 	// Denied destinations from the device: this Mac and the LAN.
 	before := socks.count()
@@ -200,9 +214,36 @@ func TestTwoNodes(t *testing.T) {
 		t.Errorf("the outsider never got the exit route: %v", err)
 	}
 	if pc, err := outsider.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err == nil {
-		if code, _ := connect(pc, "203.0.113.6:443"); code != 403 {
-			t.Errorf("CONNECT from the outsider: %d, want 403", code)
+		if code, _ := connect(pc, "203.0.113.6:443"); code != 0 {
+			t.Errorf("CONNECT from the outsider: %d, want the connection closed at once", code)
 		}
+	}
+
+	// UDP: the device's goes out (netstack forwards it: one datagram to TEST-NET-3,
+	// where nothing answers); the outsider's, and the device's to a denied range, do not.
+	for _, u := range []struct {
+		from *tsnet.Server
+		dst  string
+	}{{phone, "203.0.113.9:9"}, {outsider, "203.0.113.9:9"}, {phone, "198.18.0.1:9"}} {
+		if c, err := u.from.Dial(ctx, "udp", u.dst); err == nil {
+			c.Write([]byte("x"))
+			c.Close()
+		}
+	}
+	time.Sleep(time.Second) // the log lines are written in the background
+	p4, _ := phone.TailscaleIPs()
+	o4udp, _ := outsider.TailscaleIPs()
+	for _, want := range []string{
+		fmt.Sprintf(`udp %v:\d+ -> 203\.0\.113\.9:9 forward=true\n`, regexp.QuoteMeta(p4.String())),
+		fmt.Sprintf(`udp %v:\d+ -> 203\.0\.113\.9:9 forward=false\n`, regexp.QuoteMeta(o4udp.String())),
+		`udp \S+ -> 198\.18\.0\.1:9 forward=false\n`,
+	} {
+		if !regexp.MustCompile(want).MatchString(logBuf.String()) {
+			t.Errorf("UDP: no log line like %q", want)
+		}
+	}
+	if n := strings.Count(logBuf.String(), "forward=true"); n != 1 {
+		t.Errorf("%d UDP flows forwarded, want 1 (the device's to 203.0.113.9:9)", n)
 	}
 
 	time.Sleep(time.Second)

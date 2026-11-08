@@ -140,7 +140,7 @@ func TestStartStopsStaleMitmdump(t *testing.T) {
 	state := filepath.Join(dir, "s")
 	os.MkdirAll(state, 0o700)
 	spawn := func(arg string) *exec.Cmd {
-		cmd := exec.Command("/bin/sh", "-c", "sleep 600", "fake-uvx", arg)
+		cmd := exec.Command("/bin/sh", "-c", "sleep 600; true", "fake-uvx", arg) // "; true": sh must not exec into sleep and drop arg
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)

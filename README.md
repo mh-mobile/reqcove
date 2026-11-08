@@ -100,13 +100,13 @@ setting, so this works on Wi-Fi only.
 
 | | |
 |---|---|
-| `--device NAME` | a device to carry: machine name, device name, tailnet IP or StableID; repeat for more |
+| `--device NAME` | a device to carry: machine name, device name (your own devices only), tailnet IP or StableID; repeat for more |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML with `map_remote`, `map_local` and `modify_headers` (mitmproxy's syntax), applied to allowed hosts only |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
 | `--dns` | the exit node's DNS upstream, `1.1.1.1:53` by default; `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
-| `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key |
+| `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |
 
 ## What it keeps safe, and what it does not
 
@@ -147,7 +147,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 - The CA stays the same as long as the state directory does. To use one CA on two
   computers, copy `~/.reqcove/mitmproxy/` whole (it holds the private key).
 - `reqcove cleanup` lists how to undo everything; `--delete-state` deletes the state
-  directory.
+  directory (only one reqcove made).
 
 ## License
 

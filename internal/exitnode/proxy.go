@@ -33,14 +33,45 @@ type remoteProxy struct {
 
 var errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
 
-func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	src, err := netip.ParseAddrPort(r.RemoteAddr)
-	var dev Device
-	ok := false
-	if p := rp.policy(); err == nil && p != nil {
-		dev, ok = p.devices[src.Addr().Unmap()]
+// onlyDevices closes connections from peers that are not devices as soon as
+// they are accepted, so they cannot hold the Remote Proxy's connections open
+// (waiting for headers, or keep-alive after a 403). ServeHTTP checks each
+// request again: the devices can change while a connection lasts.
+type onlyDevices struct {
+	net.Listener
+	policy func() *policy
+}
+
+func (l onlyDevices) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if ra := c.RemoteAddr(); ra != nil {
+			if _, ok := deviceAt(l.policy(), ra.String()); ok {
+				return c, nil
+			}
+		}
+		c.Close()
 	}
+}
+
+// deviceAt is the device at addr (ip:port), if it is one.
+func deviceAt(p *policy, addr string) (Device, bool) {
+	src, err := netip.ParseAddrPort(addr)
+	if err != nil || p == nil {
+		return Device{}, false
+	}
+	d, ok := p.devices[src.Addr().Unmap()]
+	return d, ok
+}
+
+func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	src, _ := netip.ParseAddrPort(r.RemoteAddr)
+	dev, ok := deviceAt(rp.policy(), r.RemoteAddr)
 	if !ok {
+		w.Header().Set("Connection", "close")
 		http.Error(w, "reqcove: this device is not one of reqcove's --device", http.StatusForbidden)
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,13 +114,21 @@ func TestServeAndRelay(t *testing.T) {
 	sock := filepath.Join(dir, "mcp.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Serve(ctx, sock, New(testStore(t), nil))
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if _, err := os.Stat(sock); err == nil {
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatal("socket never appeared")
+	// Serve returns once listening, so `run` can stop on its error instead of logging "MCP on".
+	served := make(chan error, 1)
+	go func() { served <- Serve(ctx, sock, New(testStore(t), nil)) }()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatal(err)
 		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return once listening")
+	}
+	long := filepath.Join(dir, strings.Repeat("d", 120)) // a socket path is at most 104 bytes on macOS, 108 on Linux
+	os.Mkdir(long, 0o700)
+	if err := Serve(ctx, filepath.Join(long, "mcp.sock"), New(testStore(t), nil)); err == nil {
+		t.Error("Serve on a path too long for a socket: no error")
 	}
 
 	// The agent side: an in-memory pipe stands in for `reqcove mcp`'s stdio.

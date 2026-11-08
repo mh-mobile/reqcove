@@ -136,7 +136,7 @@ func Run(ctx context.Context, cfg Config) error {
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}
-		go srv.Serve(ln)
+		go srv.Serve(onlyDevices{ln, current.Load})
 		defer srv.Close()
 		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
 	}
@@ -170,7 +170,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			for _, p := range st.Peer {
 				peers = append(peers, p)
 			}
-			devices, problems := matchDevices(cfg.Devices, peers)
+			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
 			p := &policy{devices: devices, self: self, local: interfaceAddrs(), socks: cfg.SocksAddr != ""}
 			names := map[string]string{}
 			for ip, d := range devices {
@@ -275,12 +275,22 @@ func pipe(wg *sync.WaitGroup, dst, src net.Conn) {
 	}
 }
 
-// A dropped UDP flow is decided again on every retransmit, so log each flow once.
-// ponytail: seen grows without bound; only used with Verbose.
-var seen sync.Map
+// A dropped UDP flow is decided again on every retransmit, so log each flow
+// once. Any peer's UDP reaches here, so seen is emptied every maxSeen flows.
+// ponytail: emptying it logs some flows twice; an LRU if that ever matters.
+var (
+	seen  sync.Map
+	seenN atomic.Int64
+)
+
+const maxSeen = 10000
 
 func logUDPOnce(src, dst netip.AddrPort, forward bool) {
 	if _, dup := seen.LoadOrStore([2]netip.AddrPort{src, dst}, struct{}{}); !dup {
+		if seenN.Add(1) > maxSeen {
+			seen.Clear()
+			seenN.Store(0)
+		}
 		logEvent("udp %v -> %v forward=%v", src, dst, forward)
 	}
 }

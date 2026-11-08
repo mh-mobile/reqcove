@@ -66,7 +66,9 @@ func status(ctx context.Context, args []string) error {
 	state := fs.String("state", defaultState(), "state directory")
 	asJSON := fs.Bool("json", false, "print the status tool's JSON")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
-	fs.Parse(args)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
 
 	conn, err := net.Dial("unix", filepath.Join(*state, "mcp.sock"))
 	if err != nil {
@@ -158,7 +160,9 @@ func cleanup(args []string) error {
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
 	del := fs.Bool("delete-state", false, "delete the state directory (node key, CA and its private key, logs)")
-	fs.Parse(args)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
 	ca, caErr := capture.ReadCA(filepath.Join(*state, "mitmproxy"))
 	fmt.Println("To undo reqcove:")
 	fmt.Printf("  1. On each iPhone: Tailscale app, Exit Node, None (or set the Wi-Fi proxy back to Off).\n")
@@ -172,20 +176,42 @@ func cleanup(args []string) error {
 	if !*del {
 		return nil
 	}
-	if _, err := os.Stat(*state); err != nil {
+	// The directory itself, not a symlink to it: RemoveAll would take only the link and leave the CA's key.
+	dir, err := filepath.EvalSymlinks(*state)
+	if os.IsNotExist(err) {
 		fmt.Printf("%s is already gone\n", *state)
 		return nil
+	} else if err != nil {
+		return err
 	}
-	unlock, err := lockState(*state) // refuses while `reqcove run` holds it
+	if !isState(dir) {
+		return fmt.Errorf("%s does not look like reqcove's state (a lock file and tsnet/ or mitmproxy/); not deleting it", dir)
+	}
+	unlock, err := lockState(dir) // refuses while `reqcove run` holds it
 	if err != nil {
 		return fmt.Errorf("%w: stop `reqcove run` first", err)
 	}
-	unlock()
-	if err := os.RemoveAll(*state); err != nil {
+	defer unlock() // held until it is gone, so no run starts in between
+	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
-	fmt.Printf("deleted %s\n", *state)
+	os.Remove(filepath.Clean(*state)) // the symlink, if *state was one
+	fmt.Printf("deleted %s\n", dir)
 	return nil
+}
+
+// isState reports whether dir is a state directory `reqcove run` used: its
+// lock file, and the node's or mitmproxy's files.
+func isState(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "lock")); err != nil {
+		return false
+	}
+	for _, sub := range []string{"tsnet", "mitmproxy"} {
+		if fi, err := os.Stat(filepath.Join(dir, sub)); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func orDash(s string) string {

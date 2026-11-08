@@ -11,6 +11,8 @@ come from reading code rather than from a test say so.
   can read the records, and the CA's private key. Reqcove promises nothing stronger.
 - **The devices you name are trusted to use the exit node**, nothing else. Traffic
   from other tailnet devices is refused, on the exit node and on the Remote Proxy.
+  A device name is what each device calls itself, so `--device` takes one only from
+  your own user's devices; name other users' devices by machine name, IP or StableID.
 
 ## The CA's private key
 
@@ -71,7 +73,24 @@ another local process can neither use the proxy nor pose as a device.
 The exit node answers DNS over HTTPS (Tailscale's PeerAPI) for devices that use it.
 It also answered this computer, which was not one of `--device`, when tried: other
 devices of the tailnet that may use the exit node can resolve names through it.
-Reqcove does not record DNS.
+They ask the same upstream as your devices: `1.1.1.1` by default. With `--dns system`,
+or a LAN resolver in `--dns`, that is your router's or your company's resolver, and
+they can look up names only it knows. (From reading Tailscale's code: it answers any
+peer the tailnet policy lets use an exit node.) Reqcove does not record DNS.
+
+## What the devices can reach
+
+Public IPv4 addresses. Reqcove refuses this computer's own addresses (those of every
+interface), loopback, private and link-local ranges, the tailnet's range, multicast
+and the other special-purpose ranges, and all of IPv6, on the exit node and on the
+Remote Proxy. Two things it does not catch:
+
+- **Your network's public address.** It is not an address of this computer's
+  interfaces. A device that connects to it may reach what the router forwards
+  (port forwarding), or, on a cloud server, this computer. Not tested.
+- **Replies to UDP.** While a device's UDP flow lasts (2 minutes after its last
+  packet, 30 seconds for DNS), whatever arrives at the port it went out from, from
+  any sender, is handed to the device, as with a full-cone NAT. (From reading code.)
 
 ## Logs to Tailscale
 

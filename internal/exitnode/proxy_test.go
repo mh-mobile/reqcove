@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -164,5 +166,44 @@ func TestRemoteProxyLogsNoURL(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no log line")
+	}
+}
+
+// Peers that are not devices are closed as they are accepted, so they cannot
+// hold Remote Proxy connections open; a connection whose device is dropped
+// gets a 403 that closes it.
+func TestRemoteProxyClosesOutsiders(t *testing.T) {
+	var cur atomic.Pointer[policy]
+	device := &policy{devices: map[netip.Addr]Device{netip.MustParseAddr("127.0.0.1"): {ID: "nPHONE"}}}
+	cur.Store(&policy{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: &remoteProxy{policy: cur.Load}, ReadHeaderTimeout: 30 * time.Second}
+	go srv.Serve(onlyDevices{ln, cur.Load})
+	t.Cleanup(func() { srv.Close() })
+
+	c, _ := net.Dial("tcp", ln.Addr().String())
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+		t.Errorf("an outsider's connection stayed open: %v", err)
+	}
+	c.Close()
+
+	cur.Store(device)
+	c, _ = net.Dial("tcp", ln.Addr().String())
+	defer c.Close()
+	br := bufio.NewReader(c)
+	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	if r, err := http.ReadResponse(br, nil); err != nil || r.StatusCode != 400 {
+		t.Fatalf("device's first request: %v %v", r, err)
+	} else {
+		io.Copy(io.Discard, r.Body)
+	}
+	cur.Store(&policy{}) // the device is gone from the tailnet
+	fmt.Fprint(c, "GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\n\r\n")
+	if r, err := http.ReadResponse(br, nil); err != nil || r.StatusCode != 403 || !r.Close {
+		t.Errorf("after the device left: %v %v, want a 403 that closes", r, err)
 	}
 }
