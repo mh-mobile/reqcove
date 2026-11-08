@@ -88,6 +88,7 @@ func TestRules(t *testing.T) {
 	rules := filepath.Join(dir, "rules.yaml")
 	// localhost is outside --allow-hosts (127.0.0.1): the flow must still be recorded.
 	os.WriteFile(rules, []byte(fmt.Sprintf(`map_remote:
+  - "|//resolved.test/old/|//resolved.test/new/"
   - "|//%[1]s/remote/|//localhost:%[2]s/landed/"
   - "|//elsewhere.example/|//localhost:%[2]s/landed/"
 map_local:
@@ -106,7 +107,7 @@ resolve:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(h.stats()["rules"]); got != "map[keep_host_header:1 map_local:1 map_remote:2 modify_headers:3 resolve:2]" {
+	if got := fmt.Sprint(h.stats()["rules"]); got != "map[keep_host_header:1 map_local:1 map_remote:3 modify_headers:3 resolve:2]" {
 		t.Errorf("rules loaded: %s", got)
 	}
 	hc := h.client("dev")
@@ -231,13 +232,27 @@ resolve:
 	if rv := h.doneFlow("/resolve/plain", false); rv.Host != "resolved.test" || !slices.Contains(rv.Rewrites, "resolve: 127.0.0.1:"+mport) {
 		t.Errorf("resolve record: host %q rewrites %v", rv.Host, rv.Rewrites)
 	}
+	// map_remote, then resolve on the name it sent the request to.
+	req, _ = http.NewRequest("GET", "http://"+o+"/old/x", nil)
+	req.Host = "resolved.test"
+	if r, err := hc.Do(req); err != nil {
+		t.Errorf("map_remote then resolve: %v", err)
+	} else {
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if string(b) != "mapped /new/x" {
+			t.Errorf("map_remote then resolve: %q", b)
+		}
+	}
 	// resolve, TLS: the target is asked for the app's name (SNI), not its
 	// address, and its certificate is checked against that name (it fails here).
 	tc := h.client("dev")
 	tc.Transport.(*http.Transport).TLSClientConfig.ServerName = "tls.resolved.test"
 	treq, _ := http.NewRequest("GET", "https://"+real.Listener.Addr().String()+"/resolve/tls", nil)
 	treq.Host = "tls.resolved.test"
-	if r, err := tc.Do(treq); err == nil {
+	if r, err := tc.Do(treq); err != nil {
+		t.Errorf("resolve over TLS: %v", err)
+	} else {
 		r.Body.Close()
 		if r.StatusCode != 502 {
 			t.Errorf("resolve to a server without the name's certificate: %d, want 502", r.StatusCode)
@@ -251,8 +266,8 @@ resolve:
 	case <-time.After(30 * time.Second):
 		t.Error("resolve over TLS never reached the target")
 	}
-	if tv := h.doneFlow("/resolve/tls", false); !slices.Contains(tv.Rewrites, fmt.Sprintf("resolve: 127.0.0.1:%d", tport)) {
-		t.Errorf("resolve over TLS, record: status %d rewrites %v", tv.Status, tv.Rewrites)
+	if tv := h.doneFlow("/resolve/tls", false); !slices.Contains(tv.Rewrites, fmt.Sprintf("resolve: 127.0.0.1:%d", tport)) || !strings.Contains(tv.Error, "Certificate verify failed") {
+		t.Errorf("resolve over TLS, record: status %d error %q rewrites %v", tv.Status, tv.Error, tv.Rewrites)
 	}
 
 	// Outside --allow-hosts (Host elsewhere.example on an allowed connection):
@@ -292,16 +307,18 @@ func TestRulesRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	for name, c := range map[string]struct{ yaml, want string }{
-		"other option":         {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
-		"missing file":         {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
-		"bad regex":            {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
-		"not a mapping":        {"- a\n", "the file must map"},
-		"yaml typo":            {"map_remote: [\"a\"\n  b: ]\n", " at line "},
-		"resolve out of scope": {"resolve: [\"nope.example=192.0.2.1\"]\n", "resolve[0]: nope.example is not in --allow-hosts"},
-		"resolve metadata":     {"resolve: [\"127.0.0.1=169.254.169.254\"]\n", "resolve[0]: 127.0.0.1: 169.254.169.254 cannot be a target"},
-		"resolve name target":  {"resolve: [\"127.0.0.1=localhost\"]\n", "resolve[0]: 127.0.0.1: the target must be an IPv4 address"},
-		"resolve wildcard":     {"resolve: [\"*.example=192.0.2.1\"]\n", "resolve[0]: write name=IPv4"},
-		"keep host not bool":   {"keep_host_header: \"yes\"\n", "keep_host_header must be true or false"},
+		"other option":          {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
+		"missing file":          {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
+		"bad regex":             {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
+		"not a mapping":         {"- a\n", "the file must map"},
+		"yaml typo":             {"map_remote: [\"a\"\n  b: ]\n", " at line "},
+		"resolve out of scope":  {"resolve: [\"nope.example=192.0.2.1\"]\n", "resolve[0]: nope.example is not in --allow-hosts"},
+		"resolve metadata":      {"resolve: [\"127.0.0.1=169.254.169.254\"]\n", "resolve[0]: 127.0.0.1: 169.254.169.254 cannot be a target"},
+		"resolve name target":   {"resolve: [\"127.0.0.1=localhost\"]\n", "resolve[0]: 127.0.0.1: the target must be an IPv4 address"},
+		"resolve wildcard":      {"resolve: [\"*.example=192.0.2.1\"]\n", "resolve[0]: write name=IPv4"},
+		"keep host not bool":    {"keep_host_header: \"yes\"\n", "keep_host_header must be true or false"},
+		"resolve shared target": {"resolve: [\"127.0.0.1=192.0.2.1\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
+		"resolve quad100":       {"resolve: [\"127.0.0.1=100.100.100.100\"]\n", "resolve[0]: 127.0.0.1: 100.100.100.100 cannot be a target"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")

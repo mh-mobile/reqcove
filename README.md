@@ -112,7 +112,7 @@ setting, so this works on Wi-Fi only.
 
 ```yaml
 map_remote:                     # mitmproxy's syntax, as are map_local and modify_headers
-  - "|//api.example.com/|//localhost:3000/"
+  - "|https://api.example.com/|http://localhost:3000/"
 keep_host_header: true          # reqcove's: map_remote keeps the app's Host
 resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
   - "api.example.com=203.0.113.10"
@@ -123,16 +123,20 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
   code. Relative paths count from the rules file.
 - `map_remote` changes the URL, and with it the `Host` header, unless
   `keep_host_header` is true. For a development server on this computer
-  (`http://localhost:3000`), this is the one to use.
-- `resolve` sends requests whose `Host` is the name to that IPv4 address (and port,
-  if given), on this computer or the LAN too; `Host`, SNI and the recorded URL stay
-  the same, and TLS is still checked against the name. So the server there needs a
-  certificate for that name (a staging server or a new load balancer; a local
-  HTTPS server without one gets a 502). The phone still looks the name up and
-  connects to the real server first: a name that does not resolve publicly, or a
-  real server that refuses connections, cannot be redirected. Names must be in
-  `--allow-hosts`; `0.0.0.0/8`, link-local (cloud metadata) and multicast
-  addresses are refused.
+  (`http://localhost:3000`), this is the one to use; write the schemes, as above,
+  since apps send `https` and a plain server cannot answer TLS.
+- `resolve` sends requests whose `Host` is the name (after `map_remote`, if one
+  applied) to that IPv4 address, on this computer or the LAN too; `Host`, SNI and
+  the recorded URL stay the same, and TLS is still checked against the name. So
+  the server there needs a certificate for that name (a staging server or a new
+  load balancer; a local HTTPS server without one gets a 502). Without a port, the
+  port the app connects to is used (80 and 443 both, and plain HTTP is not checked
+  by any certificate). Through the exit node, the phone still looks the name up
+  and connects to the real server first: a name that does not resolve publicly,
+  or a real server that refuses connections, cannot be redirected. Names must be
+  in `--allow-hosts`, and each needs its own address (or port): mitmproxy reuses a
+  connection by address. `0.0.0.0/8`, link-local (cloud metadata), multicast and
+  Tailscale's 100.100.100.100 are refused.
 - Read a rules file from someone else before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 

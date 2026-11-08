@@ -206,8 +206,9 @@ class Resolve:
     option in this mode): requests whose Host is name go to that address, with
     Host and SNI left as they were, and TLS checked against name."""
 
-    # Never a target: no host there, or a cloud's (or Tailscale's) metadata service.
-    REFUSED = [ipaddress.ip_network(n) for n in ("0.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "100.100.100.200/32")]
+    # Never a target: no host there, a cloud's metadata service (169.254.169.254,
+    # Alibaba's 100.100.100.200), or Tailscale's own 100.100.100.100.
+    REFUSED = [ipaddress.ip_network(n) for n in ("0.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "100.100.100.100/32", "100.100.100.200/32")]
 
     def __init__(self):
         self.replacements = {}  # name -> (ip, port or None)
@@ -228,7 +229,14 @@ class Resolve:
             raise ValueError(f"{name}: bad port {port!r}")
         if name in self.replacements:
             raise ValueError(f"{name}: listed twice")
-        self.replacements[name] = (str(addr), int(port) if port else None)
+        port = int(port) if port else None
+        # mitmproxy reuses a connection by address, not name: two names at one
+        # address would share connections, one name's TLS check standing for
+        # both. Without a port, a rule takes whatever port the app uses.
+        for other, (ip, p) in self.replacements.items():
+            if ip == str(addr) and (port is None or p is None or port == p):
+                raise ValueError(f"{name}: {addr} is {other}'s target too; give each name its own address or port")
+        self.replacements[name] = (str(addr), port)
 
 
 def load_rules(path):
@@ -444,18 +452,19 @@ class Reqcove:
         r = flow.request
         before, host_header = r.pretty_url, r.host_header
         self.rules["map_remote"].request(flow)
+        name = r.pretty_host  # after map_remote, the name it sent the request to
         if r.pretty_url != before:
             if self.rules["map_remote"].keep_host_header:
                 r.host_header = host_header  # Host (or :authority) as the app sent it
             done.append("map_remote")
-            return done
-        target = self.rules["resolve"].replacements.get(r.pretty_host.lower().rstrip("."))
+        name = name.lower().rstrip(".")
+        target = self.rules["resolve"].replacements.get(name)
         if target:
             # Only where to connect changes: not Host, nor the URL recorded
             # (the setters would rewrite Host).
             address = (target[0], target[1] or r.port)
             r.data.host, r.data.port = address
-            self.resolve_sni[(flow.client_conn.id, address)] = r.pretty_host.lower().rstrip(".")
+            self.resolve_sni[(flow.client_conn.id, address)] = name
             done.append(f"resolve: {address[0]}:{address[1]}")
         return done
 
