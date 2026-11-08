@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -197,5 +198,23 @@ func TestHeadersCountTowardBytes(t *testing.T) {
 	st2.Apply(line(t, map[string]any{"ev": "request", "id": "m", "host": "h", "url": "https://h/", "headers": many}))
 	if n := st2.Stats()["held_bytes"].(int); n < 4096*64 {
 		t.Errorf("4096 small headers held as %d bytes", n)
+	}
+}
+
+// A rules event (--rules-reload) replaces what the hello said about the
+// rules, keeps the rest of it, and is told to SetRulesLog.
+func TestRulesEvent(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	st.Apply(line(t, map[string]any{"ev": "hello", "mitmproxy": "12.3.1", "rules": map[string]int{"map_remote": 1}}))
+	var told []string
+	st.SetRulesLog(func(r map[string]int, problem string) { told = append(told, fmt.Sprintf("%v %s", r, problem)) })
+	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": ""}))
+	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": "map_remote[1]: bad"}))
+	s := st.Stats()
+	if fmt.Sprint(s["rules"]) != "map[map_remote:2]" || s["rules_error"] != "map_remote[1]: bad" || s["mitmproxy"] != "12.3.1" {
+		t.Errorf("stats: rules %v, error %v, mitmproxy %v", s["rules"], s["rules_error"], s["mitmproxy"])
+	}
+	if want := []string{"map[map_remote:2] ", "map[map_remote:2] map_remote[1]: bad"}; !slices.Equal(told, want) {
+		t.Errorf("told %q", told)
 	}
 }

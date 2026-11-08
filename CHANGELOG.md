@@ -11,6 +11,8 @@
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
 - `reqcove har > flows.har`: the recorded flows as a HAR 1.2 file, masked, with
   the same filters as `list_flows`.
+- `run --rules-reload`: the `--rules` file is read again when it changes; a
+  file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
 - `--dns 1.1.1.1` works without the port (53).
 - `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);

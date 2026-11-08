@@ -54,6 +54,7 @@ func TestNextSteps(t *testing.T) {
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},
+		{"rules reload failed", ok, map[string]any{"state": "ready", "rules_error": "map_remote[0]: bad"}, allow, nil, []string{"--rules file does not load (map_remote[0]: bad)", "rules before it still apply"}},
 		{"CA not trusted", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3}}, []string{"phone refuses", "Reqcove CA (mac, 2026-11-07)", "http://mitm.it"}},
 		{"CA fine", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3, Flows: 10}}, nil},
 		{"silent device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true}}, []string{"no traffic from phone yet", "reqcove.ts.net", "off and on again"}},

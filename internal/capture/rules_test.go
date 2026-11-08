@@ -340,3 +340,106 @@ func TestRulesRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestRulesReload: with RulesReload, a changed file takes over for new
+// requests; a request under way keeps the rules it started with (its response
+// too); a file that does not load leaves the rules before it, and says why;
+// without RulesReload nothing is taken again.
+func TestRulesReload(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) }) // a failed test does not hold the server's Close
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			arrived <- struct{}{}
+			<-release
+		}
+		fmt.Fprint(w, r.Header.Get("X-Rule"))
+	}))
+	defer srv.Close()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(rules, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := "modify_headers:\n  - \"|~q|X-Rule|one\"\n  - \"|~s|X-Resp|one\"\n"
+	two := "modify_headers:\n  - \"|~q|X-Rule|two\"\n  - \"|~s|X-Resp|two\"\n  - \"|~q|X-Two|1\"\n"
+	for _, reload := range []bool{true, false} {
+		write(one)
+		h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules, c.RulesReload = rules, reload })
+		if err != nil {
+			t.Fatal(err)
+		}
+		hc := h.client("dev")
+		get := func(path string) (string, string) {
+			t.Helper()
+			resp, err := hc.Get(srv.URL + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return string(b), resp.Header.Get("X-Resp")
+		}
+		waitRules := func(want, problem string) {
+			t.Helper()
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+				got, e := fmt.Sprint(h.stats()["rules"]), fmt.Sprint(h.stats()["rules_error"])
+				if strings.Contains(got, want) && strings.Contains(e, problem) && (problem != "" || e == "") {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("rules %s, error %q: want %s, %q", got, e, want, problem)
+				}
+			}
+		}
+		if req, resp := get("/r1"); req != "one" || resp != "one" {
+			t.Fatalf("first rules: %q %q", req, resp)
+		}
+		if !reload {
+			write(two)
+			time.Sleep(3 * time.Second)
+			if req, _ := get("/r2"); req != "one" {
+				t.Errorf("without RulesReload, taken again: %q", req)
+			}
+			continue
+		}
+		slow := make(chan [2]string, 1)
+		go func() {
+			resp, err := hc.Get(srv.URL + "/slow")
+			if err != nil {
+				slow <- [2]string{err.Error()}
+				return
+			}
+			resp.Body.Close()
+			slow <- [2]string{"", resp.Header.Get("X-Resp")}
+		}()
+		<-arrived
+		write(two)
+		waitRules("modify_headers:3", "")
+		releaseOnce.Do(func() { close(release) })
+		if r := <-slow; r[0] != "" || r[1] != "one" {
+			t.Errorf("the request under way got response rules %q (%s), not its own", r[1], r[0])
+		}
+		if req, resp := get("/r2"); req != "two" || resp != "two" {
+			t.Errorf("after the change: %q %q", req, resp)
+		}
+		write("modify_headers: [\n")
+		waitRules("modify_headers:3", "at line")
+		if req, _ := get("/r3"); req != "two" {
+			t.Errorf("a broken file changed the rules: %q", req)
+		}
+		write(one)
+		waitRules("modify_headers:2", "")
+		if req, _ := get("/r4"); req != "one" {
+			t.Errorf("fixed: %q", req)
+		}
+	}
+}

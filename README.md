@@ -111,6 +111,7 @@ setting, so this works on Wi-Fi only.
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
+| `--rules-reload` | read that file again whenever it changes, while running (see below; after v0.1.0) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
 | `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
@@ -151,6 +152,13 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
   Tailscale's 100.100.100.100 are refused.
 - Read a rules file from someone else before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
+- The file is read when `run` starts. With `--rules-reload` (after v0.1.0) it is
+  read again within a second of each change, for the requests that start after
+  it; a request under way keeps the rules it started with. A file that does not
+  load leaves the rules before it in place, and `run` and `reqcove status` say
+  why; but if mitmproxy restarts meanwhile, `run` stops on it, as at start. With
+  it, whatever can write the file (an agent included) can change where the
+  devices' requests go, without you restarting anything.
 
 ### The flows on the iPhone (`--ui`)
 

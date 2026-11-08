@@ -54,7 +54,7 @@ type event struct {
 	BrotliDecode bool           `json:"brotli_decode"`
 	ZstdDecode   bool           `json:"zstd_decode"`
 	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
-	RulesError   string         `json:"rules_error"` // why --rules could not be loaded
+	RulesError   string         `json:"rules_error"` // why --rules could not be loaded (at start), or reloaded
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
@@ -137,6 +137,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
+	rulesLog      func(rules map[string]int, problem string) // SetRulesLog
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -205,6 +206,14 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 }
 
 // SetDeviceNames tells the store the display name of each device it may see.
+// SetRulesLog has f told of each --rules-reload: the rules now in force, and
+// why the file did not load when it did not (the rules before it then stay).
+func (s *Store) SetRulesLog(f func(rules map[string]int, problem string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rulesLog = f
+}
+
 func (s *Store) SetDeviceNames(names map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -250,6 +259,12 @@ func (s *Store) Apply(line []byte) {
 		s.hellos++
 		return
 	case "skip": // a request outside --allow-hosts; only its count matters
+		return
+	case "rules": // --rules-reload took the file again, or could not
+		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
+		if s.rulesLog != nil {
+			s.rulesLog(e.Rules, e.RulesError)
+		}
 		return
 	case "tls_failed":
 		host := e.SNI

@@ -16,7 +16,9 @@ to the socket. When the queue is over its byte budget, body heads are dropped
 first; header, done and error events are kept so flows are never orphaned.
 """
 
+import asyncio
 import base64
+import os
 import hmac
 import ipaddress
 import json
@@ -241,6 +243,18 @@ class Resolve:
         self.replacements[name] = (str(addr), port)
 
 
+RULES_POLL = 1.0  # seconds between looks at the --rules file, with --rules-reload
+
+
+def _stamp(path):
+    """What changes when the file is saved, in place or by a rename; None when it is gone."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
 def load_rules(path):
     """The --rules file as mitmproxy's own rule addons, which reqcove calls
     from its hooks (so rules never touch skipped flows or mitm.it).
@@ -300,6 +314,9 @@ class Reqcove:
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
+        self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
+        self.rules_stamp = None  # the file's (mtime, size, inode) when loaded, for --rules-reload
+        self.rules_watch = None
         self.upstream = None  # (host, port) of --upstream-proxy
         self.rules_error = ""
         threading.Thread(target=self._writer, daemon=True).start()
@@ -311,6 +328,7 @@ class Reqcove:
         loader.add_option("reqcove_secret_file", str, "", "File holding the SOCKS5 password reqcove uses.")
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
         loader.add_option("reqcove_rules", str, "", "The --rules file.")
+        loader.add_option("reqcove_rules_reload", bool, False, "Re-read the --rules file when it changes.")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
 
     def configure(self, updated):
@@ -333,19 +351,54 @@ class Reqcove:
         if "reqcove_rules" in updated:
             self.rules, self.rules_error = None, ""
             if ctx.options.reqcove_rules:
-                try:
-                    self.rules = load_rules(ctx.options.reqcove_rules)
-                    if self.upstream and self.rules["resolve"].replacements:
-                        # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
-                        raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
-                    for i, name in enumerate(self.rules["resolve"].replacements):
-                        if not self._in_scope(name):  # would never apply: a typo
-                            raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
-                except Exception as e:  # reqcove reads it from the hello and refuses to start
-                    self.rules = None  # and none of it applies meanwhile
-                    self.rules_error = str(e) if isinstance(e, ValueError) else type(e).__name__
-                    if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
-                        self.rules_error += f" at line {mark.line + 1}"
+                self.rules_stamp = _stamp(ctx.options.reqcove_rules)
+                # On an error reqcove reads it from the hello and refuses to start;
+                # none of the rules applies meanwhile.
+                self.rules, self.rules_error = self._load_checked(ctx.options.reqcove_rules)
+
+    def _load_checked(self, path):
+        """The rules in path, checked as at start, or None and why not (never a
+        rule's text: modify_headers rules often carry tokens)."""
+        try:
+            rules = load_rules(path)
+            if self.upstream and rules["resolve"].replacements:
+                # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
+                raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
+            for i, name in enumerate(rules["resolve"].replacements):
+                if not self._in_scope(name):  # would never apply: a typo
+                    raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
+            return rules, ""
+        except Exception as e:
+            why = str(e) if isinstance(e, ValueError) else type(e).__name__
+            if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
+                why += f" at line {mark.line + 1}"
+            return None, why
+
+    async def _watch_rules(self, path):
+        """--rules-reload: once a second, take the file again when it changed.
+        A file that does not load leaves the rules before it in place, and says
+        why. On the event loop, as the hooks, so a swap never lands mid-hook."""
+        while True:
+            await asyncio.sleep(RULES_POLL)
+            try:
+                stamp = _stamp(path)
+                if stamp == self.rules_stamp:
+                    continue
+                self.rules_stamp = stamp
+                rules, why = self._load_checked(path) if stamp else (None, "the file is gone")
+                if rules is not None:
+                    self.rules = rules
+                self.rules_error = why
+                self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
+            except Exception as e:  # the watch must not die quietly
+                self.rules_error = type(e).__name__
+
+    def _rules_info(self):
+        return {
+            "rules": dict({k: len(a.replacements) for k, a in self.rules.items()}, keep_host_header=int(self.rules["map_remote"].keep_host_header)) if self.rules else None,
+            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in self.rules["resolve"].replacements.items()] if self.rules else None,
+            "rules_error": self.rules_error,
+        }
 
     def socks5_auth(self, data):
         # mitmproxy's proxyauth=any has already accepted any user and password;
@@ -411,6 +464,8 @@ class Reqcove:
         # before it advertises the exit node. The writer says hello again on
         # every reconnect.
         self.put_event(self._hello())
+        if ctx.options.reqcove_rules_reload and ctx.options.reqcove_rules and self.rules_watch is None:
+            self.rules_watch = asyncio.get_running_loop().create_task(self._watch_rules(ctx.options.reqcove_rules))
 
     # Queueing: small events always go in (bounded by count); body heads need byte budget.
     def _put(self, msg, size):
@@ -468,9 +523,11 @@ class Reqcove:
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
             "headers": headers, "note": note,
         }
-        if self.rules:
+        rules = self.rules
+        if rules:
+            self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
             try:
-                ev["rewrites"] = self._rewrite_request(flow)
+                ev["rewrites"] = self._rewrite_request(flow, rules)
             except Exception as e:
                 # A rule that fails (map_remote making a bad URL) must not let the
                 # request go on unrewritten, around the rule or the upstream proxy.
@@ -488,13 +545,13 @@ class Reqcove:
         self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
 
-    def _rewrite_request(self, flow):
+    def _rewrite_request(self, flow, rules):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
         map_remote and map_local run in request(), after the body, too late."""
-        done = self._modify_headers(flow, flow.request.headers, "request")
+        done = self._modify_headers(flow, flow.request.headers, "request", rules)
         if self._small_body(flow.request):
-            self.rules["map_local"].request(flow)
-        elif any(s.matches(flow) for s in self.rules["map_local"].replacements):
+            rules["map_local"].request(flow)
+        elif any(s.matches(flow) for s in rules["map_local"].replacements):
             # A local answer would make mitmproxy buffer the whole request body
             # (it cannot stream one that already has a response): only for small ones.
             done.append("map_local: skipped, request body over 1 MiB or of unknown length")
@@ -503,15 +560,15 @@ class Reqcove:
             return done
         r = flow.request
         before, host_header = r.pretty_url, r.host_header
-        self.rules["map_remote"].request(flow)
+        rules["map_remote"].request(flow)
         name = r.pretty_host  # after map_remote, the name it sent the request to
         if r.pretty_url != before:
             flow.metadata["reqcove_mapped"] = r.url  # map_remote's URL, before resolve changes the address
-            if self.rules["map_remote"].keep_host_header:
+            if rules["map_remote"].keep_host_header:
                 r.host_header = host_header  # Host (or :authority) as the app sent it
             done.append("map_remote")
         name = name.lower().rstrip(".")
-        target = self.rules["resolve"].replacements.get(name)
+        target = rules["resolve"].replacements.get(name)
         if target:
             # Only where to connect changes: not Host, nor the URL recorded
             # (the setters would rewrite Host).
@@ -533,8 +590,9 @@ class Reqcove:
         # No length: a body may follow (chunked, HTTP/2) unless the method takes none.
         return r.method in ("GET", "HEAD", "OPTIONS", "DELETE") and "transfer-encoding" not in r.headers
 
-    def _modify_headers(self, flow, headers, direction):
-        mh = self.rules["modify_headers"]
+    @staticmethod
+    def _modify_headers(flow, headers, direction, rules):
+        mh = rules["modify_headers"]
         names = [s.subject.decode(errors="replace") for s in mh.replacements if s.matches(flow)]
         mh.run(flow, headers)
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
@@ -553,7 +611,8 @@ class Reqcove:
             flow.response.stream = True
             return
         s = flow.response
-        rewrites = self._modify_headers(flow, s.headers, "response") if self.rules else []
+        rules = self.flow_rules.get(flow.id)
+        rewrites = self._modify_headers(flow, s.headers, "response", rules) if rules else []
         headers, note = _headers(s.headers)
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
@@ -565,6 +624,7 @@ class Reqcove:
         s.stream = _Head(self, flow, "response", s.headers)
 
     def response(self, flow):
+        self.flow_rules.pop(flow.id, None)
         if flow.metadata.get("reqcove_skip"):
             return
         if flow.metadata.get("reqcove_local"):
@@ -572,6 +632,7 @@ class Reqcove:
         self.put_event({"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end})
 
     def error(self, flow):
+        self.flow_rules.pop(flow.id, None)
         if flow.metadata.get("reqcove_skip"):
             return
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg[:SHORT]})
@@ -607,9 +668,7 @@ class Reqcove:
             "python": sys.version.split()[0], "brotli": getattr(brotli, "__version__", "?"),
             "brotli_decode": BROTLI_OK, "zstd_decode": zstd is not None,
             "dropped_bodies": self.dropped_bodies, "dropped_events": self.dropped_events,
-            "rules": dict({k: len(a.replacements) for k, a in self.rules.items()}, keep_host_header=int(self.rules["map_remote"].keep_host_header)) if self.rules else None,
-            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in self.rules["resolve"].replacements.items()] if self.rules else None,
-            "rules_error": self.rules_error,
+            **self._rules_info(),
             "upstream": "%s:%d" % self.upstream if self.upstream else "",
         }
 

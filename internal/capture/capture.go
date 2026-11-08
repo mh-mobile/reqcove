@@ -56,6 +56,7 @@ type Config struct {
 	CAName       string                        // name of a CA made for this confdir (mitmproxy's own is just "mitmproxy"); empty: mitmproxy's default
 	WebPort      int                           // run mitmweb on 127.0.0.1:WebPort instead of mitmdump (--web); 0: mitmdump
 	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
+	RulesReload  bool                          // --rules-reload: the addon also takes the file again whenever it changes
 	Upstream     string                        // host:port of an HTTP proxy decrypted requests go on to (--upstream-proxy); empty: none
 	UpstreamCA   string                        // PEM file of the upstream's CA, the only CA trusted then (--upstream-ca); empty: the public CAs
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
@@ -195,6 +196,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
+		if cfg.RulesReload {
+			c.args = append(c.args, "--set", "reqcove_rules_reload=true")
+		}
 	}
 	if cfg.Upstream != "" {
 		// lazy: otherwise mitmproxy connects to the server itself first, around the upstream.

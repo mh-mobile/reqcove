@@ -111,6 +111,7 @@ func run(ctx context.Context, args []string) error {
 		allowSpecs = append(allowSpecs, v)
 		return nil
 	})
+	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump, its UI on http://127.0.0.1:8081 (no masking, can edit and replay)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
@@ -159,6 +160,8 @@ func run(ctx context.Context, args []string) error {
 		if _, err := os.Stat(*rules); err != nil {
 			return fmt.Errorf("--rules: %w", err)
 		}
+	} else if *rulesReload {
+		return errors.New("--rules-reload needs --rules FILE")
 	}
 	if *noRedact {
 		log.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
@@ -211,7 +214,7 @@ func run(ctx context.Context, args []string) error {
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
-		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, WebPort: webPort(*web),
+		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, RulesReload: *rulesReload, WebPort: webPort(*web),
 		Upstream: upstream, UpstreamCA: upstreamCAFile,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
@@ -238,6 +241,16 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
+		if *rulesReload {
+			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
+			cap.Store.SetRulesLog(func(r map[string]int, problem string) {
+				if problem != "" {
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply", *rules, problem)
+				} else {
+					log.Printf("rules from %s, again: %v", *rules, r)
+				}
+			})
+		}
 		if r, _ := s["resolve"].([]string); len(r) > 0 {
 			log.Printf("resolve: %s (Host and SNI as the app sent them; TLS checked against the name)", strings.Join(r, ", "))
 		}

@@ -195,6 +195,14 @@ func TestHostsOnly(t *testing.T) {
 	}
 }
 
+// --rules-reload without --rules is refused.
+func TestRulesReloadNeedsRules(t *testing.T) {
+	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--rules-reload", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
+	if err == nil || !strings.Contains(err.Error(), "--rules-reload needs --rules") {
+		t.Errorf("got %v", err)
+	}
+}
+
 // The page and the Remote Proxy cannot share the node's port 80.
 func TestUIPortClash(t *testing.T) {
 	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--ui", "--proxy-port", "80", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
