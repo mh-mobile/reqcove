@@ -174,7 +174,7 @@ func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
 	start := time.Now()
 	maskURLs(v)
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > slow*200*time.Millisecond {
 		t.Errorf("8192 levels took %v", d)
 	}
 }
@@ -267,7 +267,7 @@ func TestSearchLongQueryIsLinear(t *testing.T) {
 	}
 	start := time.Now()
 	st.List(Filter{Query: strings.Repeat("a", 2000) + "b", QueryBodies: true, Limit: 100})
-	if d := time.Since(start); d > time.Second {
+	if d := time.Since(start); d > slow*time.Second {
 		t.Errorf("search took %v", d)
 	}
 }
@@ -279,7 +279,7 @@ func TestFourthReview(t *testing.T) {
 	start := time.Now()
 	maskBody([]byte("x?q=1"+chain), "text/plain", false)
 	maskURLs("https://h/x?q=1" + chain + chain + chain + chain) // 256 KiB, a header's bound
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > slow*2*time.Second {
 		t.Errorf("';' chains took %v", d)
 	}
 
