@@ -66,8 +66,9 @@ xattr -dr com.apple.quarantine reqcove_*_darwin_arm64
    approve the exit node in the admin console. `reqcove status` always says
    what is still missing.
 2. On the iPhone, in the Tailscale app, choose the exit node `reqcove`.
-3. Still on the iPhone, open `http://mitm.it` in Safari (type the `http://`
-   yourself; Safari may try HTTPS otherwise and warn), install the iOS profile,
+3. Still on the iPhone, with the exit node on, scan the QR code `reqcove run`
+   prints with the Camera, or open `http://mitm.it` in Safari (type the `http://`
+   yourself; Safari may try HTTPS otherwise and warn); install the iOS profile,
    and trust it in Settings › General › About › Certificate Trust Settings. The
    CA is named `Reqcove CA (<computer>, <date>)`.
 4. Give your agent the tools. For Claude Code:

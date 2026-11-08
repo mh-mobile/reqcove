@@ -25,6 +25,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/skip2/go-qrcode"
 )
 
 // version is set at release builds: -ldflags "-X main.version=v0.1.0".
@@ -159,6 +160,7 @@ func run(ctx context.Context, args []string) error {
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
 	if ca := cap.CA; ca.Name != "" {
 		log.Printf("CA %q, SHA-256 %s, until %s: iPhones get it from http://mitm.it (the same CA as long as %s is kept)", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"), filepath.Join(*state, "mitmproxy"))
+		printQR(os.Stderr, "http://mitm.it", "to get the CA, scan this with the iPhone's camera while it uses the exit node (Safari opens http://mitm.it)")
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
@@ -294,4 +296,17 @@ func runMCP(ctx context.Context, args []string) error {
 		return fmt.Errorf("is `reqcove run` running? %w", err)
 	}
 	return nil
+}
+
+// printQR draws url as a QR code, with what it is for, when w is a terminal:
+// typing http://mitm.it by hand is easy to get wrong (Safari tries https).
+func printQR(w *os.File, url, what string) {
+	if fi, err := w.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return // a log file or pipe: the URL in the line above is enough
+	}
+	q, err := qrcode.New(url, qrcode.Medium)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "%s:\n%s", what, q.ToSmallString(false))
 }

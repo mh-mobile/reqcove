@@ -243,3 +243,12 @@ func TestStatusOutHidesLoginURL(t *testing.T) {
 		t.Errorf("steps do not say where to log in: %v", out.NextSteps)
 	}
 }
+
+// The QR code goes to a terminal only: not into a log file.
+func TestPrintQR(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "log")
+	printQR(f, "http://mitm.it", "scan")
+	if fi, _ := f.Stat(); fi.Size() != 0 {
+		t.Error("a QR code was written to a file")
+	}
+}

@@ -51,7 +51,7 @@ xattr -dr com.apple.quarantine reqcove_*_darwin_arm64
 
    初回はログイン用の URL が表示されます。Tailnet Lock を使っている場合は、続けて、署名用のデバイスで実行する `tailscale lock sign nodekey:…` が表示され、管理コンソールで Exit Node を承認するよう案内されます。不足しているものは `reqcove status` でいつでも確認できます。
 2. iPhone の Tailscale アプリで、Exit Node に `reqcove` を選びます。
-3. 同じく iPhone の Safari で `http://mitm.it` を開き（`http://` まで自分で入力してください。省略すると Safari が HTTPS で開こうとして警告を出すことがあります）、iOS のプロファイルをインストールして（設定 › プロファイルがダウンロード済み）、設定 › 一般 › 情報 › 証明書信頼設定 で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です。
+3. 同じく iPhone で、Exit Node をオンにしたまま、`reqcove run` が表示する QR コードをカメラで読みます（または Safari で `http://mitm.it` を開きます。`http://` まで自分で入力してください。省略すると Safari が HTTPS で開こうとして警告を出すことがあります）。そして、iOS のプロファイルをインストールして（設定 › プロファイルがダウンロード済み）、設定 › 一般 › 情報 › 証明書信頼設定 で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です。
 4. エージェントに MCP ツールを登録します。Claude Code の場合：
 
    ```sh
