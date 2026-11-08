@@ -160,6 +160,19 @@ or a LAN resolver in `--dns`, that is your router's or your company's resolver, 
 they can look up names only it knows. (From reading Tailscale's code: it answers any
 peer the tailnet policy lets use an exit node.) Reqcove does not record DNS.
 
+From this computer to the upstream, DNS is plain, unencrypted DNS, for the exit
+node and for the Remote Proxy alike, and answers are not checked with DNSSEC
+(from reading code). So the network this computer is on (its Wi-Fi, the ISP) sees
+the names the devices look up, and someone on that path can answer falsely.
+Off the path that is hard: each query has a random ID and its own random port,
+and answers from any other address are dropped. A false answer gets little
+(from reading code, not tried): HTTPS still has to show a certificate for the
+name (mitmproxy checks it for decrypted hosts, the phone itself for the others),
+and an answer pointing at this computer, its LAN or loopback is refused like any
+connection there (tested). Plain HTTP can be sent elsewhere, as it can on any
+network. To hide the names, a local DNS-over-HTTPS relay could serve as
+`--dns 127.0.0.1:PORT`; that has not been tried.
+
 ## What the devices can reach
 
 Public IPv4 addresses. Reqcove refuses this computer's own addresses (those of every
