@@ -107,13 +107,15 @@ page included). `resolve` takes IPv4 addresses only, never a name to look up, an
 refuses `0.0.0.0/8`, link-local, multicast and reserved ranges, Tailscale's
 100.100.100.100 and the cloud metadata addresses 169.254.169.254 and
 100.100.100.200; `map_remote` takes whatever it is given. A `resolve` rule
-without a port takes the port the app connects to. TLS to a `resolve` target is
+without a port takes the request's port (the app's, or a `map_remote` URL's). TLS to a `resolve` target is
 checked against the rule's name, with mitmproxy's own CA list (certifi, from
 reading its code), so a request goes on only to a server with a certificate for
-that name (a test sees a 502 from one without); plain HTTP is not checked. Each
+that name (tried: one with a trusted certificate for another name gets a 502); plain HTTP is not checked. Each
 `resolve` name needs its own address: mitmproxy reuses a connection by address,
 so names sharing one would share one name's check, and are refused. A
-`map_remote` to a `resolve` target's address can ride on that connection too.
+`map_remote` to a `resolve` target's address shares its connections, both ways:
+a request of one can ride on a connection made, and checked, for the other, and a
+failed connection fails both for as long as the app's connection lasts.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
 

@@ -115,8 +115,8 @@ map_remote:                     # mitmproxy's syntax, as are map_local and modif
   - "|https://api.example.com/|http://localhost:3000/"
 keep_host_header: true          # reqcove's: map_remote keeps the app's Host
 resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
-  - "api.example.com=203.0.113.10"
-  - "auth.example.com=127.0.0.1:8443"
+  - "shop.example.com=203.0.113.10"
+  - "auth.example.com=192.168.1.20:8443"
 ```
 
 - `map_remote`, `map_local` and `modify_headers` are mitmproxy's, run by its own
@@ -125,15 +125,16 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
   `keep_host_header` is true. For a development server on this computer
   (`http://localhost:3000`), this is the one to use; write the schemes, as above,
   since apps send `https` and a plain server cannot answer TLS.
-- `resolve` sends requests whose `Host` is the name (after `map_remote`, if one
-  applied) to that IPv4 address, on this computer or the LAN too; `Host`, SNI and
-  the recorded URL stay the same, and TLS is still checked against the name. So
-  the server there needs a certificate for that name (a staging server or a new
-  load balancer; a local HTTPS server without one gets a 502). Without a port, the
-  port the app connects to is used (80 and 443 both, and plain HTTP is not checked
-  by any certificate). Through the exit node, the phone still looks the name up
-  and connects to the real server first: a name that does not resolve publicly,
-  or a real server that refuses connections, cannot be redirected. Names must be
+- `resolve` sends requests for the name to that IPv4 address, on this computer or
+  the LAN too; `Host`, SNI and the recorded URL stay the same, and TLS is still
+  checked against the name. So the server there needs a certificate for that name
+  (a staging server or a new load balancer; a local HTTPS server without one gets
+  a 502). After a `map_remote`, the name is the host of its new URL, which is then
+  also the SNI. Without a port, the request's port is used (the app's, 80 or 443,
+  or the `map_remote` URL's), and plain HTTP is not checked by any certificate.
+  The name is still looked up (by the phone, or by this computer for the Remote
+  Proxy) and the real server connected first: a name that does not resolve
+  publicly, or a real server that refuses connections, cannot be redirected. Names must be
   in `--allow-hosts`, and each needs its own address (or port): mitmproxy reuses a
   connection by address. `0.0.0.0/8`, link-local (cloud metadata), multicast and
   Tailscale's 100.100.100.100 are refused.

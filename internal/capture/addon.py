@@ -425,8 +425,8 @@ class Reqcove:
         }
         if self.rules:
             ev["rewrites"] = self._rewrite_request(flow)
-            if "map_remote" in ev["rewrites"]:
-                ev["mapped_url"] = r.url  # where it went, whatever Host says (keep_host_header)
+            if "reqcove_mapped" in flow.metadata:
+                ev["mapped_url"] = flow.metadata["reqcove_mapped"]  # whatever Host says (keep_host_header)
         self.put_event(ev)
         if flow.response:
             # map_local answered. mitmproxy cannot stream a request that already
@@ -454,6 +454,7 @@ class Reqcove:
         self.rules["map_remote"].request(flow)
         name = r.pretty_host  # after map_remote, the name it sent the request to
         if r.pretty_url != before:
+            flow.metadata["reqcove_mapped"] = r.url  # map_remote's URL, before resolve changes the address
             if self.rules["map_remote"].keep_host_header:
                 r.host_header = host_header  # Host (or :authority) as the app sent it
             done.append("map_remote")
