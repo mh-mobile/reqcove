@@ -114,7 +114,7 @@ setting, so this works on Wi-Fi only.
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
-| `--dns` | the exit node's DNS upstream, `1.1.1.1:53` by default; `system` for `/etc/resolv.conf` |
+| `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |
 

@@ -285,9 +285,13 @@ func parseDNS(v string) ([]netip.AddrPort, error) {
 	}
 	var out []netip.AddrPort
 	for _, s := range strings.Split(v, ",") {
-		ap, err := netip.ParseAddrPort(strings.TrimSpace(s))
+		s = strings.TrimSpace(s)
+		ap, err := netip.ParseAddrPort(s)
+		if ip, ipErr := netip.ParseAddr(s); err != nil && ipErr == nil {
+			ap, err = netip.AddrPortFrom(ip, 53), nil // no port: DNS's
+		}
 		if err != nil {
-			return nil, fmt.Errorf("--dns: %w", err)
+			return nil, fmt.Errorf("--dns %q: want an IP address, optionally with :PORT", s)
 		}
 		out = append(out, ap)
 	}

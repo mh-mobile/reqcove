@@ -91,7 +91,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | `--upstream-proxy URL` | 復号したリクエストを、Burp Suite などの HTTP プロキシに回します。`http://127.0.0.1:8080` など（下を参照） |
 | `--upstream-ca FILE` | そのプロキシの CA（PEM か DER）。自分で復号するプロキシのときに渡します。この Mac の Burp なら、自動で取ってきます |
 | `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（マスクなし。編集とリプレイができ、すべてのフローを保持します） |
-| `--dns` | Exit Node が使う上流 DNS。デフォルトは `1.1.1.1:53`。`system` を指定すると `/etc/resolv.conf` を使います |
+| `--dns` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省けます）。`system` を指定すると `/etc/resolv.conf` を使います |
 | `--no-redact` | シークレットをマスクせずに記録します |
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵が入ります。新しいか空のディレクトリ、または reqcove が前に使ったものに限ります |
 

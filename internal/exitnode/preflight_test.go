@@ -3,6 +3,8 @@ package exitnode
 import (
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -64,5 +66,22 @@ func TestProbeDNS(t *testing.T) {
 	dead.Close()
 	if err := probeDNS(addr, 300*time.Millisecond); err == nil || !strings.Contains(err.Error(), "an A query") {
 		t.Errorf("nothing there: %v", err)
+	}
+}
+
+func TestFirstNameserver(t *testing.T) {
+	dir := t.TempDir()
+	for _, c := range []struct{ conf, want, err string }{
+		{"# a comment\nsearch example.com\nnameserver 192.168.1.1\nnameserver 1.1.1.1\n", "192.168.1.1", ""},
+		{"nameserver fe80::1%en0\n", "fe80::1%en0", ""},
+		{"search example.com\n", "", "no nameserver"},
+		{"nameserver router.local\n", "", "bad nameserver"},
+	} {
+		p := filepath.Join(dir, "resolv.conf")
+		os.WriteFile(p, []byte(c.conf), 0o600)
+		got, err := firstNameserver(p)
+		if got != c.want || (c.err == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.err)) {
+			t.Errorf("%q: %q %v", c.conf, got, err)
+		}
 	}
 }

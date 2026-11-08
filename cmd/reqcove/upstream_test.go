@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -148,5 +149,21 @@ func TestIOSDevices(t *testing.T) {
 	tailscaleStatus = func() ([]byte, error) { return nil, os.ErrNotExist }
 	if got := iosDevices(); got != nil {
 		t.Errorf("without the CLI: %v", got)
+	}
+}
+
+// --dns takes addresses with or without a port (53), comma-separated, or "system".
+func TestParseDNS(t *testing.T) {
+	got, err := parseDNS("1.1.1.1, 9.9.9.9:5353,2606:4700::1111,[2606:4700::1001]:53")
+	if err != nil || fmt.Sprint(got) != "[1.1.1.1:53 9.9.9.9:5353 [2606:4700::1111]:53 [2606:4700::1001]:53]" {
+		t.Errorf("got %v %v", got, err)
+	}
+	if got, err := parseDNS("system"); got != nil || err != nil {
+		t.Errorf("system: %v %v", got, err)
+	}
+	for _, bad := range []string{"dns.google", "1.1.1.1:x", ""} {
+		if _, err := parseDNS(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }
