@@ -98,7 +98,9 @@ func TestHAR(t *testing.T) {
 		t.Errorf("the newest, open: %+v", e)
 	}
 	// Filters and the limit go through: the newest flow only.
-	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--limit", "1", "--host", "example.com", "--method", "POST"}) })
+	out = captureStdout(t, func() error {
+		return har(ctx, []string{"--state", dir, "--limit", "1", "--host", "example.com", "--method", "POST"})
+	})
 	if !strings.Contains(out, "img.example.com") || strings.Contains(out, "api.example.com") {
 		t.Errorf("--limit 1:\n%s", out)
 	}
