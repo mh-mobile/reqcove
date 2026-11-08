@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -89,7 +90,7 @@ func har(ctx context.Context, args []string) error {
 	for i := len(ids) - 1; i >= 0; i-- {
 		var v capture.FlowView
 		if err := call("get_flow", mcpserver.GetIn{ID: ids[i], Bodies: true}, &v); err != nil {
-			if strings.Contains(err.Error(), "no flow") {
+			if strings.Contains(err.Error(), "no flow") { // get_flow's (Store.Get's) words
 				continue // evicted since the list
 			}
 			return err
@@ -197,18 +198,31 @@ func harEntry(v capture.FlowView) harEntryOut {
 	if v.Status == 0 {
 		e.Response.BodySize = -1 // no response
 	}
+	var notes []string
+	if v.State == "open" {
+		notes = append(notes, "still open when exported")
+	}
 	if v.ReqBody.Size > 0 || v.ReqBodyText != "" || v.ReqBodyEnc != "" {
 		text, enc, note := harBody(v.ReqBodyText, v.ReqBodyEnc, v.ReqBody)
 		e.Request.PostData = &harPost{MimeType: header(v.ReqHeaders, "content-type"), Text: text, Encoding: enc, Comment: note}
 	}
 	text, enc, note := harBody(v.RespBodyText, v.RespBodyEnc, v.RespBody)
-	e.Response.Content = harContent{Size: v.RespBody.Size, MimeType: header(v.RespHeaders, "content-type"), Text: text, Encoding: enc, Comment: note}
-	var notes []string
+	size := v.RespBody.Size // on the wire; HAR's is decoded, known when all of it is kept
+	if v.RespBody.Final && !v.RespBody.Truncated && v.RespBody.Decoded && note == "" {
+		size = int64(len(text))
+		if b, err := base64.StdEncoding.DecodeString(text); enc == "base64" && err == nil {
+			size = int64(len(b))
+		}
+	}
+	e.Response.Content = harContent{Size: size, MimeType: header(v.RespHeaders, "content-type"), Text: text, Encoding: enc, Comment: note}
 	if v.MappedURL != "" {
 		notes = append(notes, "sent to "+v.MappedURL)
 	}
 	for _, r := range v.Rewrites {
 		notes = append(notes, "rule: "+r)
+	}
+	if v.WSMessages > 0 {
+		notes = append(notes, fmt.Sprintf("WebSocket: %d messages, %d bytes (not in the HAR)", v.WSMessages, v.WSBytes))
 	}
 	notes = append(notes, v.Notes...)
 	e.Comment = strings.Join(notes, "; ")
@@ -225,6 +239,11 @@ func harBody(text, enc string, b capture.Body) (string, string, string) {
 	}
 	if b.Truncated {
 		notes = append(notes, fmt.Sprintf("only the first part of the body is kept (%d bytes on the wire)", b.Size))
+	} else if !b.Final && b.Size > 0 {
+		notes = append(notes, "the body had not ended")
+	}
+	if !b.Decoded && text != "" {
+		notes = append(notes, "not decoded: the bytes as sent (Content-Encoding "+b.Encoding+")")
 	}
 	if b.Note != "" {
 		notes = append(notes, b.Note)

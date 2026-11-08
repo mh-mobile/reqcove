@@ -173,11 +173,13 @@ tools return them. Not tried on an iPhone yet: the tests use a browser stand-in.
 
 While `reqcove run` is running, `reqcove har > flows.har` writes its flows as a
 HAR 1.2 file, oldest first: the newest 1000 by default (`--limit 0` for all),
-filtered with `--host`, `--device`, `--since 10m`, `--status 4xx`, `--method`. It
+filtered with `--host`, `--device`, `--since 10m`, `--until`, `--status 4xx`,
+`--method`. It
 holds what the MCP tools return: masked as it arrived, the heads of bodies only
 (cut ones say so in a comment), and no body that masking could not check. It is
-written to the HAR 1.2 spec's required fields, but not opened in other tools yet
-(browsers' developer tools, Charles, Proxyman).
+written to the HAR 1.2 spec's required fields (from reading the spec; no
+validator was run), but not opened in other tools yet (browsers' developer tools,
+Charles, Proxyman).
 
 ### An upstream proxy (Burp Suite and others)
 

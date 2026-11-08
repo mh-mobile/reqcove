@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ func TestHAR(t *testing.T) {
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	st := capture.NewStore(100, 1<<20)
+	st := capture.NewStore(1000, 1<<20)
 	ev := func(m map[string]any) {
 		m["v"] = 2
 		b, _ := json.Marshal(m)
@@ -74,8 +75,30 @@ func TestHAR(t *testing.T) {
 	if b.Response.Content.Text != "" || !strings.Contains(b.Response.Content.Comment, "omitted") || b.Device != "devA" {
 		t.Errorf("a body that is not text: %+v", b)
 	}
+	// A whole body, sent gzipped in 9 bytes: HAR's size is the decoded one.
+	ev(map[string]any{"ev": "request", "id": "f3", "device": "devA", "host": "gz.example.com", "method": "GET", "ts": 150.0, "url": "https://gz.example.com/"})
+	ev(map[string]any{"ev": "response", "id": "f3", "status": 200, "headers": [][2]string{{"Content-Type", "text/plain"}, {"Content-Encoding", "gzip"}}})
+	ev(map[string]any{"ev": "body", "id": "f3", "dir": "response", "decoded": true, "final": true, "size": 9, "encoding": "gzip", "head": b64("hello world")})
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "gz.example.com"}) })
+	h.Log.Entries = nil
+	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 1 || h.Log.Entries[0].Response.Content.Size != 11 || h.Log.Entries[0].Response.BodySize != 9 {
+		t.Errorf("a gzipped body's sizes: %v\n%s", err, out)
+	}
+	// More than a page of list_flows (500), and a flow still open: all of them,
+	// in order, the open one said to be open.
+	for i := 0; i < 600; i++ {
+		ev(map[string]any{"ev": "request", "id": fmt.Sprintf("p%03d", i), "device": "devA", "host": "many.example.com", "method": "GET", "ts": 200.0 + float64(i), "url": "https://many.example.com/"})
+	}
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "many.example.com"}) })
+	h.Log.Entries = nil
+	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 600 {
+		t.Fatalf("600 flows: %d entries, %v", len(h.Log.Entries), err)
+	}
+	if e := h.Log.Entries[599]; e.Response.Status != 0 || e.Response.BodySize != -1 || !strings.Contains(e.Comment, "still open") || e.Started <= h.Log.Entries[0].Started {
+		t.Errorf("the newest, open: %+v", e)
+	}
 	// Filters and the limit go through: the newest flow only.
-	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--limit", "1"}) })
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--limit", "1", "--host", "example.com", "--method", "POST"}) })
 	if !strings.Contains(out, "img.example.com") || strings.Contains(out, "api.example.com") {
 		t.Errorf("--limit 1:\n%s", out)
 	}

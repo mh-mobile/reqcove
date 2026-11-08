@@ -107,10 +107,12 @@ func captureStdout(t *testing.T, f func() error) string {
 	r, w, _ := os.Pipe()
 	old := os.Stdout
 	os.Stdout = w
+	read := make(chan []byte)
+	go func() { b, _ := io.ReadAll(r); read <- b }() // as it is written: a pipe holds only 64 KiB
 	err := f()
 	w.Close()
 	os.Stdout = old
-	b, _ := io.ReadAll(r)
+	b := <-read
 	if err != nil {
 		t.Fatal(err)
 	}

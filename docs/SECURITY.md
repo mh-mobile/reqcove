@@ -79,7 +79,10 @@ Copying the directory to another computer copies the key.
 - Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
   URLs and other text together; a site's reason text, `Content-Encoding` and
   error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
-  when `reqcove run` stops; no flow is written to disk. `mitmproxy.log` in the
+  when `reqcove run` stops; reqcove writes no flow to disk itself. `reqcove har >
+  FILE` (after v0.1.0) writes them where you send it, masked as the tools return
+  them, with your shell's file mode (often readable by other users; the state
+  directory is 0700). `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
   sent in failing and malformed requests do not reach it).
 
