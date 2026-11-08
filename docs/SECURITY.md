@@ -97,6 +97,22 @@ untrusted.
 The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
 yours, from a file, at start.)
 
+## Rules (`--rules`)
+
+Rules are yours, read from a file when mitmproxy starts; no tool changes them.
+`map_remote` and `resolve` make mitmproxy connect, from this computer, where the
+rule says, this computer and the LAN included: the exit node's refusal of those
+addresses is about the devices' own connections, and a rule opens its target to
+every app on the carried devices that sends a request for the rule's host (a web
+page included). `resolve` takes IPv4 addresses only, never a name to look up, and
+refuses `0.0.0.0/8`, link-local (cloud metadata), multicast and reserved ranges
+and Tailscale's 100.100.100.200; `map_remote` takes whatever it is given. TLS to a
+`resolve` target is checked against the rule's name, with mitmproxy's own CA list
+(certifi, from reading its code), so a request goes on only to a server with a
+certificate for that name (a test sees a 502 from one without).
+A rules file from someone else is code: it can send your apps' requests, cookies
+and tokens included, anywhere.
+
 ## mitmweb (`--web`)
 
 mitmweb listens on 127.0.0.1 only, with a password made at each start and passed

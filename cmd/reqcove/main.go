@@ -80,7 +80,7 @@ func run(ctx context.Context, args []string) error {
 		allowSpecs = append(allowSpecs, v)
 		return nil
 	})
-	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), applied to --allow-hosts hosts only")
+	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump, its UI on http://127.0.0.1:8081 (no masking, can edit and replay)")
 	noRedact := fs.Bool("no-redact", false, "keep Authorization, cookies and secret query values in the records")
 	state := fs.String("state", defaultState(), "state directory")
@@ -162,6 +162,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
+		if r, _ := s["resolve"].([]string); len(r) > 0 {
+			log.Printf("resolve: %s (Host and SNI as the app sent them; TLS checked against the name)", strings.Join(r, ", "))
+		}
 	}
 	if *web {
 		log.Printf("mitmweb on %s", cap.WebURL)

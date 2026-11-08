@@ -18,6 +18,7 @@ first; header, done and error events are kept so flows are never orphaned.
 
 import base64
 import hmac
+import ipaddress
 import json
 import queue
 import re
@@ -179,7 +180,8 @@ class _Head:
         })
 
 
-RULE_KINDS = ("map_remote", "map_local", "modify_headers")
+RULE_KINDS = ("map_remote", "map_local", "modify_headers", "resolve")  # resolve is reqcove's own
+RULE_SETTINGS = ("keep_host_header",)  # reqcove's own: map_remote keeps the app's Host
 MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
 
 
@@ -199,6 +201,36 @@ def _parse_rule(kind, spec, base):
     return rule
 
 
+class Resolve:
+    """resolve: name=IPv4[:port] rules, reqcove's own (mitmproxy has no such
+    option in this mode): requests whose Host is name go to that address, with
+    Host and SNI left as they were, and TLS checked against name."""
+
+    # Never a target: no host there, or a cloud's (or Tailscale's) metadata service.
+    REFUSED = [ipaddress.ip_network(n) for n in ("0.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "100.100.100.200/32")]
+
+    def __init__(self):
+        self.replacements = {}  # name -> (ip, port or None)
+
+    def add(self, spec):
+        name, sep, target = spec.partition("=")
+        name = name.strip().lower().rstrip(".")
+        if not sep or not name or any(c in name for c in "*/:@ ") or name == "mitm.it":
+            raise ValueError("write name=IPv4 or name=IPv4:port, one exact host name")
+        ip, _, port = target.strip().partition(":")
+        try:
+            addr = ipaddress.IPv4Address(ip)
+        except ValueError:
+            raise ValueError(f"{name}: the target must be an IPv4 address, not {target.strip()!r}") from None
+        if any(addr in n for n in self.REFUSED):
+            raise ValueError(f"{name}: {addr} cannot be a target (no host there, or a metadata service)")
+        if port and not (port.isdigit() and 0 < int(port) < 65536):
+            raise ValueError(f"{name}: bad port {port!r}")
+        if name in self.replacements:
+            raise ValueError(f"{name}: listed twice")
+        self.replacements[name] = (str(addr), int(port) if port else None)
+
+
 def load_rules(path):
     """The --rules file as mitmproxy's own rule addons, which reqcove calls
     from its hooks (so rules never touch skipped flows or mitm.it).
@@ -207,11 +239,24 @@ def load_rules(path):
     rules often carry tokens."""
     data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError("the file must map map_remote, map_local and modify_headers to lists")
-    extra = sorted(str(k) for k in data if k not in RULE_KINDS)
+        raise ValueError("the file must map map_remote, map_local, modify_headers and resolve to lists")
+    extra = sorted(str(k) for k in data if k not in RULE_KINDS + RULE_SETTINGS)
     if extra:
-        raise ValueError(f"only {', '.join(RULE_KINDS)} are allowed, not {', '.join(extra)}")
+        raise ValueError(f"only {', '.join(RULE_KINDS + RULE_SETTINGS)} are allowed, not {', '.join(extra)}")
+    keep = data.get("keep_host_header", False)
+    if not isinstance(keep, bool):
+        raise ValueError("keep_host_header must be true or false")
     addons = {"map_remote": mapremote.MapRemote(), "map_local": maplocal.MapLocal(), "modify_headers": modifyheaders.ModifyHeaders()}
+    addons["map_remote"].keep_host_header = keep
+    resolve = Resolve()
+    specs = data.get("resolve") or []
+    if not isinstance(specs, list) or not all(isinstance(s, str) for s in specs):
+        raise ValueError("resolve must be a list of strings")
+    for i, spec in enumerate(specs):
+        try:
+            resolve.add(spec)
+        except ValueError as e:
+            raise ValueError(f"resolve[{i}]: {e}") from None
     for kind, addon in addons.items():
         specs = data.get(kind) or []
         if not isinstance(specs, list) or not all(isinstance(s, str) for s in specs):
@@ -224,6 +269,7 @@ def load_rules(path):
                 # modify_headers error could quote the value, so only its kind.
                 why = f"{type(e).__name__}: {e}" if kind != "modify_headers" else type(e).__name__
                 raise ValueError(f"{kind}[{i}]: {why}") from None
+    addons["resolve"] = resolve
     return addons
 
 
@@ -242,6 +288,7 @@ class Reqcove:
         self.allow_all = False
         self.allow = []
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
+        self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
         self.rules_error = ""
         threading.Thread(target=self._writer, daemon=True).start()
@@ -273,6 +320,9 @@ class Reqcove:
             if ctx.options.reqcove_rules:
                 try:
                     self.rules = load_rules(ctx.options.reqcove_rules)
+                    for i, name in enumerate(self.rules["resolve"].replacements):
+                        if not self._in_scope(name):  # would never apply: a typo
+                            raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
                 except Exception as e:  # reqcove reads it from the hello and refuses to start
                     self.rules_error = str(e) if isinstance(e, ValueError) else type(e).__name__
                     if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
@@ -288,6 +338,15 @@ class Reqcove:
 
     def client_disconnected(self, client):
         self.conn_device.pop(client.id, None)
+        for k in [k for k in self.resolve_sni if k[0] == client.id]:
+            del self.resolve_sni[k]
+
+    def server_connect(self, data):
+        # A connection a resolve rule made: TLS says, and is checked for, the
+        # name the app asked for, not the address.
+        name = self.resolve_sni.get((data.client.id, data.server.address))
+        if name:
+            data.server.sni = name
 
     def _in_scope(self, host):
         host = host.lower().rstrip(".")
@@ -358,8 +417,8 @@ class Reqcove:
         }
         if self.rules:
             ev["rewrites"] = self._rewrite_request(flow)
-            if r.pretty_url != ev["url"]:
-                ev["mapped_url"] = r.pretty_url
+            if "map_remote" in ev["rewrites"]:
+                ev["mapped_url"] = r.url  # where it went, whatever Host says (keep_host_header)
         self.put_event(ev)
         if flow.response:
             # map_local answered. mitmproxy cannot stream a request that already
@@ -382,10 +441,22 @@ class Reqcove:
         if flow.response:
             done.append(f"map_local: {flow.response.status_code}")
             return done
-        before = flow.request.pretty_url
+        r = flow.request
+        before, host_header = r.pretty_url, r.host_header
         self.rules["map_remote"].request(flow)
-        if flow.request.pretty_url != before:
+        if r.pretty_url != before:
+            if self.rules["map_remote"].keep_host_header:
+                r.host_header = host_header  # Host (or :authority) as the app sent it
             done.append("map_remote")
+            return done
+        target = self.rules["resolve"].replacements.get(r.pretty_host.lower().rstrip("."))
+        if target:
+            # Only where to connect changes: not Host, nor the URL recorded
+            # (the setters would rewrite Host).
+            address = (target[0], target[1] or r.port)
+            r.data.host, r.data.port = address
+            self.resolve_sni[(flow.client_conn.id, address)] = r.pretty_host.lower().rstrip(".")
+            done.append(f"resolve: {address[0]}:{address[1]}")
         return done
 
     @staticmethod
@@ -474,7 +545,8 @@ class Reqcove:
             "python": sys.version.split()[0], "brotli": getattr(brotli, "__version__", "?"),
             "brotli_decode": BROTLI_OK, "zstd_decode": zstd is not None,
             "dropped_bodies": self.dropped_bodies, "dropped_events": self.dropped_events,
-            "rules": {k: len(a.replacements) for k, a in self.rules.items()} if self.rules else None,
+            "rules": dict({k: len(a.replacements) for k, a in self.rules.items()}, keep_host_header=int(self.rules["map_remote"].keep_host_header)) if self.rules else None,
+            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in self.rules["resolve"].replacements.items()] if self.rules else None,
             "rules_error": self.rules_error,
         }
 

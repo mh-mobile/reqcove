@@ -81,11 +81,27 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 |---|---|
 | `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
 | `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
-| `--rules FILE` | `map_remote`、`map_local`、`modify_headers` を書いた YAML（mitmproxy の書式）。許可したホストにのみ適用されます |
+| `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
 | `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（マスクなし。編集とリプレイができ、すべてのフローを保持します） |
 | `--dns` | Exit Node が使う上流 DNS。デフォルトは `1.1.1.1:53`。`system` を指定すると `/etc/resolv.conf` を使います |
 | `--no-redact` | シークレットをマスクせずに記録します |
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵が入ります。新しいか空のディレクトリ、または reqcove が前に使ったものに限ります |
+
+### ルール
+
+```yaml
+map_remote:                     # mitmproxy の書式（map_local、modify_headers も同じ）
+  - "|//api.example.com/|//localhost:3000/"
+keep_host_header: true          # Reqcove 独自：map_remote でもアプリの Host を残す
+resolve:                        # Reqcove 独自：Host と SNI はそのままで、つなぐ先だけ変える
+  - "api.example.com=203.0.113.10"
+  - "auth.example.com=127.0.0.1:8443"
+```
+
+- `map_remote`、`map_local`、`modify_headers` は mitmproxy の書式で、mitmproxy 自身のコードが処理します。相対パスは、ルールのファイルがある場所から数えます。
+- `map_remote` は URL を書き換えるので、`Host` ヘッダーも変わります。`keep_host_header` を true にすると、`Host` はアプリが送ったままになります。この Mac の開発サーバー（`http://localhost:3000` など）につなぐなら、こちらを使います。
+- `resolve` は、`Host` がその名前のリクエストを、書いた IPv4 アドレス（ポートを書けばそのポート）へ送ります。この Mac や LAN のアドレスも使えます。`Host`、SNI、記録される URL は変わらず、TLS もその名前で確かめます。そのため、向け先のサーバーには、その名前の証明書が必要です（ステージングや新しいロードバランサーなど）。証明書のない手元の HTTPS サーバーでは 502 になります。iPhone は今までどおり名前を引き、まず本物のサーバーにつなぎます。そのため、公開の DNS で引けない名前や、本物のサーバーがつながらないときは、向け先を変えられません。名前は `--allow-hosts` に入っている必要があります。`0.0.0.0/8`、リンクローカル（クラウドのメタデータを含む）、マルチキャストのアドレスは拒みます。
+- 他人が作ったルールのファイルは、中身を読んでから使ってください。ルールは、アプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 
 ## セキュリティ
 

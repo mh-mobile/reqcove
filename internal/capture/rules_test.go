@@ -2,9 +2,11 @@ package capture
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -66,6 +68,19 @@ func TestRules(t *testing.T) {
 	defer origin.Close()
 	o, m := origin.Listener.Addr().String(), mapped.Listener.Addr().String()
 	_, mport, _ := strings.Cut(m, ":")
+	// resolve over TLS: the phone dials the real server; the rule sends the
+	// request to target, which records the SNI it was asked for.
+	sni := make(chan string, 8)
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	target.TLS = &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		sni <- h.ServerName
+		return nil, nil
+	}}
+	target.StartTLS()
+	defer target.Close()
+	real := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer real.Close()
+	tport := target.Listener.Addr().(*net.TCPAddr).Port
 
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "files"), 0o700)
@@ -81,13 +96,17 @@ modify_headers:
   - "|~q|X-Injected|yes"
   - "|~q|Authorization|Bearer s3cret-injected"
   - "|~s|X-Resp|added"
-`, o, mport)), 0o600)
+keep_host_header: true
+resolve:
+  - "resolved.test=127.0.0.1:%[2]s"
+  - "tls.resolved.test=127.0.0.1:%[3]d"
+`, o, mport, tport)), 0o600)
 
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules = rules })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1", "resolved.test", "tls.resolved.test"}, func(c *Config) { c.Rules = rules })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(h.stats()["rules"]); got != "map[map_local:1 map_remote:2 modify_headers:3]" {
+	if got := fmt.Sprint(h.stats()["rules"]); got != "map[keep_host_header:1 map_local:1 map_remote:2 modify_headers:3 resolve:2]" {
 		t.Errorf("rules loaded: %s", got)
 	}
 	hc := h.client("dev")
@@ -120,6 +139,8 @@ modify_headers:
 	mu.Unlock()
 	if got == nil || got.Header.Get("X-Injected") != "yes" || got.Header.Get("Authorization") != "Bearer s3cret-injected" {
 		t.Errorf("request headers at the backend: %v", got)
+	} else if got.Host != o {
+		t.Errorf("keep_host_header: the mapped backend got Host %q, want the app's %q", got.Host, o)
 	}
 	v := h.doneFlow("/remote/post", true)
 	if v.Host != "127.0.0.1" || !strings.Contains(v.MappedURL, "localhost:"+mport+"/landed/post") || v.ReqBodyText != "payload" {
@@ -191,10 +212,53 @@ modify_headers:
 		t.Errorf("rewrites for the big body: %v", bv.Rewrites)
 	}
 
+	// resolve, plain HTTP: the request goes to the rule's address with the
+	// app's Host and URL; the record says where it went.
+	req, _ := http.NewRequest("GET", "http://"+o+"/resolve/plain", nil)
+	req.Host = "resolved.test"
+	if r, err := hc.Do(req); err != nil {
+		t.Errorf("resolve: %v", err)
+	} else {
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		mu.Lock()
+		got := seen["/resolve/plain"]
+		mu.Unlock()
+		if string(b) != "mapped /resolve/plain" || got == nil || got.Host != "resolved.test" {
+			t.Errorf("resolve: body %q, backend saw %v", b, got)
+		}
+	}
+	if rv := h.doneFlow("/resolve/plain", false); rv.Host != "resolved.test" || !slices.Contains(rv.Rewrites, "resolve: 127.0.0.1:"+mport) {
+		t.Errorf("resolve record: host %q rewrites %v", rv.Host, rv.Rewrites)
+	}
+	// resolve, TLS: the target is asked for the app's name (SNI), not its
+	// address, and its certificate is checked against that name (it fails here).
+	tc := h.client("dev")
+	tc.Transport.(*http.Transport).TLSClientConfig.ServerName = "tls.resolved.test"
+	treq, _ := http.NewRequest("GET", "https://"+real.Listener.Addr().String()+"/resolve/tls", nil)
+	treq.Host = "tls.resolved.test"
+	if r, err := tc.Do(treq); err == nil {
+		r.Body.Close()
+		if r.StatusCode != 502 {
+			t.Errorf("resolve to a server without the name's certificate: %d, want 502", r.StatusCode)
+		}
+	}
+	select {
+	case got := <-sni:
+		if got != "tls.resolved.test" {
+			t.Errorf("the target was asked for SNI %q, want tls.resolved.test", got)
+		}
+	case <-time.After(30 * time.Second):
+		t.Error("resolve over TLS never reached the target")
+	}
+	if tv := h.doneFlow("/resolve/tls", false); !slices.Contains(tv.Rewrites, fmt.Sprintf("resolve: 127.0.0.1:%d", tport)) {
+		t.Errorf("resolve over TLS, record: status %d rewrites %v", tv.Status, tv.Rewrites)
+	}
+
 	// Outside --allow-hosts (Host elsewhere.example on an allowed connection):
 	// no rule applies (the second map_remote would match), nothing is recorded.
 	oos := h.stat("out_of_scope")
-	req, _ := http.NewRequest("GET", "http://"+o+"/remote/oos", nil)
+	req, _ = http.NewRequest("GET", "http://"+o+"/remote/oos", nil)
 	req.Host = "elsewhere.example"
 	if r, err := hc.Do(req); err == nil {
 		b, _ := io.ReadAll(r.Body)
@@ -228,11 +292,16 @@ func TestRulesRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	for name, c := range map[string]struct{ yaml, want string }{
-		"other option":  {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers are allowed, not scripts"},
-		"missing file":  {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
-		"bad regex":     {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
-		"not a mapping": {"- a\n", "the file must map"},
-		"yaml typo":     {"map_remote: [\"a\"\n  b: ]\n", " at line "},
+		"other option":         {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
+		"missing file":         {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
+		"bad regex":            {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
+		"not a mapping":        {"- a\n", "the file must map"},
+		"yaml typo":            {"map_remote: [\"a\"\n  b: ]\n", " at line "},
+		"resolve out of scope": {"resolve: [\"nope.example=192.0.2.1\"]\n", "resolve[0]: nope.example is not in --allow-hosts"},
+		"resolve metadata":     {"resolve: [\"127.0.0.1=169.254.169.254\"]\n", "resolve[0]: 127.0.0.1: 169.254.169.254 cannot be a target"},
+		"resolve name target":  {"resolve: [\"127.0.0.1=localhost\"]\n", "resolve[0]: 127.0.0.1: the target must be an IPv4 address"},
+		"resolve wildcard":     {"resolve: [\"*.example=192.0.2.1\"]\n", "resolve[0]: write name=IPv4"},
+		"keep host not bool":   {"keep_host_header: \"yes\"\n", "keep_host_header must be true or false"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")

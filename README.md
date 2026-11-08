@@ -102,11 +102,39 @@ setting, so this works on Wi-Fi only.
 |---|---|
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
-| `--rules FILE` | YAML with `map_remote`, `map_local` and `modify_headers` (mitmproxy's syntax), applied to allowed hosts only |
+| `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
 | `--dns` | the exit node's DNS upstream, `1.1.1.1:53` by default; `system` for `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |
+
+### Rules
+
+```yaml
+map_remote:                     # mitmproxy's syntax, as are map_local and modify_headers
+  - "|//api.example.com/|//localhost:3000/"
+keep_host_header: true          # reqcove's: map_remote keeps the app's Host
+resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
+  - "api.example.com=203.0.113.10"
+  - "auth.example.com=127.0.0.1:8443"
+```
+
+- `map_remote`, `map_local` and `modify_headers` are mitmproxy's, run by its own
+  code. Relative paths count from the rules file.
+- `map_remote` changes the URL, and with it the `Host` header, unless
+  `keep_host_header` is true. For a development server on this computer
+  (`http://localhost:3000`), this is the one to use.
+- `resolve` sends requests whose `Host` is the name to that IPv4 address (and port,
+  if given), on this computer or the LAN too; `Host`, SNI and the recorded URL stay
+  the same, and TLS is still checked against the name. So the server there needs a
+  certificate for that name (a staging server or a new load balancer; a local
+  HTTPS server without one gets a 502). The phone still looks the name up and
+  connects to the real server first: a name that does not resolve publicly, or a
+  real server that refuses connections, cannot be redirected. Names must be in
+  `--allow-hosts`; `0.0.0.0/8`, link-local (cloud metadata) and multicast
+  addresses are refused.
+- Read a rules file from someone else before using it: rules can send your apps'
+  requests, cookies and tokens included, wherever they say.
 
 ## What it keeps safe, and what it does not
 
