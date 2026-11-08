@@ -131,6 +131,9 @@ func TestServeAndRelay(t *testing.T) {
 		t.Error("Serve on a path too long for a socket: no error")
 	}
 
+	if fi, err := os.Stat(sock); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("MCP socket mode %v, want 0600", fi.Mode().Perm())
+	}
 	// The agent side: an in-memory pipe stands in for `reqcove mcp`'s stdio.
 	agentIn, relayIn := io.Pipe()   // agent writes -> relay's stdin
 	relayOut, agentOut := io.Pipe() // relay's stdout -> agent reads

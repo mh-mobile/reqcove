@@ -80,6 +80,9 @@ func waitState(t *testing.T, c *Capture, state string, restarts int64) {
 func TestRestartsMitmdump(t *testing.T) {
 	c, kill := startFake(t, 1000)
 	waitState(t, c, "ready", 0)
+	if fi, err := os.Stat(filepath.Join(c.cfg.Dir, "ingest.sock")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("ingest socket mode %v, want 0600", fi.Mode().Perm())
+	}
 	kill(1)
 	waitState(t, c, "ready", 1)
 	if f, _ := c.Store.Get("open1", false); f.State != "error" || !strings.Contains(f.Error, "mitmdump exited") {

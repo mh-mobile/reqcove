@@ -186,6 +186,7 @@ func Serve(ctx context.Context, path string, server *mcp.Server) error {
 	if err != nil {
 		return err
 	}
+	os.Chmod(path, 0o600) // the directory is 0700 already; this keeps the socket private on its own too
 	go func() { <-ctx.Done(); ln.Close(); os.Remove(path) }()
 	go func() {
 		for {

@@ -115,6 +115,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if err != nil {
 		return nil, err
 	}
+	os.Chmod(sock, 0o600) // the directory is 0700 already; this keeps the socket private on its own too
 	fail := func(err error) (*Capture, error) {
 		ln.Close()
 		os.Remove(sock)
