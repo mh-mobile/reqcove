@@ -1,27 +1,32 @@
-# Reqcove（フォルダ名の far-traffic は仮）
+# Reqcove
 
-遠くの iPhone の HTTP(S) を、Tailscale の Exit Node と mitmproxy で復号し、MCP で AI エージェントに渡す OSS。使い方は `README.md`、安全の考え方は `docs/SECURITY.md`。
+Hands an iPhone's HTTP(S) traffic to AI agents over MCP: a Tailscale exit node
+(tsnet) carries it, mitmproxy decrypts the allowed hosts, records are masked and
+kept in memory. How to use it: `README.md`. What it protects: `docs/SECURITY.md`.
+How to contribute: `CONTRIBUTING.md`.
 
-手元に `NOTES.md` と `docs/plan.ja.md` があれば、先に読むこと（経緯、試した結果、計画と進み具合。どちらもリポジトリには入れていない）。
+## Layout
 
-## 作り
+- `cmd/reqcove`: `run`, `status`, `cleanup`, `mcp`, `version`.
+- `internal/exitnode`: the tsnet exit node (a fork of Tailscale through the
+  `replace` in `go.mod`), the destination policy, the Remote Proxy, status and
+  next steps.
+- `internal/capture`: runs mitmdump through uvx as a child, with the embedded
+  addon (`addon.py`), and records what it reports (masking, scope, bounds).
+- `internal/mcpserver`: the MCP tools and the Unix socket bridge.
 
-- `cmd/reqcove`：`run`、`status`、`cleanup`、`mcp`、`version`。
-- `internal/exitnode`：tsnet の Exit Node（Tailscale の fork を `go.mod` の `replace` で使う）、振り分け、Remote Proxy、状態と次の手順。
-- `internal/capture`：mitmdump を uvx で子として動かし、埋め込みのアドオン（`addon.py`）から通信を受けて記録する（伏せ字、範囲、上限）。
-- `internal/mcpserver`：MCP の道具と、Unix ソケットの中継。
+## Tests
 
-## テスト
+- `go test -race ./...`: the usual tests (CI on macOS and Linux).
+- `REQCOVE_E2E=1 go test ./internal/capture/`: real mitmproxy through uvx (CI too).
+- `REQCOVE_TRIAL2=1` (memory), `REQCOVE_SOAK=4h` (soak), `REQCOVE_UDP_MEASURE=1`
+  (UDP): by hand only.
+- After a fix, check that its test fails with the fix taken out.
 
-- `go test ./...`：ふつうのテスト（CI で macOS と Linux）。
-- `REQCOVE_E2E=1`：本物の mitmproxy を uvx で使う（CI でも回す）。
-- `REQCOVE_TRIAL2=1`（メモリの試し）、`REQCOVE_SOAK=4h`（長い試し）、`REQCOVE_UDP_MEASURE=1`（UDP の測り）：手元だけ。
-- 直したら、直しを外すとテストが落ちることを確かめる。
+## Rules
 
-## 決まり
-
-- 返事は日本語で書く。
-- iPhone や VM（tart の `ubuntu-standin`）で何かする前に、ユーザーに聞く。
-- ~/Documents や ~/Desktop は探さない。
-- ドキュメントには、裏の取れたことだけを書く。試していないことは、そう書く。
-- 外に出ること（リポジトリの公開、タグ、リリース、上流への issue や PR）は、ユーザーに聞いてから。
+- Docs say only what was checked; what was not tried, or comes from reading code,
+  says so. Keep the English and Japanese READMEs in step.
+- Secrets must not reach the records, the MCP tools or the logs unmasked.
+- Ask the maintainer before anything that leaves this computer (pushing a tag, a
+  release, issues or pull requests upstream).
