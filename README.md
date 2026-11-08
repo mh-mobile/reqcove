@@ -162,6 +162,10 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   proxy requests), never straight to the server. Hosts outside `--allow-hosts`
   pass through directly, as always. Turn Burp's Intercept off, or requests wait
   in it.
+- Requests go to the address the iPhone connected to, not a name for the proxy to
+  look up again (that could lead it into this computer's LAN). Burp names HTTPS
+  hosts from the SNI; plain HTTP shows up under the IP address, with the name in
+  its `Host` header.
 - With `--upstream-ca`, only that CA is trusted for HTTPS through the proxy; without
   it, the public CAs (for a proxy that does not decrypt).
 - The proxy sees everything unmasked, and Burp keeps it in its project. Tried with
