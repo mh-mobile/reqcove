@@ -153,7 +153,7 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
 - Read a rules file from someone else before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 - The file is read when `run` starts. With `--rules-reload` (after v0.1.0) it is
-  read again within a second of each change, for the requests that start after
+  read again within two seconds of each change (once it has stopped changing), for the requests that start after
   it; a request under way keeps the rules it started with. A file that does not
   load leaves the rules before it in place, and `run` and `reqcove status` say
   why; but if mitmproxy restarts meanwhile, `run` stops on it, as at start. With

@@ -207,7 +207,7 @@ func TestRulesEvent(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "hello", "mitmproxy": "12.3.1", "rules": map[string]int{"map_remote": 1}}))
 	var told []string
-	st.SetRulesLog(func(r map[string]int, problem string) { told = append(told, fmt.Sprintf("%v %s", r, problem)) })
+	st.SetRulesLog(func(r map[string]int, _ []string, problem string) { told = append(told, fmt.Sprintf("%v %s", r, problem)) })
 	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": ""}))
 	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": "map_remote[1]: bad"}))
 	s := st.Stats()

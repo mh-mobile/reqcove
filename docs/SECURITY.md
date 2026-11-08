@@ -110,7 +110,8 @@ Rules are yours, read from a file when mitmproxy starts; no tool changes them.
 With `run --rules-reload` (after v0.1.0) the file is also read again whenever it
 changes, so whatever can write it (any process as your user, an agent with file
 access included) can then change where the devices' requests go while `run`
-runs; without it, a change needs you to restart `run`.
+runs; without it, the file is read only when mitmproxy starts (with `run`, or
+when reqcove restarts it after it exits).
 `map_remote` and `resolve` make mitmproxy connect, from this computer, where the
 rule says, this computer and the LAN included: the exit node's refusal of those
 addresses is about the devices' own connections, and a rule opens its target to

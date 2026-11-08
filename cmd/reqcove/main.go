@@ -243,11 +243,14 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
 		if *rulesReload {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
-			cap.Store.SetRulesLog(func(r map[string]int, problem string) {
+			cap.Store.SetRulesLog(func(r map[string]int, resolve []string, problem string) {
 				if problem != "" {
 					log.Printf("--rules: %s does not load (%s); the rules before it still apply", *rules, problem)
-				} else {
-					log.Printf("rules from %s, again: %v", *rules, r)
+					return
+				}
+				log.Printf("rules from %s, again: %v", *rules, r)
+				if len(resolve) > 0 {
+					log.Printf("resolve: %s", strings.Join(resolve, ", "))
 				}
 			})
 		}

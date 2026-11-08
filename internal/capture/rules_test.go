@@ -441,5 +441,27 @@ func TestRulesReload(t *testing.T) {
 		if req, _ := get("/r4"); req != "one" {
 			t.Errorf("fixed: %q", req)
 		}
+		// Saved by a rename, as editors do.
+		tmp := rules + ".tmp"
+		if err := os.WriteFile(tmp, []byte(two), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, rules); err != nil {
+			t.Fatal(err)
+		}
+		waitRules("modify_headers:3", "")
+		// The checks at start hold on a reload; an error quotes no rule.
+		write("resolve: [\"elsewhere.example=192.0.2.1\"]\n")
+		waitRules("modify_headers:3", "not in --allow-hosts")
+		write("map_remote:\n  - '|~h \"X-Key: sekrit123\" ~zz|//a/|//b/'\n")
+		waitRules("modify_headers:3", "map_remote[0]: ")
+		if e := fmt.Sprint(h.stats()["rules_error"]); strings.Contains(e, "sekrit123") {
+			t.Errorf("the error quotes the rule: %s", e)
+		}
+		os.Remove(rules)
+		waitRules("modify_headers:3", "the file is gone")
+		if req, _ := get("/r5"); req != "two" {
+			t.Errorf("after the file went: %q", req)
+		}
 	}
 }

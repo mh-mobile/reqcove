@@ -137,7 +137,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve []string, problem string) // SetRulesLog
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -205,15 +205,15 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.allow, s.redact = allow, redact
 }
 
-// SetDeviceNames tells the store the display name of each device it may see.
 // SetRulesLog has f told of each --rules-reload: the rules now in force, and
 // why the file did not load when it did not (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, problem string)) {
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve []string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
 }
 
+// SetDeviceNames tells the store the display name of each device it may see.
 func (s *Store) SetDeviceNames(names map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,7 +263,7 @@ func (s *Store) Apply(line []byte) {
 	case "rules": // --rules-reload took the file again, or could not
 		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
 		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.RulesError)
+			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
 		}
 		return
 	case "tls_failed":

@@ -289,10 +289,10 @@ def load_rules(path):
             try:
                 addon.replacements.append(_parse_rule(kind, spec, Path(path).parent))
             except Exception as e:
-                # map_remote and map_local errors quote a regex or a path; a
-                # modify_headers error could quote the value, so only its kind.
-                why = f"{type(e).__name__}: {e}" if kind != "modify_headers" else type(e).__name__
-                raise ValueError(f"{kind}[{i}]: {why}") from None
+                # Only the error's kind: mitmproxy's messages quote the filter, the
+                # regex or the value, and any of them can carry a token. They go
+                # to the log, and after a reload to the status tool and the page.
+                raise ValueError(f"{kind}[{i}]: {type(e).__name__}") from None
     addons["resolve"] = resolve
     return addons
 
@@ -378,25 +378,30 @@ class Reqcove:
         """--rules-reload: once a second, take the file again when it changed.
         A file that does not load leaves the rules before it in place, and says
         why. On the event loop, as the hooks, so a swap never lands mid-hook."""
+        seen = self.rules_stamp
         while True:
             await asyncio.sleep(RULES_POLL)
             try:
                 stamp = _stamp(path)
-                if stamp == self.rules_stamp:
+                # Taken once it looks the same twice in a row: not halfway through
+                # a save (an editor's truncate, then write).
+                changed, settled, seen = stamp != self.rules_stamp, stamp == seen, stamp
+                if not changed or not settled:
                     continue
                 self.rules_stamp = stamp
                 rules, why = self._load_checked(path) if stamp else (None, "the file is gone")
                 if rules is not None:
                     self.rules = rules
                 self.rules_error = why
-                self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
             except Exception as e:  # the watch must not die quietly
                 self.rules_error = type(e).__name__
+            self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
 
     def _rules_info(self):
+        rules = self.rules  # once: the writer thread asks too, for the hello on a reconnect
         return {
-            "rules": dict({k: len(a.replacements) for k, a in self.rules.items()}, keep_host_header=int(self.rules["map_remote"].keep_host_header)) if self.rules else None,
-            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in self.rules["resolve"].replacements.items()] if self.rules else None,
+            "rules": dict({k: len(a.replacements) for k, a in rules.items()}, keep_host_header=int(rules["map_remote"].keep_host_header)) if rules else None,
+            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in rules["resolve"].replacements.items()] if rules else None,
             "rules_error": self.rules_error,
         }
 
