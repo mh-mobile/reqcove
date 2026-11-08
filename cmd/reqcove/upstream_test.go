@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -182,9 +183,15 @@ func TestParseDNS(t *testing.T) {
 
 // --allow-hosts values pasted as URLs or with a port become their hosts.
 func TestHostsOnly(t *testing.T) {
-	got := hostsOnly([]string{"https://API.example.com/v1?x=1, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	got := hostsOnly([]string{"https://API.example.com/v1?access_token=S3CRET, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
 	if want := []string{"API.example.com,api2.example.com", "*.example.org", "2001:db8::1"}; !slices.Equal(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	if strings.Contains(logs.String(), "S3CRET") || !strings.Contains(logs.String(), "https://API.example.com/…") {
+		t.Errorf("logs: %s", logs.String())
 	}
 }
 

@@ -50,13 +50,14 @@ func TestHAR(t *testing.T) {
 	var h struct {
 		Log struct {
 			Version string
+			Comment string
 			Entries []harEntryOut
 		}
 	}
 	if err := json.Unmarshal([]byte(out), &h); err != nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
-	if h.Log.Version != "1.2" || len(h.Log.Entries) != 2 {
+	if h.Log.Version != "1.2" || len(h.Log.Entries) != 2 || !strings.HasPrefix(h.Log.Comment, "masked") {
 		t.Fatalf("log: %+v", h.Log)
 	}
 	a, b := h.Log.Entries[0], h.Log.Entries[1]
@@ -107,5 +108,11 @@ func TestHAR(t *testing.T) {
 	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "api.example.com"}) })
 	if strings.Contains(out, "img.example.com") || !strings.Contains(out, "api.example.com") {
 		t.Errorf("--host:\n%s", out)
+	}
+	// --no-redact: the file says it is not masked.
+	st.SetScope(capture.HostRules{All: true}, false)
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--limit", "1"}) })
+	if !strings.Contains(out, `"comment":"NOT masked`) {
+		t.Errorf("--no-redact not said:\n%.300s", out)
 	}
 }

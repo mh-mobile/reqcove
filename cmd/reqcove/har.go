@@ -84,8 +84,17 @@ func har(ctx context.Context, args []string) error {
 		ids = ids[:*limit]
 	}
 
+	var stats mcpserver.StatsOut
+	if err := call("capture_stats", nil, &stats); err != nil {
+		return err
+	}
+	comment := "masked as it arrived; bodies are their kept heads"
+	if r, _ := stats.Stats["redacting"].(bool); !r {
+		comment = "NOT masked: reqcove run --no-redact; bodies are their kept heads"
+		fmt.Fprintln(os.Stderr, "the flows are not masked (reqcove run --no-redact): check before sharing the file")
+	}
 	w := bufio.NewWriter(os.Stdout)
-	fmt.Fprintf(w, `{"log":{"version":"1.2","creator":{"name":"reqcove","version":%q},"entries":[`, version)
+	fmt.Fprintf(w, `{"log":{"version":"1.2","creator":{"name":"reqcove","version":%q},"comment":%q,"entries":[`, version, comment)
 	n := 0
 	for i := len(ids) - 1; i >= 0; i-- {
 		var v capture.FlowView

@@ -559,14 +559,15 @@ func hostsOnly(specs []string) []string {
 		var hosts []string
 		for _, h := range strings.Split(spec, ",") {
 			h = strings.TrimSpace(h)
-			host := h
+			host, shown := h, h
 			if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
 				host = u.Hostname()
+				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
 			} else if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
 				host = hh
 			}
 			if host != h {
-				log.Printf("--allow-hosts: %q taken as %q (hosts are matched, not paths or ports)", h, host)
+				log.Printf("--allow-hosts: %q taken as %q (hosts are matched, not paths or ports)", shown, host)
 			}
 			hosts = append(hosts, host)
 		}

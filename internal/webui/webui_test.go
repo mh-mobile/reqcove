@@ -155,3 +155,16 @@ func TestOwnCountsAndSteps(t *testing.T) {
 		t.Errorf("refresh or format detection:\n%s", page)
 	}
 }
+
+// Records kept unmasked (--no-redact) say so on the page.
+func TestUnmaskedSaid(t *testing.T) {
+	st := store(t)
+	u := New(st, nil)
+	if page := body(get(u, "devA", "/", u.Token())); strings.Contains(page, "not masked") {
+		t.Errorf("masked, said unmasked:\n%s", page)
+	}
+	st.SetScope(capture.HostRules{All: true}, false)
+	if page := body(get(u, "devA", "/", u.Token())); !strings.Contains(page, "not masked (--no-redact)") {
+		t.Errorf("unmasked, not said:\n%s", page)
+	}
+}

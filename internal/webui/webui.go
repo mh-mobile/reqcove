@@ -95,9 +95,10 @@ func (u *UI) list(w http.ResponseWriter, r *http.Request, deviceID string) {
 	if u.steps != nil {
 		steps = u.steps(deviceID)
 	}
+	stats := u.store.Stats()
 	render(w, listPage, map[string]any{
 		"Flows": flows, "Host": f.Host, "Status": f.Status, "Paused": q.Get("pause") != "",
-		"State": u.store.Stats()["state"], "Count": me.Flows, "TLSFailures": me.TLSFailures, "Steps": steps,
+		"State": stats["state"], "Unmasked": stats["redacting"] == false, "Count": me.Flows, "TLSFailures": me.TLSFailures, "Steps": steps,
 	})
 }
 
@@ -192,7 +193,7 @@ const head = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 
 var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 {{if not .Paused}}<meta http-equiv="refresh" content="1">{{end}}</head><body>
-<header><b>Reqcove</b> <span class="muted">mitmproxy {{.State}} · {{.Count}} flows{{if .TLSFailures}} · {{.TLSFailures}} TLS failures{{end}}</span>
+<header><b>Reqcove</b>{{if .Unmasked}} <b class="bad">not masked (--no-redact)</b>{{end}} <span class="muted">mitmproxy {{.State}} · {{.Count}} flows{{if .TLSFailures}} · {{.TLSFailures}} TLS failures{{end}}</span>
 <nav>{{if .Paused}}<a href="/?host={{.Host}}&amp;status={{.Status}}">resume</a>{{else}}<a href="/?host={{.Host}}&amp;status={{.Status}}&amp;pause=1">pause</a>{{end}}
  · <a href="/?status=4xx">4xx</a> <a href="/?status=5xx">5xx</a> <a href="/?status=none">no answer</a>{{if or .Host .Status}} · <a href="/">all</a>{{end}}</nav>
 {{if or .Host .Status}}<p class="muted">{{with .Host}}host {{.}} {{end}}{{with .Status}}status {{.}}{{end}}</p>{{end}}
