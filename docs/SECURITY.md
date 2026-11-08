@@ -31,21 +31,28 @@ Copying the directory to another computer copies the key.
   requests to others, as with HTTP/2 connection reuse). Requests and TLS failures
   outside the list are counted, never recorded.
 - Apple's hosts always pass through undecrypted.
-- Secrets are masked as they arrive, so no tool can return them: the values of
-  headers and of query parameters whose names contain one of the words
-  authorization, auth, token, secret, password, session, signature, credential,
-  key, jwt or code (names are split into words, so `accessToken`,
-  `X-Amz-Signature` and `Ocp-Apim-Subscription-Key` count, while `author` and
-  `keyword` do not); cookie values (names stay); and the same query parameters
-  wherever a URL appears (`Referer`, `Location`, fragments such as
-  `#/callback?access_token=`, error messages). Raw bytes that mitmproxy quotes in
-  an error message (`b'…'`) are masked whole. `--no-redact` turns this off.
-- Bodies are masked as they arrive too, as far as they can be recognised: in JSON,
-  the string values of fields whose names are secret by the same words (except
-  `code` alone, which in a body is usually an error code); in forms, such fields'
-  values (`code` included: it carries OAuth authorization codes). Anywhere in a
+- Secrets are masked as they arrive, so no tool can return them. A header, query
+  parameter or body field is secret by its name: a name containing token,
+  secret, password, passwd, passphrase, passcode, credential, signature, session,
+  jwt, apikey, privatekey or authorization, even run together (`accesstoken`,
+  `X-AuthToken`), or having auth, key, sid, sig, pwd, otp, pin or code as a whole
+  word (names split at punctuation and case changes, so `apiKey`, `XAuth` and
+  `X-Amz-Signature` count, while `author` and `keyword` do not). `code` and `key`
+  next to an everyday word (`country_code`, `error_code`, `sort_key`) and
+  `token_type` are not secrets. Cookie values are masked (names stay), and query
+  parameters wherever a URL appears (`Referer`, `Location`, fragments such as
+  `#/callback?access_token=`, a URL inside another parameter, error messages),
+  as is the response's reason text. Raw bytes that mitmproxy quotes in an error
+  message (`b'…'`) are masked whole. `--no-redact` turns this off.
+- Bodies are masked as they arrive too, as far as they can be recognised: in JSON
+  (whatever the content type says), the string values of fields whose names are
+  secret by the same rule, except a lone `code`, which in a body is usually an
+  error code (`verification_code` and `device_code` are masked); in forms (or
+  bodies that look like one), such fields' values, a lone `code` included: it
+  carries OAuth authorization codes. Anywhere in a
   header value, URL, body or error message, credentials recognisable by their
-  shape are masked: `Bearer`/`Basic`/`Token` values, JWTs, and keys with
+  shape are masked: `Bearer`/`Basic`/`Token` values that look like credentials
+  (not the next word of a sentence), JWTs, and keys with
   well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs, Google API keys).
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
   a value cut before its closing quote is masked too.

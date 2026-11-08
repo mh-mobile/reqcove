@@ -292,7 +292,7 @@ class Reqcove:
             return
         # Headers and URLs count toward the queue's byte budget too: a site can
         # send large ones.
-        size = 512 + len(msg.get("url") or "") + sum(len(k) + len(v) for k, v in msg.get("headers") or [])
+        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + sum(len(k) + len(v) for k, v in msg.get("headers") or [])
         self._put(msg, size)
 
     def put_body(self, msg):

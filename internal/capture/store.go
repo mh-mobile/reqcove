@@ -104,7 +104,7 @@ type Flow struct {
 // bytes is what a flow holds that a site or an app controls the size of: the
 // body heads, and the headers, URLs and error text.
 func (f *Flow) bytes() int {
-	n := len(f.ReqBody.Head) + len(f.RespBody.Head) + len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error)
+	n := len(f.ReqBody.Head) + len(f.RespBody.Head) + len(f.URL) + len(f.MappedURL) + len(f.Path) + len(f.Error) + len(f.Reason)
 	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
 		for _, kv := range h {
 			n += len(kv[0]) + len(kv[1])
@@ -282,7 +282,7 @@ func (s *Store) Apply(line []byte) {
 		f.ReqHeaders = s.maskHeaders(e.Headers)
 		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites
 	case "response":
-		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, s.maskHeaders(e.Headers)
+		f.Status, f.Reason, f.RespHeaders = e.Status, s.mask(e.Reason), s.maskHeaders(e.Headers) // a reason is free text from the site
 		f.Rewrites = append(f.Rewrites, e.Rewrites...)
 	case "body":
 		head, _ := base64.StdEncoding.DecodeString(e.Head)
@@ -390,6 +390,13 @@ func (q Filter) matchedIn(f *Flow) []string {
 		where = append(where, "response_headers")
 	}
 	if q.QueryBodies {
+		// Bodies fold ASCII case only (containsFold), so the needle may lower ASCII only.
+		needle := strings.Map(func(r rune) rune {
+			if 'A' <= r && r <= 'Z' {
+				return r + 'a' - 'A'
+			}
+			return r
+		}, q.Query)
 		// While masking, a head that is not text is never handed out, so it is
 		// not searched either: a match would tell what is in it.
 		if (!q.textOnly || isText(f.ReqBody.Head)) && containsFold(f.ReqBody.Head, needle) {
@@ -720,10 +727,11 @@ func (s *Store) maskError(v string) string {
 	if !s.redact {
 		return v
 	}
-	return quotedBytesRE.ReplaceAllString(maskTokens(maskURLs(v)), "b'[redacted]'")
+	return quotedBytesRE.ReplaceAllString(maskTokens(maskURLs(v)), "${1}b'[redacted]'")
 }
 
-var quotedBytesRE = regexp.MustCompile(`b'(?:[^'\\]|\\.)*'|b"(?:[^"\\]|\\.)*"`)
+// Python's repr of bytes, b'…' or b"…", not the b' of a word such as "job's".
+var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")`)
 
 func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	if !s.redact {
@@ -749,52 +757,101 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 }
 
 // secretName reports whether a header or parameter name says it carries a
-// secret. Names are split into words (accessToken, X-Amz-Signature,
-// oauth_token, Ocp-Apim-Subscription-Key), so the words, not substrings,
-// decide: author and keyword are not secrets. Masking a harmless value by
-// mistake costs little; missing a key does not.
-func secretName(name string) bool {
-	for _, w := range nameWords(name) {
-		if secretWords[w] {
+// secret (secretKind with a lone "code" counted: in URLs and forms it is an
+// OAuth authorization code). Masking a harmless value by mistake costs
+// little; missing a key does not.
+func secretName(name string) bool { return secretKind(name, true) }
+
+// secretKind decides by two kinds of words. Strong ones are secret wherever
+// they appear, even run together (accesstoken, x-authtoken, sessiontoken,
+// passcode). Short ones only as a whole word, so author, keyword and monkey
+// are not; code and key next to an everyday word (country_code, error_code,
+// sort_key) are everyday values; a lone code counts only if loneCode.
+func secretKind(name string, loneCode bool) bool {
+	lower := strings.ToLower(name)
+	flat := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, lower)
+	if notSecretNames[flat] {
+		return false
+	}
+	for _, part := range strongSecretParts {
+		if strings.Contains(flat, part) {
+			return true
+		}
+	}
+	words := nameWords(name)
+	everyday := false
+	for _, w := range words {
+		everyday = everyday || everydayWords[w]
+	}
+	for _, w := range words {
+		if !shortSecretWords[w] {
+			continue
+		}
+		switch {
+		case (w == "code" || w == "key") && everyday:
+		case w == "code" && len(words) == 1 && !loneCode:
+		default:
 			return true
 		}
 	}
 	return false
 }
 
-var secretWords = map[string]bool{
-	"authorization": true, "auth": true, "token": true, "secret": true, "password": true, "passwd": true, "pwd": true,
-	"session": true, "sessionid": true, "jsessionid": true, "phpsessid": true, "sid": true,
-	"signature": true, "sig": true, "credential": true, "credentials": true,
-	"key": true, "apikey": true, "jwt": true, "code": true,
+var strongSecretParts = []string{
+	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
+	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
 }
 
-// nameWords splits a name at non-alphanumerics and lower-to-upper case
-// changes, in lower case: "X-Amz-Signature" -> x amz signature, "accessToken" -> access token.
+var shortSecretWords = map[string]bool{
+	"auth": true, "key": true, "sid": true, "sig": true, "pwd": true, "otp": true, "pin": true, "code": true,
+}
+
+// everydayWords next to code or key make them ordinary values.
+var everydayWords = map[string]bool{
+	"error": true, "status": true, "reason": true, "response": true, "http": true, "result": true,
+	"country": true, "currency": true, "lang": true, "language": true, "locale": true, "region": true,
+	"zip": true, "postal": true, "area": true, "state": true, "iso": true, "sort": true, "order": true,
+	"primary": true, "foreign": true,
+}
+
+// notSecretNames look secret but carry what debugging needs (letters and digits only).
+var notSecretNames = map[string]bool{"tokentype": true}
+
+// nameWords splits a name at non-alphanumerics and case changes, in lower
+// case: "X-Amz-Signature" -> x amz signature, "accessToken" -> access token,
+// "APIToken" -> api token.
 func nameWords(name string) []string {
+	rs := []rune(name)
 	var words []string
-	var w []rune
-	flush := func() {
-		if len(w) > 0 {
-			words = append(words, strings.ToLower(string(w)))
-			w = w[:0]
+	start := -1
+	flush := func(end int) {
+		if start >= 0 && end > start {
+			words = append(words, strings.ToLower(string(rs[start:end])))
 		}
+		start = -1
 	}
-	prevLower := false
-	for _, r := range name {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			if unicode.IsUpper(r) && prevLower {
-				flush()
+	for i, r := range rs {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush(i)
+			continue
+		}
+		if start >= 0 && unicode.IsUpper(r) {
+			prev := rs[i-1]
+			nextLower := i+1 < len(rs) && unicode.IsLower(rs[i+1])
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextLower) {
+				flush(i)
 			}
-			w = append(w, r)
-			prevLower = unicode.IsLower(r) || unicode.IsDigit(r)
-		default:
-			flush()
-			prevLower = false
+		}
+		if start < 0 {
+			start = i
 		}
 	}
-	flush()
+	flush(len(rs))
 	return words
 }
 
@@ -831,6 +888,17 @@ func maskURLs(v string) string {
 		}
 		if secretName(name) {
 			return sub[1] + sub[2] + "=REDACTED"
+		}
+		// A URL inside a value (?redirect=https://x/cb?token=…, also percent-encoded):
+		// if anything in it would be masked, mask the whole value.
+		if v := sub[3]; strings.ContainsAny(v, "?=%") {
+			inner := v
+			if u, err := url.QueryUnescape(v); err == nil {
+				inner = u
+			}
+			if maskTokens(maskURLs(inner)) != inner {
+				return sub[1] + sub[2] + "=REDACTED"
+			}
 		}
 		return m
 	})

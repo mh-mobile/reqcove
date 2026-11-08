@@ -163,8 +163,11 @@ func TestSecretName(t *testing.T) {
 		"Authorization": true, "X-Auth-Token": true, "accessToken": true, "oauth_token": true, "session_id": true,
 		"X-Amz-Signature": true, "X-Amz-Credential": true, "Ocp-Apim-Subscription-Key": true, "apiKey": true, "api-key": true,
 		"jsessionid": true, "PHPSESSID": true, "code": true, "jwt": true, "client_secret": true,
+		"accesstoken": true, "x-authtoken": true, "sessiontoken": true, "APIToken": true, "IDToken": true, "XAuth": true,
+		"passcode": true, "passphrase": true, "secretkey": true, "privatekey": true, "otp": true, "pin": true, "verification_code": true,
 		"author": false, "keyword": false, "monkey": false, "page": false, "state": false, "User-Agent": false,
 		"Content-Type": false, "Accept": false, "view": false, "type": false, "codec": false,
+		"token_type": false, "country_code": false, "error_code": false, "sort_key": false, "WWW-Authenticate": false,
 	} {
 		if got := secretName(name); got != want {
 			t.Errorf("secretName(%q) = %v, want %v (words %q)", name, got, want, nameWords(name))

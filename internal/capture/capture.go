@@ -119,6 +119,8 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	fail := func(err error) (*Capture, error) {
 		ln.Close()
 		os.Remove(sock)
+		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
+		os.Remove(filepath.Join(cfg.Dir, "addon.py"))
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
