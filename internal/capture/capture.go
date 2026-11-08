@@ -295,6 +295,8 @@ func (c *Capture) Stop() {
 	c.ln.Close()
 	os.Remove(c.ln.Addr().String())
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
+	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
+	os.Remove(filepath.Join(c.cfg.Dir, "addon.py"))
 	if c.WebURL != "" {
 		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
 	}

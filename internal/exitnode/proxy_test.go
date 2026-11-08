@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"golang.org/x/net/dns/dnsmessage"
 	"time"
 )
 
@@ -205,5 +207,48 @@ func TestRemoteProxyClosesOutsiders(t *testing.T) {
 	fmt.Fprint(c, "GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\n\r\n")
 	if r, err := http.ReadResponse(br, nil); err != nil || r.StatusCode != 403 || !r.Close {
 		t.Errorf("after the device left: %v %v, want a 403 that closes", r, err)
+	}
+}
+
+// The Remote Proxy's lookups go on to the next --dns when one is dead.
+func TestResolverTriesEveryUpstream(t *testing.T) {
+	good, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer good.Close()
+	go func() { // answers every A query with 203.0.113.7
+		buf := make([]byte, 1500)
+		for {
+			n, addr, err := good.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var p dnsmessage.Parser
+			h, err := p.Start(buf[:n])
+			if err != nil {
+				continue
+			}
+			q, _ := p.Question()
+			b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: h.ID, Response: true, RecursionAvailable: true})
+			b.StartQuestions()
+			b.Question(q)
+			if q.Type == dnsmessage.TypeA {
+				b.StartAnswers()
+				b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 60}, dnsmessage.AResource{A: [4]byte{203, 0, 113, 7}})
+			}
+			out, _ := b.Finish()
+			good.WriteTo(out, addr)
+		}
+	}()
+	dead, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	deadAddr := netip.MustParseAddrPort(dead.LocalAddr().String())
+	dead.Close()
+	resolve := resolver([]netip.AddrPort{deadAddr, netip.MustParseAddrPort(good.LocalAddr().String())})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ip, err := resolve(ctx, "app.example")
+	if err != nil || ip != netip.MustParseAddr("203.0.113.7") {
+		t.Fatalf("resolve with a dead first upstream: %v %v", ip, err)
 	}
 }

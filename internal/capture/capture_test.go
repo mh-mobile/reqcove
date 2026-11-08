@@ -256,7 +256,14 @@ func TestEndToEnd(t *testing.T) {
 			t.Errorf("%s was intercepted: issuer %s", u, issuer)
 		}
 	}
-	// mitm.it, where iPhones get the CA, is served by mitmproxy and not recorded.
+	// mitm.it, where iPhones get the CA, is served by mitmproxy and not recorded,
+	// nor counted as out of scope.
+	oosBefore := h.stat("out_of_scope")
+	defer func() {
+		if got := h.stat("out_of_scope"); got > oosBefore+1 { // +1: the coalesced request below
+			t.Errorf("mitm.it counted as out of scope: %d -> %d", oosBefore, got)
+		}
+	}()
 	if r, err := plain.Get("http://mitm.it/"); err != nil || r.StatusCode != 200 {
 		t.Errorf("mitm.it: %v %v", err, r)
 	} else {

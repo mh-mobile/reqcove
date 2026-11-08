@@ -16,7 +16,8 @@ come from reading code rather than from a test say so.
 
 ## The CA's private key
 
-`~/.reqcove/mitmproxy/mitmproxy-ca.pem` holds the private key of a CA your iPhone
+`~/.reqcove/mitmproxy/mitmproxy-ca.pem`, and `mitmproxy-ca.p12` next to it (a
+PKCS#12 file without a passphrase), hold the private key of a CA your iPhone
 trusts. Whoever has it can impersonate any HTTPS site to that iPhone. Keep the
 directory to yourself; when you stop using Reqcove, remove the profile from the
 iPhone first, then delete the directory (`reqcove cleanup` lists the steps).
@@ -54,8 +55,10 @@ traffic too, and Reqcove warns when it starts.
 
 ## Prompt injection
 
-Response bodies are written by remote sites and may contain text meant to steer
-the agent. Tools return bodies only on request, and say the data is untrusted.
+Response bodies, and also response headers, status reasons, redirect targets
+and error messages, are written by remote sites and may contain text meant to
+steer the agent. Tools return bodies only on request, and say all of it is
+untrusted.
 The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
 yours, from a file, at start.)
 
@@ -64,7 +67,9 @@ yours, from a file, at start.)
 mitmweb listens on 127.0.0.1 only, with a password made at each start and passed
 through a 0600 file, never the command line. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
-options.
+options. It shows every flow mitmproxy decrypted, including requests to hosts
+outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
+reuse): the per-request check keeps those out of Reqcove's records only.
 
 ## Other processes on this computer
 

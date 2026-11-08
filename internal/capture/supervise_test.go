@@ -97,6 +97,11 @@ func TestRestartsMitmdump(t *testing.T) {
 	if c.Err() != nil {
 		t.Errorf("Err after Stop = %v", c.Err())
 	}
+	for _, f := range []string{"socks-secret", "addon.py", "mitmdump.pid", "ingest.sock"} {
+		if _, err := os.Stat(filepath.Join(c.cfg.Dir, f)); err == nil {
+			t.Errorf("%s left in the state directory after Stop", f)
+		}
+	}
 }
 
 func TestGivesUpOnMitmdump(t *testing.T) {

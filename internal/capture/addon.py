@@ -306,6 +306,8 @@ class Reqcove:
             # can carry requests to others (HTTP/2 coalescing). Pass them through.
             flow.metadata["reqcove_skip"] = True
             flow.request.stream = True
+            if flow.request.pretty_host.lower().rstrip(".") == "mitm.it":
+                return  # the CA's page: served, never recorded, and not "out of scope" either
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
             return
