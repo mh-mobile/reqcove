@@ -15,6 +15,8 @@
   `.example.com` is refused with the right spelling, `*.example.com`.
 - Without `--device`, `run` suggests your iPhones and iPads on the tailnet (from the
   Tailscale CLI, when there is one), and it prints the `claude mcp add` command.
+- The exit node approval step says how to skip it next time (`autoApprovers` in
+  the tailnet policy).
 - A request a `--rules` rule fails on (such as a `map_remote` making a bad port)
   is answered with a 502 instead of going on unrewritten.
 - `resolve` and `--upstream-proxy` are refused together: Burp connects by the
