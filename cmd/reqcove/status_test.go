@@ -34,7 +34,7 @@ func TestNextSteps(t *testing.T) {
 		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
 		// Just after start the key looks unsigned until the netmap is checked: no step yet.
 		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
-		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net"}},
+		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net", "autoApprovers"}},
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},

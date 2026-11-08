@@ -288,7 +288,7 @@ func FirstStep(s Status) string {
 	case s.LockEnabled && s.NodeKey != "" && lockedOut(s.Health):
 		return "Tailnet Lock: on a signing device run `tailscale lock sign " + s.NodeKey + "`"
 	case s.Backend == "Running" && !s.ExitApproved:
-		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node"
+		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node (to skip this next time, add \"autoApprovers\": {\"exitNode\": [\"you@example.com\"]} to the tailnet policy)"
 	}
 	return ""
 }
