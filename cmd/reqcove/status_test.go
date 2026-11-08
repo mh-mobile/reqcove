@@ -161,6 +161,14 @@ func TestOpenState(t *testing.T) {
 	if fi, _ := os.Stat(foreign); fi.Mode().Perm() != 0o755 {
 		t.Errorf("mode changed to %v", fi.Mode().Perm())
 	}
+	// A folder made by hand and opened in Finder holds only .DS_Store: still empty.
+	finder := t.TempDir()
+	os.WriteFile(filepath.Join(finder, ".DS_Store"), nil, 0o644)
+	if unlock, err := openState(finder); err != nil {
+		t.Errorf("openState refused a folder with only .DS_Store: %v", err)
+	} else {
+		unlock()
+	}
 	fresh := filepath.Join(t.TempDir(), "state")
 	unlock, err := openState(fresh)
 	if err != nil {

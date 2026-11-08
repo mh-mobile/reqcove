@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -250,6 +251,7 @@ func openState(dir string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool { return e.Name() == ".DS_Store" }) // Finder leaves it in folders it opened
 	if _, err := os.Stat(filepath.Join(dir, "lock")); len(ents) > 0 && err != nil {
 		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
 	}
