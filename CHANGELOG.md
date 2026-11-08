@@ -9,6 +9,8 @@
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.
 - Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
+- `reqcove har > flows.har`: the recorded flows as a HAR 1.2 file, masked, with
+  the same filters as `list_flows`.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
 - `--dns 1.1.1.1` works without the port (53).
 - `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);

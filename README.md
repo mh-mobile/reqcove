@@ -167,6 +167,18 @@ tools return them. Not tried on an iPhone yet: the tests use a browser stand-in.
 - Tailscale must be on; it works with the exit node or the Remote Proxy, or
   neither. The page's own requests are not recorded.
 
+### A HAR file
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+While `reqcove run` is running, `reqcove har > flows.har` writes its flows as a
+HAR 1.2 file, oldest first: the newest 1000 by default (`--limit 0` for all),
+filtered with `--host`, `--device`, `--since 10m`, `--status 4xx`, `--method`. It
+holds what the MCP tools return: masked as it arrived, the heads of bodies only
+(cut ones say so in a comment), and no body that masking could not check. It is
+written to the HAR 1.2 spec's required fields, but not opened in other tools yet
+(browsers' developer tools, Charles, Proxyman).
+
 ### An upstream proxy (Burp Suite and others)
 
 > Not in v0.1.0: until the next release, build from source to use it.

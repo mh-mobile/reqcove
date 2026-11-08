@@ -48,6 +48,8 @@ Usage:
                      the allowed hosts; prints what is left to set up
   reqcove status     what reqcove is doing, and the next steps
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
+  reqcove har > flows.har
+                     the recorded flows as a HAR file, masked (-h for filters)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
   reqcove version
 
@@ -74,6 +76,8 @@ func main() {
 		err = runMCP(ctx, os.Args[2:])
 	case "status":
 		err = status(ctx, os.Args[2:])
+	case "har":
+		err = har(ctx, os.Args[2:])
 	case "cleanup":
 		err = cleanup(os.Args[2:])
 	case "version", "--version", "-version":
