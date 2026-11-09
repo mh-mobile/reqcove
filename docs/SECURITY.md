@@ -202,12 +202,14 @@ MCP tools.
 mitmweb listens on 127.0.0.1, with a password kept in `web-token` in the state
 directory (0600; the same at each start until you delete that file and start
 again) and passed through a 0600 file, never the command line. A link with it
-(`?token=`) through the node is answered with a redirect to the same URL without
-it, once mitmweb has set its cookie (a test, with a stand-in for mitmweb), so the
-password does not stay in the address bar; whether Safari's history keeps the
-first URL is not checked, nor the terminal's scrollback, where `run` prints it.
-mitmweb's cookie does not outlast its restart (it signs it with a key made at
-each start), so after one the link is needed again. After v0.1.0, the node also relays
+(`?token=`) opened by a browser through the node is answered, once mitmweb
+accepts it, with a redirect to the same URL without it (a test, with a stand-in
+for mitmweb), so the password does not stay in the address bar; whether
+Safari's history keeps the first URL is not checked. `run` prints the links with
+the tokens on its standard error: in the terminal's scrollback, and in a file if
+you send it there, they stay valid until the token files are deleted. mitmweb's
+cookie does not outlast its restart (it signs it with a key made at each start,
+from reading its code), so after one the link is needed again. After v0.1.0, the node also relays
 its port 8081 to it for your own devices on the tailnet (the same user, untagged:
 not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).

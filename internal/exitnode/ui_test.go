@@ -363,6 +363,7 @@ func TestWebRelayDropsToken(t *testing.T) {
 	mitmweb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("token") == "PW" {
 			http.SetCookie(w, &http.Cookie{Name: "mitmproxy-auth-8081", Value: "signed"})
+			http.SetCookie(w, &http.Cookie{Name: "_mitmproxy_xsrf", Value: "x"})
 		} else if r.URL.Query().Has("token") {
 			http.Error(w, "no", http.StatusForbidden)
 			return
@@ -373,16 +374,22 @@ func TestWebRelayDropsToken(t *testing.T) {
 	me := netip.MustParseAddr("127.0.0.1")
 	p := &policy{own: map[netip.Addr]Device{me: {"nMAC", "macbook"}}, self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}
 	relay := webRelay(func() *policy { return p }, mitmweb.Listener.Addr().String())
-	ask := func(url string) *httptest.ResponseRecorder {
+	ask := func(url string, navigate ...bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", url, nil)
 		r.Host, r.RemoteAddr = "reqcove:8081", "127.0.0.1:5000"
+		if len(navigate) == 0 || navigate[0] {
+			r.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8") // Safari opening the link
+		}
 		w := httptest.NewRecorder()
 		relay.ServeHTTP(w, r)
 		return w
 	}
-	w := ask("/?token=PW&x=1")
-	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/?x=1" || !strings.Contains(w.Header().Get("Set-Cookie"), "mitmproxy-auth-8081=signed") || strings.Contains(w.Body.String(), "mitmweb page") {
+	w := ask("/a%2Fb?z=2&token=PW&a=1")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/a%2Fb?z=2&a=1" || len(w.Header().Values("Set-Cookie")) != 2 || strings.Contains(w.Body.String(), "mitmweb page") {
 		t.Errorf("with the token: %d %v %q", w.Code, w.Header(), w.Body.String())
+	}
+	if w := ask("/?token=PW", false); w.Code != 200 || w.Body.String() != "mitmweb page" {
+		t.Errorf("an API call (no navigation): %d %q", w.Code, w.Body.String())
 	}
 	if w := ask("/?token=wrong"); w.Code != http.StatusForbidden {
 		t.Errorf("a wrong token: %d", w.Code)

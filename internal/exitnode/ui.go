@@ -90,18 +90,24 @@ func webRelay(policy func() *policy, addr string) http.Handler {
 			pr.Out.Host = pr.In.Host
 		},
 		// mitmweb answers a link with ?token= in place, so the password would
-		// stay in the address bar, history and synced tabs. Once mitmweb took it
-		// (and set its cookie), the browser is sent on to the URL without it.
+		// stay in the address bar, history and synced tabs. When a browser opens
+		// such a link and mitmweb takes it, the browser is sent on to the URL
+		// without it, with mitmweb's cookie. API calls (curl) are left alone.
 		ModifyResponse: func(resp *http.Response) error {
 			in := resp.Request
-			q := in.URL.Query()
-			if in.Method != http.MethodGet || !q.Has("token") || resp.StatusCode != http.StatusOK {
+			// A page, asked for HTML (Sec-Fetch-Mode is not sent to a plain-http origin such as the node's).
+			if in.Method != http.MethodGet || !strings.Contains(in.Header.Get("Accept"), "text/html") || !in.URL.Query().Has("token") || resp.StatusCode != http.StatusOK {
 				return nil
 			}
-			q.Del("token")
-			loc := in.URL.Path
-			if e := q.Encode(); e != "" {
-				loc += "?" + e
+			var rest []string // the query without token, in its order and encoding
+			for _, kv := range strings.Split(in.URL.RawQuery, "&") {
+				if k, _, _ := strings.Cut(kv, "="); k != "token" && kv != "" {
+					rest = append(rest, kv)
+				}
+			}
+			loc := in.URL.EscapedPath()
+			if len(rest) > 0 {
+				loc += "?" + strings.Join(rest, "&")
 			}
 			resp.Body.Close()
 			resp.Header = http.Header{"Set-Cookie": resp.Header.Values("Set-Cookie"), "Location": {loc}, "Cache-Control": {"no-store"}}

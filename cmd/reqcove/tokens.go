@@ -22,6 +22,9 @@ func keptToken(state, name string) (token string, made bool, err error) {
 	path := filepath.Join(state, name)
 	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
 		if b, err := os.ReadFile(path); err == nil && tokenForm.Match(b) {
+			if fi.Mode().Perm() != 0o600 {
+				os.Chmod(path, 0o600) // a copy or a restore may have widened it
+			}
 			return string(b), false, nil
 		}
 	}

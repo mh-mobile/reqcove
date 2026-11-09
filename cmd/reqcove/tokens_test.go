@@ -17,8 +17,12 @@ func TestKeptToken(t *testing.T) {
 	if fi, _ := os.Stat(filepath.Join(state, "ui-token")); fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", fi.Mode())
 	}
+	os.Chmod(filepath.Join(state, "ui-token"), 0o644)
 	if again, made, _ := keptToken(state, "ui-token"); again != first || made {
 		t.Errorf("not kept: %q %v", again, made)
+	}
+	if fi, _ := os.Stat(filepath.Join(state, "ui-token")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("a widened file kept its mode %v", fi.Mode())
 	}
 	for _, bad := range []string{"x", "$argon2id$v=19$m", first + "\nscripts: [evil.py]", first + "\n"} {
 		os.WriteFile(filepath.Join(state, "web-token"), []byte(bad), 0o600)
