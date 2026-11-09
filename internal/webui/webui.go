@@ -225,7 +225,131 @@ func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string, all b
 		http.NotFound(w, r)
 		return
 	}
-	render(w, flowPage, map[string]any{"F": v, "ReqBody": pretty(v.ReqBodyText), "RespBody": pretty(v.RespBodyText)})
+	var ms int64
+	if v.End > v.Start {
+		ms = int64((v.End - v.Start) * 1000)
+	}
+	render(w, flowPage, map[string]any{
+		"F": v, "MS": ms, "Slow": ms >= 1000, "Time": time.Unix(0, int64(v.Start*1e9)).Format("15:04:05"),
+		"Query":   queryOf(v.URL),
+		"ReqBody": tokens(v.ReqBodyText), "ReqInfo": bodyInfo(v.ReqHeaders, v.ReqBody),
+		"RespBody": tokens(v.RespBodyText), "RespInfo": bodyInfo(v.RespHeaders, v.RespBody),
+	})
+}
+
+// queryOf is a URL's query as name and value pairs, in their order (masked as
+// the URL was recorded).
+func queryOf(raw string) [][2]string {
+	u, err := url.Parse(raw)
+	if err != nil || u.RawQuery == "" {
+		return nil
+	}
+	var out [][2]string
+	for _, kv := range strings.Split(u.RawQuery, "&") {
+		k, v, _ := strings.Cut(kv, "=")
+		if dk, err := url.QueryUnescape(k); err == nil {
+			k = dk
+		}
+		if dv, err := url.QueryUnescape(v); err == nil {
+			v = dv
+		}
+		if k != "" || v != "" {
+			out = append(out, [2]string{k, v})
+		}
+	}
+	return out
+}
+
+// bodyInfo says what a body is: its type, its size on the wire, and whether
+// only its head is kept.
+func bodyInfo(headers [][2]string, b capture.Body) string {
+	var parts []string
+	for _, kv := range headers {
+		if strings.EqualFold(kv[0], "content-type") {
+			ct, _, _ := strings.Cut(kv[1], ";")
+			parts = append(parts, ct)
+		}
+	}
+	if b.Size > 0 {
+		parts = append(parts, size(b.Size))
+	}
+	if b.Truncated {
+		parts = append(parts, "the head only")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func size(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
+// tok is a piece of a body, with its colour class for JSON: k (a key), s (a
+// string), n (a number), l (true, false, null), or none. Every piece goes
+// through html/template as text: a site's markup stays text.
+type tok struct{ C, T string }
+
+// tokens is a body for the page: JSON indented (pretty) and coloured; any
+// other text as one piece.
+func tokens(body string) []tok {
+	p := pretty(body)
+	if p == body { // not JSON, invalid (a cut head), or nested too deep: as it is
+		return []tok{{"", body}}
+	}
+	var out []tok
+	plain := func(t string) {
+		if n := len(out); n > 0 && out[n-1].C == "" {
+			out[n-1].T += t
+		} else {
+			out = append(out, tok{"", t})
+		}
+	}
+	for i := 0; i < len(p); {
+		c := p[i]
+		switch {
+		case c == '"':
+			j := i + 1
+			for j < len(p) && p[j] != '"' {
+				if p[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			j = min(j+1, len(p))
+			k := j
+			for k < len(p) && p[k] == ' ' {
+				k++
+			}
+			cls := "s"
+			if k < len(p) && p[k] == ':' {
+				cls = "k"
+			}
+			out = append(out, tok{cls, p[i:j]})
+			i = j
+		case c == '-' || c >= '0' && c <= '9':
+			j := i + 1
+			for j < len(p) && strings.IndexByte("0123456789.eE+-", p[j]) >= 0 {
+				j++
+			}
+			out = append(out, tok{"n", p[i:j]})
+			i = j
+		case strings.HasPrefix(p[i:], "true"), strings.HasPrefix(p[i:], "null"):
+			out = append(out, tok{"l", p[i : i+4]})
+			i += 4
+		case strings.HasPrefix(p[i:], "false"):
+			out = append(out, tok{"l", p[i : i+5]})
+			i += 5
+		default:
+			plain(p[i : i+1])
+			i++
+		}
+	}
+	return out
 }
 
 // pretty indents a JSON body; anything else is shown as it is. Deep nesting
@@ -468,18 +592,24 @@ const appJS = `"use strict";
 })();
 `
 
-var flowPage = template.Must(template.New("flow").Funcs(funcs).Parse(head + `</head><body>
+var flowPage = template.Must(template.New("flow").Funcs(funcs).Parse(head + `</head><body class="flow">
 <header><a class="chip" href="/">← flows</a> <a class="chip" href="/?host={{.F.Host}}">only {{.F.Host}}</a></header>
-<h1><b class="{{mclass .F.Method}}">{{.F.Method}}</b> <span class="badge {{class .F.Status .F.State}}">{{if .F.Status}}{{.F.Status}} {{.F.Reason}}{{else}}{{.F.State}}{{end}}</span></h1>
+<h1><b class="{{mclass .F.Method}}">{{.F.Method}}</b> <span class="badge {{class .F.Status .F.State}}">{{if .F.Status}}{{.F.Status}} {{.F.Reason}}{{else}}{{.F.State}}{{end}}</span>
+<span class="muted">{{.Time}}{{if .MS}} · <span{{if .Slow}} class="slow"{{end}}>{{.MS}} ms</span>{{end}}{{with .F.DeviceName}} · {{.}}{{end}}</span></h1>
 <p class="url">{{.F.URL}}</p>
 {{with .F.MappedURL}}<p class="muted">sent to {{.}}</p>{{end}}
-{{with .F.Error}}<p class="bad">{{.}}</p>{{end}}
+{{with .F.Error}}<p class="badge bad">{{.}}</p>{{end}}
 {{range .F.Rewrites}}<p class="muted">rule: {{.}}</p>{{end}}
 {{range .F.Notes}}<p class="muted">{{.}}</p>{{end}}
-<details open><summary>Request headers</summary><dl>{{range .F.ReqHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
-<details><summary>Request body</summary>{{with .F.ReqBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre>{{.ReqBody}}</pre></details>
-<details open><summary>Response headers</summary><dl>{{range .F.RespHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
-<details open><summary>Response body</summary>{{with .F.RespBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre>{{.RespBody}}</pre></details>
+<section><h2>Request</h2>
+{{with .Query}}<details open><summary>Query <span class="muted">{{len .}}</span></summary><dl class="kv">{{range .}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>{{end}}
+<details open><summary>Headers <span class="muted">{{len .F.ReqHeaders}}</span></summary><dl class="kv">{{range .F.ReqHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
+<details{{if .ReqInfo}} open{{end}}><summary>Body <span class="muted">{{or .ReqInfo "none"}}</span></summary>{{with .F.ReqBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre class="code">{{range .ReqBody}}{{if .C}}<span class="j{{.C}}">{{.T}}</span>{{else}}{{.T}}{{end}}{{end}}</pre></details>
+</section>
+<section><h2>Response</h2>
+<details open><summary>Headers <span class="muted">{{len .F.RespHeaders}}</span></summary><dl class="kv">{{range .F.RespHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
+<details open><summary>Body <span class="muted">{{or .RespInfo "none"}}</span></summary>{{with .F.RespBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre class="code">{{range .RespBody}}{{if .C}}<span class="j{{.C}}">{{.T}}</span>{{else}}{{.T}}{{end}}{{end}}</pre></details>
+</section>
 </body></html>`))
 
 const css = `:root{color-scheme:light dark;font:16px -apple-system,system-ui,sans-serif}
@@ -510,6 +640,12 @@ li{border-bottom:1px solid #8883}
 .m-get{color:#2f6fd6}.m-post{color:#1a8a3a}.m-put{color:#c46a00}.m-del{color:#d33}.m-other{color:GrayText}
 .slow{color:#c46a00;font-weight:600}.bad{color:#d33}
 h1{font-size:18px}.url{overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}
-summary{min-height:44px;display:flex;align-items:center;font-weight:600}
-dl{margin:0}dt{font-weight:600;font-size:14px;margin-top:8px;overflow-wrap:anywhere}dd{margin:0 0 4px;overflow-wrap:anywhere;font-size:14px}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}`
+summary{min-height:44px;display:flex;align-items:center;gap:8px;font-weight:600}
+h2{font-size:15px;margin:18px 0 0;padding:6px 8px;border-radius:6px;background:#8881;text-transform:uppercase;letter-spacing:.05em}
+dl.kv{margin:0 0 6px;display:grid;grid-template-columns:minmax(7em,32%) 1fr;font:13px ui-monospace,Menlo,monospace}
+dl.kv dt,dl.kv dd{margin:0;padding:6px 4px;border-bottom:1px solid #8882;overflow-wrap:anywhere}
+dl.kv dt{color:#2f6fd6}
+@media (max-width:520px){dl.kv{display:block}dl.kv dt{border-bottom:0;padding-bottom:0}dl.kv dd{padding-top:2px}}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.45 ui-monospace,Menlo,monospace}
+pre.code{padding:8px;border-radius:6px;background:#8881}
+.jk{color:#2f6fd6}.js{color:#1a8a3a}.jn{color:#c46a00}.jl{color:#a33bd6}`

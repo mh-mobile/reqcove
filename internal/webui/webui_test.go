@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -109,7 +110,7 @@ func TestPageEscapesAndHeaders(t *testing.T) {
 			t.Errorf("%s: headers %v", path, r.Header)
 		}
 	}
-	if page := body(get(u, "devA", "/flow?id=fa", testToken)); !strings.Contains(page, "&lt;script&gt;") || !strings.Contains(page, "&#34;html&#34;: ") {
+	if page := body(get(u, "devA", "/flow?id=fa", testToken)); !strings.Contains(page, "&lt;script&gt;") || !strings.Contains(page, `<span class="jk">&#34;html&#34;</span>: <span class="js">&#34;&lt;img src=x onerror=alert(1)&gt;&#34;</span>`) {
 		t.Errorf("detail: headers or indented body missing:\n%s", page)
 	}
 }
@@ -410,5 +411,39 @@ func TestSearchClearChips(t *testing.T) {
 	}
 	if csp := ask(u, "mac", true, "/", testToken).Header.Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("CSP %q", csp)
+	}
+}
+
+// JSON bodies are coloured by piece (a key, a string, a number, a literal),
+// escapes and all; anything else, a cut head included, stays one piece. A
+// URL's query is listed in its order, decoded; a body says its type and size.
+func TestFlowPagePieces(t *testing.T) {
+	got := tokens(`{"a\"b": "x:y", "n": [-2.5e3, true, null, false]}`)
+	var classes []string
+	for _, tk := range got {
+		if tk.C != "" {
+			classes = append(classes, tk.C+"="+tk.T)
+		}
+	}
+	if want := []string{`k="a\"b"`, `s="x:y"`, `k="n"`, `n=-2.5e3`, `l=true`, `l=null`, `l=false`}; !slices.Equal(classes, want) {
+		t.Errorf("pieces %q, want %q", classes, want)
+	}
+	var whole strings.Builder
+	for _, tk := range got {
+		whole.WriteString(tk.T)
+	}
+	if whole.String() != pretty(`{"a\"b": "x:y", "n": [-2.5e3, true, null, false]}`) {
+		t.Errorf("pieces do not make up the indented body: %q", whole.String())
+	}
+	for _, b := range []string{"plain text", `{"cut": "hea`, "<html>"} {
+		if got := tokens(b); len(got) != 1 || got[0].C != "" || got[0].T != b {
+			t.Errorf("%q: %v", b, got)
+		}
+	}
+	if q := queryOf("https://a.example/p?z=1&a=%E3%81%82&token=[redacted]"); len(q) != 3 || q[0] != [2]string{"z", "1"} || q[1] != [2]string{"a", "あ"} || q[2][0] != "token" {
+		t.Errorf("query %q", q)
+	}
+	if info := bodyInfo([][2]string{{"Content-Type", "application/json; charset=utf-8"}}, capture.Body{Size: 2048, Truncated: true}); info != "application/json · 2.0 KB · the head only" {
+		t.Errorf("info %q", info)
 	}
 }
