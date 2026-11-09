@@ -65,6 +65,16 @@ var macTrust struct {
 // macTrustTTL is how long a check of this Mac's trust is kept (tests set 0).
 var macTrustTTL = 10 * time.Second
 
+// withoutMacStep drops the step about this Mac trusting the CA: the page is
+// read on a phone, where nothing can be done about it (the terminal and
+// `reqcove status` keep it).
+func withoutMacStep(steps []string) []string {
+	if ls := localStep(); ls != "" {
+		steps = slices.DeleteFunc(steps, func(s string) bool { return s == ls })
+	}
+	return steps
+}
+
 func localStep() string {
 	if localCA == "" {
 		return ""

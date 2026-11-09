@@ -69,14 +69,14 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 		if r.URL.Query().Has("clear") {
 			// Clear: from now on, by this computer's clock (the flows' times are its own).
 			p := params(r.URL.Query())
-			http.Redirect(w, r, p.with("clear", "").with("since", strconv.FormatInt(time.Now().Unix(), 10)).String(), http.StatusSeeOther)
+			http.Redirect(w, r, p.with("clear", "").with("since", strconv.FormatFloat(float64(time.Now().UnixMilli())/1000, 'f', 3, 64)).String(), http.StatusSeeOther)
 			return
 		}
 		render(w, listPage, u.view(r, deviceID, all))
 	case "/flows.json":
 		v := u.view(r, deviceID, all)
 		h.Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"], "empty": v["Empty"], "now": time.Now().Unix()})
+		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"], "empty": v["Empty"]})
 	case "/flow":
 		u.flow(w, r, deviceID, all)
 	case "/style.css":
@@ -96,8 +96,11 @@ func (u *UI) valid(k string) bool { return subtle.ConstantTimeCompare([]byte(k),
 type row struct {
 	ID     string `json:"id"`
 	Class  string `json:"class"`
-	S      string `json:"s"`    // status, "err" or "…"
-	Text   string `json:"text"` // method and path
+	S      string `json:"s"`      // status, "err" or "…"
+	Method string `json:"method"` // its class (m-get…) comes from methodClass
+	MClass string `json:"mclass"`
+	Text   string `json:"text"` // the path
+	Slow   bool   `json:"slow,omitempty"`
 	Time   string `json:"time"`
 	Host   string `json:"host"`
 	MS     int64  `json:"ms,omitempty"`
@@ -131,8 +134,6 @@ func (p params) String() string {
 	return "/"
 }
 
-func (p params) Get(k string) string { return url.Values(p).Get(k) }
-
 // view is the list for deviceID: its own flows, counts and steps only; with
 // all, every device's.
 func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
@@ -144,8 +145,8 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	if s := q.Get("status"); capture.ValidStatus(s) {
 		f.Status = s
 	}
-	if since, err := strconv.ParseInt(q.Get("since"), 10, 64); err == nil && since > 0 {
-		f.Since = float64(since)
+	if since, err := strconv.ParseFloat(q.Get("since"), 64); err == nil && since > 0 {
+		f.Since = since // to the millisecond: a flow started just before Clear is not left in
 	}
 	listed, _ := u.store.List(f)
 	flows := listed[:0]
@@ -180,7 +181,8 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 		} else if s.State == "error" {
 			st = "err"
 		}
-		rw := row{ID: s.ID, Class: class(s.Status, s.State), S: st, Text: s.Method + " " + path(s.URL), Time: clock(s.Time), Host: s.Host, MS: s.DurationMS,
+		rw := row{ID: s.ID, Class: class(s.Status, s.State), S: st, Method: s.Method, MClass: methodClass(s.Method), Text: path(s.URL),
+			Time: clock(s.Time), Host: s.Host, MS: s.DurationMS, Slow: s.DurationMS >= 1000,
 			Where: strings.ReplaceAll(strings.Join(s.MatchedIn, ", "), "_", " ")}
 		if all {
 			rw.Device = s.DeviceName
@@ -271,7 +273,23 @@ func render(w http.ResponseWriter, t *template.Template, data any) {
 	}
 }
 
-var funcs = template.FuncMap{"class": class}
+var funcs = template.FuncMap{"class": class, "mclass": methodClass}
+
+// methodClass colours methods: reading (GET, HEAD), writing (POST), changing
+// (PUT, PATCH), removing (DELETE), and the rest.
+func methodClass(m string) string {
+	switch m {
+	case "GET", "HEAD":
+		return "m-get"
+	case "POST":
+		return "m-post"
+	case "PUT", "PATCH":
+		return "m-put"
+	case "DELETE":
+		return "m-del"
+	}
+	return "m-other"
+}
 
 func clock(s string) string {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
@@ -299,6 +317,8 @@ func class(status int, state string) string {
 		return "warn"
 	case status == 0:
 		return "open"
+	case status >= 300:
+		return "redir"
 	}
 	return "ok"
 }
@@ -313,25 +333,24 @@ const head = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 <script src="/app.js" defer></script></head><body>
 <header>
-<div class="top"><b>Reqcove</b>{{if .Unmasked}} <b class="bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span></div>
+<div class="top"><b>Reqcove</b>{{if .Unmasked}} <b class="badge bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span></div>
 <form class="search" action="/" method="get" role="search">
 <input id="q" type="search" name="q" value="{{.Q}}" placeholder="Search URLs and headers" aria-label="Search URLs and headers" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false">
-<label class="check"><input id="bodies" type="checkbox" name="bodies" value="1"{{if .Bodies}} checked{{end}}> bodies too</label>
+<label class="check"><input id="bodies" type="checkbox" name="bodies" value="1"{{if .Bodies}} checked{{end}}> also search bodies (pauses live)</label>
 {{with .Host}}<input type="hidden" name="host" value="{{.}}">{{end}}{{with .Status}}<input type="hidden" name="status" value="{{.}}">{{end}}{{with .Since}}<input type="hidden" name="since" value="{{.}}">{{end}}{{if .Paused}}<input type="hidden" name="pause" value="1">{{end}}
 </form>
-<nav class="chips" aria-label="Filters">
+<nav class="chips" aria-label="Filters and view">
 {{range .Statuses}}<a class="chip{{if .On}} on{{end}}" href="{{.Href}}"{{if .On}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
 {{with .Host}}<a class="chip on" href="{{$.P.With "host" ""}}" aria-label="Stop showing only {{.}}">{{.}} ×</a>{{end}}
-</nav>
-<nav class="chips" aria-label="View">
-{{if .Paused}}<a class="chip toggle" href="{{.P.With "pause" ""}}" aria-pressed="true">Paused · tap for live</a>{{else}}<a class="chip toggle on" href="{{.P.With "pause" "1"}}" aria-pressed="false">Live · tap to pause</a>{{end}}
+<span class="sep"></span>
+{{if .Paused}}<a class="chip" role="button" href="{{.P.With "pause" ""}}" aria-pressed="true">Paused</a>{{else}}<a class="chip on" role="button" href="{{.P.With "pause" "1"}}" aria-pressed="false">Live</a>{{end}}
 <a class="chip" href="{{.P.With "clear" "1"}}">Clear</a>{{if .Since}}<a class="chip" href="{{.P.With "since" ""}}">Show all</a>{{end}}
 <noscript><a class="chip" href="{{.P}}">Reload</a></noscript>
-<a id="new" class="chip on" href="#" hidden></a>
-</nav>
-<div id="steps">{{range .Steps}}<p class="step">next: {{.}}</p>{{end}}</div></header>
-<ul id="rows">{{range .Rows}}<li><a class="row {{.Class}}" href="/flow?id={{.ID}}"><span class="s">{{.S}}</span><span class="t">{{.Text}}</span>
-<span class="meta">{{.Time}} · {{.Host}}{{if .MS}} · {{.MS}} ms{{end}}{{with .Device}} · {{.}}{{end}}{{with .Where}} · in {{.}}{{end}}</span></a></li>
+<a id="new" class="chip on" href="#" hidden aria-live="polite"></a>
+</nav></header>
+<div id="steps">{{range .Steps}}<p class="step">next: {{.}}</p>{{end}}</div>
+<ul id="rows">{{range .Rows}}<li><a class="row {{.Class}}" href="/flow?id={{.ID}}"><span class="s">{{.S}}</span> <span class="t"><b class="{{.MClass}}">{{.Method}}</b> {{.Text}}</span>
+<span class="meta">{{.Time}} · {{.Host}}{{if .MS}} · <span{{if .Slow}} class="slow"{{end}}>{{.MS}} ms</span>{{end}}{{with .Device}} · {{.}}{{end}}{{with .Where}} · in {{.}}{{end}}</span></a></li>
 {{else}}<li class="empty muted">{{.Empty}}</li>{{end}}</ul></body></html>`))
 
 // appJS asks /flows.json (with the page's own filters) and puts the rows in
@@ -341,7 +360,7 @@ var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 // the search field filters as you type.
 const appJS = `"use strict";
 (function () {
-  var last = "", pending = null, held = 0, timer = 0;
+  var shown = "", pending = null, gen = 0, timer = 0;
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -351,76 +370,96 @@ const appJS = `"use strict";
   function row(f) {
     var li = el("li"), a = el("a", "row " + f.class);
     a.href = "/flow?id=" + encodeURIComponent(f.id);
-    a.appendChild(el("span", "s", f.s));
-    a.appendChild(el("span", "t", f.text));
-    var meta = f.time + " · " + f.host;
-    if (f.ms) meta += " · " + f.ms + " ms";
-    if (f.device) meta += " · " + f.device;
-    if (f.where) meta += " · in " + f.where;
-    a.appendChild(el("span", "meta", meta));
+    a.appendChild(el("span", "s", f.s + " "));
+    var t = el("span", "t");
+    t.appendChild(el("b", f.mclass, f.method));
+    t.appendChild(document.createTextNode(" " + f.text));
+    a.appendChild(t);
+    var meta = el("span", "meta", f.time + " · " + f.host);
+    if (f.ms) {
+      meta.appendChild(document.createTextNode(" · "));
+      meta.appendChild(el("span", f.slow ? "slow" : "", f.ms + " ms"));
+    }
+    var rest = "";
+    if (f.device) rest += " · " + f.device;
+    if (f.where) rest += " · in " + f.where;
+    if (rest) meta.appendChild(document.createTextNode(rest));
+    a.appendChild(meta);
     li.appendChild(a);
     return li;
   }
   function params() { return new URLSearchParams(location.search); }
-  function show(d) {
-    var rows = document.getElementById("rows"), steps = document.getElementById("steps");
-    document.getElementById("line").textContent = d.line;
-    steps.replaceChildren.apply(steps, d.steps.map(function (s) { return el("p", "step", "next: " + s); }));
+  function rowsKey(d) { return JSON.stringify(d.rows); }
+  function showRows(d) {
     var lis = d.rows.map(row);
     if (!lis.length) lis = [el("li", "empty muted", d.empty)];
+    var rows = document.getElementById("rows");
     rows.replaceChildren.apply(rows, lis);
-    pending = null; held = 0;
+    shown = rowsKey(d);
+    pending = null;
+    document.getElementById("new").hidden = true;
+  }
+  // The line and the steps follow at once; the rows wait while the list is
+  // scrolled down (not to move it under the finger).
+  function apply(d) {
+    document.getElementById("line").textContent = d.line;
+    var steps = document.getElementById("steps");
+    steps.replaceChildren.apply(steps, d.steps.map(function (s) { return el("p", "step", "next: " + s); }));
+    if (rowsKey(d) === shown) { pending = null; document.getElementById("new").hidden = true; return; }
+    if (shown === "" || window.scrollY <= 40) { showRows(d); return; } // the first answer always shows
+    var seen = {};
+    Array.prototype.forEach.call(document.querySelectorAll("#rows a.row"), function (a) { seen[a.getAttribute("href")] = true; });
+    var fresh = d.rows.filter(function (f) { return !seen["/flow?id=" + encodeURIComponent(f.id)]; }).length;
+    pending = d;
     var n = document.getElementById("new");
-    n.hidden = true;
+    n.textContent = fresh ? fresh + " new · show" : "updated · show";
+    n.hidden = false;
   }
-  function apply(t) {
-    if (t === last) return;
-    last = t;
-    var d = JSON.parse(t);
-    if (window.scrollY > 40) { // scrolled down: do not move the list under the finger
-      var seen = {};
-      Array.prototype.forEach.call(document.querySelectorAll("#rows a.row"), function (a) { seen[a.getAttribute("href")] = true; });
-      held = d.rows.filter(function (f) { return !seen["/flow?id=" + encodeURIComponent(f.id)]; }).length;
-      pending = d;
-      var n = document.getElementById("new");
-      n.textContent = held ? held + " new · show" : "updated · show";
-      n.hidden = false;
-      return;
-    }
-    show(d);
-  }
+  // One request at a time: a newer one (a search) makes the older one's answer
+  // and its next poll count for nothing.
   function tick() {
     clearTimeout(timer);
-    var p = params();
-    fetch("/flows.json?" + p.toString(), {credentials: "same-origin", cache: "no-store"})
+    var my = ++gen;
+    fetch("/flows.json?" + params().toString(), {credentials: "same-origin", cache: "no-store"})
       .then(function (r) {
         // A new start of reqcove run: the link is old. Reloading shows the page saying so.
         if (r.status === 403) { location.reload(); return Promise.reject(r.status); }
-        return r.ok ? r.text() : Promise.reject(r.status);
+        return r.ok ? r.json() : Promise.reject(r.status);
       })
-      .then(apply)
+      .then(function (d) { if (my === gen) apply(d); })
       .catch(function () {
-        last = "";
-        document.getElementById("line").textContent = "reqcove is not answering; trying again";
+        if (my === gen) document.getElementById("line").textContent = "reqcove is not answering; trying again";
       })
       .then(function () {
         var q = params();
-        if (q.get("pause") || q.get("bodies")) return; // paused, or a search of bodies: no polling
+        if (my !== gen || q.get("pause") || q.get("bodies")) return; // paused, or a search of bodies: no polling
         timer = setTimeout(tick, q.get("q") ? 2000 : 1000);
       });
   }
   document.getElementById("new").addEventListener("click", function (e) {
     e.preventDefault();
     window.scrollTo(0, 0);
-    if (pending) show(pending);
+    if (pending) showRows(pending);
   });
+  window.addEventListener("scroll", function () { if (pending && window.scrollY <= 40) showRows(pending); });
   var q = document.getElementById("q"), bodies = document.getElementById("bodies"), typing = 0;
+  // The filter links keep the search typed since the page was drawn.
+  function relink(p) {
+    Array.prototype.forEach.call(document.querySelectorAll("nav a.chip"), function (a) {
+      var href = a.getAttribute("href");
+      if (!href || href.charAt(0) !== "/") return;
+      var parts = href.split("?"), lp = new URLSearchParams(parts[1] || "");
+      ["q", "bodies"].forEach(function (k) { if (p.get(k)) lp.set(k, p.get(k)); else lp.delete(k); });
+      a.href = lp.toString() ? parts[0] + "?" + lp.toString() : parts[0];
+    });
+  }
   function search() {
     var p = params();
     if (q.value) p.set("q", q.value); else p.delete("q");
     if (bodies.checked) p.set("bodies", "1"); else p.delete("bodies");
     history.replaceState(null, "", p.toString() ? "/?" + p.toString() : "/");
-    last = "";
+    relink(p);
+    window.scrollTo(0, 0); // at the top, the results come in at once
     tick();
   }
   q.addEventListener("input", function () { clearTimeout(typing); typing = setTimeout(search, 400); });
@@ -431,7 +470,7 @@ const appJS = `"use strict";
 
 var flowPage = template.Must(template.New("flow").Funcs(funcs).Parse(head + `</head><body>
 <header><a class="chip" href="/">← flows</a> <a class="chip" href="/?host={{.F.Host}}">only {{.F.Host}}</a></header>
-<h1>{{.F.Method}} <span class="{{class .F.Status .F.State}}">{{if .F.Status}}{{.F.Status}} {{.F.Reason}}{{else}}{{.F.State}}{{end}}</span></h1>
+<h1><b class="{{mclass .F.Method}}">{{.F.Method}}</b> <span class="badge {{class .F.Status .F.State}}">{{if .F.Status}}{{.F.Status}} {{.F.Reason}}{{else}}{{.F.State}}{{end}}</span></h1>
 <p class="url">{{.F.URL}}</p>
 {{with .F.MappedURL}}<p class="muted">sent to {{.}}</p>{{end}}
 {{with .F.Error}}<p class="bad">{{.}}</p>{{end}}
@@ -451,17 +490,25 @@ header{position:sticky;top:0;z-index:1;background:Canvas;padding:8px 0 6px;borde
 .search{display:flex;gap:8px;align-items:center;margin:8px 0 4px}
 .search input[type=search]{flex:1;min-width:0;font-size:16px;padding:8px 10px;border:1px solid #8886;border-radius:8px;background:Field;color:FieldText}
 .check{font-size:14px;white-space:nowrap;display:flex;align-items:center;gap:4px;min-height:44px}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
-.chip{display:inline-flex;align-items:center;min-height:36px;padding:0 12px;border:1px solid #8886;border-radius:18px;text-decoration:none;font-size:14px}
-.chip.on{background:#3478f6;border-color:#3478f6;color:#fff}
-.step{color:#c80;font-size:14px;margin:4px 0;white-space:pre-wrap}
+[hidden]{display:none!important}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;align-items:center}
+.chip{display:inline-flex;align-items:center;min-height:34px;padding:0 11px;border:1px solid #8886;border-radius:17px;text-decoration:none;font-size:14px}
+.chip.on{background:#1a5fd0;border-color:#1a5fd0;color:#fff}
+.sep{width:6px}
+.step{font-size:14px;margin:6px 0;padding:6px 8px;border-left:3px solid #e08a00;background:#e08a0014;white-space:pre-wrap;overflow-wrap:anywhere}
 ul{list-style:none;margin:0;padding:0}
 li{border-bottom:1px solid #8883}
 .row{display:grid;grid-template-columns:3.2em 1fr;column-gap:8px;min-height:44px;padding:8px 0;text-decoration:none}
-.row .s{font-weight:600;grid-row:span 2}.row .t{overflow-wrap:anywhere}
+.row .s{grid-row:span 2;align-self:start;text-align:center;font-weight:600;font-size:14px;padding:2px 0;border-radius:6px}
+.row .t{overflow-wrap:anywhere}.row .t b{font-weight:700;font-size:14px}
 .row .meta{grid-column:2;color:GrayText;font-size:14px;overflow-wrap:anywhere}
 .empty{padding:16px 0}
-.bad,.row.bad .s{color:#d33}.warn,.row.warn .s{color:#c80}.row.open .s{color:GrayText}
+.badge{font-size:14px;font-weight:600;padding:2px 8px;border-radius:6px}
+.ok .s,.badge.ok{color:#1a8a3a;background:#1a8a3a1f}.redir .s,.badge.redir{color:#2f6fd6;background:#2f6fd61f}
+.warn .s,.badge.warn{color:#c46a00;background:#e08a0024}.bad .s,.badge.bad{color:#d33;background:#dd33331f}
+.open .s,.badge.open{color:GrayText;background:#8882}
+.m-get{color:#2f6fd6}.m-post{color:#1a8a3a}.m-put{color:#c46a00}.m-del{color:#d33}.m-other{color:GrayText}
+.slow{color:#c46a00;font-weight:600}.bad{color:#d33}
 h1{font-size:18px}.url{overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}
 summary{min-height:44px;display:flex;align-items:center;font-weight:600}
 dl{margin:0}dt{font-weight:600;font-size:14px;margin-top:8px;overflow-wrap:anywhere}dd{margin:0 0 4px;overflow-wrap:anywhere;font-size:14px}

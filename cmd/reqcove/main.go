@@ -327,7 +327,7 @@ func run(ctx context.Context, args []string) error {
 	if *uiFlag {
 		page = webui.New(cap.Store, uiToken, func(id string, all bool) []string {
 			if all { // one of the user's own devices: the steps as `reqcove status` gives them
-				return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps
+				return withoutMacStep(statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps)
 			}
 			return pageSteps(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices(), id)
 		})

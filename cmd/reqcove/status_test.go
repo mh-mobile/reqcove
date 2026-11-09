@@ -315,6 +315,9 @@ func TestReadyBlock(t *testing.T) {
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
 		t.Errorf("the Mac step without the local proxy: %q", steps)
 	}
+	if steps := withoutMacStep(nextSteps(n, ready, allow, capture.CA{}, devs)); strings.Contains(strings.Join(steps, "\n"), "this Mac") || !strings.Contains(strings.Join(steps, "\n"), "no traffic from iphone") {
+		t.Errorf("the page's steps keep the Mac step, or lose others: %q", steps)
+	}
 	// Trusted while run runs: the step goes, without a restart (the check is macOS's).
 	if runtime.GOOS != "darwin" {
 		return
