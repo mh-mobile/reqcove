@@ -227,7 +227,8 @@ command it prints. On Linux nothing is changed for you: point apps at it
   requests recorded); not tried on Linux.
   - macOS (TLS only; it asks for your password):
     `security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`.
-    Firefox may keep its own store.
+    Firefox may keep its own store. To stop, run the command `reqcove status`
+    prints, or delete the CA in Keychain Access (its trust goes with it; tried).
   - Linux, Debian and Ubuntu: `sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`;
     Fedora: into `/etc/pki/ca-trust/source/anchors/` and `sudo update-ca-trust`;
     Chrome and Chromium: `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`;
