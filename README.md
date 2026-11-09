@@ -379,7 +379,9 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 - To skip approving the exit node for every new node, add an auto-approver to the
   tailnet policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
 - The CA stays the same as long as the state directory does. To use one CA on two
-  computers, copy `~/.reqcove/mitmproxy/` whole (it holds the private key).
+  computers, copy `~/.reqcove/mitmproxy/` whole (it holds the private key) into
+  `~/.reqcove/` on the other, with reqcove stopped there (after v0.1.0, also
+  before its first run).
 - Several exit nodes on one computer, each with its own settings, switched on the
   iPhone in the Tailscale app: one `run` per `--state` ([how](docs/several-exit-nodes.md)).
 - `reqcove cleanup` lists how to undo everything; `--delete-state` deletes the state

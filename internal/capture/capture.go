@@ -418,7 +418,7 @@ func ReadCA(confdir string) (CA, error) {
 // from several machines can tell them apart. An existing CA is never touched.
 // create_store is internal mitmproxy API: TestCANamed catches a change.
 func ensureCA(ctx context.Context, cfg Config) error {
-	if _, err := os.Stat(filepath.Join(cfg.Confdir, "mitmproxy-ca.pem")); err == nil {
+	if HasCA(cfg.Confdir) {
 		return nil
 	}
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
@@ -430,8 +430,17 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	return cmd.Run()
 }
 
-// CAFiles are what mitmproxy and mitm.it use of a CA, the key last: it is what
-// says a confdir has a CA (ensureCA), so a copy cut short never looks like one.
+// HasCA says confdir holds a CA: its key and its certificate. mitmproxy writes
+// the key first, so a key alone is a CA cut short in the making (never handed
+// out: mitm.it serves the certificate), made again.
+func HasCA(confdir string) bool {
+	_, keyErr := os.Stat(filepath.Join(confdir, "mitmproxy-ca.pem"))
+	_, certErr := os.Stat(filepath.Join(confdir, "mitmproxy-ca-cert.pem"))
+	return keyErr == nil && certErr == nil
+}
+
+// CAFiles are what mitmproxy and mitm.it use of a CA, the key last, so a copy
+// cut short never looks like a CA (HasCA).
 // Not copied: mitmproxy-ca.p12 (the key again, without a passphrase, which
 // mitmproxy does not read), the dhparam (made when missing) and config.yaml
 // (mitmweb's password).
@@ -441,15 +450,16 @@ var CAFiles = []string{"mitmproxy-ca-cert.pem", "mitmproxy-ca-cert.cer", "mitmpr
 // serves both nodes. It does nothing when src has no CA or dst has one, and
 // copies nothing when src lacks one of CAFiles; a copy that fails is removed.
 func CopyCA(src, dst string) (bool, error) {
-	if _, err := os.Stat(filepath.Join(src, "mitmproxy-ca.pem")); err != nil {
-		return false, nil
-	}
-	if _, err := os.Stat(filepath.Join(dst, "mitmproxy-ca.pem")); err == nil {
+	if !HasCA(src) || HasCA(dst) {
 		return false, nil
 	}
 	for _, name := range CAFiles {
 		if _, err := os.Stat(filepath.Join(src, name)); err != nil {
 			return false, fmt.Errorf("%s has a CA but no %s", src, name)
+		}
+		// A temporary file of a copy cut short (it may hold the key).
+		if left, _ := filepath.Glob(filepath.Join(dst, name+".*")); len(left) > 0 {
+			removeAll(left)
 		}
 	}
 	if err := os.MkdirAll(dst, 0o700); err != nil {

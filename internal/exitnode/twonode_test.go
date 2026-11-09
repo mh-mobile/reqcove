@@ -86,12 +86,12 @@ func TestTwoNodes(t *testing.T) {
 			UI: func(w http.ResponseWriter, r *http.Request, id string, all bool) {
 				fmt.Fprint(w, "page for "+id, " all=", all)
 			},
-			LocalProxy: localProxy,
-			OnDevices:  func(m map[string]string) { matched <- m },
+			LocalProxy: localProxy, StatusCmd: "reqcove status --state /s",
+			OnDevices: func(m map[string]string) { matched <- m },
 		})
 	}()
 	var names map[string]string
-	for len(names) == 0 { // the first reports come before login, with no devices
+	for len(names) <= 1 { // the first reports come before login, with Local only (or nothing)
 		select {
 		case names = <-matched:
 		case err := <-runErr:
@@ -116,6 +116,9 @@ func TestTwoNodes(t *testing.T) {
 		t.Fatalf("matched devices %v, want phone (%s) and %s", names, phoneID, Local.ID)
 	}
 	rcIP := reqcove.Addresses[0].Addr()
+	if !strings.Contains(logBuf.String(), "(`reqcove status --state /s` says what is missing)") {
+		t.Error("the login wait does not name the node's status command")
+	}
 	// tsnet uploads its logs (they carry destination IPs) unless this is set.
 	// In tests logpolicy never uploads anyway, so the knob is what can be checked.
 	if !envknob.NoLogsNoSupport() {

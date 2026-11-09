@@ -160,7 +160,7 @@ func status(ctx context.Context, args []string) error {
 	defer session.Close()
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "status"})
 	if err != nil {
-		return fmt.Errorf("the running reqcove did not answer status (%v); an older build? restart `reqcove run` with this one", err)
+		return fmt.Errorf("the running reqcove did not answer status (%v); an older build? restart `%s` with this one", err, withState("reqcove run", *state))
 	}
 	b, _ := json.Marshal(res.StructuredContent)
 	if *asJSON {
@@ -244,7 +244,7 @@ func printCA(state string) {
 func cleanup(args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
-	fs.String("hostname", "reqcove", "tailnet node name (with a --state named reqcove-NAME, that name)")
+	fs.String("hostname", "reqcove", "tailnet node name (by default the one run kept in the state)")
 	del := fs.Bool("delete-state", false, "delete the state directory (node key, CA and its private key, logs)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -305,7 +305,7 @@ func cleanup(args []string) error {
 	}
 	unlock, err := lockState(dir) // refuses while `reqcove run` holds it
 	if err != nil {
-		return fmt.Errorf("%w: stop `reqcove run` first", err)
+		return fmt.Errorf("%w: stop `%s` first", err, withState("reqcove run", *state))
 	}
 	defer unlock() // held until it is gone, so no run starts in between
 	if err := os.RemoveAll(dir); err != nil {

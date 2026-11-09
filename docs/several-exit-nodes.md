@@ -17,23 +17,27 @@ reqcove run --device iphone --allow-hosts api.staging.example.com --rules stagin
 
 Each in a terminal of its own. The first uses `~/.reqcove` and is named
 `reqcove`, as before. Write `--state ~/x` with a space: with `--state=~/x`
-the shell leaves the `~` as it is, and `run` refuses it.
+the shell leaves the `~` as it is, and every reqcove command refuses it.
 
 - **The name.** A new `--state` directory named `reqcove-NAME` (a leading dot
   left out) names the node `reqcove-NAME`: here `reqcove-staging`. Other
   directory names give `reqcove`; give `--hostname` to choose (then two nodes
   are not both `reqcove`, which Tailscale would tell apart by renaming one,
   from its documentation; not tried). The name is kept in the state directory
-  (`node-name`): the next start and `cleanup` use it. A directory an older
-  reqcove used keeps `reqcove`.
+  (`node-name`): the next start and `cleanup` use it, so a `--hostname` given
+  once stays (give another to change it). A directory an older reqcove used
+  keeps `reqcove`.
 - **Log in and approve each node once**, as the first time (`reqcove status
   --state ~/.reqcove-staging` says what is missing). An `autoApprovers` entry in
   the tailnet policy approves them for you (README, Tips).
 - **The CA.** A state directory without a CA gets a copy of `~/.reqcove`'s at
   start (`run` says where), so the profile already on the iPhone serves every
   node. One with a CA of its own keeps it. If `~/.reqcove` has no CA yet, the
-  node makes its own (`run` says so): start the default node first. If
-  `~/.reqcove`'s CA lacks a file, `run` stops and names it.
+  node makes its own (`run` says so): start the default node first, and wait
+  until it prints its CA (its first start downloads mitmproxy, which takes
+  minutes). If `~/.reqcove`'s CA lacks a file, `run` stops and names it. For
+  a node with a CA of its own (for testers' devices you will untrust apart,
+  say), move `~/.reqcove/mitmproxy` aside while it starts the first time.
 
 ## 2. On the iPhone: switch in the Tailscale app
 

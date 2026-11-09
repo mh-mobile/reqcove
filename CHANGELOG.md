@@ -35,9 +35,15 @@
   a CA gets a copy of `~/.reqcove`'s (listed in `~/.reqcove/ca-copies`, named
   by its `cleanup`), mitmweb takes 8091-8099 on this computer while 8081 is
   taken (the node's port stays 8081), the `--ui` page shows the node's name,
-  and the commands `run`, `status` and `cleanup` print carry `--state`. A
-  second `--local-proxy` stops at once, before anything changes. `run` refuses
-  a `--state` starting with `~` (`--state=~/x`, left unexpanded by the shell).
+  and the commands reqcove prints for the node carry `--state`. A second
+  `--local-proxy` stops at once, before anything changes.
+- `--hostname` is kept in the state directory: the next runs, and `cleanup`,
+  use it without the flag.
+- Every command refuses a `--state` starting with `~` (`--state=~/x`, left
+  unexpanded by the shell).
+- A `~/.reqcove` holding only a `mitmproxy/` folder copied from another
+  computer is taken as a state directory (README, Tips); before, `run`
+  refused it.
 - `--dns 1.1.1.1` works without the port (53).
 - `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);
   `.example.com` is refused with the right spelling, `*.example.com`.

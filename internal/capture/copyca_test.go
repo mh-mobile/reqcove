@@ -27,15 +27,20 @@ func TestCopyCA(t *testing.T) {
 		os.WriteFile(filepath.Join(src, name), []byte(name), 0o600)
 	}
 	// One that cannot be read, found once copying began: what was copied goes.
-	p12 := filepath.Join(src, "mitmproxy-ca-cert.p12")
-	os.Chmod(p12, 0)
-	if ok, err := CopyCA(src, dst); ok || err == nil {
-		t.Fatalf("unreadable .p12: %v %v", ok, err)
+	if os.Getuid() != 0 { // root reads it all the same
+		p12 := filepath.Join(src, "mitmproxy-ca-cert.p12")
+		os.Chmod(p12, 0)
+		if ok, err := CopyCA(src, dst); ok || err == nil {
+			t.Fatalf("unreadable .p12: %v %v", ok, err)
+		}
+		if ents, _ := os.ReadDir(dst); len(ents) != 0 {
+			t.Fatalf("a failed copy left %v", ents)
+		}
+		os.Chmod(p12, 0o600)
 	}
-	if ents, _ := os.ReadDir(dst); len(ents) != 0 {
-		t.Fatalf("a failed copy left %v", ents)
-	}
-	os.Chmod(p12, 0o600)
+	// A temporary file a copy cut short left (it may hold the key) goes too.
+	os.MkdirAll(dst, 0o700)
+	os.WriteFile(filepath.Join(dst, "mitmproxy-ca.pem.12345"), []byte("key"), 0o600)
 	if ok, err := CopyCA(src, dst); !ok || err != nil {
 		t.Fatalf("copy: %v %v", ok, err)
 	}

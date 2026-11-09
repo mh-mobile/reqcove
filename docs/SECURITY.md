@@ -31,8 +31,9 @@ After v0.1.0, a `--state` directory without a CA gets a copy of `~/.reqcove`'s
 at start (several exit nodes on one computer, one profile on the iPhone):
 `mitmproxy-ca.pem` with the key, and the certificate files; not
 `mitmproxy-ca.p12`, nor mitmweb's password. `run` logs where it copied it, and
-refuses a `--state` starting with `~` (`--state=~/x`, which the shell leaves
-as it is, would put the key in `./~/x`). The key is then in each such
+every command refuses a `--state` starting with `~` (`--state=~/x`, which the
+shell leaves as it is, would put the key in `./~/x`, and `cleanup` would call
+the real one gone). The key is then in each such
 directory, each 0700 with the files 0600 (a test): deleting one leaves it in
 the others, and removing the profile from the iPhone is what stops them all.
 `~/.reqcove/ca-copies` lists the copies, and `cleanup` of `~/.reqcove` names

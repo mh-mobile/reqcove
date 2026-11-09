@@ -124,7 +124,7 @@ func run(ctx context.Context, args []string) error {
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081 (8091-8099 while another run has it), and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
 	state := fs.String("state", defaultState(), "state directory")
-	fs.String("hostname", "reqcove", "tailnet node name (with a --state named reqcove-NAME, that name)")
+	fs.String("hostname", "reqcove", "tailnet node name, kept in the state for the next runs (with a new --state named reqcove-NAME, that name)")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
 	mitmSpec := fs.String("mitmproxy-spec", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
 	python := fs.String("python", "3.14", "Python for uvx")
@@ -137,9 +137,6 @@ func run(ctx context.Context, args []string) error {
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
 	if err := parseFlags(fs, args); err != nil {
 		return err
-	}
-	if strings.HasPrefix(*state, "~") { // --state=~/x: the shell leaves the ~ as it is
-		return fmt.Errorf("--state %s: the shell did not expand ~ (with =, it does not): write --state ~/%s, with a space, or the full path", *state, strings.TrimPrefix(strings.TrimPrefix(*state, "~"), "/"))
 	}
 	hostname := nodeName(fs, *state)
 	if len(devices) == 0 && !*localProxy {
@@ -217,20 +214,20 @@ func run(ctx context.Context, args []string) error {
 	if err := keepNodeName(*state, hostname); err != nil {
 		return err
 	}
-	if confdir := filepath.Join(*state, "mitmproxy"); !isDefaultState(*state) && !exists(filepath.Join(confdir, "mitmproxy-ca.pem")) {
+	if confdir := filepath.Join(*state, "mitmproxy"); !isDefaultState(*state) && !capture.HasCA(confdir) {
 		// One CA for every node here, so the iPhone's one profile serves them all.
 		from := filepath.Join(defaultState(), "mitmproxy")
 		abs, _ := filepath.Abs(confdir)
 		switch copied, err := capture.CopyCA(from, confdir); {
 		case err != nil:
-			return fmt.Errorf("the CA of %s, to share it with this node: %w (copy that mitmproxy folder whole from where it came)", defaultState(), err)
+			return fmt.Errorf("the CA of %s, to share it with this node: %w (if the default node is starting for the first time, start this one once it is up; else copy that mitmproxy folder whole from where it came)", defaultState(), err)
 		case copied:
 			log.Printf("using the CA of %s, copied into %s: the iPhone's profile for it serves this node too", defaultState(), abs)
 			if err := noteCACopy(abs); err != nil {
 				log.Printf("WARN: %s does not list this copy (%v): its cleanup will not name it", defaultState(), err)
 			}
 		default:
-			log.Printf("%s has no CA yet: this node makes one of its own, and the iPhone needs its profile too (to share one, start the default node first, then this one with a new --state)", defaultState())
+			log.Printf("%s has no CA yet: this node makes one of its own, and the iPhone needs its profile too (to share one: stop this node, start the default one and wait until it prints its CA, then start this one with a new --state)", defaultState())
 		}
 	}
 	if !isDefaultState(*state) {
@@ -496,6 +493,11 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (quote values with spaces, such as --device \"Taro's iPhone\")", fs.Arg(0))
 	}
+	// --state=~/x, or a quoted ~: the shell left the ~, which would name ./~/x
+	// (for run, a place to copy the CA's key into; for cleanup, one already gone).
+	if f := fs.Lookup("state"); f != nil && strings.HasPrefix(f.Value.String(), "~") {
+		return fmt.Errorf("--state %s: the shell did not expand the ~ (it does not after =, nor in quotes): write --state ~/… with a space, or the full path", f.Value.String())
+	}
 	return nil
 }
 
@@ -526,7 +528,11 @@ func openState(dir string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool { return e.Name() == ".DS_Store" }) // Finder leaves it in folders it opened
+	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
+		// Finder leaves .DS_Store in folders it opened; mitmproxy/ is a CA copied
+		// from another computer before the first run (README, Tips).
+		return e.Name() == ".DS_Store" || e.Name() == "mitmproxy" && e.IsDir()
+	})
 	if len(ents) > 0 && !isState(dir) {
 		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
 	}
@@ -565,7 +571,7 @@ func runMCP(ctx context.Context, args []string) error {
 	}
 	sock := filepath.Join(*state, "mcp.sock")
 	if err := mcpserver.Relay(ctx, sock, os.Stdin, os.Stdout); err != nil {
-		return fmt.Errorf("is `reqcove run` running? %w", err)
+		return fmt.Errorf("is `%s` running? %w", withState("reqcove run", *state), err)
 	}
 	return nil
 }

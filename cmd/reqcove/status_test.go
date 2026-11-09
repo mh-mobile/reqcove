@@ -231,6 +231,14 @@ func TestOpenState(t *testing.T) {
 	} else {
 		unlock()
 	}
+	// A CA copied from another computer before the first run (README, Tips).
+	copied := t.TempDir()
+	os.Mkdir(filepath.Join(copied, "mitmproxy"), 0o700)
+	if unlock, err := openState(copied); err != nil {
+		t.Errorf("openState refused a folder with only mitmproxy/: %v", err)
+	} else {
+		unlock()
+	}
 	fresh := filepath.Join(t.TempDir(), "state")
 	unlock, err := openState(fresh)
 	if err != nil {

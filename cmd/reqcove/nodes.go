@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -34,7 +35,8 @@ func nodeName(fs *flag.FlagSet, state string) string {
 		return fs.Lookup("hostname").Value.String()
 	}
 	if b, err := os.ReadFile(filepath.Join(state, nodeNameFile)); err == nil {
-		if n := strings.TrimSpace(string(b)); n != "" {
+		first, _, _ := strings.Cut(strings.TrimSpace(string(b)), "\n") // a hand edit cannot split the log lines
+		if n := strings.TrimSpace(first); n != "" {
 			return n
 		}
 	}
@@ -50,11 +52,6 @@ func nodeName(fs *flag.FlagSet, state string) string {
 		return base
 	}
 	return "reqcove"
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // caCopies, in the default state, lists the confdirs its CA was copied into,
@@ -130,9 +127,16 @@ func mcpHint(state, name string) string {
 		abs = state
 	}
 	if name == "reqcove" { // the default node's, already
-		name = "reqcove-" + filepath.Base(abs)
+		name = "reqcove-" + strings.TrimPrefix(filepath.Base(abs), ".")
 	}
-	return fmt.Sprintf("claude mcp add %s -- reqcove mcp --state %s", shellWord(name), shellWord(abs))
+	// Claude Code takes letters, digits, - and _ in a server's name.
+	name = strings.Map(func(r rune) rune {
+		if r == '-' || r == '_' || r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			return r
+		}
+		return '-'
+	}, name)
+	return fmt.Sprintf("claude mcp add %s -- reqcove mcp --state %s", name, shellWord(abs))
 }
 
 // nodeWebLink is mitmweb's link, on addr here, as the iPhone opens it: through

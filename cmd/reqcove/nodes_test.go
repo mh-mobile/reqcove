@@ -17,6 +17,11 @@ import (
 // default state (~/.reqcove) into new ones, and must not take the real one.
 var testHome string
 
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func TestMain(m *testing.M) {
 	home, err := os.MkdirTemp("", "reqcove-home")
 	if err != nil {
@@ -43,6 +48,12 @@ func TestNodeName(t *testing.T) {
 	used := filepath.Join(t.TempDir(), ".reqcove-old")
 	os.MkdirAll(filepath.Join(used, "tsnet"), 0o700)
 	os.WriteFile(filepath.Join(used, "tsnet", "tailscaled.state"), nil, 0o600)
+	kept := filepath.Join(t.TempDir(), ".reqcove-kept") // made by this version: node-name, and tsnet's state after its first start
+	os.MkdirAll(filepath.Join(kept, "tsnet"), 0o700)
+	os.WriteFile(filepath.Join(kept, "tsnet", "tailscaled.state"), nil, 0o600)
+	os.WriteFile(filepath.Join(kept, nodeNameFile), []byte("reqcove-kept\n"), 0o600)
+	edited := t.TempDir()
+	os.WriteFile(filepath.Join(edited, nodeNameFile), []byte("  mine \nsecond line\n"), 0o600)
 	dot := "."
 	c := filepath.Join(t.TempDir(), "reqcove-c")
 	os.Mkdir(c, 0o700)
@@ -62,6 +73,8 @@ func TestNodeName(t *testing.T) {
 		{[]string{"--hostname", "mine"}, "/x/.reqcove-staging", "mine"},
 		{[]string{"--hostname", "reqcove"}, "/x/.reqcove-staging", "reqcove"}, // kept as it was
 		{nil, used, "reqcove"},                                                // an older reqcove's state: its name then
+		{nil, kept, "reqcove-kept"},                                           // the kept name before that rule
+		{nil, edited, "mine"},                                                 // the first line only
 		{nil, dot, "reqcove-c"},                                               // "." is the directory too
 	} {
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
@@ -111,12 +124,13 @@ func TestRunCopiesCA(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(state, "mitmproxy", "mitmproxy-ca.pem"))
 		return string(b)
 	}
-	fresh := filepath.Join(t.TempDir(), ".reqcove-b")
-	run(context.Background(), args(fresh))
+	t.Chdir(t.TempDir())
+	run(context.Background(), args(".reqcove-b")) // relative: ca-copies must not be
+	fresh, _ := filepath.Abs(".reqcove-b")
 	if key(fresh) != "mitmproxy-ca.pem" {
 		t.Errorf("new state: %q", key(fresh))
 	}
-	if b, _ := os.ReadFile(filepath.Join(defaultState(), caCopies)); !strings.Contains(string(b), filepath.Join(fresh, "mitmproxy")) {
+	if b, _ := os.ReadFile(filepath.Join(defaultState(), caCopies)); string(b) != filepath.Join(fresh, "mitmproxy")+"\n" {
 		t.Errorf("%s: %q", caCopies, b)
 	}
 	opened := t.TempDir()
@@ -132,6 +146,7 @@ func TestRunCopiesCA(t *testing.T) {
 	own := t.TempDir()
 	os.MkdirAll(filepath.Join(own, "mitmproxy"), 0o700)
 	os.WriteFile(filepath.Join(own, "mitmproxy", "mitmproxy-ca.pem"), []byte("own"), 0o600)
+	os.WriteFile(filepath.Join(own, "mitmproxy", "mitmproxy-ca-cert.pem"), []byte("own"), 0o600) // a CA: key and certificate
 	os.WriteFile(filepath.Join(own, stateMarker), nil, 0o600)
 	run(context.Background(), args(own))
 	if key(own) != "own" {
@@ -151,12 +166,22 @@ func TestRunCopiesCA(t *testing.T) {
 // space): refused, and nothing made, rather than a ./~/x holding a CA's key.
 func TestStateTildeRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
-	err := run(context.Background(), []string{"--device", "phone", "--state=~/x", "--uvx", "/usr/bin/false"})
-	if err == nil || !strings.Contains(err.Error(), "--state ~/x") {
-		t.Errorf("got %v", err)
+	os.MkdirAll(filepath.Join("~", "x"), 0o700) // a ./~/x that cleanup must not take for the state, nor call gone
+	os.WriteFile(filepath.Join("~", "x", stateMarker), nil, 0o600)
+	ctx := context.Background()
+	for name, cmd := range map[string]func() error{
+		"run":     func() error { return run(ctx, []string{"--device", "phone", "--state=~/y", "--uvx", "/usr/bin/false"}) },
+		"cleanup": func() error { return cleanup([]string{"--state=~/x", "--delete-state"}) },
+		"status":  func() error { return status(ctx, []string{"--state=~/x"}) },
+		"har":     func() error { return har(ctx, []string{"--state=~/x"}) },
+		"mcp":     func() error { return runMCP(ctx, []string{"--state", "~/x"}) },
+	} {
+		if err := cmd(); err == nil || !strings.Contains(err.Error(), "the shell did not expand the ~") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
-	if exists("~") {
-		t.Error("./~ was made")
+	if exists(filepath.Join("~", "y")) || !exists(filepath.Join("~", "x")) {
+		t.Error("./~/y was made, or ./~/x deleted")
 	}
 }
 
@@ -200,11 +225,14 @@ func TestMcpHint(t *testing.T) {
 	if got := mcpHint("/x/.reqcove-b", "reqcove-b"); got != "claude mcp add reqcove-b -- reqcove mcp --state /x/.reqcove-b" {
 		t.Errorf("another: %q", got)
 	}
-	if got := mcpHint("/x/my state's", "my node"); got != `claude mcp add 'my node' -- reqcove mcp --state '/x/my state'\''s'` {
+	// Claude Code takes letters, digits, - and _ in the name; the path is quoted.
+	if got := mcpHint("/x/my state's", "my node.v2"); got != `claude mcp add my-node-v2 -- reqcove mcp --state '/x/my state'\''s'` {
 		t.Errorf("quoted: %q", got)
 	}
-	if got := mcpHint("/x/staging", "reqcove"); got != "claude mcp add reqcove-staging -- reqcove mcp --state /x/staging" { // not the default node's name
-		t.Errorf("named reqcove: %q", got)
+	for state, want := range map[string]string{"/x/staging": "reqcove-staging", "/x/.staging": "reqcove-staging", "/x/my stage": "reqcove-my-stage"} { // not the default node's name
+		if got := mcpHint(state, "reqcove"); !strings.HasPrefix(got, "claude mcp add "+want+" -- ") {
+			t.Errorf("%s named reqcove: %q", state, got)
+		}
 	}
 	cwd, _ := os.Getwd()
 	if got := mcpHint("rel", "reqcove-r"); !strings.HasSuffix(got, "--state "+filepath.Join(cwd, "rel")) {
@@ -246,7 +274,7 @@ func TestCommandsCarryState(t *testing.T) {
 	}
 	other := filepath.Join(t.TempDir(), ".reqcove-b")
 	out := captureStdout(t, func() error { return offlineStatus(other, "/nonexistent/uvx") })
-	for _, want := range []string{"`reqcove run --state " + other + "` will ask", "reqcove run --device NAME --allow-hosts api.example.com --state " + other} {
+	for _, want := range []string{"`reqcove run --state " + other + "` will ask", "reqcove run --device NAME --allow-hosts api.example.com --state " + other, "the first `reqcove run --state " + other + "` copies"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
@@ -283,5 +311,31 @@ func TestCleanupNamesCACopies(t *testing.T) {
 	out := captureStdout(t, func() error { return cleanup(nil) })
 	if strings.Count(out, "holds a copy of this CA") != 1 || !strings.Contains(out, copy+" holds a copy") {
 		t.Errorf("cleanup:\n%s", out)
+	}
+}
+
+// har's error names the node's run, with its --state.
+func TestHarCarriesState(t *testing.T) {
+	other := t.TempDir()
+	if err := har(context.Background(), []string{"--state", other}); err == nil || !strings.Contains(err.Error(), "reqcove run --state "+other) {
+		t.Errorf("got %v", err)
+	}
+}
+
+// A key without its certificate is a CA cut short in the making: copied over.
+func TestCopyOverHalfMadeCA(t *testing.T) {
+	def := filepath.Join(tempDefaultState(t), "mitmproxy")
+	os.MkdirAll(def, 0o700)
+	defer os.RemoveAll(defaultState())
+	for _, name := range capture.CAFiles {
+		os.WriteFile(filepath.Join(def, name), []byte(name), 0o600)
+	}
+	half := t.TempDir()
+	os.MkdirAll(filepath.Join(half, "mitmproxy"), 0o700)
+	os.WriteFile(filepath.Join(half, "mitmproxy", "mitmproxy-ca.pem"), []byte("cut short"), 0o600)
+	os.WriteFile(filepath.Join(half, stateMarker), nil, 0o600)
+	run(context.Background(), []string{"--device", "phone", "--state", half, "--uvx", "/usr/bin/false"})
+	if b, _ := os.ReadFile(filepath.Join(half, "mitmproxy", "mitmproxy-ca.pem")); string(b) != "mitmproxy-ca.pem" {
+		t.Errorf("half-made CA: %q", b)
 	}
 }
