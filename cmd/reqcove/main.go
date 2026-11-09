@@ -334,10 +334,11 @@ func run(ctx context.Context, args []string) error {
 		pageFn = page.Serve
 	}
 	var shown bool
+	var gate readyGate
 	onStatus := func(s exitnode.Status) {
 		node.set(s)
 		ip := firstIPv4(s.IPs)
-		if shown || s.Backend != "Running" || ip == "" {
+		if shown || ip == "" || !gate.ready(s) {
 			return
 		}
 		shown = true
@@ -779,4 +780,23 @@ func readyBlock(devices map[string]string, uiLink, webLink, state string, steps 
 	}
 	fmt.Fprintf(&b, "──────────────────────────────────\n")
 	return b.String()
+}
+
+// readyGate says when the node is ready to report: Running at two polls in a
+// row that agree on the first step left (as the log's steps wait), since just
+// after start an approved node looks unapproved for a moment.
+type readyGate struct {
+	seen  bool
+	first string
+}
+
+func (g *readyGate) ready(s exitnode.Status) bool {
+	if s.Backend != "Running" {
+		g.seen = false
+		return false
+	}
+	first := exitnode.FirstStep(s)
+	agreed := g.seen && first == g.first
+	g.seen, g.first = true, first
+	return agreed
 }

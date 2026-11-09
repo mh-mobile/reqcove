@@ -331,3 +331,19 @@ func TestQRsSideBySide(t *testing.T) {
 		t.Errorf("40 columns: %d rows", n)
 	}
 }
+
+// The ready block waits for two Running polls that agree: the first one,
+// before the netmap says the exit node is approved, does not count.
+func TestReadyGate(t *testing.T) {
+	var g readyGate
+	unapproved := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}
+	approved := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	for i, c := range []struct {
+		s    exitnode.Status
+		want bool
+	}{{exitnode.Status{Backend: "Starting"}, false}, {unapproved, false}, {approved, false}, {approved, true}} {
+		if got := g.ready(c.s); got != c.want {
+			t.Errorf("poll %d: ready %v, want %v", i, got, c.want)
+		}
+	}
+}
