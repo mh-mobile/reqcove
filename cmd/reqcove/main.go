@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -44,6 +45,7 @@ const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
 
 Usage:
   reqcove run --device NAME --allow-hosts HOSTS [flags]
+                     (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
   reqcove status     what reqcove is doing, and the next steps
@@ -126,10 +128,11 @@ func run(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
+	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if len(devices) == 0 {
+	if len(devices) == 0 && !*localProxy {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
 		if names := iosDevices(); len(names) > 0 {
 			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
@@ -193,6 +196,10 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
+	// A run that died with the system proxy pointed at it: put it back first.
+	if err := restoreSystemProxy(*state); err != nil {
+		log.Printf("WARN: the system's web proxies, pointed at reqcove by a run that did not stop cleanly, could not be put back: %v. System Settings, Network, Details, Proxies", err)
+	}
 	keepAwake(ctx)
 	var upstreamCAFile string
 	if *upstreamCA != "" {
@@ -324,12 +331,39 @@ func run(ctx context.Context, args []string) error {
 			printQR(os.Stderr, link, "to open mitmweb on the iPhone, scan this with the camera (unmasked, and it can edit and replay)")
 		}
 	}
+	localAddr := ""
+	if *localProxy {
+		localAddr = fmt.Sprintf("127.0.0.1:%d", localProxyPort)
+		caPEM := filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")
+		if runtime.GOOS == "darwin" {
+			if err := pointSystemProxy(*state); err != nil {
+				log.Printf("WARN: could not point the system's web proxies at %s (%v): set them yourself in System Settings, Network, Details, Proxies", localAddr, err)
+			} else {
+				defer func() {
+					if err := restoreSystemProxy(*state); err != nil {
+						log.Printf("WARN: could not put the system's web proxies back: %v. System Settings, Network, Details, Proxies", err)
+					}
+				}()
+				log.Printf("local proxy on %s: this computer's web proxies point at it until reqcove stops (it records the allowed hosts as the device \"local\")", localAddr)
+			}
+			if sims, err := trustInSimulators(caPEM); err != nil {
+				log.Printf("WARN: the CA into the iOS Simulator: %v", err)
+			} else if len(sims) > 0 {
+				log.Printf("CA added to the booted iOS Simulators: %s (one booted later: xcrun simctl keychain booted add-root-cert %s)", strings.Join(sims, ", "), caPEM)
+			} else {
+				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", caPEM)
+			}
+		} else {
+			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s) and have them trust the CA %s; recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
+		}
+	}
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
 		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
-		UI:        pageFn,
-		Web:       webAddr,
-		OnDevices: cap.Store.SetDeviceNames, OnStatus: onStatus,
+		UI:         pageFn,
+		Web:        webAddr,
+		LocalProxy: localAddr,
+		OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	if ctx.Err() != nil {

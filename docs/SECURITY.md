@@ -212,6 +212,19 @@ options. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
 reuse): the per-request check keeps those out of Reqcove's records only.
 
+## The local proxy (`--local-proxy`)
+
+After v0.1.0. An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
+iOS Simulator), with no password: any process on this computer, of any user, can
+use it, and what it sends to `--allow-hosts` hosts is recorded as the device
+`local`. It reaches nothing such a process could not reach directly, so it does
+not refuse this computer or the LAN as the exit node does; it refuses IPv6, and
+leaves Apple's hosts and the tailnet undecrypted. On macOS, `run` points the
+system's web proxies at it while it runs (keeping what they were in the state
+directory, 0600, to put back when it stops, at the next start, or with
+`reqcove cleanup`), so every app here goes through it while it runs. Not tried
+yet with the real `networksetup` and Simulator: the tests use stand-ins.
+
 ## Other processes on this computer
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each

@@ -114,6 +114,7 @@ setting, so this works on Wi-Fi only.
 | `--rules-reload` | read that file again whenever it changes, while running (see below; after v0.1.0) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
+| `--local-proxy` | an HTTP proxy on `127.0.0.1:8082` for this computer's own apps, such as the iOS Simulator (see below; after v0.1.0) |
 | `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
 | `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow); after v0.1.0 also on the node's port 8081 for your own devices on the tailnet, with the link and QR code `run` prints (not tried from another device yet: the tests use a stand-in for mitmweb) |
 | `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out, after v0.1.0); `system` for the first nameserver in `/etc/resolv.conf` |
@@ -179,6 +180,31 @@ yet: following new flows without reloading, and the page from other devices.
   opened the link (a token new at each start) can read it.
 - Tailscale must be on; it works with the exit node or the Remote Proxy, or
   neither. The page's own requests are not recorded.
+
+### The iOS Simulator (`--local-proxy`)
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+```sh
+reqcove run --allow-hosts api.example.com --local-proxy   # --device too, for an iPhone as well
+```
+
+The Simulator's apps use this computer's network, which the exit node does not
+carry. `--local-proxy` opens an HTTP proxy on `127.0.0.1:8082` instead, and its
+requests are recorded as the device `local`. On macOS, as Charles and Proxyman
+do, `run` points the system's web proxies (HTTP and HTTPS, every enabled network
+service) at it and puts back what was there when it stops; if it dies, the next
+start or `reqcove cleanup` puts them back. It also adds Reqcove's CA to the booted
+Simulators (`xcrun simctl keychain … add-root-cert`); one booted later needs the
+command it prints. On Linux nothing is changed for you: point apps at it
+(`HTTPS_PROXY=http://127.0.0.1:8082`) and have them trust the CA.
+
+- Every app on this computer then goes through it, not only the Simulator. Only
+  `--allow-hosts` hosts are decrypted and recorded, but those break in apps on
+  this computer that do not trust Reqcove's CA (Safari on the Mac, say).
+- It does not refuse this computer or the LAN, as the exit node does: the
+  requests come from this computer's own apps, which could reach them anyway.
+- Not tried yet with the real `networksetup` and Simulator: the tests use stand-ins.
 
 ### A HAR file
 
@@ -276,10 +302,10 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   `--allow-hosts` falls back too (and without `--allow-hosts` as well). QUIC on a
   port other than 443 is not dropped; it goes on, and is not recorded.
 - Phone calls through the exit node have not been tried.
-- The iOS Simulator on the computer running Reqcove is not covered: its apps use
-  this computer's network, which Reqcove does not carry. On another Mac that is a
-  `--device` and uses Reqcove's exit node, the Simulator's traffic should go
-  through with the Mac's own, once the Simulator trusts Reqcove's CA (not tried).
+- The iOS Simulator on the computer running Reqcove needs `--local-proxy` (see
+  above; after v0.1.0). On another Mac that is a `--device` and uses Reqcove's
+  exit node, the Simulator's traffic should go through with the Mac's own, once
+  the Simulator trusts Reqcove's CA (not tried).
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
   can use a lot of memory (if mitmproxy runs out, reqcove restarts it; when it is down again within a minute
   after 5 restarts in a row, `run` stops).

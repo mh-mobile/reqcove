@@ -41,8 +41,11 @@ type Config struct {
 	UI func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
 	// Web, if set, is mitmweb's address on this computer (127.0.0.1:PORT): the
 	// node relays its own PORT there, for this user's own devices only.
-	Web     string
-	Verbose bool // log tsnet's backend and every flow decision
+	Web string
+	// LocalProxy, if set (127.0.0.1:PORT), is an HTTP proxy for this computer's
+	// own apps (the iOS Simulator), recorded as the device Local.
+	LocalProxy string
+	Verbose    bool // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
 	// OnStatus is called every few seconds, from start, with where the node stands.
@@ -101,6 +104,27 @@ func Run(ctx context.Context, cfg Config) error {
 		s.UserLogf = func(string, ...any) {}
 	}
 	go logLoop()
+	if cfg.LocalProxy != "" {
+		ln, err := net.Listen("tcp", cfg.LocalProxy)
+		if err != nil {
+			return fmt.Errorf("local proxy: %w", err)
+		}
+		srv := &http.Server{
+			Handler: &remoteProxy{
+				local:   true,
+				policy:  current.Load,
+				resolve: resolver(cfg.DNS),
+				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
+					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
+				},
+			},
+			ReadHeaderTimeout: 30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(ln)
+		defer srv.Close()
+	}
 	// Registered before Start; until current is set, decideTCP rejects everything.
 	s.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (func(net.Conn), bool) {
 		p := current.Load()
@@ -242,6 +266,9 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			names := map[string]string{}
+			if cfg.LocalProxy != "" {
+				names[Local.ID] = Local.Name
+			}
 			for ip, d := range devices {
 				p.allowSrc = append(p.allowSrc, ip)
 				names[d.ID] = d.Name

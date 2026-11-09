@@ -101,6 +101,24 @@ func decideUDP(p *policy, src, dst netip.AddrPort) bool {
 	return dst.Port() != 443 || apple.Contains(dst.Addr().Unmap())
 }
 
+// decideLocal is for the local proxy: this computer's own apps, which could
+// reach this computer and its LAN directly anyway, so those are not refused.
+// IPv6 is, as for the devices (apps fall back to IPv4).
+func decideLocal(dst netip.AddrPort) verdict {
+	d := dst.Addr().Unmap()
+	switch {
+	case !d.Is4():
+		return reject
+	case apple.Contains(d), tailnetRange.Contains(d):
+		return direct
+	case dst.Port() == 80 || dst.Port() == 443:
+		return socks
+	}
+	return direct
+}
+
+var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
+
 // decideTCP must stay a pure table lookup: tsnet calls it with its lock held.
 func decideTCP(p *policy, src, dst netip.AddrPort) verdict {
 	if !carried(p, src, dst) {

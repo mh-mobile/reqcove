@@ -59,6 +59,9 @@ func TestNextSteps(t *testing.T) {
 		{"CA fine", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3, Flows: 10}}, nil},
 		{"silent device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true}}, []string{"no traffic from phone yet", "reqcove.ts.net", "off and on again"}},
 		{"busy device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, Flows: 1}}, nil},
+		// The local proxy is not a phone: no exit node to turn on, and its CA step names the Simulator.
+		{"local, silent", ok, ready, allow, []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true}}, nil},
+		{"local, CA", ok, ready, allow, []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, TLSFailures: 2}}, []string{"local proxy's apps refuse", "simctl keychain"}},
 	} {
 		got := strings.Join(nextSteps(c.node, c.stats, c.allow, ca, c.devices), "\n")
 		if len(c.want) == 0 && got != "" {

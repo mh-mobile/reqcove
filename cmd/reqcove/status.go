@@ -72,6 +72,12 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
 	}
 	for _, d := range devices {
+		if d.ID == exitnode.Local.ID {
+			if d.TLSFailures > 0 && d.Flows == 0 {
+				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem), unless the app pins its certificates", ca.Name))
+			}
+			continue // not a phone: no exit node to turn on
+		}
 		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && node.ExitApproved {
 			// The PeerAPI port stays the same across restarts (derived from the IP), but a device
 			// that tried DNS while reqcove was down can stay DNS-dead (tailscale/tailscale#20870).
@@ -198,6 +204,18 @@ func cleanup(args []string) error {
 	}
 	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", *hostname)
 	fmt.Printf("  4. This computer: delete %s (`reqcove cleanup --delete-state`).\n", *state)
+	if _, err := os.Stat(savedProxyFile(*state)); err == nil { // --local-proxy left them pointed at reqcove
+		if unlock, err := lockState(*state); err != nil {
+			fmt.Println("  The system's web proxies point at the reqcove that is running; they go back when it stops.")
+		} else {
+			if err := restoreSystemProxy(*state); err != nil {
+				fmt.Printf("  The system's web proxies still point at reqcove and could not be put back (%v): System Settings, Network, Details, Proxies.\n", err)
+			} else {
+				fmt.Println("  The system's web proxies, left pointed at reqcove by a run that died, are back as they were.")
+			}
+			unlock()
+		}
+	}
 	if !*del {
 		return nil
 	}

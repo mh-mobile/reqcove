@@ -294,3 +294,44 @@ func TestRemoteProxyWeb(t *testing.T) {
 		srv.Close()
 	}
 }
+
+// The local proxy: this computer's own apps, as the device Local. It does not
+// refuse this computer or the LAN (they could reach them anyway), refuses IPv6,
+// and sends 80/443 to mitmproxy, the tailnet and Apple direct.
+func TestLocalProxy(t *testing.T) {
+	type dialed struct {
+		v      verdict
+		device string
+		dst    string
+	}
+	var got []dialed
+	rp := &remoteProxy{local: true, policy: func() *policy { return nil }, // no tailnet yet: the local proxy works all the same
+		resolve: func(_ context.Context, h string) (netip.Addr, error) { return netip.ParseAddr(h) },
+		dial: func(_ context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
+			got = append(got, dialed{v, device, dst.String()})
+			return nil, errors.New("recorded")
+		}}
+	for _, c := range []struct {
+		url  string
+		want *dialed
+	}{
+		{"http://192.168.1.10/", &dialed{socks, "local", "192.168.1.10:80"}},
+		{"http://203.0.113.5:443/", &dialed{socks, "local", "203.0.113.5:443"}},
+		{"http://203.0.113.5:3000/", &dialed{direct, "local", "203.0.113.5:3000"}},
+		{"http://100.64.0.9/", &dialed{direct, "local", "100.64.0.9:80"}},
+		{"http://17.253.144.10/", &dialed{direct, "local", "17.253.144.10:80"}},
+		{"http://[2001:db8::1]/", nil},
+	} {
+		got = nil
+		r := httptest.NewRequest("GET", c.url, nil)
+		r.RemoteAddr = "127.0.0.1:5000"
+		w := httptest.NewRecorder()
+		rp.ServeHTTP(w, r)
+		switch {
+		case c.want == nil && (len(got) != 0 || w.Code != http.StatusForbidden):
+			t.Errorf("%s: dialed %v, %d", c.url, got, w.Code)
+		case c.want != nil && (len(got) == 0 || got[0] != *c.want):
+			t.Errorf("%s: dialed %v, want %v (%d)", c.url, got, *c.want, w.Code)
+		}
+	}
+}

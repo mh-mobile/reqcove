@@ -29,6 +29,7 @@ type remoteProxy struct {
 	ui      http.Handler // the node's own page (--ui), for requests to the node's port 80
 	web     http.Handler // mitmweb's relay (--web), for requests to the node's webAddr port
 	webAddr string       // mitmweb on this computer, 127.0.0.1:PORT; the node's PORT goes there
+	local   bool         // the local proxy: this computer's own apps, as the device Local
 
 	// One per device: a pooled connection carries one device's SOCKS user.
 	// ponytail: never pruned; bounded by the devices seen in this run.
@@ -74,9 +75,15 @@ func deviceAt(p *policy, addr string) (Device, bool) {
 // pageWriteTimeout bounds writing the page to a slow reader (a variable for tests).
 var pageWriteTimeout = time.Minute
 
+// Local is the device the local proxy's requests are recorded as.
+var Local = Device{ID: "local", Name: "local"}
+
 func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	src, _ := netip.ParseAddrPort(r.RemoteAddr)
 	dev, ok := deviceAt(rp.policy(), r.RemoteAddr)
+	if rp.local {
+		dev, ok = Local, true // on 127.0.0.1: this computer's own apps, trusted as its user is
+	}
 	if !ok {
 		w.Header().Set("Connection", "close")
 		http.Error(w, "reqcove: this device is not one of reqcove's --device", http.StatusForbidden)
@@ -202,6 +209,9 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 	}
 	dst := netip.AddrPortFrom(ip, uint16(pn))
 	v := decideTCP(rp.policy(), src, dst)
+	if rp.local {
+		v = decideLocal(dst)
+	}
 	if v == reject {
 		return nil, fmt.Errorf("%s (%v): %w", host, ip, errNotCarried)
 	}

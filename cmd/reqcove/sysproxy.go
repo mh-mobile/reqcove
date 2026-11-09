@@ -1,0 +1,186 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// The local proxy (--local-proxy): on macOS, run points the system's web
+// proxies at it while it runs, as Charles and Proxyman do, and puts them back
+// when it stops. What they were is kept in the state directory, so a run that
+// died puts them back at the next start or with `reqcove cleanup`.
+
+const localProxyPort = 8082
+
+// networksetup runs macOS's networksetup; tests replace it.
+var networksetup = func(args ...string) (string, error) {
+	out, err := exec.Command("networksetup", args...).CombinedOutput()
+	return string(out), err
+}
+
+// webProxy is one service's web proxy (HTTP) or secure web proxy (HTTPS).
+type webProxy struct {
+	Enabled bool   `json:"enabled"`
+	Server  string `json:"server"`
+	Port    string `json:"port"`
+}
+
+type savedProxy struct {
+	Service string   `json:"service"`
+	Web     webProxy `json:"web"`
+	Secure  webProxy `json:"secure"`
+}
+
+func savedProxyFile(state string) string { return filepath.Join(state, "system-proxy.json") }
+
+// services are the enabled network services ("Wi-Fi", "Ethernet"...).
+func services() ([]string, error) {
+	out, err := networksetup("-listallnetworkservices")
+	if err != nil {
+		return nil, fmt.Errorf("networksetup -listallnetworkservices: %v: %s", err, strings.TrimSpace(out))
+	}
+	var names []string
+	for i, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if i == 0 || line == "" || strings.HasPrefix(line, "*") { // a header line; "*" marks a disabled service
+			continue
+		}
+		names = append(names, line)
+	}
+	return names, nil
+}
+
+func getProxy(kind, service string) (webProxy, error) {
+	out, err := networksetup("-get"+kind, service)
+	if err != nil {
+		return webProxy{}, fmt.Errorf("networksetup -get%s %q: %v", kind, service, err)
+	}
+	var p webProxy
+	for _, line := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch v = strings.TrimSpace(v); strings.TrimSpace(k) {
+		case "Enabled":
+			p.Enabled = v == "Yes"
+		case "Server":
+			p.Server = v
+		case "Port":
+			p.Port = v
+		}
+	}
+	return p, nil
+}
+
+func setProxy(kind, service string, p webProxy) error {
+	args := []string{"-set" + kind + "state", service, "off"}
+	if p.Enabled {
+		args = []string{"-set" + kind, service, p.Server, p.Port}
+	}
+	if out, err := networksetup(args...); err != nil {
+		return fmt.Errorf("networksetup %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// pointSystemProxy saves the web proxies of every enabled service, then points
+// them at the local proxy. It saves before it changes anything.
+func pointSystemProxy(state string) error {
+	names, err := services()
+	if err != nil {
+		return err
+	}
+	var saved []savedProxy
+	for _, s := range names {
+		web, err := getProxy("webproxy", s)
+		if err != nil {
+			return err
+		}
+		secure, err := getProxy("securewebproxy", s)
+		if err != nil {
+			return err
+		}
+		saved = append(saved, savedProxy{s, web, secure})
+	}
+	b, _ := json.Marshal(saved)
+	if err := os.WriteFile(savedProxyFile(state), b, 0o600); err != nil {
+		return err
+	}
+	ours := webProxy{Enabled: true, Server: "127.0.0.1", Port: fmt.Sprint(localProxyPort)}
+	for _, s := range saved {
+		if err := setProxy("webproxy", s.Service, ours); err != nil {
+			restoreSystemProxy(state)
+			return err
+		}
+		if err := setProxy("securewebproxy", s.Service, ours); err != nil {
+			restoreSystemProxy(state)
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreSystemProxy puts back what pointSystemProxy saved, if anything, and
+// forgets it. Nothing saved: nothing to do.
+func restoreSystemProxy(state string) error {
+	b, err := os.ReadFile(savedProxyFile(state))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var saved []savedProxy
+	if err := json.Unmarshal(b, &saved); err != nil {
+		return err
+	}
+	var errs []error
+	for _, s := range saved {
+		errs = append(errs, setProxy("webproxy", s.Service, s.Web), setProxy("securewebproxy", s.Service, s.Secure))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err // the file stays: the next start or cleanup tries again
+	}
+	return os.Remove(savedProxyFile(state))
+}
+
+// xcrun runs Xcode's xcrun; tests replace it.
+var xcrun = func(args ...string) (string, error) {
+	out, err := exec.Command("xcrun", args...).CombinedOutput()
+	return string(out), err
+}
+
+// trustInSimulators adds the CA to every booted iOS Simulator, returning their
+// names. No Xcode, or none booted: none.
+func trustInSimulators(caPEM string) ([]string, error) {
+	out, err := xcrun("simctl", "list", "devices", "booted", "-j")
+	if err != nil {
+		return nil, nil // no Xcode here
+	}
+	var list struct {
+		Devices map[string][]struct {
+			UDID, Name, State string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return nil, fmt.Errorf("simctl list: %v", err)
+	}
+	var done []string
+	for _, devs := range list.Devices {
+		for _, d := range devs {
+			if d.State != "Booted" {
+				continue
+			}
+			if out, err := xcrun("simctl", "keychain", d.UDID, "add-root-cert", caPEM); err != nil {
+				return done, fmt.Errorf("simctl keychain %s add-root-cert: %v: %s", d.Name, err, strings.TrimSpace(out))
+			}
+			done = append(done, d.Name)
+		}
+	}
+	return done, nil
+}

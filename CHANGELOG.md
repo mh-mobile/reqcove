@@ -12,6 +12,10 @@
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.
 - Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
+- `run --local-proxy`: an HTTP proxy on `127.0.0.1:8082` for this computer's own
+  apps, such as the iOS Simulator, recorded as the device `local`. On macOS the
+  system's web proxies point at it while `run` runs and go back when it stops,
+  and the CA goes into the booted Simulators; on Linux, point apps at it.
 - `reqcove har > flows.har`: the recorded flows as a HAR 1.2 file, masked, with
   the same filters as `list_flows`.
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
