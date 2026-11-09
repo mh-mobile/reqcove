@@ -169,6 +169,9 @@ func run(ctx context.Context, args []string) error {
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
+	if *web && *proxyPort == webPort(true) {
+		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", webPort(true))
+	}
 	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
 		return fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
 	}
@@ -281,29 +284,44 @@ func run(ctx context.Context, args []string) error {
 	}
 	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: claude mcp add reqcove -- reqcove mcp)", mcpSock)
 
-	onStatus := node.set
-	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string)
+	webAddr := ""
+	if cap.WebURL != "" {
+		webAddr = fmt.Sprintf("127.0.0.1:%d", webPort(true))
+	}
+	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
+	var page *webui.UI
 	if *uiFlag {
-		page := webui.New(cap.Store, func(id string) []string {
+		page = webui.New(cap.Store, func(id string, all bool) []string {
+			if all { // one of the user's own devices: the steps as `reqcove status` gives them
+				return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps
+			}
 			return pageSteps(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices(), id)
 		})
 		pageFn = page.Serve
-		var shown bool
-		onStatus = func(s exitnode.Status) {
-			node.set(s)
-			if ip := firstIPv4(s.IPs); !shown && s.Backend == "Running" && ip != "" {
-				shown = true
-				// The token stays in this terminal, as the login URL does: never in the MCP tools.
-				link := "http://" + ip + "/?k=" + page.Token()
-				log.Printf("the page of the flows, for the --device devices: %s", link)
-				printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
-			}
+	}
+	var shown bool
+	onStatus := func(s exitnode.Status) {
+		node.set(s)
+		ip := firstIPv4(s.IPs)
+		if shown || s.Backend != "Running" || ip == "" {
+			return
+		}
+		shown = true
+		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
+		if page != nil {
+			link := "http://" + ip + "/?k=" + page.Token()
+			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s", link)
+			printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
+		}
+		if webAddr != "" {
+			log.Printf("mitmweb from your own devices on the tailnet: %s", strings.Replace(cap.WebURL, "127.0.0.1", ip, 1))
 		}
 	}
 	err = exitnode.Run(ctx, exitnode.Config{
 		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
 		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
 		UI:        pageFn,
+		Web:       webAddr,
 		OnDevices: cap.Store.SetDeviceNames, OnStatus: onStatus,
 	})
 	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")

@@ -82,3 +82,25 @@ func TestMatchDevices(t *testing.T) {
 		t.Errorf("before login (no self), a name matched: %v", got)
 	}
 }
+
+// The user's own devices are its untagged peers of the same user: not another
+// user's, not a tagged node, and none when reqcove's node is tagged.
+func TestOwnDevices(t *testing.T) {
+	peer := func(id string, user tailcfg.UserID, ip string) *ipnstate.PeerStatus {
+		return &ipnstate.PeerStatus{ID: tailcfg.StableNodeID(id), DNSName: id + ".tail.ts.net.", UserID: user, TailscaleIPs: []netip.Addr{netip.MustParseAddr(ip)}}
+	}
+	self := peer("reqcove", 1, "100.101.0.100")
+	tags := views.SliceOf([]string{"tag:ci"})
+	tagged := peer("ci", 1, "100.101.0.3")
+	tagged.Tags = &tags
+	peers := []*ipnstate.PeerStatus{peer("macbook", 1, "100.101.0.1"), peer("colleague", 2, "100.101.0.2"), tagged}
+	got := ownDevices(self, peers)
+	if len(got) != 1 || got[netip.MustParseAddr("100.101.0.1")] != (Device{"macbook", "macbook"}) {
+		t.Errorf("own: %v", got)
+	}
+	taggedSelf := *self
+	taggedSelf.Tags = &tags
+	if got := ownDevices(&taggedSelf, peers); len(got) != 0 {
+		t.Errorf("reqcove tagged: %v", got)
+	}
+}

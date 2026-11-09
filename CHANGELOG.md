@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- `run --ui`: a read-only page of the flows for the `--device` devices, on the
-  tailnet node, opened from a QR code; each device sees its own flows.
+- `run --ui`: a read-only page of the flows on the tailnet node, opened from a QR
+  code: your own devices on the tailnet see every device's flows, a `--device`
+  device of another user its own. It follows new flows without reloading.
+- `run --web`: mitmweb also opens from your own devices on the tailnet, on the
+  node's port 8081, with the link `run` prints.
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.

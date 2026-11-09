@@ -165,10 +165,12 @@ straight to their servers (from reading code; a review saw it). What changes:
 `--ui` serves a read-only page of the records on the node's port 80, with what the
 MCP tools return, masked the same way. Who can read it (each a test):
 
-- Only the `--device` devices, checked when a connection opens and on every
-  request; others get nothing.
-- Each device sees only its own flows, in the list and by ID, and its own counts
-  and next steps (not the other devices', nor their names).
+- Only your own devices on the tailnet (logged in as the same user as reqcove's
+  node, and untagged) and the `--device` devices, checked when a connection opens
+  and on every request; others get nothing.
+- Your own devices see every device's flows, with the device's name. A `--device`
+  device of another user sees only its own flows, in the list and by ID, and its
+  own counts and next steps (not the other devices', nor their names).
 - Only a browser holding the token of this start: the link `run` prints sets it
   as an HttpOnly, SameSite=Strict cookie. Another app on the same iPhone can reach
   the port, but not read the page without the token.
@@ -191,8 +193,14 @@ MCP tools.
 
 ## mitmweb (`--web`)
 
-mitmweb listens on 127.0.0.1 only, with a password made at each start and passed
-through a 0600 file, never the command line. It shows traffic **unmasked**, and
+mitmweb listens on 127.0.0.1, with a password made at each start and passed
+through a 0600 file, never the command line. After v0.1.0, the node also relays
+its port 8081 to it for your own devices on the tailnet (the same user, untagged:
+not a `--device` device of another user, nor anyone else; checked when a
+connection opens and on every request, by the node's name or address in `Host`).
+The password still guards it, and it gives what it gives on this computer: with
+it, mitmweb's options can be changed (scripts included), which runs code on this
+computer. The link with the password is printed in `run`'s terminal only. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
 options. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection

@@ -115,7 +115,7 @@ setting, so this works on Wi-Fi only.
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
 | `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
-| `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow) |
+| `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow); after v0.1.0 also on the node's port 8081 for your own devices on the tailnet, with the link `run` prints |
 | `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out, after v0.1.0); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |
@@ -170,10 +170,13 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
 prints a link to it with a QR code. Scan it with the iPhone's camera: Safari opens
 the list, which follows new flows every second (pause stops it), beside the app in
 split view if you like. Tap a flow for its headers and bodies, masked as the MCP
-tools return them. Not tried on an iPhone yet: the tests use a browser stand-in.
+tools return them. Tried: opened on an iPhone from the camera. Not tried
+yet: following new flows without reloading, and the page from other devices.
 
-- Only the `--device` devices reach it, each sees only its own flows, and only the
-  browser that opened the link (a token new at each start) can read it.
+- Your own devices on the tailnet (logged in as you: the iPhone, a second
+  MacBook, an iPad) can open it and see every device's flows; a `--device` device
+  of another user sees only its own; no one else reaches it. Only the browser that
+  opened the link (a token new at each start) can read it.
 - Tailscale must be on; it works with the exit node or the Remote Proxy, or
   neither. The page's own requests are not recorded.
 

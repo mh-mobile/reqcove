@@ -79,7 +79,9 @@ func TestTwoNodes(t *testing.T) {
 			Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: url,
 			DNS: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:53")}, Devices: []string{"phone"},
 			SocksAddr: socks.addr, SocksSecret: "pw", ProxyPort: 8080, Verbose: true,
-			UI:        func(w http.ResponseWriter, r *http.Request, id string) { fmt.Fprint(w, "page for "+id) },
+			UI: func(w http.ResponseWriter, r *http.Request, id string, all bool) {
+				fmt.Fprint(w, "page for "+id, " all=", all)
+			},
 			OnDevices: func(m map[string]string) { matched <- m },
 		})
 	}()
@@ -175,7 +177,7 @@ func TestTwoNodes(t *testing.T) {
 		return string(b), nil
 	}
 	socksBefore := socks.count()
-	if got, err := pageVia(phone); err != nil || got != "page for "+phoneID {
+	if got, err := pageVia(phone); err != nil || got != "page for "+phoneID+" all=false" { // testcontrol gives each node its own user
 		t.Errorf("phone to the page: %q %v", got, err)
 	}
 	if socks.count() != socksBefore {

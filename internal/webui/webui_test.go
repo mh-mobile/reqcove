@@ -36,14 +36,20 @@ func store(t *testing.T) *capture.Store {
 	return st
 }
 
-// get asks the page as device dev, with the cookie when it is not empty.
+// get asks the page as device dev (a --device device of another user), with
+// the cookie when it is not empty.
 func get(u *UI, dev, path, cookieValue string) *http.Response {
+	return ask(u, dev, false, path, cookieValue)
+}
+
+// ask is get, as one of the user's own devices when all.
+func ask(u *UI, dev string, all bool, path, cookieValue string) *http.Response {
 	r := httptest.NewRequest("GET", path, nil)
 	if cookieValue != "" {
 		r.AddCookie(&http.Cookie{Name: cookie, Value: cookieValue})
 	}
 	w := httptest.NewRecorder()
-	u.Serve(w, r, dev)
+	u.Serve(w, r, dev, all)
 	return w.Result()
 }
 
@@ -79,7 +85,7 @@ func TestToken(t *testing.T) {
 }
 
 func TestPageEscapesAndHeaders(t *testing.T) {
-	u := New(store(t), func(string) []string { return []string{"<b>step</b>"} })
+	u := New(store(t), func(string, bool) []string { return []string{"<b>step</b>"} })
 	for _, path := range []string{"/", "/flow?id=fa"} {
 		r := get(u, "devA", path, u.Token())
 		page := body(r)
@@ -143,7 +149,7 @@ func TestOwnCountsAndSteps(t *testing.T) {
 	st := store(t)
 	st.SetDeviceNames(map[string]string{"devA": "alice-phone", "devB": "devA"})
 	var asked string
-	u := New(st, func(id string) []string { asked = id; return []string{"approve the exit node"} })
+	u := New(st, func(id string, _ bool) []string { asked = id; return []string{"approve the exit node"} })
 	page := body(get(u, "devB", "/", u.Token()))
 	if asked != "devB" || !strings.Contains(page, "approve the exit node") {
 		t.Errorf("steps asked for %q:\n%s", asked, page)
@@ -175,7 +181,7 @@ func TestUnmaskedSaid(t *testing.T) {
 // /flows.json is the list's data, for app.js: this device's flows only, and
 // only with the cookie. app.js puts text in as text.
 func TestFlowsJSON(t *testing.T) {
-	u := New(store(t), func(string) []string { return []string{"approve"} })
+	u := New(store(t), func(string, bool) []string { return []string{"approve"} })
 	r := get(u, "devB", "/flows.json", u.Token())
 	var d struct {
 		Line  string
@@ -259,5 +265,29 @@ setImmediate(() => {
 	if len(got.Asked) != 1 || got.Asked[0] != "/flows.json?host=api.example.com" || got.Line != "mitmproxy ready · 1 flows" || got.Step != "next: approve" ||
 		got.Cls != "ok" || got.Status != "200" || got.Text != "GET /<img src=x onerror=alert(1)>" || got.Href != "/flow?id=a%26b" || got.Again != 1 {
 		t.Errorf("app.js: %+v", got)
+	}
+}
+
+// One of the user's own devices sees every device's flows, says whose, and
+// opens any of them; the steps are asked for all.
+func TestOwnDeviceSeesAll(t *testing.T) {
+	st := store(t)
+	st.SetDeviceNames(map[string]string{"devA": "iphone", "devB": "ipad"})
+	var forAll bool
+	u := New(st, func(_ string, all bool) []string { forAll = all; return nil })
+	page := body(ask(u, "macbook", true, "/", u.Token()))
+	if !strings.Contains(page, "api.example.com") || !strings.Contains(page, "other.example.com") || !strings.Contains(page, " · iphone") || !strings.Contains(page, " 2 flows") || !forAll {
+		t.Errorf("own device's list (steps for all: %v):\n%s", forAll, page)
+	}
+	if r := ask(u, "macbook", true, "/flow?id=fa", u.Token()); r.StatusCode != 200 {
+		t.Errorf("another device's flow: %d", r.StatusCode)
+	}
+	var d struct{ Rows []row }
+	json.NewDecoder(ask(u, "macbook", true, "/flows.json", u.Token()).Body).Decode(&d)
+	if len(d.Rows) != 2 || d.Rows[0].Device == "" {
+		t.Errorf("own device's data: %+v", d)
+	}
+	if page := body(get(u, "devB", "/", u.Token())); strings.Contains(page, "api.example.com") || strings.Contains(page, " · ipad") {
+		t.Errorf("a --device device of another user sees more than its own:\n%s", page)
 	}
 }

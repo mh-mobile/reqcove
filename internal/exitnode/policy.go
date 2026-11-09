@@ -28,6 +28,7 @@ type Device struct {
 type policy struct {
 	allowSrc []netip.Addr          // tailnet IPs whose traffic we carry
 	devices  map[netip.Addr]Device // the same IPs, with who they are
+	own      map[netip.Addr]Device // this user's own devices (untagged), carried or not: they may see every flow
 	self     []netip.Addr          // this tsnet node's tailnet IPs
 	local    []netip.Addr          // this Mac's interface addresses
 	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range

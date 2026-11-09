@@ -1,6 +1,7 @@
 // Package webui is Reqcove's own read-only page, served on the tailnet node to
-// the --device devices (exitnode checks who asks): each device sees the flows
-// it made, as the MCP tools return them, already masked. It is rendered on the
+// the user's own devices, which see every device's flows, and to the other
+// --device devices, which see their own (exitnode checks who asks); as the MCP
+// tools return them, already masked. It is rendered on the
 // server with html/template; its one script, app.js, refreshes the list as text
 // only, so what remote sites wrote into headers and bodies stays text.
 package webui
@@ -26,19 +27,20 @@ const cookie = "reqcove"
 
 type UI struct {
 	store *capture.Store
-	steps func(deviceID string) []string // the next steps for one device, as the status tool words them (no login URL)
+	steps func(deviceID string, all bool) []string // the next steps for one device, or for all, as the status tool words them (no login URL)
 	token string
 }
 
-func New(st *capture.Store, steps func(deviceID string) []string) *UI {
+func New(st *capture.Store, steps func(deviceID string, all bool) []string) *UI {
 	return &UI{store: st, steps: steps, token: rand.Text()}
 }
 
 // Token is what the link to the page carries: http://NODE/?k=TOKEN.
 func (u *UI) Token() string { return u.token }
 
-// Serve answers a GET from the device deviceID (its StableID).
-func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string) {
+// Serve answers a GET from the device deviceID (its StableID). With all (one of
+// the user's own devices) it shows every device's flows; else deviceID's only.
+func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all bool) {
 	h := w.Header()
 	// One script, /app.js, from here; nothing inline. It fetches /flows.json and
 	// puts what sites wrote in as text only.
@@ -62,13 +64,13 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string) {
 	}
 	switch r.URL.Path {
 	case "/":
-		render(w, listPage, u.view(r, deviceID))
+		render(w, listPage, u.view(r, deviceID, all))
 	case "/flows.json":
-		v := u.view(r, deviceID)
+		v := u.view(r, deviceID, all)
 		h.Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"]})
 	case "/flow":
-		u.flow(w, r, deviceID)
+		u.flow(w, r, deviceID, all)
 	case "/style.css":
 		h.Set("Content-Type", "text/css; charset=utf-8")
 		w.Write([]byte(css))
@@ -84,39 +86,46 @@ func (u *UI) valid(k string) bool { return subtle.ConstantTimeCompare([]byte(k),
 
 // row is one flow in the list, as the page and /flows.json show it.
 type row struct {
-	ID    string `json:"id"`
-	Class string `json:"class"`
-	S     string `json:"s"`    // status, "err" or "…"
-	Text  string `json:"text"` // method and path
-	Time  string `json:"time"`
-	Host  string `json:"host"`
-	MS    int64  `json:"ms,omitempty"`
+	ID     string `json:"id"`
+	Class  string `json:"class"`
+	S      string `json:"s"`    // status, "err" or "…"
+	Text   string `json:"text"` // method and path
+	Time   string `json:"time"`
+	Host   string `json:"host"`
+	MS     int64  `json:"ms,omitempty"`
+	Device string `json:"device,omitempty"` // whose, when the page shows every device's
 }
 
-// view is the list for deviceID: its own flows, counts and steps only.
-func (u *UI) view(r *http.Request, deviceID string) map[string]any {
+// view is the list for deviceID: its own flows, counts and steps only; with
+// all, every device's.
+func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	q := r.URL.Query()
-	f := capture.Filter{Device: deviceID, Host: q.Get("host"), Limit: 50}
+	f := capture.Filter{Host: q.Get("host"), Limit: 50}
+	if !all {
+		f.Device = deviceID
+	}
 	if s := q.Get("status"); capture.ValidStatus(s) {
 		f.Status = s
 	}
-	all, _ := u.store.List(f)
-	flows := all[:0]
-	for _, s := range all {
-		if s.Device == deviceID { // the filter also takes a display name; the page, the ID only
+	listed, _ := u.store.List(f)
+	flows := listed[:0]
+	for _, s := range listed {
+		if all || s.Device == deviceID { // the filter also takes a display name; the page, the ID only
 			flows = append(flows, s)
 		}
 	}
-	// This device's counts and steps only: not the others', nor their names.
+	// This device's counts and steps only, not the others' nor their names;
+	// with all, everyone's.
 	var me capture.DeviceInfo
 	for _, d := range u.store.Devices() {
-		if d.ID == deviceID {
-			me = d
+		if all || d.ID == deviceID {
+			me.Flows += d.Flows
+			me.TLSFailures += d.TLSFailures
 		}
 	}
 	var steps []string
 	if u.steps != nil {
-		steps = u.steps(deviceID)
+		steps = u.steps(deviceID, all)
 	}
 	stats := u.store.Stats()
 	line := fmt.Sprintf("mitmproxy %v · %d flows", stats["state"], me.Flows)
@@ -131,7 +140,14 @@ func (u *UI) view(r *http.Request, deviceID string) map[string]any {
 		} else if s.State == "error" {
 			st = "err"
 		}
-		rows = append(rows, row{ID: s.ID, Class: class(s.Status, s.State), S: st, Text: s.Method + " " + path(s.URL), Time: clock(s.Time), Host: s.Host, MS: s.DurationMS})
+		rw := row{ID: s.ID, Class: class(s.Status, s.State), S: st, Text: s.Method + " " + path(s.URL), Time: clock(s.Time), Host: s.Host, MS: s.DurationMS}
+		if all {
+			rw.Device = s.DeviceName
+			if rw.Device == "" {
+				rw.Device = s.Device
+			}
+		}
+		rows = append(rows, rw)
 	}
 	if steps == nil {
 		steps = []string{}
@@ -142,9 +158,9 @@ func (u *UI) view(r *http.Request, deviceID string) map[string]any {
 	}
 }
 
-func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string) {
+func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string, all bool) {
 	v, err := u.store.Get(r.URL.Query().Get("id"), true)
-	if err != nil || v.Device != deviceID { // another device's flow is not there for this one
+	if err != nil || !all && v.Device != deviceID { // another device's flow is not there for this one
 		http.NotFound(w, r)
 		return
 	}
@@ -245,7 +261,7 @@ var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 <table><tbody id="rows">{{range .Rows}}<tr class="{{.Class}}">
 <td class="s">{{.S}}</td>
 <td><a class="u" href="/flow?id={{.ID}}">{{.Text}}</a>
-<div class="muted">{{.Time}} · <a href="/?host={{.Host}}">{{.Host}}</a>{{if .MS}} · {{.MS}} ms{{end}}</div></td></tr>
+<div class="muted">{{.Time}} · <a href="/?host={{.Host}}">{{.Host}}</a>{{if .MS}} · {{.MS}} ms{{end}}{{with .Device}} · {{.}}{{end}}</div></td></tr>
 {{else}}<tr><td class="muted">No flows from this device yet.</td></tr>{{end}}</tbody></table></body></html>`))
 
 // appJS asks /flows.json (with the page's own filters) once a second and puts
@@ -269,6 +285,7 @@ const appJS = `"use strict";
     h.href = "/?host=" + encodeURIComponent(f.host);
     meta.appendChild(h);
     if (f.ms) meta.appendChild(document.createTextNode(" · " + f.ms + " ms"));
+    if (f.device) meta.appendChild(document.createTextNode(" · " + f.device));
     td.appendChild(meta);
     tr.appendChild(td);
     return tr;

@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,7 +22,7 @@ func TestUIGuard(t *testing.T) {
 		names:   []string{"reqcove.tail-scale.ts.net", "reqcove"},
 	}
 	var got string
-	g := uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) { got = id }}
+	g := uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string, _ bool) { got = id }}
 	ask := func(method, host, from string) int {
 		got = ""
 		r := httptest.NewRequest(method, "/", nil)
@@ -47,6 +49,70 @@ func TestUIGuard(t *testing.T) {
 	if code := ask("GET", "reqcove", "100.64.0.7:5000"); code != http.StatusForbidden || got != "" {
 		t.Errorf("not a --device: %d", code)
 	}
+	// One of the user's own devices, carried or not, sees all; a --device of
+	// another user, its own.
+	p.own = map[netip.Addr]Device{netip.MustParseAddr("100.64.0.7"): {"nMAC", "macbook"}}
+	var all bool
+	g.serve = func(w http.ResponseWriter, r *http.Request, id string, a bool) { got, all = id, a }
+	if code := ask("GET", "reqcove", "100.64.0.7:5000"); code != 200 || got != "nMAC" || !all {
+		t.Errorf("own device: %d %q all=%v", code, got, all)
+	}
+	if code := ask("GET", "reqcove", "100.64.0.1:5000"); code != 200 || got != "nPHONE" || all {
+		t.Errorf("--device of another user: %d %q all=%v", code, got, all)
+	}
+}
+
+// mitmweb through the node: the user's own devices only, by the node's name,
+// with Host kept (mitmweb's WebSocket origin check compares it) and upgrades
+// relayed; a --device of another user, or anyone else, never gets it.
+func TestWebRelay(t *testing.T) {
+	var hosts []string
+	mitmweb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hosts = append(hosts, r.Host)
+		if r.Header.Get("Upgrade") == "websocket" {
+			c, rw, _ := http.NewResponseController(w).Hijack()
+			rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\nhello")
+			rw.Flush()
+			c.Close()
+			return
+		}
+		w.Write([]byte("mitmweb " + r.Method + " " + r.URL.RequestURI()))
+	}))
+	defer mitmweb.Close()
+	me, phone := netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("100.64.0.1")
+	p := &policy{devices: map[netip.Addr]Device{phone: {"nPHONE", "phone"}}, own: map[netip.Addr]Device{me: {"nMAC", "macbook"}},
+		self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}
+	relay := webRelay(func() *policy { return p }, mitmweb.Listener.Addr().String())
+	ask := func(method, host, from string) (int, string) {
+		r := httptest.NewRequest(method, "/?token=x", nil)
+		r.Host, r.RemoteAddr = host, from
+		w := httptest.NewRecorder()
+		relay.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, b := ask("POST", "reqcove:8081", "127.0.0.1:5000"); code != 200 || b != "mitmweb POST /?token=x" || hosts[len(hosts)-1] != "reqcove:8081" {
+		t.Errorf("own device: %d %q, Host %v", code, b, hosts)
+	}
+	if code, _ := ask("GET", "reqcove:8081", "100.64.0.1:5000"); code != http.StatusForbidden {
+		t.Errorf("a --device of another user: %d", code)
+	}
+	if code, _ := ask("GET", "evil.example:8081", "127.0.0.1:5000"); code != http.StatusMisdirectedRequest {
+		t.Errorf("another Host: %d", code)
+	}
+	// A WebSocket upgrade goes through (a real server: the recorder cannot hijack).
+	srv := httptest.NewServer(relay)
+	defer srv.Close()
+	c, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.Write([]byte("GET /updates HTTP/1.1\r\nHost: 100.64.0.9:8081\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"))
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	b, _ := io.ReadAll(c)
+	if !strings.HasPrefix(string(b), "HTTP/1.1 101") || !strings.HasSuffix(string(b), "hello") {
+		t.Errorf("upgrade: %q", b)
+	}
 }
 
 // A phone on the Remote Proxy sends the page's requests to it: requests for the
@@ -61,7 +127,7 @@ func TestRemoteProxyServesPage(t *testing.T) {
 		dial: func(context.Context, verdict, string, netip.AddrPort) (net.Conn, error) {
 			return nil, errors.New("no dialing in this test")
 		},
-		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) { got = id + " " + r.URL.RequestURI() }}}
+		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string, _ bool) { got = id + " " + r.URL.RequestURI() }}}
 	for _, c := range []struct {
 		method, url string
 		page        bool
@@ -92,7 +158,7 @@ func TestRemoteProxyPageDeadline(t *testing.T) {
 		dial: func(context.Context, verdict, string, netip.AddrPort) (net.Conn, error) {
 			return nil, errors.New("no dialing in this test")
 		},
-		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string) {
+		ui: uiGuard{policy: func() *policy { return p }, serve: func(w http.ResponseWriter, r *http.Request, id string, _ bool) {
 			if r.URL.Path == "/slow" {
 				time.Sleep(4 * pageWriteTimeout)
 			}
@@ -129,5 +195,49 @@ func TestRemoteProxyPageDeadline(t *testing.T) {
 	time.Sleep(4 * pageWriteTimeout)
 	if err := ask(c, br, "http://192.0.2.1/"); err != nil {
 		t.Errorf("the next request on the connection: %v", err)
+	}
+}
+
+// The listeners: the page's takes a --device of another user too; mitmweb's,
+// the user's own devices only.
+func TestOnlyViewers(t *testing.T) {
+	me := netip.MustParseAddr("127.0.0.1")
+	for _, c := range []struct {
+		p       *policy
+		ownOnly bool
+		want    bool
+	}{
+		{&policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}}, false, true},
+		{&policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}}, true, false},
+		{&policy{own: map[netip.Addr]Device{me: {"nMAC", "macbook"}}}, true, true},
+		{&policy{}, false, false},
+	} {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := onlyViewers{ln, func() *policy { return c.p }, c.ownOnly}
+		accepted := make(chan bool, 1)
+		go func() {
+			conn, err := l.Accept()
+			if err == nil {
+				conn.Close()
+			}
+			accepted <- err == nil
+		}()
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got bool
+		select {
+		case got = <-accepted:
+		case <-time.After(300 * time.Millisecond): // closed and still waiting for another
+		}
+		conn.Close()
+		ln.Close()
+		if got != c.want {
+			t.Errorf("own=%v devices=%v ownOnly=%v: accepted %v", c.p.own, c.p.devices, c.ownOnly, got)
+		}
 	}
 }

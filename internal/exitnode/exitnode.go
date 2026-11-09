@@ -36,8 +36,12 @@ type Config struct {
 	SocksSecret string           // its password
 	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
 	// UI, if set, serves Reqcove's own page on the node's port 80 to the
-	// --device devices, with the asking device's StableID.
-	UI      func(w http.ResponseWriter, r *http.Request, deviceID string)
+	// --device devices and to this user's own devices, with the asking device's
+	// StableID; all says it is one of this user's own, which see every device's flows.
+	UI func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
+	// Web, if set, is mitmweb's address on this computer (127.0.0.1:PORT): the
+	// node relays its own PORT there, for this user's own devices only.
+	Web     string
 	Verbose bool // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
@@ -172,7 +176,25 @@ func Run(ctx context.Context, cfg Config) error {
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}
-		go srv.Serve(onlyDevices{ln, current.Load})
+		go srv.Serve(onlyViewers{ln, current.Load, false})
+		defer srv.Close()
+	}
+	if cfg.Web != "" {
+		_, port, err := net.SplitHostPort(cfg.Web)
+		if err != nil {
+			return fmt.Errorf("mitmweb: %w", err)
+		}
+		ln, err := s.Listen("tcp", ":"+port)
+		if err != nil {
+			return fmt.Errorf("mitmweb: %w", err)
+		}
+		srv := &http.Server{
+			Handler:           webRelay(current.Load, cfg.Web),
+			ReadHeaderTimeout: 30 * time.Second, // no WriteTimeout: mitmweb's updates are one long WebSocket
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(onlyViewers{ln, current.Load, true})
 		defer srv.Close()
 	}
 	<-ctx.Done()
@@ -207,7 +229,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			}
 			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
 			local, onLink := interfaceAddrs()
-			p := &policy{devices: devices, self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
+			p := &policy{devices: devices, own: ownDevices(st.Self, peers), self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
 			if st.Self != nil {
 				if fqdn := strings.ToLower(strings.TrimSuffix(st.Self.DNSName, ".")); fqdn != "" {
 					short, _, _ := strings.Cut(fqdn, ".")
