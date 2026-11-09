@@ -318,6 +318,11 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   `--allow-hosts` falls back too (and without `--allow-hosts` as well). QUIC on a
   port other than 443 is not dropped; it goes on, and is not recorded.
 - Phone calls through the exit node have not been tried.
+- mitmweb (`--web`) can change mitmproxy's options. In its Capture tab, leave
+  "Run SOCKS Proxy" on: it is how Reqcove hands the devices' traffic to
+  mitmproxy, and without it their HTTP(S) stops. The other modes there are not
+  Reqcove's. Whatever is changed goes back when reqcove starts again, and
+  Reqcove's records stay scoped and masked (from reading code, not tried).
 - The iOS Simulator on the computer running Reqcove needs `--local-proxy` (see
   above; after v0.1.0). On another Mac that is a `--device` and uses Reqcove's
   exit node, the Simulator's traffic should go through with the Mac's own, once

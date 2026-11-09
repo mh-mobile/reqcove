@@ -225,6 +225,14 @@ options. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
 reuse): the per-request check keeps those out of Reqcove's records only.
 
+What its options change (from reading code, not tried): mitmproxy's behaviour
+only, until reqcove starts it again. Reqcove's records stay scoped to
+`--allow-hosts` and masked, since Reqcove checks both again as they arrive.
+Turning off the SOCKS proxy in its Capture tab stops the devices' HTTP(S)
+(that is how Reqcove hands them to mitmproxy). Another mode turned on there
+listens on 127.0.0.1 (the listen host reqcove sets) and bypasses Reqcove's
+device names and its refusals of this computer and the LAN.
+
 ## The local proxy (`--local-proxy`)
 
 After v0.1.0. An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
