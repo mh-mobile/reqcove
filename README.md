@@ -65,7 +65,7 @@ through a `replace` directive.
    hosts to record:
 
    ```sh
-   reqcove run --device iphone --allow-hosts 'api.example.com,*.example.com'
+   reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
    ```
 
    The first time, it prints a login URL. Under Tailnet Lock it then prints the
@@ -109,7 +109,7 @@ setting, so this works on Wi-Fi only.
 | | |
 |---|---|
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
-| `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, or `'*'` for all. Without it, traffic is carried but nothing is recorded |
+| `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--rules-reload` | read that file again whenever it changes, while running (see below; after v0.1.0) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |

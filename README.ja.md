@@ -52,7 +52,7 @@ go build -o reqcove ./cmd/reqcove
 1. コンピュータ側で起動します。中継する iPhone（`tailscale status` に表示される名前）と、記録するホストを指定します。
 
    ```sh
-   reqcove run --device iphone --allow-hosts 'api.example.com,*.example.com'
+   reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
    ```
 
    初回はログイン用の URL が表示されます。Tailnet Lock を使っている場合は、続けて、署名用のデバイスで実行する `tailscale lock sign nodekey:…` が表示され、管理コンソールで Exit Node を承認するよう案内されます。不足しているものは `reqcove status` でいつでも確認できます。
@@ -86,7 +86,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | | |
 |---|---|
 | `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
-| `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
+| `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身と、すべてのサブドメイン）、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
 | `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
 | `--rules-reload` | 動いている間、そのファイルが変わるたびに読み直します（下を参照。v0.1.0 のあとに追加） |
 | `--upstream-proxy URL` | 復号したリクエストを、Burp Suite などの HTTP プロキシに回します。`http://127.0.0.1:8080` など（下を参照。v0.1.0 のあとに追加） |
