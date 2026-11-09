@@ -276,9 +276,10 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   `--allow-hosts` falls back too (and without `--allow-hosts` as well). QUIC on a
   port other than 443 is not dropped; it goes on, and is not recorded.
 - Phone calls through the exit node have not been tried.
-- The iOS Simulator is not covered: its apps use this computer's network, which
-  Reqcove does not carry, only the devices' through the exit node or the Remote
-  Proxy.
+- The iOS Simulator on the computer running Reqcove is not covered: its apps use
+  this computer's network, which Reqcove does not carry. On another Mac that is a
+  `--device` and uses Reqcove's exit node, the Simulator's traffic should go
+  through with the Mac's own, once the Simulator trusts Reqcove's CA (not tried).
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
   can use a lot of memory (if mitmproxy runs out, reqcove restarts it; when it is down again within a minute
   after 5 restarts in a row, `run` stops).
