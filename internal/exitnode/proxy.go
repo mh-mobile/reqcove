@@ -27,6 +27,8 @@ type remoteProxy struct {
 	resolve func(ctx context.Context, host string) (netip.Addr, error)
 	dial    func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error)
 	ui      http.Handler // the node's own page (--ui), for requests to the node's port 80
+	web     http.Handler // mitmweb's relay (--web), for requests to the node's webAddr port
+	webAddr string       // mitmweb on this computer, 127.0.0.1:PORT; the node's PORT goes there
 
 	// One per device: a pooled connection carries one device's SOCKS user.
 	// ponytail: never pruned; bounded by the devices seen in this run.
@@ -88,6 +90,10 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reqcove is a proxy: send absolute http:// URLs, or CONNECT", http.StatusBadRequest)
 		return
 	}
+	if rp.toWeb(r.URL.Host) {
+		rp.web.ServeHTTP(w, r) // mitmweb from a phone on the Remote Proxy, which sends it here too
+		return
+	}
 	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
 		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
 			// A phone on the Remote Proxy sends the page's requests here too. As on port 80, a
@@ -102,8 +108,30 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp.reverseProxy(src, dev).ServeHTTP(w, r)
 }
 
+// toWeb: hostport is the node's own mitmweb port.
+func (rp *remoteProxy) toWeb(hostport string) bool {
+	if rp.web == nil || !rp.policy().isSelf(hostport) {
+		return false
+	}
+	_, port, err1 := net.SplitHostPort(hostport)
+	_, webPort, err2 := net.SplitHostPort(rp.webAddr)
+	return err1 == nil && err2 == nil && port == webPort
+}
+
 func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip.AddrPort, dev Device) {
-	out, err := rp.open(r.Context(), src, dev, r.Host)
+	var out net.Conn
+	var err error
+	if rp.toWeb(r.Host) {
+		// mitmweb's WebSocket through the proxy (Safari tunnels ws:// with CONNECT):
+		// to mitmweb itself, for the user's own devices only, as the relay is.
+		if _, all, _ := viewerAt(rp.policy(), r.RemoteAddr); !all {
+			http.Error(w, "reqcove: mitmweb is for your own devices only", http.StatusForbidden)
+			return
+		}
+		out, err = (&net.Dialer{Timeout: 5 * time.Second}).DialContext(r.Context(), "tcp", rp.webAddr)
+	} else {
+		out, err = rp.open(r.Context(), src, dev, r.Host)
+	}
 	if err != nil {
 		logEvent("proxy %v CONNECT %s: %v", src, r.Host, err)
 		http.Error(w, "reqcove: "+err.Error(), statusFor(err))

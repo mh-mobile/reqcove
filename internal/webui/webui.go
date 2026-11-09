@@ -68,7 +68,7 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 	case "/flows.json":
 		v := u.view(r, deviceID, all)
 		h.Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"]})
+		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"], "empty": v["Empty"]})
 	case "/flow":
 		u.flow(w, r, deviceID, all)
 	case "/style.css":
@@ -152,8 +152,12 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	if steps == nil {
 		steps = []string{}
 	}
+	empty := "No flows from this device yet."
+	if all {
+		empty = "No flows yet."
+	}
 	return map[string]any{
-		"Rows": rows, "Host": f.Host, "Status": f.Status, "Paused": q.Get("pause") != "",
+		"Rows": rows, "Empty": empty, "Host": f.Host, "Status": f.Status, "Paused": q.Get("pause") != "",
 		"Unmasked": stats["redacting"] == false, "Line": line, "Steps": steps,
 	}
 }
@@ -262,7 +266,7 @@ var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 <td class="s">{{.S}}</td>
 <td><a class="u" href="/flow?id={{.ID}}">{{.Text}}</a>
 <div class="muted">{{.Time}} · <a href="/?host={{.Host}}">{{.Host}}</a>{{if .MS}} · {{.MS}} ms{{end}}{{with .Device}} · {{.}}{{end}}</div></td></tr>
-{{else}}<tr><td class="muted">No flows from this device yet.</td></tr>{{end}}</tbody></table></body></html>`))
+{{else}}<tr><td class="muted">{{.Empty}}</td></tr>{{end}}</tbody></table></body></html>`))
 
 // appJS asks /flows.json (with the page's own filters) once a second and puts
 // the rows in with textContent and DOM calls only: never markup from a site.
@@ -292,7 +296,11 @@ const appJS = `"use strict";
   }
   function tick() {
     fetch("/flows.json" + location.search, {credentials: "same-origin", cache: "no-store"})
-      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (r) {
+        // A new start of reqcove run: the link is old. Reloading shows the page saying so.
+        if (r.status === 403) { location.reload(); return Promise.reject(r.status); }
+        return r.ok ? r.text() : Promise.reject(r.status);
+      })
       .then(function (t) {
         if (t === last) return;
         last = t;
@@ -302,12 +310,15 @@ const appJS = `"use strict";
         var trs = d.rows.map(row);
         if (!trs.length) {
           var empty = el("tr");
-          empty.appendChild(el("td", "muted", "No flows from this device yet."));
+          empty.appendChild(el("td", "muted", d.empty));
           trs = [empty];
         }
         rows.replaceChildren.apply(rows, trs);
       })
-      .catch(function () {})
+      .catch(function () {
+        last = "";
+        document.getElementById("line").textContent = "reqcove is not answering; trying again";
+      })
       .then(function () { setTimeout(tick, 1000); });
   }
   setTimeout(tick, 1000);

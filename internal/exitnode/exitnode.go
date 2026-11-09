@@ -143,13 +143,18 @@ func Run(ctx context.Context, cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("remote proxy: %w", err)
 		}
-		var page http.Handler
+		var page, web http.Handler
 		if cfg.UI != nil {
 			page = uiGuard{policy: current.Load, serve: cfg.UI}
+		}
+		if cfg.Web != "" {
+			web = webRelay(current.Load, cfg.Web)
 		}
 		srv := &http.Server{
 			Handler: &remoteProxy{
 				ui:      page,
+				web:     web,
+				webAddr: cfg.Web,
 				policy:  current.Load,
 				resolve: resolver(cfg.DNS),
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {

@@ -229,15 +229,68 @@ func TestOnlyViewers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		wait := 300 * time.Millisecond // refused: closed, and still waiting for another
+		if c.want {
+			wait = 10 * time.Second // room for a slow CI under -race
+		}
 		var got bool
 		select {
 		case got = <-accepted:
-		case <-time.After(300 * time.Millisecond): // closed and still waiting for another
+		case <-time.After(wait):
 		}
 		conn.Close()
 		ln.Close()
 		if got != c.want {
 			t.Errorf("own=%v devices=%v ownOnly=%v: accepted %v", c.p.own, c.p.devices, c.ownOnly, got)
 		}
+	}
+}
+
+// mitmweb for a phone on the Remote Proxy: plain requests and CONNECT (Safari's
+// ws://) to the node's mitmweb port reach mitmweb, for the user's own devices
+// only; a --device of another user gets 403 both ways.
+func TestRemoteProxyWeb(t *testing.T) {
+	mitmweb, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mitmweb.Close()
+	go http.Serve(mitmweb, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("mitmweb " + r.Host)) }))
+	_, port, _ := net.SplitHostPort(mitmweb.Addr().String())
+	me := netip.MustParseAddr("127.0.0.1")
+	own := &policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}, own: map[netip.Addr]Device{me: {"nPHONE", "phone"}},
+		self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}
+	other := &policy{devices: own.devices, self: own.self, names: own.names}
+	for _, c := range []struct {
+		p    *policy
+		want bool
+	}{{own, true}, {other, false}} {
+		p := c.p
+		rp := &remoteProxy{policy: func() *policy { return p }, web: webRelay(func() *policy { return p }, mitmweb.Addr().String()), webAddr: mitmweb.Addr().String(),
+			resolve: func(_ context.Context, h string) (netip.Addr, error) { return netip.ParseAddr(h) },
+			dial: func(context.Context, verdict, string, netip.AddrPort) (net.Conn, error) {
+				return nil, errors.New("no dialing in this test")
+			}}
+		srv := httptest.NewServer(rp)
+		ask := func(req string) string {
+			conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.Write([]byte(req))
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			b, _ := io.ReadAll(conn)
+			return string(b)
+		}
+		plain := ask("GET http://100.64.0.9:" + port + "/ HTTP/1.1\r\nHost: 100.64.0.9:" + port + "\r\nConnection: close\r\n\r\n")
+		tunnel := ask("CONNECT 100.64.0.9:" + port + " HTTP/1.1\r\nHost: 100.64.0.9:" + port + "\r\n\r\nGET / HTTP/1.1\r\nHost: 100.64.0.9:" + port + "\r\nConnection: close\r\n\r\n")
+		if got := strings.Contains(plain, "mitmweb 100.64.0.9:"+port) && strings.Contains(tunnel, "mitmweb 100.64.0.9:"+port); got != c.want {
+			t.Errorf("own=%v: plain %q, tunnel %q", c.want, plain, tunnel)
+		}
+		if !c.want && (!strings.HasPrefix(plain, "HTTP/1.1 403") || !strings.HasPrefix(tunnel, "HTTP/1.1 403")) {
+			t.Errorf("another user's device: plain %q, tunnel %q", plain, tunnel)
+		}
+		srv.Close()
 	}
 }

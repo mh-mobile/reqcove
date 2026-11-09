@@ -231,20 +231,35 @@ globalThis.document = { createElement: mk, getElementById: (id) => els[id],
   createTextNode: (t) => ({ tag: "#text", textContent: t, children: [] }) };
 globalThis.location = { search: "?host=api.example.com" };
 const asked = [];
-globalThis.fetch = (url) => { asked.push(url); return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({
-  line: "mitmproxy ready · 1 flows", steps: ["approve"],
-  rows: [{ id: "a&b", class: "ok", s: "200", text: "GET /<img src=x onerror=alert(1)>", time: "10:00:00", host: "api.example.com", ms: 12 }] })) }); };
+let reloaded = 0;
+globalThis.location.reload = () => { reloaded++; };
+const answers = [
+  () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({
+    line: "mitmproxy ready · 1 flows", steps: ["approve"], empty: "No flows yet.",
+    rows: [{ id: "a&b", class: "ok", s: "200", text: "GET /<img src=x onerror=alert(1)>", time: "10:00:00", host: "api.example.com", ms: 12 }] })) }),
+  () => Promise.reject(new Error("down")),
+  () => Promise.resolve({ ok: false, status: 403 }),
+];
+globalThis.fetch = (url) => { asked.push(url); return answers[asked.length - 1](); };
 const timers = [];
 globalThis.setTimeout = (f) => timers.push(f);
 ` + appJS + `
-timers.shift()();
-setImmediate(() => {
+const settle = () => new Promise((r) => setImmediate(r));
+(async () => {
+  timers.shift()();
+  await settle();
   const tr = els.rows.children[0], a = tr.children[1].children[0];
   const out = { asked, line: els.line.textContent, step: els.steps.children[0].textContent,
     cls: tr.className, status: tr.children[0].textContent, text: a.textContent, href: a.href,
     again: timers.length };
+  timers.shift()(); // reqcove down
+  await settle();
+  out.down = els.line.textContent;
+  timers.shift()(); // a new start: the link is old
+  await settle();
+  out.reloaded = reloaded;
   console.log(JSON.stringify(out));
-});
+})();
 `
 	f := filepath.Join(t.TempDir(), "app_test.js")
 	if err := os.WriteFile(f, []byte(harness), 0o600); err != nil {
@@ -255,15 +270,16 @@ setImmediate(() => {
 		t.Fatalf("%v: %s", err, out)
 	}
 	var got struct {
-		Asked                               []string
-		Line, Step, Cls, Status, Text, Href string
-		Again                               int
+		Asked                                     []string
+		Line, Step, Cls, Status, Text, Href, Down string
+		Again, Reloaded                           int
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	if len(got.Asked) != 1 || got.Asked[0] != "/flows.json?host=api.example.com" || got.Line != "mitmproxy ready · 1 flows" || got.Step != "next: approve" ||
-		got.Cls != "ok" || got.Status != "200" || got.Text != "GET /<img src=x onerror=alert(1)>" || got.Href != "/flow?id=a%26b" || got.Again != 1 {
+	if len(got.Asked) != 3 || got.Asked[2] != "/flows.json?host=api.example.com" || got.Line != "mitmproxy ready · 1 flows" || got.Step != "next: approve" ||
+		got.Cls != "ok" || got.Status != "200" || got.Text != "GET /<img src=x onerror=alert(1)>" || got.Href != "/flow?id=a%26b" || got.Again != 1 ||
+		got.Down != "reqcove is not answering; trying again" || got.Reloaded != 1 {
 		t.Errorf("app.js: %+v", got)
 	}
 }

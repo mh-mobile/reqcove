@@ -115,7 +115,7 @@ setting, so this works on Wi-Fi only.
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER), for one that decrypts; Burp's on this computer is fetched by itself |
 | `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
-| `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow); after v0.1.0 also on the node's port 8081 for your own devices on the tailnet, with the link `run` prints |
+| `--web` | run mitmweb on `http://127.0.0.1:8081` instead (no masking, can edit and replay, keeps every flow); after v0.1.0 also on the node's port 8081 for your own devices on the tailnet, with the link `run` prints (not tried from another device yet: the tests use a stand-in for mitmweb) |
 | `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out, after v0.1.0); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before |

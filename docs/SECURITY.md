@@ -200,7 +200,11 @@ not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).
 The password still guards it, and it gives what it gives on this computer: with
 it, mitmweb's options can be changed (scripts included), which runs code on this
-computer. The link with the password is printed in `run`'s terminal only. It shows traffic **unmasked**, and
+computer. The link with the password is printed in `run`'s terminal only. A phone on the
+Remote Proxy reaches it the same way (its requests and WebSocket tunnels to the
+node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
+open stays open if the device stops counting as yours. Not tried from another
+device yet: the tests use a stand-in for mitmweb. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
 options. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
