@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -365,5 +366,23 @@ func TestReadyGate(t *testing.T) {
 		if got := g.ready(c.s); got != c.want {
 			t.Errorf("poll %d: ready %v, want %v", i, got, c.want)
 		}
+	}
+}
+
+// Help lists flags with two dashes, as the README writes them.
+func TestUsageTwoDashes(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.Bool("ui", false, "serve the page")
+	fs.String("state", "", "state directory")
+	r, w, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = w
+	usageOf(fs)
+	w.Close()
+	os.Stderr = old
+	b, _ := io.ReadAll(r)
+	out := string(b)
+	if !strings.Contains(out, "Usage: reqcove run [flags]") || !strings.Contains(out, "  --ui\n") || !strings.Contains(out, "  --state string") || strings.Contains(out, "\n  -ui") {
+		t.Errorf("help:\n%s", out)
 	}
 }

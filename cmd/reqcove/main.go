@@ -121,7 +121,7 @@ func run(ctx context.Context, args []string) error {
 	})
 	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
-	web := fs.Bool("web", false, "run mitmweb instead of mitmdump, its UI on http://127.0.0.1:8081 (no masking, can edit and replay)")
+	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081, and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
 	state := fs.String("state", defaultState(), "state directory")
 	hostname := fs.String("hostname", "reqcove", "tailnet node name")
@@ -130,7 +130,7 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", "3.14", "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
-	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80, for the --device devices (a link with a token is printed)")
+	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
@@ -448,11 +448,28 @@ func parseDNS(v string) ([]netip.AddrPort, error) {
 // parseFlags parses args and refuses leftovers: flag stops at the first one,
 // so `--device Taro's iPhone --allow-hosts x` would drop the --allow-hosts.
 func parseFlags(fs *flag.FlagSet, args []string) error {
+	fs.Usage = func() { usageOf(fs) }
 	fs.Parse(args)
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (quote values with spaces, such as --device \"Taro's iPhone\")", fs.Arg(0))
 	}
 	return nil
+}
+
+// usageOf prints a command's flags with two dashes, as the README and run's
+// own messages write them (Go's flag package prints one; it takes either).
+func usageOf(fs *flag.FlagSet) {
+	var b strings.Builder
+	fs.SetOutput(&b)
+	fs.PrintDefaults()
+	fs.SetOutput(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Usage: reqcove %s [flags]\n", fs.Name())
+	for _, line := range strings.SplitAfter(b.String(), "\n") {
+		if strings.HasPrefix(line, "  -") {
+			line = "  --" + line[3:]
+		}
+		fmt.Fprint(os.Stderr, line)
+	}
 }
 
 // openState makes the state directory (0700) and locks it. It refuses a
