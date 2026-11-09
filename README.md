@@ -222,8 +222,9 @@ command it prints. On Linux nothing is changed for you: point apps at it
   decrypted and recorded too (as `local`, mixed with the Simulator's) rather than
   warned about, trust Reqcove's CA on this computer once. `run` prints the
   command when it is not trusted yet; `reqcove status` and `reqcove cleanup` say
-  how to stop. Tried on macOS 27 (the command, Reqcove's check of it, and the
-  hint to stop); not tried on Linux.
+  how to stop. Tried on macOS 27 (the command, Reqcove's check of it, the hint
+  to stop, and Chrome on the Mac opening an allowed host without a warning, its
+  requests recorded); not tried on Linux.
   - macOS (TLS only; it asks for your password):
     `security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`.
     Firefox may keep its own store.
