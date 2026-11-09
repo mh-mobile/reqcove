@@ -6,6 +6,8 @@
 
 手元の iPhone でも、遠くにある iPhone でも、その HTTP(S) 通信を AI エージェントに渡します。
 
+Reqcove（レクコーブ）は、request と cove（入り江）から。リクエストが集まる、穏やかな入り江という意味です。
+
 [English](README.md)
 
 iPhone は、あなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は、Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。

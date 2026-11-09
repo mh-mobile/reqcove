@@ -6,6 +6,8 @@
 
 Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent.
 
+Reqcove (REK-kohv) is request + cove: a sheltered place where requests gather.
+
 [日本語](README.ja.md)
 
 The iPhone picks your computer as its Tailscale **exit node**. Reqcove, a single
