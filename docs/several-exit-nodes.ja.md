@@ -11,11 +11,11 @@ reqcove run --device iphone --allow-hosts api.example.com --ui
 reqcove run --device iphone --allow-hosts api.staging.example.com --rules staging.yaml --ui --state ~/.reqcove-staging
 ```
 
-それぞれ別のターミナルで動かします。1 つめは `~/.reqcove` を使い、名前は今までどおり `reqcove` です。
+それぞれ別のターミナルで動かします。1 つめは `~/.reqcove` を使い、名前は今までどおり `reqcove` です。`--state ~/x` は、スペースを空けて書いてください。`--state=~/x` と書くと、シェルが `~` をそのまま渡すので、`run` は断ります。
 
-- **名前**：`--state` のフォルダの名前が `reqcove-名前` なら（先頭のドットは除きます）、ノードの名前は `reqcove-名前` になります。この例では `reqcove-staging` です。ほかの名前のフォルダでは `reqcove` のままで、2 つめは Tailscale が `reqcove-1` に変えます。名前を決めたいときは `--hostname` を付けてください。前に別の名前で使ったフォルダでは、新しい名前に変わります（Tailscale がマシンの名前を変えます）。前の名前のままにしたいときは、`--hostname reqcove` を付けます。
+- **名前**：新しい `--state` のフォルダの名前が `reqcove-名前` なら（先頭のドットは除きます）、ノードの名前は `reqcove-名前` になります。この例では `reqcove-staging` です。ほかの名前のフォルダでは `reqcove` になります。名前を決めたいときは `--hostname` を付けてください（2 つのノードが両方 `reqcove` だと、Tailscale が片方の名前を変えて区別します。Tailscale の説明によるもので、試していません）。名前は状態のフォルダ（`node-name`）に記録され、次の起動と `cleanup` はそれを使います。前の版の reqcove が使ったフォルダでは、`reqcove` のままです。
 - **ログインと承認は、ノードごとに 1 回**：初めてのときと同じです（足りないことは `reqcove status --state ~/.reqcove-staging` で分かります）。tailnet のポリシーに `autoApprovers` を書いておけば、承認は自動になります（README の Tips）。
-- **CA**：新しい状態のフォルダでは、初めての起動で `~/.reqcove` の CA を写します（`run` がそう表示します）。そのため、iPhone にもう入っているプロファイルが、どのノードでも使えます。前に使ったフォルダでは、そのフォルダの CA をそのまま使います。`~/.reqcove` にまだ CA がないうちに起動したフォルダも、自分の CA を作ります。先に、デフォルトのノードを起動してください。
+- **CA**：CA のない状態のフォルダでは、起動のときに `~/.reqcove` の CA を写します（どこに写したかを `run` が表示します）。そのため、iPhone にもう入っているプロファイルが、どのノードでも使えます。自分の CA があるフォルダでは、それをそのまま使います。`~/.reqcove` にまだ CA がなければ、そのノードは自分の CA を作ります（`run` がそう表示します）。先に、デフォルトのノードを起動してください。`~/.reqcove` の CA のファイルが欠けていれば、`run` はどれが欠けているかを示して止まります。
 
 ## 2. iPhone の Tailscale アプリで切り替える
 
@@ -32,15 +32,23 @@ claude mcp add reqcove -- reqcove mcp
 claude mcp add reqcove-staging -- reqcove mcp --state /Users/you/.reqcove-staging
 ```
 
-`reqcove status`、`reqcove har`、`reqcove cleanup` にも `--state` を付けられます。
+`reqcove status`、`reqcove har`、`reqcove cleanup` にも `--state` を付けられます。`run` と `status` がそのノードについて表示するコマンドには、`--state` が付いています。
 
 ## ポート
 
-- `--ui` はそれぞれのノードの 80 番、`--web` はそれぞれのノードの 8081 番です。リンクにはノードのアドレスが入るので、それぞれのリンクで、そのノードのページが開きます。`--ui` のページには、ノードの名前が出ます（`reqcove` のときは出ません）。
-- このコンピュータの中では、mitmweb は `127.0.0.1:8081` で待ち受けます。ほかの run が使っているときは、8091〜8099 のうち空いている最初のポートを使います（どれかは `run` が表示します）。ノードの側は 8081 のままなので、起動の順番で iPhone のリンクは変わりません。
+`--ui` は、それぞれのノードの 80 番です。mitmweb（`--web`）には、入り口が 2 つあります。
+
+| | `reqcove`（先に起動） | `reqcove-staging`（あとに起動） |
+|---|---|---|
+| ノード：iPhone が開く所。`run` が出すリンクと QR コード | `http://100.1.1.1:8081/…` | `http://100.2.2.2:8081/…` |
+| このコンピュータ：ここのブラウザで開く所 | `http://127.0.0.1:8081/…` | `http://127.0.0.1:8091/…` |
+
+- ノードの側は、どのノードも 8081 番です。ノードごとにアドレスが違うのでぶつからず、起動の順番で iPhone のリンクは変わりません。
+- このコンピュータの 127.0.0.1 は 1 つしかないので、最初の mitmweb が 8081 を使い、次からは 8091〜8099 のうち空いている最初のポートを使います（どれかは `run` が表示します）。ノードは、自分の 8081 をそこへ中継します。
+- `--ui` のページには、ノードの名前が出ます（`reqcove` のときは出ません）。
 - `--local-proxy` は、コンピュータ 1 台に 1 つだけです（ポート 8082 と、システムの Web プロキシの設定が 1 組しかないため）。2 つめの run で指定すると、何も変えずにすぐ止まります。
 
 ## 知っておくこと
 
-- CA の秘密鍵は、それぞれの状態のフォルダ（中の `mitmproxy/`）に入ります。1 つを消しても（`reqcove cleanup --delete-state --state …`）、ほかのフォルダには残ります。iPhone からプロファイルを消すと、どのノードでも復号できなくなります（`~/.reqcove` と同じ CA を使うノードでは、`cleanup` がそう表示します）。
-- ノードは、どれも Tailscale の管理画面に 1 台のマシンとして載ります。使わなくなったものは削除してください（名前は `reqcove cleanup --state …` が表示します）。
+- CA の秘密鍵は、それぞれの状態のフォルダ（中の `mitmproxy/`）に入ります。1 つを消しても（`reqcove cleanup --delete-state --state …`）、ほかのフォルダには残ります。`~/.reqcove` の `reqcove cleanup` は、写した先のフォルダを表示します（`~/.reqcove/ca-copies` に記録しています）。iPhone からプロファイルを消すと、どのノードでも復号できなくなります（CA を共有するノードの `cleanup` が、そう表示します）。
+- ノードは、どれも Tailscale の管理画面に 1 台のマシンとして載ります。使わなくなったものは削除してください（`reqcove cleanup --state …` は、`run` が付けた名前を表示します。Tailscale が `reqcove-1` などに変えたものは、管理画面ではその名前で出ます）。

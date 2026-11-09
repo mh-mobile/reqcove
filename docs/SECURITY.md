@@ -27,13 +27,17 @@ directory to yourself; when you stop using Reqcove, remove the profile from the
 iPhone first, then delete the directory (`reqcove cleanup` lists the steps).
 Copying the directory to another computer copies the key.
 
-After v0.1.0, a new `--state` directory gets a copy of `~/.reqcove`'s CA on its
-first start (several exit nodes on one computer, one profile on the iPhone):
+After v0.1.0, a `--state` directory without a CA gets a copy of `~/.reqcove`'s
+at start (several exit nodes on one computer, one profile on the iPhone):
 `mitmproxy-ca.pem` with the key, and the certificate files; not
-`mitmproxy-ca.p12`, nor mitmweb's password. The key is then in each such
+`mitmproxy-ca.p12`, nor mitmweb's password. `run` logs where it copied it, and
+refuses a `--state` starting with `~` (`--state=~/x`, which the shell leaves
+as it is, would put the key in `./~/x`). The key is then in each such
 directory, each 0700 with the files 0600 (a test): deleting one leaves it in
 the others, and removing the profile from the iPhone is what stops them all.
-`cleanup` of such a directory says so.
+`~/.reqcove/ca-copies` lists the copies, and `cleanup` of `~/.reqcove` names
+those still holding the CA; `cleanup` of a copy says the profile serves both.
+So "delete the directory" above means each of them.
 
 ## What is recorded
 

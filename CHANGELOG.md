@@ -30,12 +30,14 @@
 - `reqcove help` (also `-h`, `--help`) shows the commands.
 - Several exit nodes on one computer, one `run` per `--state`
   ([docs/several-exit-nodes.md](docs/several-exit-nodes.md)): a `--state`
-  directory named `reqcove-NAME` names the node so (before, every node was
-  `reqcove` without `--hostname`; such a directory used before gets the new
-  name), a new one gets a copy of `~/.reqcove`'s CA, mitmweb takes 8091-8099
-  on this computer while 8081 is taken (the node's port stays 8081), the `--ui`
-  page shows the node's name, and `run` prints the `claude mcp add` command
-  with `--state`. A second `--local-proxy` stops at once, before anything changes.
+  directory named `reqcove-NAME` names the node so, and the name is kept in it
+  (`node-name`; a directory an older reqcove used keeps `reqcove`), one without
+  a CA gets a copy of `~/.reqcove`'s (listed in `~/.reqcove/ca-copies`, named
+  by its `cleanup`), mitmweb takes 8091-8099 on this computer while 8081 is
+  taken (the node's port stays 8081), the `--ui` page shows the node's name,
+  and the commands `run`, `status` and `cleanup` print carry `--state`. A
+  second `--local-proxy` stops at once, before anything changes. `run` refuses
+  a `--state` starting with `~` (`--state=~/x`, left unexpanded by the shell).
 - `--dns 1.1.1.1` works without the port (53).
 - `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);
   `.example.com` is refused with the right spelling, `*.example.com`.

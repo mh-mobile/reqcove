@@ -190,7 +190,7 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
-	printCA(filepath.Join(*state, "mitmproxy"))
+	printCA(*state)
 	if len(out.NextSteps) == 0 {
 		fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
 		return nil
@@ -214,16 +214,21 @@ func offlineStatus(state, uvx string) error {
 	} else {
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
-	printCA(filepath.Join(state, "mitmproxy"))
+	printCA(state)
 	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
 	return nil
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.
-func printCA(confdir string) {
+func printCA(state string) {
+	confdir := filepath.Join(state, "mitmproxy")
 	ca, err := capture.ReadCA(confdir)
 	if err != nil {
-		fmt.Println("  CA:          none yet; the first `reqcove run` makes it")
+		if isDefaultState(state) {
+			fmt.Println("  CA:          none yet; the first `reqcove run` makes it")
+		} else {
+			fmt.Printf("  CA:          none yet; the first `%s` copies %s's, or makes one if it has none\n", withState("reqcove run", state), defaultState())
+		}
 		return
 	}
 	fmt.Printf("  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
@@ -258,6 +263,11 @@ func cleanup(args []string) error {
 	}
 	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", hostname)
 	fmt.Printf("  4. This computer: delete %s (`%s`).\n", *state, withState("reqcove cleanup --delete-state", *state))
+	if caErr == nil && isDefaultState(*state) {
+		for _, d := range caCopiesOf(ca.SHA256) {
+			fmt.Printf("     %s holds a copy of this CA and its key (another node's): `%s`.\n", d, withState("reqcove cleanup --delete-state", d))
+		}
+	}
 	if _, err := os.Stat(savedProxyFile(*state)); err == nil { // --local-proxy left them pointed at reqcove
 		if unlock, err := lockState(*state); err != nil {
 			fmt.Println("  The system's web proxies point at the reqcove that is running; they go back when it stops.")

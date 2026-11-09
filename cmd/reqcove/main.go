@@ -138,6 +138,9 @@ func run(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if strings.HasPrefix(*state, "~") { // --state=~/x: the shell leaves the ~ as it is
+		return fmt.Errorf("--state %s: the shell did not expand ~ (with =, it does not): write --state ~/%s, with a space, or the full path", *state, strings.TrimPrefix(strings.TrimPrefix(*state, "~"), "/"))
+	}
 	hostname := nodeName(fs, *state)
 	if len(devices) == 0 && !*localProxy {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
@@ -206,19 +209,28 @@ func run(ctx context.Context, args []string) error {
 	if _, err := exec.LookPath(*uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)
 	}
-	newState := isNew(*state)
 	unlock, err := openState(*state)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if newState && !isDefaultState(*state) {
+	if err := keepNodeName(*state, hostname); err != nil {
+		return err
+	}
+	if confdir := filepath.Join(*state, "mitmproxy"); !isDefaultState(*state) && !exists(filepath.Join(confdir, "mitmproxy-ca.pem")) {
 		// One CA for every node here, so the iPhone's one profile serves them all.
 		from := filepath.Join(defaultState(), "mitmproxy")
-		if copied, err := capture.CopyCA(from, filepath.Join(*state, "mitmproxy")); err != nil {
-			return fmt.Errorf("copying the CA of %s: %w", from, err)
-		} else if copied {
-			log.Printf("using the CA of %s (copied): the iPhone's profile for it serves this node too", defaultState())
+		abs, _ := filepath.Abs(confdir)
+		switch copied, err := capture.CopyCA(from, confdir); {
+		case err != nil:
+			return fmt.Errorf("the CA of %s, to share it with this node: %w (copy that mitmproxy folder whole from where it came)", defaultState(), err)
+		case copied:
+			log.Printf("using the CA of %s, copied into %s: the iPhone's profile for it serves this node too", defaultState(), abs)
+			if err := noteCACopy(abs); err != nil {
+				log.Printf("WARN: %s does not list this copy (%v): its cleanup will not name it", defaultState(), err)
+			}
+		default:
+			log.Printf("%s has no CA yet: this node makes one of its own, and the iPhone needs its profile too (to share one, start the default node first, then this one with a new --state)", defaultState())
 		}
 	}
 	if !isDefaultState(*state) {
@@ -386,7 +398,7 @@ func run(ctx context.Context, args []string) error {
 			uiLink = "http://" + ip + "/?k=" + uiToken
 		}
 		if webAddr != "" {
-			webLink = strings.Replace(cap.WebURL, webAddr, fmt.Sprintf("%s:%d", ip, exitnode.WebPort), 1)
+			webLink = nodeWebLink(cap.WebURL, webAddr, ip)
 		}
 		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
 		var codes []qrItem
@@ -436,6 +448,7 @@ func run(ctx context.Context, args []string) error {
 			UI:         pageFn,
 			Web:        webAddr,
 			LocalProxy: localLn,
+			StatusCmd:  withState("reqcove status", *state),
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})

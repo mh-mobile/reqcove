@@ -74,6 +74,10 @@ func TestTwoNodes(t *testing.T) {
 	outsider := startPeer(t, ctx, url, "outsider")
 	matched := make(chan map[string]string, 4)
 	runErr := make(chan error, 1)
+	localProxy, err := net.Listen("tcp", "127.0.0.1:0") // as run listens before Run, for --local-proxy
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		runErr <- Run(ctx, Config{
 			Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: url,
@@ -82,7 +86,8 @@ func TestTwoNodes(t *testing.T) {
 			UI: func(w http.ResponseWriter, r *http.Request, id string, all bool) {
 				fmt.Fprint(w, "page for "+id, " all=", all)
 			},
-			OnDevices: func(m map[string]string) { matched <- m },
+			LocalProxy: localProxy,
+			OnDevices:  func(m map[string]string) { matched <- m },
 		})
 	}()
 	var names map[string]string
@@ -107,8 +112,8 @@ func TestTwoNodes(t *testing.T) {
 	control.SetSubnetRoutes(reqcove.Key, tsaddr.ExitRoutes()) // the admin's approval
 	phoneID := useExitNode(t, ctx, phone, reqcove)
 	useExitNode(t, ctx, outsider, reqcove)
-	if names[phoneID] != "phone" || len(names) != 1 {
-		t.Fatalf("matched devices %v, want only phone (%s)", names, phoneID)
+	if names[phoneID] != "phone" || names[Local.ID] != Local.Name || len(names) != 2 {
+		t.Fatalf("matched devices %v, want phone (%s) and %s", names, phoneID, Local.ID)
 	}
 	rcIP := reqcove.Addresses[0].Addr()
 	// tsnet uploads its logs (they carry destination IPs) unless this is set.
@@ -206,6 +211,19 @@ func TestTwoNodes(t *testing.T) {
 		pc.Close()
 		if r := socks.last(); r.dst != "203.0.113.7:80" || r.user != phoneID {
 			t.Errorf("plain HTTP on the Remote Proxy: SOCKS5 saw %+v", r)
+		}
+	}
+
+	// The local proxy, on the listener run gave: to SOCKS5 as the device Local.
+	if pc, err := net.Dial("tcp", localProxy.Addr().String()); err != nil {
+		t.Errorf("the local proxy: %v", err)
+	} else {
+		fmt.Fprint(pc, "GET http://203.0.113.8/x HTTP/1.1\r\nHost: 203.0.113.8\r\n\r\n")
+		pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+		http.ReadResponse(bufio.NewReader(pc), nil)
+		pc.Close()
+		if r := socks.last(); r.dst != "203.0.113.8:80" || r.user != Local.ID {
+			t.Errorf("the local proxy: SOCKS5 saw %+v", r)
 		}
 	}
 

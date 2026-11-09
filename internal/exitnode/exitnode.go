@@ -4,6 +4,7 @@
 package exitnode
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -53,6 +54,9 @@ type Config struct {
 	// The caller listens, so a port taken stops run before anything changes.
 	LocalProxy net.Listener
 	Verbose    bool // log tsnet's backend and every flow decision
+	// StatusCmd is the command that shows this node's status, for the log
+	// (with --state for a node of another state); empty: reqcove status.
+	StatusCmd string
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
 	// OnStatus is called every few seconds, from start, with where the node stands.
@@ -152,7 +156,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// From the start, before login: the status is most useful while the node is stuck.
 	go watch(ctx, lc, cfg)
-	log.Printf("waiting for %s to log in (`reqcove status` says what is missing)", cfg.Hostname)
+	statusCmd := cmp.Or(cfg.StatusCmd, "reqcove status")
+	log.Printf("waiting for %s to log in (`%s` says what is missing)", cfg.Hostname, statusCmd)
 	if _, err := s.Up(ctx); err != nil {
 		return err
 	}

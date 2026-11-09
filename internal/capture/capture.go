@@ -431,15 +431,15 @@ func ensureCA(ctx context.Context, cfg Config) error {
 }
 
 // CAFiles are what mitmproxy and mitm.it use of a CA, the key last: it is what
-// says a confdir has a CA (ensureCA), so a copy cut short never looks like one,
-// and the next start makes a CA of its own there.
+// says a confdir has a CA (ensureCA), so a copy cut short never looks like one.
 // Not copied: mitmproxy-ca.p12 (the key again, without a passphrase, which
 // mitmproxy does not read), the dhparam (made when missing) and config.yaml
 // (mitmweb's password).
 var CAFiles = []string{"mitmproxy-ca-cert.pem", "mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.p12", "mitmproxy-ca.pem"}
 
 // CopyCA copies the CA of confdir src into dst, so one profile on the iPhone
-// serves both nodes. It does nothing when src has no CA or dst has one.
+// serves both nodes. It does nothing when src has no CA or dst has one, and
+// copies nothing when src lacks one of CAFiles; a copy that fails is removed.
 func CopyCA(src, dst string) (bool, error) {
 	if _, err := os.Stat(filepath.Join(src, "mitmproxy-ca.pem")); err != nil {
 		return false, nil
@@ -447,33 +447,53 @@ func CopyCA(src, dst string) (bool, error) {
 	if _, err := os.Stat(filepath.Join(dst, "mitmproxy-ca.pem")); err == nil {
 		return false, nil
 	}
+	for _, name := range CAFiles {
+		if _, err := os.Stat(filepath.Join(src, name)); err != nil {
+			return false, fmt.Errorf("%s has a CA but no %s", src, name)
+		}
+	}
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return false, err
 	}
+	var done []string
 	for _, name := range CAFiles {
-		in, err := os.Open(filepath.Join(src, name))
-		if err != nil {
+		if err := copyFile(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			removeAll(done)
 			return false, err
 		}
-		tmp, err := os.CreateTemp(dst, name+".*")
-		if err == nil {
-			_, err = io.Copy(tmp, in) // CreateTemp makes it 0600
-			if cerr := tmp.Close(); err == nil {
-				err = cerr
-			}
-			if err == nil {
-				err = os.Rename(tmp.Name(), filepath.Join(dst, name))
-			}
-			if err != nil {
-				os.Remove(tmp.Name())
-			}
-		}
-		in.Close()
-		if err != nil {
-			return false, err
-		}
+		done = append(done, filepath.Join(dst, name))
 	}
 	return true, nil
+}
+
+// copyFile copies src to dst, 0600, through a temporary file: dst is whole or absent.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".*") // 0600
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(tmp, in)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), dst)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+func removeAll(paths []string) {
+	for _, p := range paths {
+		os.Remove(p)
+	}
 }
 
 // freePort asks the kernel for an unused port.
