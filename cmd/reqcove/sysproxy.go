@@ -115,9 +115,8 @@ func getProxy(kind, service string) (webProxy, error) {
 		}
 	}
 	if p.Server == ours.Server && p.Port == ours.Port && !p.Enabled {
-		// Turned off with reqcove's address left in it, as putting back an empty,
-		// turned-off proxy leaves it (networksetup cannot empty the server):
-		// nothing is pointed at reqcove; put back off and empty.
+		// Turned off with reqcove's address left in it, as builds before
+		// 17ec7a8 put an empty proxy back: not pointed at reqcove; put back off and empty.
 		return webProxy{}, nil
 	}
 	if p.Server == ours.Server && p.Port == ours.Port {
@@ -149,12 +148,15 @@ func ns(args ...string) error {
 	return nil
 }
 
-// setProxy sets one proxy as p has it: a disabled one keeps its server and port.
+// setProxy sets one proxy as p has it: a disabled one keeps its server and
+// port, or is emptied when it had none ("" and 0 empty it: tried on macOS 27).
 func setProxy(kind, service string, p webProxy) error {
-	if p.Server != "" && p.Port != "" && p.Port != "0" {
-		if err := ns("-set"+kind, service, p.Server, p.Port); err != nil { // this also turns it on
-			return err
-		}
+	server, port := p.Server, p.Port
+	if server == "" || port == "" || port == "0" {
+		server, port = "", "0"
+	}
+	if err := ns("-set"+kind, service, server, port); err != nil { // this also turns it on
+		return err
 	}
 	if !p.Enabled {
 		return ns("-set"+kind+"state", service, "off")

@@ -56,8 +56,12 @@ func fakeNetworksetup(t *testing.T, proxies map[string]webProxy, failSet string)
 			p := proxies[k]
 			p.Enabled = false
 			proxies[k] = p
-		default:
-			proxies[strings.TrimPrefix(cmd, "-set")+"|"+args[1]] = webProxy{true, args[2], args[3]}
+		default: // "" and 0 empty it, as on macOS 27
+			p := webProxy{true, args[2], args[3]}
+			if p.Port == "0" {
+				p.Port = ""
+			}
+			proxies[strings.TrimPrefix(cmd, "-set")+"|"+args[1]] = p
 		}
 		return "", nil
 	}
@@ -90,7 +94,7 @@ func TestSystemProxy(t *testing.T) {
 	if err := restoreSystemProxy(state); err != nil {
 		t.Fatal(err)
 	}
-	if proxies["webproxy|Wi-Fi"] != corp || proxies["securewebproxy|Wi-Fi"] != corp || proxies["webproxy|USB LAN"] != off || proxies["securewebproxy|USB LAN"].Enabled {
+	if proxies["webproxy|Wi-Fi"] != corp || proxies["securewebproxy|Wi-Fi"] != corp || proxies["webproxy|USB LAN"] != off || proxies["securewebproxy|USB LAN"] != (webProxy{}) {
 		t.Errorf("not put back: %+v", proxies)
 	}
 	if proxies["bypass|Wi-Fi"].Server != "*.local,169.254/16" || proxies["bypass|USB LAN"].Server != "" {
