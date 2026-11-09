@@ -111,7 +111,7 @@ setting, so this works on Wi-Fi only.
 
 | | |
 |---|---|
-| `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
+| `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more. Another Mac can be one too ([how](docs/another-mac.md)) |
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), or `'*'` for all. Without it, traffic is carried but nothing is recorded |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--rules-reload` | read that file again whenever it changes, while running (see below; after v0.1.0) |
@@ -358,7 +358,8 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   Reqcove's records stay scoped and masked (from reading code, not tried).
 - The iOS Simulator on the computer running Reqcove needs `--local-proxy` (see
   above; after v0.1.0). On another Mac that is a `--device` and uses Reqcove's
-  exit node, the Simulator's traffic should go through with the Mac's own, once
+  exit node ([how](docs/another-mac.md)), the Simulator's traffic should go
+  through with the Mac's own, once
   the Simulator trusts Reqcove's CA (not tried).
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
   can use a lot of memory (if mitmproxy runs out, reqcove restarts it; when it is down again within a minute

@@ -87,7 +87,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 
 | | |
 |---|---|
-| `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します |
+| `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します。別の Mac も入れられます（[手順](docs/another-mac.ja.md)） |
 | `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身と、すべてのサブドメイン）、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません |
 | `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
 | `--rules-reload` | 動いている間、そのファイルが変わるたびに読み直します（下を参照。v0.1.0 のあとに追加） |
@@ -197,7 +197,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 - IPv6 は拒否します（アプリはすぐに IPv4 にフォールバックします）。QUIC は Apple 宛て以外をドロップするので、アプリは TCP にフォールバックします。見分けるのはアドレスで、ホストではありません。そのため、`--allow-hosts` に入っていないホストの QUIC も（`--allow-hosts` がないときも）TCP に切り替わります。443 以外のポートを使う QUIC は止めずにそのまま通し、記録もしません。
 - Exit Node 経由の通話は試していません。
 - mitmweb（`--web`）では、mitmproxy の設定を変えられます。Capture のタブの「Run SOCKS Proxy」は、オンのままにしてください。Reqcove がデバイスの通信を mitmproxy に渡す入り口で、外すとデバイスの HTTP(S) がつながらなくなります。そこにあるほかのモードは、Reqcove では使いません。変えた設定は reqcove を起動し直すと戻り、Reqcove の記録の範囲とマスクは崩れません（コードを読んで考えたことで、試してはいません）。
-- Reqcove を動かしているコンピュータの iOS シミュレーターには、`--local-proxy` が要ります（上を参照。v0.1.0 のあとに追加）。別の Mac を `--device` に入れ、その Mac で Reqcove の Exit Node を使えば、シミュレーターの通信も、その Mac の通信と一緒に通るはずです。シミュレーターに Reqcove の CA を入れる必要があります（試していません）。
+- Reqcove を動かしているコンピュータの iOS シミュレーターには、`--local-proxy` が要ります（上を参照。v0.1.0 のあとに追加）。別の Mac を `--device` に入れ、その Mac で Reqcove の Exit Node を使えば（[手順](docs/another-mac.ja.md)）、シミュレーターの通信も、その Mac の通信と一緒に通るはずです。シミュレーターに Reqcove の CA を入れる必要があります（試していません）。
 - mitmproxy は WebSocket のメッセージを、届ききるまで1つずつ溜めます。巨大なメッセージが来るとメモリを多く使います（mitmproxy が落ちたら、reqcove が起動し直します。起動し直しても 1 分以内に落ちるのが 5 回続くと、`run` が止まります）。
 - `map_local` が答えるのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET には答えるので、そこにデバイスがボディを付けて送ってくると、まるごと溜めます。こうしたリクエストを送るのは、自分のデバイスだけです。
 - iPhone が使用中に reqcove が停止すると、reqcove が復帰したあとも iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。その場合は Exit Node を一度オフにして、オンに戻してください。
