@@ -176,8 +176,10 @@ MCP tools return, masked the same way. Who can read it (each a test):
   `Host`: a site the iPhone visits cannot point its own name at the node and read
   the page as its own (DNS rebinding).
 - GET and HEAD only, also when the request comes through the Remote Proxy. The
-  page has no script (its Content-Security-Policy allows none), so
-  what sites wrote into headers and bodies stays text; it is not cached
+  page's only script is its own `/app.js` (the Content-Security-Policy allows no
+  other, and nothing inline), which asks `/flows.json` for the list once a second
+  and puts it in with DOM calls and `textContent` only, so what sites wrote into
+  headers and bodies stays text (a test runs it over a stand-in DOM in node); it is not cached
   (`no-store`). Pages still go through Safari: its history may keep the URLs of
   the flow pages viewed, and the first link with the token (useless without the
   device, and changed at each start). A JSON body nested deeper than 32 levels is

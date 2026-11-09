@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -88,7 +91,7 @@ func TestPageEscapesAndHeaders(t *testing.T) {
 				t.Errorf("%s: %q not escaped", path, raw)
 			}
 		}
-		if csp := r.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "script-src") {
+		if csp := r.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "script-src 'self';") || strings.Contains(csp, "unsafe") {
 			t.Errorf("%s: CSP %q", path, csp)
 		}
 		if r.Header.Get("Cache-Control") != "no-store" || r.Header.Get("X-Content-Type-Options") != "nosniff" {
@@ -166,5 +169,95 @@ func TestUnmaskedSaid(t *testing.T) {
 	st.SetScope(capture.HostRules{All: true}, false)
 	if page := body(get(u, "devA", "/", u.Token())); !strings.Contains(page, "not masked (--no-redact)") {
 		t.Errorf("unmasked, not said:\n%s", page)
+	}
+}
+
+// /flows.json is the list's data, for app.js: this device's flows only, and
+// only with the cookie. app.js puts text in as text.
+func TestFlowsJSON(t *testing.T) {
+	u := New(store(t), func(string) []string { return []string{"approve"} })
+	r := get(u, "devB", "/flows.json", u.Token())
+	var d struct {
+		Line  string
+		Steps []string
+		Rows  []row
+	}
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil || r.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("%v, %s", err, r.Header.Get("Content-Type"))
+	}
+	if len(d.Rows) != 1 || d.Rows[0].ID != "fb" || d.Rows[0].Text != "POST /b" || d.Rows[0].S != "…" || d.Line != "mitmproxy starting · 1 flows" || len(d.Steps) != 1 {
+		t.Errorf("devB's data: %+v", d)
+	}
+	if r := get(u, "devB", "/flows.json", ""); r.StatusCode != http.StatusForbidden {
+		t.Errorf("without the cookie: %d", r.StatusCode)
+	}
+	js := get(u, "devB", "/app.js", u.Token())
+	src := body(js)
+	if !strings.HasPrefix(js.Header.Get("Content-Type"), "text/javascript") {
+		t.Errorf("app.js type %q", js.Header.Get("Content-Type"))
+	}
+	for _, bad := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function("} {
+		if strings.Contains(src, bad) {
+			t.Errorf("app.js uses %s", bad)
+		}
+	}
+	if page := body(get(u, "devB", "/?pause=1", u.Token())); strings.Contains(page, "app.js") || strings.Contains(page, "refresh") {
+		t.Errorf("paused, still following:\n%s", page)
+	}
+}
+
+// app.js run in node over a stand-in DOM: rows come from /flows.json with the
+// page's filters, a site's markup stays text, and it asks again.
+func TestAppJS(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	harness := `
+const els = {};
+function mk(tag) {
+  return { tag, className: "", textContent: "", href: "", children: [],
+    appendChild(c) { this.children.push(c); return c; },
+    replaceChildren(...c) { this.children = c; } };
+}
+for (const id of ["line", "steps", "rows"]) els[id] = mk("div");
+globalThis.document = { createElement: mk, getElementById: (id) => els[id],
+  createTextNode: (t) => ({ tag: "#text", textContent: t, children: [] }) };
+globalThis.location = { search: "?host=api.example.com" };
+const asked = [];
+globalThis.fetch = (url) => { asked.push(url); return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify({
+  line: "mitmproxy ready · 1 flows", steps: ["approve"],
+  rows: [{ id: "a&b", class: "ok", s: "200", text: "GET /<img src=x onerror=alert(1)>", time: "10:00:00", host: "api.example.com", ms: 12 }] })) }); };
+const timers = [];
+globalThis.setTimeout = (f) => timers.push(f);
+` + appJS + `
+timers.shift()();
+setImmediate(() => {
+  const tr = els.rows.children[0], a = tr.children[1].children[0];
+  const out = { asked, line: els.line.textContent, step: els.steps.children[0].textContent,
+    cls: tr.className, status: tr.children[0].textContent, text: a.textContent, href: a.href,
+    again: timers.length };
+  console.log(JSON.stringify(out));
+});
+`
+	f := filepath.Join(t.TempDir(), "app_test.js")
+	if err := os.WriteFile(f, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var got struct {
+		Asked                               []string
+		Line, Step, Cls, Status, Text, Href string
+		Again                               int
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Asked) != 1 || got.Asked[0] != "/flows.json?host=api.example.com" || got.Line != "mitmproxy ready · 1 flows" || got.Step != "next: approve" ||
+		got.Cls != "ok" || got.Status != "200" || got.Text != "GET /<img src=x onerror=alert(1)>" || got.Href != "/flow?id=a%26b" || got.Again != 1 {
+		t.Errorf("app.js: %+v", got)
 	}
 }
