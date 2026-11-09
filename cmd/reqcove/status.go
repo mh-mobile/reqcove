@@ -74,7 +74,7 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	for _, d := range devices {
 		if d.ID == exitnode.Local.ID {
 			if d.TLSFailures > 0 && d.Flows == 0 {
-				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem), unless the app pins its certificates", ca.Name))
+				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert, with mitmproxy/mitmproxy-ca-cert.pem in the state directory), unless the app pins its certificates", ca.Name))
 			}
 			continue // not a phone: no exit node to turn on
 		}
@@ -216,8 +216,12 @@ func cleanup(args []string) error {
 			unlock()
 		}
 	}
+	fmt.Println("  5. iOS Simulator, if you used --local-proxy: xcrun simctl keychain booted reset (removes every certificate added to it).")
 	if !*del {
 		return nil
+	}
+	if _, err := os.Stat(savedProxyFile(*state)); err == nil {
+		return fmt.Errorf("not deleting %s: it holds the system's web proxy settings to put back (%s)", *state, savedProxyFile(*state))
 	}
 	// The directory itself, not a symlink to it: RemoveAll would take only the link and leave the CA's key.
 	dir, err := filepath.EvalSymlinks(*state)

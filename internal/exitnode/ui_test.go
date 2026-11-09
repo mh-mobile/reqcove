@@ -295,9 +295,9 @@ func TestRemoteProxyWeb(t *testing.T) {
 	}
 }
 
-// The local proxy: this computer's own apps, as the device Local. It does not
-// refuse this computer or the LAN (they could reach them anyway), refuses IPv6,
-// and sends 80/443 to mitmproxy, the tailnet and Apple direct.
+// The local proxy: this computer's own apps, as the device Local. It refuses
+// this computer, the LAN, the tailnet and IPv6, sends 80/443 to mitmproxy,
+// and Apple and other ports direct.
 func TestLocalProxy(t *testing.T) {
 	type dialed struct {
 		v      verdict
@@ -315,10 +315,11 @@ func TestLocalProxy(t *testing.T) {
 		url  string
 		want *dialed
 	}{
-		{"http://192.168.1.10/", &dialed{socks, "local", "192.168.1.10:80"}},
+		{"http://192.168.1.10/", nil}, // the LAN, this computer and the tailnet bypass it, and it refuses them (DNS rebinding)
+		{"http://127.0.0.1:3000/", nil},
 		{"http://203.0.113.5:443/", &dialed{socks, "local", "203.0.113.5:443"}},
 		{"http://203.0.113.5:3000/", &dialed{direct, "local", "203.0.113.5:3000"}},
-		{"http://100.64.0.9/", &dialed{direct, "local", "100.64.0.9:80"}},
+		{"http://100.64.0.9/", nil},
 		{"http://17.253.144.10/", &dialed{direct, "local", "17.253.144.10:80"}},
 		{"http://[2001:db8::1]/", nil},
 	} {

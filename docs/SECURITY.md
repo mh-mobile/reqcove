@@ -217,13 +217,17 @@ reuse): the per-request check keeps those out of Reqcove's records only.
 After v0.1.0. An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
 iOS Simulator), with no password: any process on this computer, of any user, can
 use it, and what it sends to `--allow-hosts` hosts is recorded as the device
-`local`. It reaches nothing such a process could not reach directly, so it does
-not refuse this computer or the LAN as the exit node does; it refuses IPv6, and
-leaves Apple's hosts and the tailnet undecrypted. On macOS, `run` points the
-system's web proxies at it while it runs (keeping what they were in the state
-directory, 0600, to put back when it stops, at the next start, or with
-`reqcove cleanup`), so every app here goes through it while it runs. Not tried
-yet with the real `networksetup` and Simulator: the tests use stand-ins.
+`local`. Like the exit node, it refuses this computer, the LAN, the tailnet and
+IPv6 as destinations (a test): a page in a browser here could otherwise reach
+them through it by pointing its own name there (DNS rebinding). Those are in
+the system proxy's exceptions instead, so apps reach them directly, as without
+reqcove. Apple's hosts are not decrypted. On macOS, `run` points the system's web
+proxies at it while it runs, keeping what they were in the state directory
+(0600) to put back when it stops (also on SIGHUP), at the next start, or with
+`reqcove cleanup`; it never saves over settings not put back yet, and cleanup
+will not delete the state while it holds them. If reqcove is killed outright,
+apps here that use the system proxy cannot connect until they are put back. Not
+tried yet with the real `networksetup` and Simulator: the tests use stand-ins.
 
 ## Other processes on this computer
 

@@ -4,11 +4,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 )
+
+// withSystemProxy, on macOS with the local proxy on, points the system's web
+// proxies at it for as long as f runs, and puts them back after, however f ends.
+func withSystemProxy(state string, on bool, f func() error) error {
+	if !on || runtime.GOOS != "darwin" {
+		return f()
+	}
+	if err := pointSystemProxy(state); err != nil {
+		log.Printf("WARN: could not point the system's web proxies at 127.0.0.1:%d (%v): set them yourself in System Settings, Network, Details, Proxies", localProxyPort, err)
+		return f()
+	}
+	log.Printf("this computer's web proxies point at the local proxy until reqcove stops; the LAN, the tailnet and this computer bypass it")
+	defer func() {
+		if err := restoreSystemProxy(state); err != nil {
+			log.Printf("WARN: could not put the system's web proxies back: %v. System Settings, Network, Details, Proxies; or reqcove cleanup", err)
+		}
+	}()
+	return f()
+}
 
 // The local proxy (--local-proxy): on macOS, run points the system's web
 // proxies at it while it runs, as Charles and Proxyman do, and puts them back
@@ -17,11 +39,24 @@ import (
 
 const localProxyPort = 8082
 
-// networksetup runs macOS's networksetup; tests replace it.
+// networksetup runs macOS's networksetup; tests replace it. It can say
+// "** Error" with no failing exit status: that counts as failing too.
 var networksetup = func(args ...string) (string, error) {
 	out, err := exec.Command("networksetup", args...).CombinedOutput()
-	return string(out), err
+	return string(out), nsError(string(out), err)
 }
+
+func nsError(out string, err error) error {
+	if err == nil && strings.Contains(out, "** Error") {
+		return errors.New(strings.TrimSpace(out))
+	}
+	return err
+}
+
+// bypass is what never goes through the local proxy: this computer, the LAN and
+// the tailnet go direct, so a site in a browser here cannot reach them through
+// it (DNS rebinding), and the proxy refuses them as the exit node does.
+var bypass = []string{"localhost", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254/16", "100.64.0.0/10", "*.local", "*.ts.net"}
 
 // webProxy is one service's web proxy (HTTP) or secure web proxy (HTTPS).
 type webProxy struct {
@@ -34,7 +69,10 @@ type savedProxy struct {
 	Service string   `json:"service"`
 	Web     webProxy `json:"web"`
 	Secure  webProxy `json:"secure"`
+	Bypass  []string `json:"bypass"`
 }
+
+var ours = webProxy{Enabled: true, Server: "127.0.0.1", Port: fmt.Sprint(localProxyPort)}
 
 func savedProxyFile(state string) string { return filepath.Join(state, "system-proxy.json") }
 
@@ -62,6 +100,7 @@ func getProxy(kind, service string) (webProxy, error) {
 	}
 	var p webProxy
 	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
 		k, v, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
@@ -75,23 +114,60 @@ func getProxy(kind, service string) (webProxy, error) {
 			p.Port = v
 		}
 	}
+	if p.Server == ours.Server && p.Port == ours.Port {
+		p = webProxy{} // left pointed at us by a run with other state: not what to put back
+	}
 	return p, nil
 }
 
-func setProxy(kind, service string, p webProxy) error {
-	args := []string{"-set" + kind + "state", service, "off"}
-	if p.Enabled {
-		args = []string{"-set" + kind, service, p.Server, p.Port}
+func getBypass(service string) ([]string, error) {
+	out, err := networksetup("-getproxybypassdomains", service)
+	if err != nil {
+		return nil, fmt.Errorf("networksetup -getproxybypassdomains %q: %v", service, err)
 	}
+	var list []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "There aren't any") {
+			list = append(list, line)
+		}
+	}
+	return list, nil
+}
+
+func ns(args ...string) error {
 	if out, err := networksetup(args...); err != nil {
 		return fmt.Errorf("networksetup %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(out))
 	}
 	return nil
 }
 
+// setProxy sets one proxy as p has it: a disabled one keeps its server and port.
+func setProxy(kind, service string, p webProxy) error {
+	if p.Server != "" && p.Port != "" && p.Port != "0" {
+		if err := ns("-set"+kind, service, p.Server, p.Port); err != nil { // this also turns it on
+			return err
+		}
+	}
+	if !p.Enabled {
+		return ns("-set"+kind+"state", service, "off")
+	}
+	return nil
+}
+
+func setBypass(service string, list []string) error {
+	if len(list) == 0 {
+		list = []string{"Empty"}
+	}
+	return ns(append([]string{"-setproxybypassdomains", service}, list...)...)
+}
+
 // pointSystemProxy saves the web proxies of every enabled service, then points
 // them at the local proxy. It saves before it changes anything.
 func pointSystemProxy(state string) error {
+	if _, err := os.Stat(savedProxyFile(state)); err == nil {
+		// Settings saved by an earlier run were not put back: saving again would lose them.
+		return fmt.Errorf("the settings an earlier run saved in %s are not put back yet", savedProxyFile(state))
+	}
 	names, err := services()
 	if err != nil {
 		return err
@@ -106,21 +182,28 @@ func pointSystemProxy(state string) error {
 		if err != nil {
 			return err
 		}
-		saved = append(saved, savedProxy{s, web, secure})
+		by, err := getBypass(s)
+		if err != nil {
+			return err
+		}
+		saved = append(saved, savedProxy{s, web, secure, by})
 	}
 	b, _ := json.Marshal(saved)
 	if err := os.WriteFile(savedProxyFile(state), b, 0o600); err != nil {
 		return err
 	}
-	ours := webProxy{Enabled: true, Server: "127.0.0.1", Port: fmt.Sprint(localProxyPort)}
 	for _, s := range saved {
-		if err := setProxy("webproxy", s.Service, ours); err != nil {
-			restoreSystemProxy(state)
-			return err
+		by := slices.Clone(s.Bypass)
+		for _, b := range bypass {
+			if !slices.Contains(by, b) {
+				by = append(by, b)
+			}
 		}
-		if err := setProxy("securewebproxy", s.Service, ours); err != nil {
-			restoreSystemProxy(state)
-			return err
+		for _, err := range []error{setBypass(s.Service, by), setProxy("webproxy", s.Service, ours), setProxy("securewebproxy", s.Service, ours)} {
+			if err != nil {
+				restoreSystemProxy(state)
+				return err
+			}
 		}
 	}
 	return nil
@@ -141,7 +224,7 @@ func restoreSystemProxy(state string) error {
 	}
 	var errs []error
 	for _, s := range saved {
-		errs = append(errs, setProxy("webproxy", s.Service, s.Web), setProxy("securewebproxy", s.Service, s.Secure))
+		errs = append(errs, setProxy("webproxy", s.Service, s.Web), setProxy("securewebproxy", s.Service, s.Secure), setBypass(s.Service, s.Bypass))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return err // the file stays: the next start or cleanup tries again

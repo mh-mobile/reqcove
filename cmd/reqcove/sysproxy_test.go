@@ -4,33 +4,55 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
 
-// fakeNetworksetup keeps proxies per service and answers like networksetup.
+// fakeNetworksetup keeps proxies and bypass lists per service and answers like
+// networksetup (formats as macOS 27 prints them).
 func fakeNetworksetup(t *testing.T, proxies map[string]webProxy, failSet string) *[]string {
 	t.Helper()
 	var calls []string
+	bypasses := map[string][]string{"Wi-Fi": {"*.local", "169.254/16"}}
 	old := networksetup
 	t.Cleanup(func() { networksetup = old })
 	networksetup = func(args ...string) (string, error) {
 		calls = append(calls, strings.Join(args, " "))
-		switch cmd := args[0]; {
+		cmd := args[0]
+		switch {
 		case cmd == "-listallnetworkservices":
 			return "An asterisk (*) denotes that a network service is disabled.\nWi-Fi\nUSB LAN\n*Bluetooth PAN\n", nil
+		case cmd == "-getproxybypassdomains":
+			if b := bypasses[args[1]]; len(b) > 0 {
+				return strings.Join(b, "\n") + "\n", nil
+			}
+			return "There aren't any bypass domains set on " + args[1] + ".\n", nil
 		case strings.HasPrefix(cmd, "-get"):
 			p := proxies[strings.TrimPrefix(cmd, "-get")+"|"+args[1]]
-			on := "No"
+			on, port := "No", p.Port
 			if p.Enabled {
 				on = "Yes"
 			}
-			return "Enabled: " + on + "\nServer: " + p.Server + "\nPort: " + p.Port + "\nAuthenticated Proxy Enabled: 0\n", nil
+			if port == "" {
+				port = "0"
+			}
+			return "Enabled: " + on + "\nServer: " + p.Server + "\nPort: " + port + "\nAuthenticated Proxy Enabled: 0\n", nil
 		case failSet != "" && strings.Contains(strings.Join(args, " "), failSet):
 			return "", errors.New("exit status 1")
-		case strings.HasSuffix(cmd, "state"):
-			proxies[strings.TrimSuffix(strings.TrimPrefix(cmd, "-set"), "state")+"|"+args[1]] = webProxy{}
+		case cmd == "-setproxybypassdomains":
+			if args[2] == "Empty" {
+				delete(bypasses, args[1])
+			} else {
+				bypasses[args[1]] = args[2:]
+			}
+			proxies["bypass|"+args[1]] = webProxy{Server: strings.Join(bypasses[args[1]], ",")}
+		case strings.HasSuffix(cmd, "state"): // turns it off, keeping the server and port
+			k := strings.TrimSuffix(strings.TrimPrefix(cmd, "-set"), "state") + "|" + args[1]
+			p := proxies[k]
+			p.Enabled = false
+			proxies[k] = p
 		default:
 			proxies[strings.TrimPrefix(cmd, "-set")+"|"+args[1]] = webProxy{true, args[2], args[3]}
 		}
@@ -44,10 +66,14 @@ func fakeNetworksetup(t *testing.T, proxies map[string]webProxy, failSet string)
 func TestSystemProxy(t *testing.T) {
 	state := t.TempDir()
 	corp := webProxy{true, "proxy.corp", "3128"}
-	proxies := map[string]webProxy{"webproxy|Wi-Fi": corp, "securewebproxy|Wi-Fi": corp}
+	off := webProxy{false, "old.corp", "8080"} // turned off, its server kept
+	proxies := map[string]webProxy{"webproxy|Wi-Fi": corp, "securewebproxy|Wi-Fi": corp, "webproxy|USB LAN": off}
 	calls := fakeNetworksetup(t, proxies, "")
 	if err := pointSystemProxy(state); err != nil {
 		t.Fatal(err)
+	}
+	if by := proxies["bypass|Wi-Fi"].Server; !strings.HasPrefix(by, "*.local,169.254/16,localhost,127.0.0.0/8") || !strings.Contains(by, "192.168.0.0/16") || !strings.Contains(by, "100.64.0.0/10") {
+		t.Errorf("bypass: %s", by)
 	}
 	ours := webProxy{true, "127.0.0.1", "8082"}
 	for _, k := range []string{"webproxy|Wi-Fi", "securewebproxy|Wi-Fi", "webproxy|USB LAN", "securewebproxy|USB LAN"} {
@@ -61,8 +87,11 @@ func TestSystemProxy(t *testing.T) {
 	if err := restoreSystemProxy(state); err != nil {
 		t.Fatal(err)
 	}
-	if proxies["webproxy|Wi-Fi"] != corp || proxies["securewebproxy|Wi-Fi"] != corp || proxies["webproxy|USB LAN"].Enabled || proxies["securewebproxy|USB LAN"].Enabled {
+	if proxies["webproxy|Wi-Fi"] != corp || proxies["securewebproxy|Wi-Fi"] != corp || proxies["webproxy|USB LAN"] != off || proxies["securewebproxy|USB LAN"].Enabled {
 		t.Errorf("not put back: %+v", proxies)
+	}
+	if proxies["bypass|Wi-Fi"].Server != "*.local,169.254/16" || proxies["bypass|USB LAN"].Server != "" {
+		t.Errorf("bypass not put back: %q %q", proxies["bypass|Wi-Fi"].Server, proxies["bypass|USB LAN"].Server)
 	}
 	if _, err := os.Stat(savedProxyFile(state)); !os.IsNotExist(err) {
 		t.Error("the saved settings stayed after they were put back")
@@ -150,5 +179,84 @@ func TestLeftSystemProxyGoesBack(t *testing.T) {
 		if want := how != "cleanup while running"; back != want {
 			t.Errorf("%s: put back %v, want %v: %+v", how, back, want, proxies)
 		}
+	}
+}
+
+// Settings saved and not put back yet are never saved over: the next point is
+// refused. Settings already pointed at reqcove (by a run with other state)
+// are not taken for the ones to put back.
+func TestSystemProxyKeepsTheOriginal(t *testing.T) {
+	state := t.TempDir()
+	corp := webProxy{true, "proxy.corp", "3128"}
+	proxies := map[string]webProxy{"webproxy|Wi-Fi": corp}
+	fakeNetworksetup(t, proxies, "")
+	if err := pointSystemProxy(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := pointSystemProxy(state); err == nil {
+		t.Error("pointed again over saved settings")
+	}
+	restoreSystemProxy(state)
+	if proxies["webproxy|Wi-Fi"] != corp {
+		t.Errorf("the original is lost: %+v", proxies["webproxy|Wi-Fi"])
+	}
+	other := t.TempDir()
+	proxies["webproxy|Wi-Fi"] = webProxy{true, "127.0.0.1", "8082"}
+	if err := pointSystemProxy(other); err != nil {
+		t.Fatal(err)
+	}
+	restoreSystemProxy(other)
+	if proxies["webproxy|Wi-Fi"].Enabled {
+		t.Errorf("reqcove's own setting taken for the original: %+v", proxies["webproxy|Wi-Fi"])
+	}
+}
+
+// withSystemProxy puts the settings back however what it wraps ends.
+func TestWithSystemProxy(t *testing.T) {
+	state := t.TempDir()
+	corp := webProxy{true, "proxy.corp", "3128"}
+	proxies := map[string]webProxy{"webproxy|Wi-Fi": corp}
+	fakeNetworksetup(t, proxies, "")
+	var during webProxy
+	err := withSystemProxy(state, true, func() error { during = proxies["webproxy|Wi-Fi"]; return errors.New("port 8082 busy") })
+	if err == nil || proxies["webproxy|Wi-Fi"] != corp {
+		t.Errorf("after: %v %+v", err, proxies["webproxy|Wi-Fi"])
+	}
+	if want := runtime.GOOS == "darwin"; (during.Port == "8082") != want {
+		t.Errorf("during, on %s: %+v", runtime.GOOS, during)
+	}
+}
+
+// networksetup can print "** Error" and exit 0.
+func TestNetworksetupError(t *testing.T) {
+	if nsError("** Error: Unable to find item in network database.\n", nil) == nil || nsError("Enabled: No\n", nil) != nil {
+		t.Error("nsError")
+	}
+}
+
+// cleanup --delete-state keeps the state while it holds settings to put back.
+func TestCleanupKeepsSavedProxy(t *testing.T) {
+	state := t.TempDir()
+	if unlock, err := openState(state); err != nil {
+		t.Fatal(err)
+	} else {
+		unlock()
+	}
+	proxies := map[string]webProxy{}
+	fakeNetworksetup(t, proxies, "-setwebproxystate") // putting back fails
+	proxies["webproxy|Wi-Fi"] = webProxy{}
+	os.WriteFile(savedProxyFile(state), []byte(`[{"service":"Wi-Fi","web":{"enabled":false}}]`), 0o600)
+	r, w, _ := os.Pipe()
+	oldOut := os.Stdout
+	os.Stdout = w
+	err := cleanup([]string{"--state", state, "--delete-state"})
+	w.Close()
+	os.Stdout = oldOut
+	r.Close()
+	if err == nil {
+		t.Error("deleted the state holding settings to put back")
+	}
+	if _, err := os.Stat(savedProxyFile(state)); err != nil {
+		t.Error("the saved settings are gone")
 	}
 }

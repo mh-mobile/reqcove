@@ -68,7 +68,7 @@ func main() {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(capture.GoMemoryLimit)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP) // SIGHUP: the terminal closed; --local-proxy must still put the system proxy back
 	defer stop()
 	var err error
 	switch os.Args[1] {
@@ -335,17 +335,11 @@ func run(ctx context.Context, args []string) error {
 	if *localProxy {
 		localAddr = fmt.Sprintf("127.0.0.1:%d", localProxyPort)
 		caPEM := filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")
+		if allow.All {
+			log.Print("WARN: --local-proxy with --allow-hosts '*': every HTTPS site this computer's apps open is decrypted, and fails in those that do not trust Reqcove's CA (Safari here, say)")
+		}
 		if runtime.GOOS == "darwin" {
-			if err := pointSystemProxy(*state); err != nil {
-				log.Printf("WARN: could not point the system's web proxies at %s (%v): set them yourself in System Settings, Network, Details, Proxies", localAddr, err)
-			} else {
-				defer func() {
-					if err := restoreSystemProxy(*state); err != nil {
-						log.Printf("WARN: could not put the system's web proxies back: %v. System Settings, Network, Details, Proxies", err)
-					}
-				}()
-				log.Printf("local proxy on %s: this computer's web proxies point at it until reqcove stops (it records the allowed hosts as the device \"local\")", localAddr)
-			}
+			log.Printf("local proxy on %s, recorded as the device \"local\"", localAddr)
 			if sims, err := trustInSimulators(caPEM); err != nil {
 				log.Printf("WARN: the CA into the iOS Simulator: %v", err)
 			} else if len(sims) > 0 {
@@ -357,15 +351,19 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s) and have them trust the CA %s; recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
 		}
 	}
-	err = exitnode.Run(ctx, exitnode.Config{
-		Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
-		Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
-		UI:         pageFn,
-		Web:        webAddr,
-		LocalProxy: localAddr,
-		OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
+	err = withSystemProxy(*state, *localProxy, func() error {
+		return exitnode.Run(ctx, exitnode.Config{
+			Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
+			Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
+			UI:         pageFn,
+			Web:        webAddr,
+			LocalProxy: localAddr,
+			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
+		})
 	})
-	fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
+	if len(devices) > 0 {
+		fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
+	}
 	if ctx.Err() != nil {
 		return nil // Ctrl-C, or mitmproxy failed (already logged)
 	}
