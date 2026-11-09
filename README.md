@@ -216,7 +216,9 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 - Reqcove hands the proxy the address the iPhone connected to, but Burp connects to
   HTTPS hosts by the name in the SNI, looked up again on this computer (tried). So
   the exit node's refusal of this computer and its LAN does not cover where Burp
-  connects: keep `--allow-hosts` to the hosts you test. For the same reason,
+  connects, and a site the iPhone visits can answer that lookup with this
+  computer's or the LAN's address (DNS rebinding; from reading code, not tried):
+  keep `--allow-hosts` to the hosts you test (`run` warns about `'*'`). For the same reason,
   `resolve` rules are refused with `--upstream-proxy`; use the proxy's own
   overrides (Burp's Hostname resolution overrides). Plain HTTP shows up in Burp
   under the IP address, with the name in its `Host` header.

@@ -179,6 +179,11 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if upstream != "" && allow.All {
+		// Burp looks HTTPS names up again on this computer; a site can answer that
+		// lookup with 127.0.0.1 or a LAN address (DNS rebinding).
+		log.Print("WARN: --upstream-proxy with --allow-hosts '*': the proxy connects to HTTPS hosts by name, looked up again on this computer, so a site the iPhone visits can point it at this computer or the LAN. Keep --allow-hosts to the hosts you test.")
+	}
 
 	if _, err := exec.LookPath(*uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)

@@ -195,6 +195,25 @@ func TestHostsOnly(t *testing.T) {
 	}
 }
 
+// --upstream-proxy with --allow-hosts '*' warns of DNS rebinding through the proxy.
+func TestUpstreamAllHostsWarns(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	for _, hosts := range []string{"*", "api.example.com"} {
+		logs.Reset()
+		run(context.Background(), []string{"--device", "phone", "--allow-hosts", hosts, "--upstream-proxy", "http://" + ln.Addr().String(), "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
+		if got := strings.Contains(logs.String(), "DNS") || strings.Contains(logs.String(), "this computer or the LAN"); got != (hosts == "*") {
+			t.Errorf("--allow-hosts %s: warned %v:\n%s", hosts, got, logs.String())
+		}
+	}
+}
+
 // --rules-reload without --rules is refused.
 func TestRulesReloadNeedsRules(t *testing.T) {
 	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--rules-reload", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})

@@ -154,8 +154,10 @@ straight to their servers (from reading code; a review saw it). What changes:
 - Where the proxy connects is the proxy's choice. Reqcove hands it the address the
   exit node allowed, but Burp connects by the name in the SNI, looked up again on
   this computer (tried, a review): a name that resolves into this computer's LAN
-  reaches it, past the exit node's refusal. `resolve` rules are refused with
-  `--upstream-proxy` for this reason.
+  reaches it, past the exit node's refusal. A site the iPhone visits can make
+  its own name do that only for the proxy's lookup (DNS rebinding: from reading
+  code, not tried), so keep `--allow-hosts` narrow; `run` warns when it is `'*'`.
+  `resolve` rules are refused with `--upstream-proxy` for this reason.
 - The CONNECT lines (an IP address and port) and plain HTTP reach the proxy
   unencrypted: keep it on this computer, or on the tailnet.
 - The flag is read at start; no tool changes it.
