@@ -41,9 +41,11 @@
   use it without the flag.
 - Every command refuses a `--state` starting with `~` (`--state=~/x`, left
   unexpanded by the shell).
-- A `~/.reqcove` holding only a `mitmproxy/` folder copied from another
-  computer is taken as a state directory (README, Tips); before, `run`
-  refused it.
+- A `~/.reqcove` holding only a `mitmproxy/` folder with a CA copied from
+  another computer is taken as a state directory (README, Tips); before,
+  `run` refused it.
+- A CA's key (`mitmproxy-ca.pem`) is never replaced: certificate files
+  missing beside it are written again from it at start.
 - `--dns 1.1.1.1` works without the port (53).
 - `--allow-hosts` takes pasted URLs and host:port, using the host (and says so);
   `.example.com` is refused with the right spelling, `*.example.com`.

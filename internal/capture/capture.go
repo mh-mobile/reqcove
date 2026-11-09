@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -415,28 +416,53 @@ func ReadCA(confdir string) (CA, error) {
 
 // ensureCA makes the CA with mitmproxy's own CertStore.create_store, which
 // takes a name (mitmproxy always passes "mitmproxy"), so iPhones holding CAs
-// from several machines can tell them apart. An existing CA is never touched.
-// create_store is internal mitmproxy API: TestCANamed catches a change.
+// from several machines can tell them apart. An existing CA (its key) is never
+// touched: certificate files missing beside it are written again from
+// mitmproxy-ca.pem, which holds the certificate too, as create_store writes
+// them. create_store is internal mitmproxy API: TestCANamed catches a change.
 func ensureCA(ctx context.Context, cfg Config) error {
+	py := `import sys; from pathlib import Path; from mitmproxy.certs import CertStore; CertStore.create_store(Path(sys.argv[1]), "mitmproxy", 2048, organization="Reqcove", cn=sys.argv[2])`
 	if HasCA(cfg.Confdir) {
-		return nil
+		whole := true
+		for _, name := range CAFiles {
+			if _, err := os.Stat(filepath.Join(cfg.Confdir, name)); err != nil {
+				whole = false
+			}
+		}
+		if whole {
+			return nil
+		}
+		py = certsFromKey
 	}
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 		return err
 	}
-	const py = `import sys; from pathlib import Path; from mitmproxy.certs import CertStore; CertStore.create_store(Path(sys.argv[1]), "mitmproxy", 2048, organization="Reqcove", cn=sys.argv[2])`
 	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", uvExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
 	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
 	return cmd.Run()
 }
 
-// HasCA says confdir holds a CA: its key and its certificate. mitmproxy writes
-// the key first, so a key alone is a CA cut short in the making (never handed
-// out: mitm.it serves the certificate), made again.
+// certsFromKey writes the certificate files missing beside mitmproxy-ca.pem
+// from the certificate in it, as create_store writes them.
+const certsFromKey = `import sys
+from pathlib import Path
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12
+p = Path(sys.argv[1])
+ca = x509.load_pem_x509_certificates((p / "mitmproxy-ca.pem").read_bytes())[0]
+pem = ca.public_bytes(serialization.Encoding.PEM)
+for name, b in (("mitmproxy-ca-cert.pem", pem), ("mitmproxy-ca-cert.cer", pem),
+                ("mitmproxy-ca-cert.p12", pkcs12.serialize_key_and_certificates(name=b"mitmproxy", key=None, cert=ca, cas=None, encryption_algorithm=serialization.NoEncryption()))):
+    if not (p / name).exists():
+        (p / name).write_bytes(b)
+`
+
+// HasCA says confdir holds a CA: its key, mitmproxy-ca.pem (with the
+// certificate in it). Whatever else is missing, a CA there is never replaced.
 func HasCA(confdir string) bool {
-	_, keyErr := os.Stat(filepath.Join(confdir, "mitmproxy-ca.pem"))
-	_, certErr := os.Stat(filepath.Join(confdir, "mitmproxy-ca-cert.pem"))
-	return keyErr == nil && certErr == nil
+	_, err := os.Stat(filepath.Join(confdir, "mitmproxy-ca.pem"))
+	return err == nil
 }
 
 // CAFiles are what mitmproxy and mitm.it use of a CA, the key last, so a copy
@@ -455,11 +481,16 @@ func CopyCA(src, dst string) (bool, error) {
 	}
 	for _, name := range CAFiles {
 		if _, err := os.Stat(filepath.Join(src, name)); err != nil {
-			return false, fmt.Errorf("%s has a CA but no %s", src, name)
+			return false, fmt.Errorf("%s has a CA but no %s (its node writes it again at its next start)", src, name)
 		}
-		// A temporary file of a copy cut short (it may hold the key).
-		if left, _ := filepath.Glob(filepath.Join(dst, name+".*")); len(left) > 0 {
-			removeAll(left)
+	}
+	// Temporary files of a copy cut short (one may hold the key): NAME.DIGITS,
+	// as os.CreateTemp names them; nothing else, a .bak say, goes.
+	ents, _ := os.ReadDir(dst)
+	for _, e := range ents {
+		name, suffix, _ := strings.Cut(e.Name(), ".tmp")
+		if slices.Contains(CAFiles, name) && suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+			os.Remove(filepath.Join(dst, e.Name()))
 		}
 	}
 	if err := os.MkdirAll(dst, 0o700); err != nil {
@@ -483,7 +514,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".*") // 0600
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp*") // 0600, NAME.tmpDIGITS
 	if err != nil {
 		return err
 	}

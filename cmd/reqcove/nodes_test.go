@@ -68,6 +68,7 @@ func TestNodeName(t *testing.T) {
 		{nil, "/x/reqcove-B/", "reqcove-b"},
 		{nil, "/x/.reqcove", "reqcove"},
 		{nil, "/x/staging", "reqcove"},          // not named reqcove-…
+		{nil, "/x/reqcovex", "reqcove"},         // not reqcove-…
 		{nil, "/x/.reqcove_staging", "reqcove"}, // not a DNS label
 		{nil, "/x/.reqcove-", "reqcove"},        // ends with a dash
 		{[]string{"--hostname", "mine"}, "/x/.reqcove-staging", "mine"},
@@ -229,6 +230,12 @@ func TestMcpHint(t *testing.T) {
 	if got := mcpHint("/x/my state's", "my node.v2"); got != `claude mcp add my-node-v2 -- reqcove mcp --state '/x/my state'\''s'` {
 		t.Errorf("quoted: %q", got)
 	}
+	if got := mcpHint("/x/my-stage", "ステージ"); !strings.HasPrefix(got, "claude mcp add reqcove-my-stage -- ") { // nothing of the name left
+		t.Errorf("non-ASCII name: %q", got)
+	}
+	if got := mcpHint("/x/ステージ", "ステージ"); !strings.HasPrefix(got, "claude mcp add reqcove-node -- ") {
+		t.Errorf("non-ASCII name and state: %q", got)
+	}
 	for state, want := range map[string]string{"/x/staging": "reqcove-staging", "/x/.staging": "reqcove-staging", "/x/my stage": "reqcove-my-stage"} { // not the default node's name
 		if got := mcpHint(state, "reqcove"); !strings.HasPrefix(got, "claude mcp add "+want+" -- ") {
 			t.Errorf("%s named reqcove: %q", state, got)
@@ -322,20 +329,51 @@ func TestHarCarriesState(t *testing.T) {
 	}
 }
 
-// A key without its certificate is a CA cut short in the making: copied over.
-func TestCopyOverHalfMadeCA(t *testing.T) {
+// A key without its certificate files is a CA all the same (the iPhone may
+// trust it): never replaced by the default's.
+func TestKeyNeverReplaced(t *testing.T) {
 	def := filepath.Join(tempDefaultState(t), "mitmproxy")
 	os.MkdirAll(def, 0o700)
 	defer os.RemoveAll(defaultState())
 	for _, name := range capture.CAFiles {
 		os.WriteFile(filepath.Join(def, name), []byte(name), 0o600)
 	}
-	half := t.TempDir()
-	os.MkdirAll(filepath.Join(half, "mitmproxy"), 0o700)
-	os.WriteFile(filepath.Join(half, "mitmproxy", "mitmproxy-ca.pem"), []byte("cut short"), 0o600)
-	os.WriteFile(filepath.Join(half, stateMarker), nil, 0o600)
-	run(context.Background(), []string{"--device", "phone", "--state", half, "--uvx", "/usr/bin/false"})
-	if b, _ := os.ReadFile(filepath.Join(half, "mitmproxy", "mitmproxy-ca.pem")); string(b) != "mitmproxy-ca.pem" {
-		t.Errorf("half-made CA: %q", b)
+	keyOnly := t.TempDir()
+	os.MkdirAll(filepath.Join(keyOnly, "mitmproxy"), 0o700)
+	os.WriteFile(filepath.Join(keyOnly, "mitmproxy", "mitmproxy-ca.pem"), []byte("trusted key"), 0o600)
+	os.WriteFile(filepath.Join(keyOnly, stateMarker), nil, 0o600)
+	run(context.Background(), []string{"--device", "phone", "--state", keyOnly, "--uvx", "/usr/bin/false"})
+	if b, _ := os.ReadFile(filepath.Join(keyOnly, "mitmproxy", "mitmproxy-ca.pem")); string(b) != "trusted key" {
+		t.Errorf("key replaced: %q", b)
+	}
+}
+
+// The commands printed carry the --state as a full path (the same in another
+// terminal), and the errors of mcp and cleanup name the node's run.
+func TestStateCommandsFull(t *testing.T) {
+	t.Chdir(t.TempDir())
+	os.Mkdir("rel", 0o700)
+	full, _ := filepath.Abs("rel")
+	if got := withState("reqcove status", "rel"); got != "reqcove status --state "+full {
+		t.Errorf("withState: %q", got)
+	}
+	if err := runMCP(context.Background(), []string{"--state", "rel"}); err == nil || !strings.Contains(err.Error(), "reqcove run --state "+full) {
+		t.Errorf("mcp: %v", err)
+	}
+	unlock, err := openState("rel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := cleanup([]string{"--state", "rel", "--delete-state"}); err == nil || !strings.Contains(err.Error(), "stop `reqcove run --state "+full) {
+		t.Errorf("cleanup while running: %v", err)
+	}
+}
+
+// A HOME starting with ~ is said to be HOME's, not a --state the user gave.
+func TestHomeTilde(t *testing.T) {
+	t.Setenv("HOME", "~/h")
+	if err := status(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "HOME is ~/h") {
+		t.Errorf("got %v", err)
 	}
 }

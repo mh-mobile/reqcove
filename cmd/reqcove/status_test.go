@@ -231,13 +231,30 @@ func TestOpenState(t *testing.T) {
 	} else {
 		unlock()
 	}
-	// A CA copied from another computer before the first run (README, Tips).
-	copied := t.TempDir()
-	os.Mkdir(filepath.Join(copied, "mitmproxy"), 0o700)
-	if unlock, err := openState(copied); err != nil {
-		t.Errorf("openState refused a folder with only mitmproxy/: %v", err)
+	// ~/.reqcove before its first run, with a CA copied from another computer
+	// (README, Tips) and the list of copies another node made: taken. Another
+	// directory with a mitmproxy/ (a clone of mitmproxy, say), or ~/.reqcove's
+	// mitmproxy/ without a key, is not.
+	def := tempDefaultState(t)
+	defer os.RemoveAll(def)
+	os.MkdirAll(filepath.Join(def, "mitmproxy"), 0o700)
+	if unlock, err := openState(def); err == nil {
+		unlock()
+		t.Error("openState took ~/.reqcove with a mitmproxy/ without a key")
+	}
+	os.WriteFile(filepath.Join(def, "mitmproxy", "mitmproxy-ca.pem"), []byte("key"), 0o600)
+	os.WriteFile(filepath.Join(def, caCopies), []byte("/x/mitmproxy\n"), 0o600)
+	if unlock, err := openState(def); err != nil {
+		t.Errorf("openState refused ~/.reqcove with a copied CA: %v", err)
 	} else {
 		unlock()
+	}
+	clone := t.TempDir()
+	os.MkdirAll(filepath.Join(clone, "mitmproxy", "mitmproxy"), 0o755)
+	os.WriteFile(filepath.Join(clone, "mitmproxy", "mitmproxy-ca.pem"), []byte("key"), 0o600)
+	if unlock, err := openState(clone); err == nil {
+		unlock()
+		t.Error("openState took another directory holding a mitmproxy/")
 	}
 	fresh := filepath.Join(t.TempDir(), "state")
 	unlock, err := openState(fresh)

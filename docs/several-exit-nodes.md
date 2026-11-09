@@ -37,7 +37,8 @@ the shell leaves the `~` as it is, and every reqcove command refuses it.
   until it prints its CA (its first start downloads mitmproxy, which takes
   minutes). If `~/.reqcove`'s CA lacks a file, `run` stops and names it. For
   a node with a CA of its own (for testers' devices you will untrust apart,
-  say), move `~/.reqcove/mitmproxy` aside while it starts the first time.
+  say), stop the default node and move `~/.reqcove/mitmproxy` aside while the
+  other starts the first time, then put it back.
 
 ## 2. On the iPhone: switch in the Tailscale app
 

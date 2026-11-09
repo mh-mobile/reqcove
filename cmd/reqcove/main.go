@@ -496,6 +496,11 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	// --state=~/x, or a quoted ~: the shell left the ~, which would name ./~/x
 	// (for run, a place to copy the CA's key into; for cleanup, one already gone).
 	if f := fs.Lookup("state"); f != nil && strings.HasPrefix(f.Value.String(), "~") {
+		given := false
+		fs.Visit(func(v *flag.Flag) { given = given || v.Name == "state" })
+		if !given {
+			return fmt.Errorf("HOME is %s, starting with ~: set it to the full path of your home directory", os.Getenv("HOME"))
+		}
 		return fmt.Errorf("--state %s: the shell did not expand the ~ (it does not after =, nor in quotes): write --state ~/… with a space, or the full path", f.Value.String())
 	}
 	return nil
@@ -529,9 +534,15 @@ func openState(dir string) (func(), error) {
 		return nil, err
 	}
 	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
-		// Finder leaves .DS_Store in folders it opened; mitmproxy/ is a CA copied
-		// from another computer before the first run (README, Tips).
-		return e.Name() == ".DS_Store" || e.Name() == "mitmproxy" && e.IsDir()
+		switch e.Name() {
+		case ".DS_Store": // Finder leaves it in folders it opened
+			return true
+		case "mitmproxy", caCopies:
+			// ~/.reqcove before its first run: a CA copied from another computer
+			// (README, Tips), and the list of copies another node made of it.
+			return isDefaultState(dir) && capture.HasCA(filepath.Join(dir, "mitmproxy"))
+		}
+		return false
 	})
 	if len(ents) > 0 && !isState(dir) {
 		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)

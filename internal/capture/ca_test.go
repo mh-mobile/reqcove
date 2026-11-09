@@ -57,6 +57,24 @@ func TestCANamed(t *testing.T) {
 	if h2.c.CA != ca {
 		t.Errorf("CA changed on restart: %+v, was %+v", h2.c.CA, ca)
 	}
+	// The certificate files lost, the key kept: never a new CA (the iPhone
+	// trusts this one); they are written again from mitmproxy-ca.pem.
+	h2.c.Stop()
+	for _, name := range []string{"mitmproxy-ca-cert.pem", "mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.p12"} {
+		os.Remove(filepath.Join(confdir, name))
+	}
+	h2, err = tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Confdir = confdir; c.CAName = "Reqcove CA (third, 2031-01-01)" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h2.c.CA != ca {
+		t.Errorf("certificate files lost: CA %+v, was %+v", h2.c.CA, ca)
+	}
+	for _, name := range []string{"mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.p12"} {
+		if _, err := os.Stat(filepath.Join(confdir, name)); err != nil {
+			t.Errorf("%s not written again: %v", name, err)
+		}
+	}
 	// Another node's confdir with the CA copied (CopyCA): the same CA, and
 	// mitm.it hands it out there too.
 	h2.c.Stop()

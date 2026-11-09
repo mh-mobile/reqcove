@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"net"
@@ -48,7 +49,7 @@ func nodeName(fs *flag.FlagSet, state string) string {
 		abs = state
 	}
 	base := strings.ToLower(strings.TrimPrefix(filepath.Base(abs), "."))
-	if strings.HasPrefix(base, "reqcove") && dnsLabel.MatchString(base) {
+	if strings.HasPrefix(base, "reqcove-") && dnsLabel.MatchString(base) {
 		return base
 	}
 	return "reqcove"
@@ -126,16 +127,18 @@ func mcpHint(state, name string) string {
 	if err != nil {
 		abs = state
 	}
-	if name == "reqcove" { // the default node's, already
-		name = "reqcove-" + strings.TrimPrefix(filepath.Base(abs), ".")
-	}
 	// Claude Code takes letters, digits, - and _ in a server's name.
-	name = strings.Map(func(r rune) rune {
-		if r == '-' || r == '_' || r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
-			return r
-		}
-		return '-'
-	}, name)
+	plain := func(s string) string {
+		return strings.Trim(strings.Map(func(r rune) rune {
+			if r == '-' || r == '_' || r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+				return r
+			}
+			return '-'
+		}, s), "-_")
+	}
+	if name = plain(name); name == "" || name == "reqcove" { // nothing left, or the default node's already
+		name = "reqcove-" + cmp.Or(plain(filepath.Base(abs)), "node")
+	}
 	return fmt.Sprintf("claude mcp add %s -- reqcove mcp --state %s", name, shellWord(abs))
 }
 
@@ -149,6 +152,9 @@ func nodeWebLink(webURL, addr, ip string) string {
 func withState(cmd, state string) string {
 	if isDefaultState(state) {
 		return cmd
+	}
+	if abs, err := filepath.Abs(state); err == nil { // the same in another terminal
+		state = abs
 	}
 	return cmd + " --state " + shellWord(state)
 }
