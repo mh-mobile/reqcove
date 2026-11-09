@@ -354,10 +354,10 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
 		var codes []qrItem
 		if uiLink != "" {
-			codes = append(codes, qrItem{uiLink, "page (scan with the camera)"})
+			codes = append(codes, qrItem{uiLink, "--ui: the flows"})
 		}
 		if webLink != "" {
-			codes = append(codes, qrItem{webLink, "mitmweb (unmasked)"})
+			codes = append(codes, qrItem{webLink, "--web: mitmweb (unmasked)"})
 		}
 		printQRs(os.Stderr, codes...)
 	}
@@ -761,10 +761,10 @@ func readyBlock(devices map[string]string, uiLink, webLink, state string, steps 
 	slices.Sort(names)
 	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
 	if uiLink != "" {
-		fmt.Fprintf(&b, "page:     %s  (QR code below; the same at each start, rm %s to change it)\n", uiLink, filepath.Join(state, "ui-token"))
+		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only; QR code below; the same at each start, rm %s to change it)\n", uiLink, filepath.Join(state, "ui-token"))
 	}
 	if webLink != "" {
-		fmt.Fprintf(&b, "mitmweb:  %s  (QR code below; unmasked; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
+		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")

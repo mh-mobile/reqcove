@@ -292,12 +292,12 @@ func TestReadyBlock(t *testing.T) {
 	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
 	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
 	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "/s", steps)
-	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "page:     http://100.1.2.3/?k=K", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
+	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in:\n%s", w, got)
 		}
 	}
-	if strings.Contains(got, "mitmweb:") {
+	if strings.Contains(got, "--web:") {
 		t.Errorf("mitmweb without --web:\n%s", got)
 	}
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
