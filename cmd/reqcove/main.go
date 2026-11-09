@@ -343,12 +343,12 @@ func run(ctx context.Context, args []string) error {
 		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
 		if page != nil {
 			link := "http://" + ip + "/?k=" + uiToken
-			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s (the same at each start: delete %s and start again to change it)", link, filepath.Join(*state, "ui-token"))
+			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s (the same at each start; to change it: rm %s, and start again)", link, filepath.Join(*state, "ui-token"))
 			printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
 		}
 		if webAddr != "" {
 			link := strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
-			log.Printf("mitmweb from your own devices on the tailnet: %s (the same at each start: delete %s and start again to change it)", link, filepath.Join(*state, "web-token"))
+			log.Printf("mitmweb from your own devices on the tailnet: %s (the same at each start; to change it: rm %s, and start again)", link, filepath.Join(*state, "web-token"))
 			printQR(os.Stderr, link, "to open mitmweb on the iPhone, scan this with the camera (unmasked, and it can edit and replay)")
 		}
 	}
