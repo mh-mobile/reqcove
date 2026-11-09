@@ -381,6 +381,7 @@ type Filter struct {
 	Since, Until float64 // unix seconds; the request's start
 	Status       string  // "404", "4xx", or "none" (no response: open or failed)
 	Method       string
+	UserAgent    string // case-insensitive text in the request's User-Agent
 	Query        string // case-insensitive text in the URL or header names and values (as stored, masked)
 	QueryBodies  bool   // Query also looks in the kept body heads
 	Before       int64  // cursor from a previous page: only older flows
@@ -450,7 +451,8 @@ func (q Filter) match(f *Flow, name string) bool {
 		host != "" && fhost != host && !strings.HasSuffix(fhost, "."+host),
 		q.Since != 0 && f.Start < q.Since,
 		q.Until != 0 && f.Start > q.Until,
-		q.Method != "" && !strings.EqualFold(f.Method, q.Method):
+		q.Method != "" && !strings.EqualFold(f.Method, q.Method),
+		q.UserAgent != "" && !strings.Contains(strings.ToLower(header(f.ReqHeaders, "user-agent")), strings.ToLower(q.UserAgent)):
 		return false
 	}
 	switch {
@@ -1097,4 +1099,42 @@ func lowerASCII(c byte) byte {
 		return c + 'a' - 'A'
 	}
 	return c
+}
+
+// SimilarHosts returns up to n recorded hosts that look like host (compared
+// lowercased with all but letters and digits left out, one containing the
+// other: evenrealities.com and api.even-realities.com), for an agent whose
+// host filter matched nothing; nil when host or a subdomain of it is recorded.
+func (s *Store) SimilarHosts(host string, n int) []string {
+	key := func(h string) string {
+		return strings.Map(func(r rune) rune {
+			if 'a' <= r && r <= 'z' || '0' <= r && r <= '9' {
+				return r
+			}
+			return -1
+		}, strings.ToLower(h))
+	}
+	want := key(host)
+	if len(want) < 4 { // too short to tell alike from not
+		return nil
+	}
+	q := Filter{Host: host}
+	seen := map[string]bool{}
+	s.mu.Lock()
+	for _, f := range s.flows {
+		if q.match(f, "") {
+			s.mu.Unlock()
+			return nil
+		}
+		seen[strings.ToLower(f.Host)] = true
+	}
+	s.mu.Unlock()
+	var out []string
+	for h := range seen {
+		if k := key(h); k != "" && (strings.Contains(k, want) || strings.Contains(want, k)) {
+			out = append(out, h)
+		}
+	}
+	sort.Strings(out)
+	return out[:min(len(out), n)]
 }

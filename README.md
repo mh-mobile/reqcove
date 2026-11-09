@@ -98,10 +98,10 @@ setting, so this works on Wi-Fi only.
 
 | Tool | |
 |---|---|
-| `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method; paged |
+| `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (after v0.1.0: text in it, such as an app's name; the app's bundle id is not in its traffic); paged. After v0.1.0, a host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`even-realities.com` for `evenrealities.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`) |
 | `get_flow` | one flow; bodies only with `bodies` |
-| `summarize` | counts by host, User-Agent, status, method, device, content type |
+| `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters |
 | `list_devices` | carried devices, their counts and last activity |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
@@ -257,7 +257,7 @@ command it prints. On Linux nothing is changed for you: point apps at it
 While `reqcove run` is running, `reqcove har > flows.har` writes its flows as a
 HAR 1.2 file, oldest first: the newest 1000 by default (`--limit 0` for all),
 filtered with `--host`, `--device`, `--since 10m`, `--until`, `--status 4xx`,
-`--method`. It
+`--method` (and `--user-agent`, after v0.1.0). It
 holds what the MCP tools return: masked as it arrived, the heads of bodies only
 (cut ones say so in a comment), and no body that masking could not check. With
 `run --no-redact` nothing is masked, and the file says so in its comment. It is

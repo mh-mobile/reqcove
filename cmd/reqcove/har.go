@@ -35,6 +35,7 @@ func har(ctx context.Context, args []string) error {
 	fs.StringVar(&in.Until, "until", "", "only requests started until: RFC 3339, or a duration ago")
 	fs.StringVar(&in.Status, "status", "", "only this status: 404, 4xx, or none")
 	fs.StringVar(&in.Method, "method", "", "only this method")
+	fs.StringVar(&in.UserAgent, "user-agent", "", "only requests whose User-Agent contains this, case-insensitive")
 	limit := fs.Int("limit", 1000, "at most this many flows, the newest; 0 for all")
 	if err := parseFlags(fs, args); err != nil {
 		return err

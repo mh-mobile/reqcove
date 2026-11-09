@@ -28,6 +28,12 @@
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
   file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
+  filter by text in the User-Agent, case-insensitive: one app's traffic, as
+  summarize lists the User-Agents. A host filter that matches no flow answers
+  with `similar_hosts`, recorded hosts that look alike (`even-realities.com`
+  for `evenrealities.com`). `list_tls_failures` refuses `user_agent` (a
+  failed handshake has no headers).
 - Several exit nodes on one computer, one `run` per `--state`
   ([docs/several-exit-nodes.md](docs/several-exit-nodes.md)): a `--state`
   directory named `reqcove-NAME` names the node so, and the name is kept in it

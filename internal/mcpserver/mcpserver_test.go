@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -170,5 +171,50 @@ func TestListFilterInput(t *testing.T) {
 		if _, err := filter(in, now); err == nil {
 			t.Errorf("%+v accepted", in)
 		}
+	}
+}
+
+// One app's traffic by its User-Agent, and look-alike hosts when a host
+// filter matches nothing (evenrealities.com for even-realities.com).
+func TestUserAgentAndSimilarHosts(t *testing.T) {
+	st := capture.NewStore(10, 1<<20)
+	for _, l := range []string{
+		`{"v":2,"ev":"request","id":"a","device":"d","host":"api.even-realities.com","url":"https://api.even-realities.com/x","ts":1794000000,"headers":[["User-Agent","EvenApp/2.1 CFNetwork/1568 Darwin/25.0"]]}`,
+		`{"v":2,"ev":"request","id":"b","device":"d","host":"cdn.example.com","url":"https://cdn.example.com/y","ts":1794000001,"headers":[["User-Agent","Safari/605"]]}`,
+	} {
+		st.Apply([]byte(l))
+	}
+	ct, sst := mcp.NewInMemoryTransports()
+	if _, err := New(st, nil).Connect(context.Background(), sst, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"user_agent": "evenapp"}); len(got.Flows) != 1 || got.Flows[0].ID != "a" {
+		t.Errorf("user_agent: %+v", got)
+	}
+	if got := call[SummarizeOut](t, session, "summarize", map[string]any{"user_agent": "SAFARI"}); got.Flows != 1 {
+		t.Errorf("summarize user_agent: %+v", got)
+	}
+	for _, tool := range []string{"list_flows", "summarize"} {
+		got := call[SummarizeOut](t, session, tool, map[string]any{"host": "evenrealities.com"})
+		if !slices.Equal(got.SimilarHosts, []string{"api.even-realities.com"}) {
+			t.Errorf("%s similar_hosts: %v", tool, got.SimilarHosts)
+		}
+	}
+	// The host is there, a since left nothing: no look-alikes, they would mislead.
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "even-realities.com", "since": "1m"}); len(got.Flows) != 0 || got.SimilarHosts != nil {
+		t.Errorf("host there, since empty: %+v", got)
+	}
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "c.om"}); got.SimilarHosts != nil { // too short to tell ("com" is in every .com)
+		t.Errorf("short host: %v", got.SimilarHosts)
+	}
+	// A TLS failure has no headers: user_agent there is refused, not silently empty.
+	if res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_tls_failures", Arguments: map[string]any{"user_agent": "x"}}); err != nil || !res.IsError {
+		t.Errorf("list_tls_failures user_agent: %v %+v", err, res)
 	}
 }
