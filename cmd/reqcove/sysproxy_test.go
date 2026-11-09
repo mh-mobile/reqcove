@@ -203,6 +203,17 @@ func TestSystemProxyKeepsTheOriginal(t *testing.T) {
 	if proxies["webproxy|Wi-Fi"] != corp {
 		t.Errorf("the original is lost: %+v", proxies["webproxy|Wi-Fi"])
 	}
+	// Turned off with reqcove's address left in it (as an earlier run put an
+	// empty proxy back): not pointed at reqcove, so not refused.
+	left := t.TempDir()
+	proxies["webproxy|Wi-Fi"] = webProxy{false, "127.0.0.1", "8082"}
+	if err := pointSystemProxy(left); err != nil {
+		t.Errorf("refused over a turned-off proxy: %v", err)
+	}
+	restoreSystemProxy(left)
+	if proxies["webproxy|Wi-Fi"].Enabled {
+		t.Errorf("put back on: %+v", proxies["webproxy|Wi-Fi"])
+	}
 	// Pointed at a reqcove already (another --state holds the original): refused, nothing saved.
 	other := t.TempDir()
 	proxies["webproxy|Wi-Fi"] = webProxy{true, "127.0.0.1", "8082"}

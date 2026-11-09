@@ -114,6 +114,12 @@ func getProxy(kind, service string) (webProxy, error) {
 			p.Port = v
 		}
 	}
+	if p.Server == ours.Server && p.Port == ours.Port && !p.Enabled {
+		// Turned off with reqcove's address left in it, as putting back an empty,
+		// turned-off proxy leaves it (networksetup cannot empty the server):
+		// nothing is pointed at reqcove; put back off and empty.
+		return webProxy{}, nil
+	}
 	if p.Server == ours.Server && p.Port == ours.Port {
 		// Pointed at a reqcove already (one with other state, running or not):
 		// that one holds what to put back, so this one must not save over it.
