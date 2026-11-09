@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // withSystemProxy, on macOS with the local proxy on, points the system's web
@@ -25,6 +26,7 @@ func withSystemProxy(state string, on bool, f func() error) error {
 	}
 	log.Printf("this computer's web proxies point at the local proxy until reqcove stops; the LAN, the tailnet and this computer bypass it")
 	defer func() {
+		log.Printf("putting the system's web proxies back (a few seconds; no need to press Ctrl-C again)")
 		if err := restoreSystemProxy(state); err != nil {
 			log.Printf("WARN: could not put the system's web proxies back: %v. System Settings, Network, Details, Proxies; or reqcove cleanup", err)
 		}
@@ -42,8 +44,16 @@ const localProxyPort = 8082
 // networksetup runs macOS's networksetup; tests replace it. It can say
 // "** Error" with no failing exit status: that counts as failing too.
 var networksetup = func(args ...string) (string, error) {
-	out, err := exec.Command("networksetup", args...).CombinedOutput()
+	out, err := nsCommand(args...).CombinedOutput()
 	return string(out), nsError(string(out), err)
+}
+
+// nsCommand runs networksetup in its own process group: a second Ctrl-C in
+// the terminal, while run puts the proxies back, must not stop it midway.
+func nsCommand(args ...string) *exec.Cmd {
+	cmd := exec.Command("networksetup", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
 }
 
 func nsError(out string, err error) error {

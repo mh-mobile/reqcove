@@ -368,3 +368,11 @@ func TestCleanupMacTrust(t *testing.T) {
 		}
 	}
 }
+
+// networksetup runs in a process group of its own, out of reach of the
+// terminal's Ctrl-C while run puts the proxies back.
+func TestNetworksetupOwnGroup(t *testing.T) {
+	if c := nsCommand("-listallnetworkservices"); c.SysProcAttr == nil || !c.SysProcAttr.Setpgid {
+		t.Error("networksetup shares the terminal's process group")
+	}
+}
