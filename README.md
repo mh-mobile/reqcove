@@ -282,6 +282,11 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   at start; for another proxy that decrypts (ZAP, Charles), pass its CA with
   `--upstream-ca FILE` (PEM or DER). Otherwise the public CAs are used (for a
   proxy that does not decrypt).
+- Reqcove connects to the proxy itself and ignores the system's proxy settings.
+  But a proxy that points them at itself when it starts (Charles does, unless its
+  Proxy menu's macOS Proxy is off) and `--local-proxy` (after v0.1.0) both claim
+  them, and each puts back what the other set. With `--local-proxy`, turn that
+  off in the proxy. Not tried with Charles.
 - Only HTTP(S) goes through the proxy. Other protocols to an allowed host (MQTT,
   say) go straight to their servers (from reading code); over TLS with the
   proxy's CA in use they fail: the server's certificate is checked against that CA. HTTPS without a server name
