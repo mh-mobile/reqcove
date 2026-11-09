@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -50,10 +51,34 @@ func pageSteps(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	return statusOut(n, stats, allow, ca, mine).NextSteps
 }
 
-// localStep, when set by run, is a next step about this computer for the local
-// proxy (that it trusts the CA), checked once at start: nextSteps is asked
-// every second by the page, too often to run security each time.
-var localStep string
+// localCA, set by run with --local-proxy on macOS, is the CA's file: while
+// this Mac does not trust it, nextSteps says how. The answer is kept a few
+// seconds: the page asks every second, too often to run security each time.
+var localCA string
+
+var macTrust struct {
+	sync.Mutex
+	at      time.Time
+	trusted bool
+}
+
+// macTrustTTL is how long a check of this Mac's trust is kept (tests set 0).
+var macTrustTTL = 10 * time.Second
+
+func localStep() string {
+	if localCA == "" {
+		return ""
+	}
+	macTrust.Lock()
+	defer macTrust.Unlock()
+	if time.Since(macTrust.at) >= macTrustTTL {
+		macTrust.trusted, macTrust.at = macTrusts(localCA), time.Now()
+	}
+	if macTrust.trusted {
+		return ""
+	}
+	return "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password):\n" + macTrustCommand(localCA)
+}
 
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
@@ -78,8 +103,10 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	if !allow.All && len(allow.Patterns) == 0 {
 		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
 	}
-	if localStep != "" && slices.ContainsFunc(devices, func(d capture.DeviceInfo) bool { return d.ID == exitnode.Local.ID }) {
-		steps = append(steps, localStep)
+	if slices.ContainsFunc(devices, func(d capture.DeviceInfo) bool { return d.ID == exitnode.Local.ID }) {
+		if s := localStep(); s != "" {
+			steps = append(steps, s)
+		}
 	}
 	for _, d := range devices {
 		if d.ID == exitnode.Local.ID {

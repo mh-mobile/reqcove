@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -283,9 +285,16 @@ func TestPrintQR(t *testing.T) {
 // one place; the local proxy's step about this Mac is among them, but only
 // with the local proxy on.
 func TestReadyBlock(t *testing.T) {
-	old := localStep
-	defer func() { localStep = old }()
-	localStep = "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once"
+	oldCA, oldSec, oldTTL := localCA, security, macTrustTTL
+	defer func() { localCA, security, macTrustTTL = oldCA, oldSec, oldTTL }()
+	localCA, macTrustTTL = "/s/ca.pem", 0
+	trusted := false
+	security = func(...string) error {
+		if trusted {
+			return nil
+		}
+		return errors.New("exit status 1")
+	}
 	ready := map[string]any{"state": "ready"}
 	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
 	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
@@ -305,6 +314,14 @@ func TestReadyBlock(t *testing.T) {
 	}
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
 		t.Errorf("the Mac step without the local proxy: %q", steps)
+	}
+	// Trusted while run runs: the step goes, without a restart (the check is macOS's).
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	trusted = true
+	if steps := nextSteps(n, ready, allow, capture.CA{}, devs); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
+		t.Errorf("the Mac step once it trusts the CA: %q", steps)
 	}
 }
 

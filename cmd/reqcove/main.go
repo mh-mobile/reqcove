@@ -378,9 +378,8 @@ func run(ctx context.Context, args []string) error {
 		if runtime.GOOS == "darwin" {
 			if trusted {
 				log.Printf("this Mac trusts Reqcove's CA: its own browsers' requests to the allowed hosts are decrypted and recorded too, as \"local\" (to stop: %s)", macUntrustCommand(cap.CA.SHA256))
-			} else {
-				localStep = "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password), then start reqcove again:\n" + macTrustCommand(caPEM)
 			}
+			localCA = caPEM // nextSteps says how to trust it, while this Mac does not
 			log.Printf("local proxy on %s, recorded as the device \"local\"", localAddr)
 			if sims, err := trustInSimulators(caPEM); err != nil {
 				log.Printf("WARN: the CA into the iOS Simulator: %v", err)
