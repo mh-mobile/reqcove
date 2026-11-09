@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +44,7 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 	h := w.Header()
 	// One script, /app.js, from here; nothing inline. It fetches /flows.json and
 	// puts what sites wrote in as text only.
-	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	h.Set("Referrer-Policy", "no-referrer")
@@ -64,11 +66,17 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 	}
 	switch r.URL.Path {
 	case "/":
+		if r.URL.Query().Has("clear") {
+			// Clear: from now on, by this computer's clock (the flows' times are its own).
+			p := params(r.URL.Query())
+			http.Redirect(w, r, p.with("clear", "").with("since", strconv.FormatInt(time.Now().Unix(), 10)).String(), http.StatusSeeOther)
+			return
+		}
 		render(w, listPage, u.view(r, deviceID, all))
 	case "/flows.json":
 		v := u.view(r, deviceID, all)
 		h.Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"], "empty": v["Empty"]})
+		json.NewEncoder(w).Encode(map[string]any{"line": v["Line"], "steps": v["Steps"], "rows": v["Rows"], "empty": v["Empty"], "now": time.Now().Unix()})
 	case "/flow":
 		u.flow(w, r, deviceID, all)
 	case "/style.css":
@@ -94,18 +102,50 @@ type row struct {
 	Host   string `json:"host"`
 	MS     int64  `json:"ms,omitempty"`
 	Device string `json:"device,omitempty"` // whose, when the page shows every device's
+	Where  string `json:"where,omitempty"`  // with a search: where it matched (url, request headers…)
 }
+
+// params are the list's filters as in its URL; with gives a link with one
+// changed (an empty value drops it), keeping the others.
+type params url.Values
+
+func (p params) with(k, v string) params {
+	n := url.Values{}
+	for key, vs := range p {
+		n[key] = slices.Clone(vs)
+	}
+	n.Del(k)
+	if v != "" {
+		n.Set(k, v)
+	}
+	return params(n)
+}
+
+// With is with for the templates: the link itself.
+func (p params) With(k, v string) string { return p.with(k, v).String() }
+
+func (p params) String() string {
+	if e := url.Values(p).Encode(); e != "" {
+		return "/?" + e
+	}
+	return "/"
+}
+
+func (p params) Get(k string) string { return url.Values(p).Get(k) }
 
 // view is the list for deviceID: its own flows, counts and steps only; with
 // all, every device's.
 func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	q := r.URL.Query()
-	f := capture.Filter{Host: q.Get("host"), Limit: 50}
+	f := capture.Filter{Host: q.Get("host"), Query: q.Get("q"), QueryBodies: q.Get("bodies") != "", Limit: 50}
 	if !all {
 		f.Device = deviceID
 	}
 	if s := q.Get("status"); capture.ValidStatus(s) {
 		f.Status = s
+	}
+	if since, err := strconv.ParseInt(q.Get("since"), 10, 64); err == nil && since > 0 {
+		f.Since = float64(since)
 	}
 	listed, _ := u.store.List(f)
 	flows := listed[:0]
@@ -140,7 +180,8 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 		} else if s.State == "error" {
 			st = "err"
 		}
-		rw := row{ID: s.ID, Class: class(s.Status, s.State), S: st, Text: s.Method + " " + path(s.URL), Time: clock(s.Time), Host: s.Host, MS: s.DurationMS}
+		rw := row{ID: s.ID, Class: class(s.Status, s.State), S: st, Text: s.Method + " " + path(s.URL), Time: clock(s.Time), Host: s.Host, MS: s.DurationMS,
+			Where: strings.ReplaceAll(strings.Join(s.MatchedIn, ", "), "_", " ")}
 		if all {
 			rw.Device = s.DeviceName
 			if rw.Device == "" {
@@ -156,10 +197,24 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	if all {
 		empty = "No flows yet."
 	}
+	if f.Query != "" || f.Status != "" || f.Host != "" || f.Since != 0 {
+		empty = "No flows match."
+	}
+	var statuses []chip
+	for _, c := range []struct{ label, v string }{{"All", ""}, {"2xx", "2xx"}, {"3xx", "3xx"}, {"4xx", "4xx"}, {"5xx", "5xx"}, {"No answer", "none"}} {
+		statuses = append(statuses, chip{c.label, params(q).With("status", c.v), f.Status == c.v})
+	}
 	return map[string]any{
-		"Rows": rows, "Empty": empty, "Host": f.Host, "Status": f.Status, "Paused": q.Get("pause") != "",
+		"Rows": rows, "Empty": empty, "Host": f.Host, "Status": f.Status, "Q": f.Query, "Bodies": f.QueryBodies,
+		"Since": q.Get("since"), "Paused": q.Get("pause") != "", "P": params(q), "Statuses": statuses,
 		"Unmasked": stats["redacting"] == false, "Line": line, "Steps": steps,
 	}
+}
+
+// chip is a filter button: its link, and whether it is the one on.
+type chip struct {
+	Label, Href string
+	On          bool
 }
 
 func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string, all bool) {
@@ -254,25 +309,39 @@ const head = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="stylesheet" href="/style.css"><title>Reqcove</title>`
 
 // The list follows new flows with /app.js, without reloading (a reload a second
-// made Safari's address bar flicker); without scripts, a refresh does it.
+// made Safari's address bar flicker). Without scripts, it is a page to reload.
 var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
-{{if not .Paused}}<script src="/app.js" defer></script><noscript><meta http-equiv="refresh" content="1"></noscript>{{end}}</head><body>
-<header><b>Reqcove</b>{{if .Unmasked}} <b class="bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span>
-<nav>{{if .Paused}}<a href="/?host={{.Host}}&amp;status={{.Status}}">resume</a>{{else}}<a href="/?host={{.Host}}&amp;status={{.Status}}&amp;pause=1">pause</a>{{end}}
- · <a href="/?status=4xx">4xx</a> <a href="/?status=5xx">5xx</a> <a href="/?status=none">no answer</a>{{if or .Host .Status}} · <a href="/">all</a>{{end}}</nav>
-{{if or .Host .Status}}<p class="muted">{{with .Host}}host {{.}} {{end}}{{with .Status}}status {{.}}{{end}}</p>{{end}}
+<script src="/app.js" defer></script></head><body>
+<header>
+<div class="top"><b>Reqcove</b>{{if .Unmasked}} <b class="bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span></div>
+<form class="search" action="/" method="get" role="search">
+<input id="q" type="search" name="q" value="{{.Q}}" placeholder="Search URLs and headers" aria-label="Search URLs and headers" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false">
+<label class="check"><input id="bodies" type="checkbox" name="bodies" value="1"{{if .Bodies}} checked{{end}}> bodies too</label>
+{{with .Host}}<input type="hidden" name="host" value="{{.}}">{{end}}{{with .Status}}<input type="hidden" name="status" value="{{.}}">{{end}}{{with .Since}}<input type="hidden" name="since" value="{{.}}">{{end}}{{if .Paused}}<input type="hidden" name="pause" value="1">{{end}}
+</form>
+<nav class="chips" aria-label="Filters">
+{{range .Statuses}}<a class="chip{{if .On}} on{{end}}" href="{{.Href}}"{{if .On}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+{{with .Host}}<a class="chip on" href="{{$.P.With "host" ""}}" aria-label="Stop showing only {{.}}">{{.}} ×</a>{{end}}
+</nav>
+<nav class="chips" aria-label="View">
+{{if .Paused}}<a class="chip toggle" href="{{.P.With "pause" ""}}" aria-pressed="true">Paused · tap for live</a>{{else}}<a class="chip toggle on" href="{{.P.With "pause" "1"}}" aria-pressed="false">Live · tap to pause</a>{{end}}
+<a class="chip" href="{{.P.With "clear" "1"}}">Clear</a>{{if .Since}}<a class="chip" href="{{.P.With "since" ""}}">Show all</a>{{end}}
+<noscript><a class="chip" href="{{.P}}">Reload</a></noscript>
+<a id="new" class="chip on" href="#" hidden></a>
+</nav>
 <div id="steps">{{range .Steps}}<p class="step">next: {{.}}</p>{{end}}</div></header>
-<table><tbody id="rows">{{range .Rows}}<tr class="{{.Class}}">
-<td class="s">{{.S}}</td>
-<td><a class="u" href="/flow?id={{.ID}}">{{.Text}}</a>
-<div class="muted">{{.Time}} · <a href="/?host={{.Host}}">{{.Host}}</a>{{if .MS}} · {{.MS}} ms{{end}}{{with .Device}} · {{.}}{{end}}</div></td></tr>
-{{else}}<tr><td class="muted">{{.Empty}}</td></tr>{{end}}</tbody></table></body></html>`))
+<ul id="rows">{{range .Rows}}<li><a class="row {{.Class}}" href="/flow?id={{.ID}}"><span class="s">{{.S}}</span><span class="t">{{.Text}}</span>
+<span class="meta">{{.Time}} · {{.Host}}{{if .MS}} · {{.MS}} ms{{end}}{{with .Device}} · {{.}}{{end}}{{with .Where}} · in {{.}}{{end}}</span></a></li>
+{{else}}<li class="empty muted">{{.Empty}}</li>{{end}}</ul></body></html>`))
 
-// appJS asks /flows.json (with the page's own filters) once a second and puts
-// the rows in with textContent and DOM calls only: never markup from a site.
+// appJS asks /flows.json (with the page's own filters) and puts the rows in
+// with textContent and DOM calls only: never markup from a site. It does not
+// poll while paused, nor for a search of bodies (the store is walked under its
+// lock); it waits while the list is scrolled down, saying how many are new;
+// the search field filters as you type.
 const appJS = `"use strict";
 (function () {
-  var last = "";
+  var last = "", pending = null, held = 0, timer = 0;
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -280,69 +349,120 @@ const appJS = `"use strict";
     return e;
   }
   function row(f) {
-    var tr = el("tr", f.class), td = el("td");
-    tr.appendChild(el("td", "s", f.s));
-    var a = el("a", "u", f.text);
+    var li = el("li"), a = el("a", "row " + f.class);
     a.href = "/flow?id=" + encodeURIComponent(f.id);
-    td.appendChild(a);
-    var meta = el("div", "muted", f.time + " · "), h = el("a", null, f.host);
-    h.href = "/?host=" + encodeURIComponent(f.host);
-    meta.appendChild(h);
-    if (f.ms) meta.appendChild(document.createTextNode(" · " + f.ms + " ms"));
-    if (f.device) meta.appendChild(document.createTextNode(" · " + f.device));
-    td.appendChild(meta);
-    tr.appendChild(td);
-    return tr;
+    a.appendChild(el("span", "s", f.s));
+    a.appendChild(el("span", "t", f.text));
+    var meta = f.time + " · " + f.host;
+    if (f.ms) meta += " · " + f.ms + " ms";
+    if (f.device) meta += " · " + f.device;
+    if (f.where) meta += " · in " + f.where;
+    a.appendChild(el("span", "meta", meta));
+    li.appendChild(a);
+    return li;
+  }
+  function params() { return new URLSearchParams(location.search); }
+  function show(d) {
+    var rows = document.getElementById("rows"), steps = document.getElementById("steps");
+    document.getElementById("line").textContent = d.line;
+    steps.replaceChildren.apply(steps, d.steps.map(function (s) { return el("p", "step", "next: " + s); }));
+    var lis = d.rows.map(row);
+    if (!lis.length) lis = [el("li", "empty muted", d.empty)];
+    rows.replaceChildren.apply(rows, lis);
+    pending = null; held = 0;
+    var n = document.getElementById("new");
+    n.hidden = true;
+  }
+  function apply(t) {
+    if (t === last) return;
+    last = t;
+    var d = JSON.parse(t);
+    if (window.scrollY > 40) { // scrolled down: do not move the list under the finger
+      var seen = {};
+      Array.prototype.forEach.call(document.querySelectorAll("#rows a.row"), function (a) { seen[a.getAttribute("href")] = true; });
+      held = d.rows.filter(function (f) { return !seen["/flow?id=" + encodeURIComponent(f.id)]; }).length;
+      pending = d;
+      var n = document.getElementById("new");
+      n.textContent = held ? held + " new · show" : "updated · show";
+      n.hidden = false;
+      return;
+    }
+    show(d);
   }
   function tick() {
-    fetch("/flows.json" + location.search, {credentials: "same-origin", cache: "no-store"})
+    clearTimeout(timer);
+    var p = params();
+    fetch("/flows.json?" + p.toString(), {credentials: "same-origin", cache: "no-store"})
       .then(function (r) {
         // A new start of reqcove run: the link is old. Reloading shows the page saying so.
         if (r.status === 403) { location.reload(); return Promise.reject(r.status); }
         return r.ok ? r.text() : Promise.reject(r.status);
       })
-      .then(function (t) {
-        if (t === last) return;
-        last = t;
-        var d = JSON.parse(t), rows = document.getElementById("rows"), steps = document.getElementById("steps");
-        document.getElementById("line").textContent = d.line;
-        steps.replaceChildren.apply(steps, d.steps.map(function (s) { return el("p", "step", "next: " + s); }));
-        var trs = d.rows.map(row);
-        if (!trs.length) {
-          var empty = el("tr");
-          empty.appendChild(el("td", "muted", d.empty));
-          trs = [empty];
-        }
-        rows.replaceChildren.apply(rows, trs);
-      })
+      .then(apply)
       .catch(function () {
         last = "";
         document.getElementById("line").textContent = "reqcove is not answering; trying again";
       })
-      .then(function () { setTimeout(tick, 1000); });
+      .then(function () {
+        var q = params();
+        if (q.get("pause") || q.get("bodies")) return; // paused, or a search of bodies: no polling
+        timer = setTimeout(tick, q.get("q") ? 2000 : 1000);
+      });
   }
-  setTimeout(tick, 1000);
+  document.getElementById("new").addEventListener("click", function (e) {
+    e.preventDefault();
+    window.scrollTo(0, 0);
+    if (pending) show(pending);
+  });
+  var q = document.getElementById("q"), bodies = document.getElementById("bodies"), typing = 0;
+  function search() {
+    var p = params();
+    if (q.value) p.set("q", q.value); else p.delete("q");
+    if (bodies.checked) p.set("bodies", "1"); else p.delete("bodies");
+    history.replaceState(null, "", p.toString() ? "/?" + p.toString() : "/");
+    last = "";
+    tick();
+  }
+  q.addEventListener("input", function () { clearTimeout(typing); typing = setTimeout(search, 400); });
+  bodies.addEventListener("change", search);
+  if (!params().get("pause") && !params().get("bodies")) timer = setTimeout(tick, 1000);
 })();
 `
 
 var flowPage = template.Must(template.New("flow").Funcs(funcs).Parse(head + `</head><body>
-<header><a href="/">← flows</a></header>
+<header><a class="chip" href="/">← flows</a> <a class="chip" href="/?host={{.F.Host}}">only {{.F.Host}}</a></header>
 <h1>{{.F.Method}} <span class="{{class .F.Status .F.State}}">{{if .F.Status}}{{.F.Status}} {{.F.Reason}}{{else}}{{.F.State}}{{end}}</span></h1>
-<p class="u">{{.F.URL}}</p>
+<p class="url">{{.F.URL}}</p>
 {{with .F.MappedURL}}<p class="muted">sent to {{.}}</p>{{end}}
 {{with .F.Error}}<p class="bad">{{.}}</p>{{end}}
 {{range .F.Rewrites}}<p class="muted">rule: {{.}}</p>{{end}}
 {{range .F.Notes}}<p class="muted">{{.}}</p>{{end}}
-<details open><summary>Request headers</summary><table>{{range .F.ReqHeaders}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table></details>
+<details open><summary>Request headers</summary><dl>{{range .F.ReqHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
 <details><summary>Request body</summary>{{with .F.ReqBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre>{{.ReqBody}}</pre></details>
-<details open><summary>Response headers</summary><table>{{range .F.RespHeaders}}<tr><th>{{index . 0}}</th><td>{{index . 1}}</td></tr>{{end}}</table></details>
+<details open><summary>Response headers</summary><dl>{{range .F.RespHeaders}}<dt>{{index . 0}}</dt><dd>{{index . 1}}</dd>{{end}}</dl></details>
 <details open><summary>Response body</summary>{{with .F.RespBodyEnc}}<p class="muted">{{.}}</p>{{end}}<pre>{{.RespBody}}</pre></details>
 </body></html>`))
 
-const css = `:root{color-scheme:light dark;font:14px -apple-system,system-ui,sans-serif}
-body{margin:0 8px}header{position:sticky;top:0;background:Canvas;padding:6px 0;border-bottom:1px solid #8884}
-nav,.muted{color:#888;font-size:12px}table{width:100%;border-collapse:collapse;table-layout:fixed}td,th{padding:4px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
-tr{border-bottom:1px solid #8882}.s{font-weight:600;width:3em}
-.u{word-break:break-all;text-decoration:none;display:block}a{color:inherit}
-.bad{color:#d33}.warn{color:#c80}.open{color:#888}.step{color:#c80;font-size:12px;margin:2px 0}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}th{font-weight:600;width:30%}h1{font-size:16px}`
+const css = `:root{color-scheme:light dark;font:16px -apple-system,system-ui,sans-serif}
+body{margin:0 10px}a{color:inherit}
+header{position:sticky;top:0;z-index:1;background:Canvas;padding:8px 0 6px;border-bottom:1px solid #8884}
+.top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.muted{color:GrayText;font-size:14px}
+.search{display:flex;gap:8px;align-items:center;margin:8px 0 4px}
+.search input[type=search]{flex:1;min-width:0;font-size:16px;padding:8px 10px;border:1px solid #8886;border-radius:8px;background:Field;color:FieldText}
+.check{font-size:14px;white-space:nowrap;display:flex;align-items:center;gap:4px;min-height:44px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.chip{display:inline-flex;align-items:center;min-height:36px;padding:0 12px;border:1px solid #8886;border-radius:18px;text-decoration:none;font-size:14px}
+.chip.on{background:#3478f6;border-color:#3478f6;color:#fff}
+.step{color:#c80;font-size:14px;margin:4px 0;white-space:pre-wrap}
+ul{list-style:none;margin:0;padding:0}
+li{border-bottom:1px solid #8883}
+.row{display:grid;grid-template-columns:3.2em 1fr;column-gap:8px;min-height:44px;padding:8px 0;text-decoration:none}
+.row .s{font-weight:600;grid-row:span 2}.row .t{overflow-wrap:anywhere}
+.row .meta{grid-column:2;color:GrayText;font-size:14px;overflow-wrap:anywhere}
+.empty{padding:16px 0}
+.bad,.row.bad .s{color:#d33}.warn,.row.warn .s{color:#c80}.row.open .s{color:GrayText}
+h1{font-size:18px}.url{overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}
+summary{min-height:44px;display:flex;align-items:center;font-weight:600}
+dl{margin:0}dt{font-weight:600;font-size:14px;margin-top:8px;overflow-wrap:anywhere}dd{margin:0 0 4px;overflow-wrap:anywhere;font-size:14px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}`

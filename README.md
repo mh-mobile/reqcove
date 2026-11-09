@@ -172,10 +172,19 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
 
 `reqcove run --ui` serves a read-only page of the flows on its tailnet node and
 prints a link to it with a QR code. Scan it with the iPhone's camera: Safari opens
-the list, which follows new flows every second (pause stops it), beside the app in
-split view if you like. Tap a flow for its headers and bodies, masked as the MCP
-tools return them. Tried: opened on an iPhone from the camera. Not tried
-yet: following new flows without reloading, and the page from other devices.
+the list, which follows new flows every second, beside the app in split view if
+you like. Tap a flow for its headers and bodies, masked as the MCP tools return
+them.
+
+- Search URLs and headers as you type (with "bodies too", the kept heads of the
+  bodies; the list then stops following, as that search walks every record);
+  filter by status (2xx to 5xx, no answer) or by host (on a flow's page).
+- Clear hides the flows so far from the list, to see only what comes next;
+  "Show all" brings them back. Nothing is deleted: the agent still sees them.
+- Live/Paused stops and starts following. Scrolled down, the list stays put and
+  says how many flows are new; tap that to see them.
+- Tried: opened on an iPhone from the camera. Not tried yet: this layout,
+  search and Clear on an iPhone (the tests run the page's script in node).
 
 - Your own devices on the tailnet (logged in as you: the iPhone, a second
   MacBook, an iPad) can open it and see every device's flows; a `--device` device

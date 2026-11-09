@@ -183,14 +183,18 @@ MCP tools return, masked the same way. Who can read it (each a test):
 - Only requests that name the node (its MagicDNS name or tailnet address) in
   `Host`: a site the iPhone visits cannot point its own name at the node and read
   the page as its own (DNS rebinding).
-- GET and HEAD only, also when the request comes through the Remote Proxy. The
+- GET and HEAD only, also when the request comes through the Remote Proxy; the
+  search form goes to the page itself (CSP `form-action 'self'`), and Clear only
+  hides flows from the list (a `since` in its URL), deleting nothing. The
   page's only script is its own `/app.js` (the Content-Security-Policy allows no
   other, and nothing inline), which asks `/flows.json` for the list once a second
   and puts it in with DOM calls and `textContent` only, so what sites wrote into
   headers and bodies stays text (a test runs it over a stand-in DOM in node); it is not cached
   (`no-store`). Pages still go through Safari: its history may keep the URLs of
   the flow pages viewed, and the first link with the token (useless without the
-  device; it lasts until `ui-token` is deleted). A JSON body nested deeper than 32 levels is
+  device; it lasts until `ui-token` is deleted), and the URLs of searches, with
+  what was searched (with `--no-redact`, a search for a secret's value keeps it
+  there). A JSON body nested deeper than 32 levels is
   shown as it is, not indented (indenting deep nesting takes memory that grows
   with the square of the depth).
 

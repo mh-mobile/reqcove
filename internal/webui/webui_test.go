@@ -6,12 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 )
@@ -162,8 +165,8 @@ func TestOwnCountsAndSteps(t *testing.T) {
 	if list := body(get(u, "devA", "/", testToken)); strings.Contains(list, "other.example.com") {
 		t.Errorf("devB, named devA, in devA's list:\n%s", list)
 	}
-	if !strings.Contains(page, `http-equiv="refresh" content="1"`) || !strings.Contains(page, "telephone=no") {
-		t.Errorf("refresh or format detection:\n%s", page)
+	if !strings.Contains(page, "/app.js") || strings.Contains(page, `http-equiv="refresh"`) || !strings.Contains(page, "telephone=no") {
+		t.Errorf("script, no refresh (it would wipe the search field), format detection:\n%s", page)
 	}
 }
 
@@ -209,80 +212,127 @@ func TestFlowsJSON(t *testing.T) {
 			t.Errorf("app.js uses %s", bad)
 		}
 	}
-	if page := body(get(u, "devB", "/?pause=1", testToken)); strings.Contains(page, "app.js") || strings.Contains(page, "refresh") {
-		t.Errorf("paused, still following:\n%s", page)
+	if page := body(get(u, "devB", "/?pause=1", testToken)); !strings.Contains(page, "/app.js") || strings.Contains(page, "refresh") || !strings.Contains(page, `aria-pressed="true"`) {
+		t.Errorf("paused: the script stays (search), no refresh, the toggle says paused:\n%s", page)
 	}
 }
 
 // app.js run in node over a stand-in DOM: rows come from /flows.json with the
-// page's filters, a site's markup stays text, and it asks again.
+// page's filters, a site's markup stays text; scrolled down, the list waits and
+// says how many are new; a search rewrites the URL and asks again; paused, it
+// does not ask at all.
 func TestAppJS(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("no node")
 	}
-	harness := `
+	run := func(search string) map[string]any {
+		harness := `
 const els = {};
 function mk(tag) {
-  return { tag, className: "", textContent: "", href: "", children: [],
+  return { tag, className: "", textContent: "", href: "", hidden: true, value: "", checked: false, children: [], handlers: {},
     appendChild(c) { this.children.push(c); return c; },
-    replaceChildren(...c) { this.children = c; } };
+    replaceChildren(...c) { this.children = c; },
+    addEventListener(ev, f) { this.handlers[ev] = f; },
+    getAttribute(k) { return this[k]; } };
 }
-for (const id of ["line", "steps", "rows"]) els[id] = mk("div");
+for (const id of ["line", "steps", "rows", "new", "q", "bodies"]) els[id] = mk("div");
 globalThis.document = { createElement: mk, getElementById: (id) => els[id],
-  createTextNode: (t) => ({ tag: "#text", textContent: t, children: [] }) };
-globalThis.location = { search: "?host=api.example.com" };
-const asked = [];
+  querySelectorAll: () => els.rows.children.map((li) => li.children[0]).filter((a) => a && a.tag === "a") };
+globalThis.window = { scrollY: 0, scrollTo() { window.scrollY = 0; } };
+globalThis.location = { search: __SEARCH__, reload() { reloaded++; } };
 let reloaded = 0;
-globalThis.location.reload = () => { reloaded++; };
+const replaced = [];
+globalThis.history = { replaceState: (a, b, u) => { replaced.push(u); location.search = u.slice(1); } };
+const row = (id, s, text) => ({ id, class: "ok", s, text, time: "10:00:00", host: "api.example.com", ms: 12, where: "url" });
+const ok = (rows) => () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({
+  line: "mitmproxy ready · 1 flows", steps: ["approve"], empty: "No flows yet.", rows })) });
 const answers = [
-  () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({
-    line: "mitmproxy ready · 1 flows", steps: ["approve"], empty: "No flows yet.",
-    rows: [{ id: "a&b", class: "ok", s: "200", text: "GET /<img src=x onerror=alert(1)>", time: "10:00:00", host: "api.example.com", ms: 12 }] })) }),
+  ok([row("a&b", "200", "GET /<img src=x onerror=alert(1)>")]),
+  ok([row("c", "201", "POST /new"), row("a&b", "200", "GET /<img src=x onerror=alert(1)>")]),
   () => Promise.reject(new Error("down")),
   () => Promise.resolve({ ok: false, status: 403 }),
+  ok([]),
+  ok([]),
 ];
+const asked = [];
 globalThis.fetch = (url) => { asked.push(url); return answers[asked.length - 1](); };
 const timers = [];
-globalThis.setTimeout = (f) => timers.push(f);
+globalThis.setTimeout = (f) => { timers.push(f); return timers.length; };
+globalThis.clearTimeout = () => {};
 ` + appJS + `
 const settle = () => new Promise((r) => setImmediate(r));
+const texts = () => els.rows.children.map((li) => li.children[0].children.map((c) => c.textContent).join("|"));
 (async () => {
+  const out = { startTimers: timers.length };
+  if (!timers.length) { console.log(JSON.stringify(out)); return; }
   timers.shift()();
   await settle();
-  const tr = els.rows.children[0], a = tr.children[1].children[0];
-  const out = { asked, line: els.line.textContent, step: els.steps.children[0].textContent,
-    cls: tr.className, status: tr.children[0].textContent, text: a.textContent, href: a.href,
-    again: timers.length };
+  const a = els.rows.children[0].children[0];
+  Object.assign(out, { first: texts(), cls: a.className, href: a.href, step: els.steps.children[0].textContent });
+  window.scrollY = 100; // scrolled down: the next answer waits
+  timers.shift()();
+  await settle();
+  Object.assign(out, { heldRows: texts().length, pill: els.new.hidden ? "" : els.new.textContent });
+  els.new.handlers.click({ preventDefault() {} });
+  out.shown = texts();
   timers.shift()(); // reqcove down
   await settle();
   out.down = els.line.textContent;
   timers.shift()(); // a new start: the link is old
   await settle();
   out.reloaded = reloaded;
+  els.q.value = "tok";
+  els.q.handlers.input();
+  timers.pop()(); // the search, after the pause in typing
+  await settle();
+  out.pollsAfterSearch = timers.length; // a search of URLs and headers: it asks again
+  const before = timers.length;
+  els.bodies.checked = true;
+  els.bodies.handlers.change(); // bodies too: asked once, then no polling
+  await settle();
+  out.pollsAfterBodies = timers.length - before;
+  Object.assign(out, { replaced, asked });
   console.log(JSON.stringify(out));
 })();
 `
-	f := filepath.Join(t.TempDir(), "app_test.js")
-	if err := os.WriteFile(f, []byte(harness), 0o600); err != nil {
-		t.Fatal(err)
+		harness = strings.Replace(harness, "__SEARCH__", strconv.Quote(search), 1)
+		f := filepath.Join(t.TempDir(), "app_test.js")
+		if err := os.WriteFile(f, []byte(harness), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(node, f).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return got
 	}
-	out, err := exec.Command(node, f).CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v: %s", err, out)
+	got := run("?host=api.example.com")
+	first, _ := got["first"].([]any)
+	shown, _ := got["shown"].([]any)
+	asked, _ := got["asked"].([]any)
+	replaced, _ := got["replaced"].([]any)
+	if len(first) != 1 || first[0] != "200|GET /<img src=x onerror=alert(1)>|10:00:00 · api.example.com · 12 ms · in url" || got["cls"] != "row ok" || got["href"] != "/flow?id=a%26b" || got["step"] != "next: approve" {
+		t.Errorf("rows: %v", got)
 	}
-	var got struct {
-		Asked                                     []string
-		Line, Step, Cls, Status, Text, Href, Down string
-		Again, Reloaded                           int
+	if got["heldRows"] != float64(1) || got["pill"] != "1 new · show" || len(shown) != 2 {
+		t.Errorf("scrolled down: held %v, pill %q, then %v", got["heldRows"], got["pill"], shown)
 	}
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("%v: %s", err, out)
+	if got["down"] != "reqcove is not answering; trying again" || got["reloaded"] != float64(1) {
+		t.Errorf("down %q, reloaded %v", got["down"], got["reloaded"])
 	}
-	if len(got.Asked) != 3 || got.Asked[2] != "/flows.json?host=api.example.com" || got.Line != "mitmproxy ready · 1 flows" || got.Step != "next: approve" ||
-		got.Cls != "ok" || got.Status != "200" || got.Text != "GET /<img src=x onerror=alert(1)>" || got.Href != "/flow?id=a%26b" || got.Again != 1 ||
-		got.Down != "reqcove is not answering; trying again" || got.Reloaded != 1 {
-		t.Errorf("app.js: %+v", got)
+	if len(replaced) != 2 || replaced[0] != "/?host=api.example.com&q=tok" || len(asked) != 6 || asked[0] != "/flows.json?host=api.example.com" || asked[4] != "/flows.json?host=api.example.com&q=tok" || asked[5] != "/flows.json?host=api.example.com&q=tok&bodies=1" {
+		t.Errorf("search: replaced %v, asked %v", replaced, asked)
+	}
+	if got["pollsAfterSearch"] == float64(0) || got["pollsAfterBodies"] != float64(0) {
+		t.Errorf("polling: after a search %v timers, after bodies too %v more", got["pollsAfterSearch"], got["pollsAfterBodies"])
+	}
+	if got := run("?pause=1"); got["startTimers"] != float64(0) {
+		t.Errorf("paused, it asks: %v", got)
 	}
 }
 
@@ -307,5 +357,37 @@ func TestOwnDeviceSeesAll(t *testing.T) {
 	}
 	if page := body(get(u, "devB", "/", testToken)); strings.Contains(page, "api.example.com") || strings.Contains(page, " · ipad") {
 		t.Errorf("a --device device of another user sees more than its own:\n%s", page)
+	}
+}
+
+// Search narrows the list and says where it matched; Clear goes on to the
+// list since now, by this computer's clock, keeping the other filters; the
+// chip that is on says so; the CSP lets the search form go to the page only.
+func TestSearchClearChips(t *testing.T) {
+	st := store(t)
+	u := New(st, testToken, nil)
+	page := body(ask(u, "mac", true, "/?q=other.example", testToken))
+	if !strings.Contains(page, "POST /b") || strings.Contains(page, "GET /a") || !strings.Contains(page, " · in url") {
+		t.Errorf("search:\n%s", page)
+	}
+	if page := body(ask(u, "mac", true, "/?q=nothing-like-this", testToken)); !strings.Contains(page, "No flows match.") {
+		t.Errorf("no match:\n%s", page)
+	}
+	before := time.Now().Unix()
+	r := ask(u, "mac", true, "/?status=4xx&clear=1", testToken)
+	loc, _ := url.Parse(r.Header.Get("Location"))
+	since, _ := strconv.ParseInt(loc.Query().Get("since"), 10, 64)
+	if r.StatusCode != http.StatusSeeOther || loc.Query().Get("status") != "4xx" || loc.Query().Has("clear") || since < before || since > time.Now().Unix() {
+		t.Errorf("clear: %d %s", r.StatusCode, r.Header.Get("Location"))
+	}
+	// The flows in store() started at 1 and 1.5 (unix seconds): since 2 hides both.
+	if page := body(ask(u, "mac", true, "/?since=2", testToken)); strings.Contains(page, "GET /a") || !strings.Contains(page, "Show all") {
+		t.Errorf("since:\n%s", page)
+	}
+	if page := body(ask(u, "mac", true, "/?status=4xx", testToken)); !strings.Contains(page, `href="/?status=4xx" aria-current="true">4xx`) {
+		t.Errorf("the chip that is on:\n%s", page)
+	}
+	if csp := ask(u, "mac", true, "/", testToken).Header.Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("CSP %q", csp)
 	}
 }
