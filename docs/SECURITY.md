@@ -217,10 +217,14 @@ reuse): the per-request check keeps those out of Reqcove's records only.
 After v0.1.0. An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
 iOS Simulator), with no password: any process on this computer, of any user, can
 use it, and what it sends to `--allow-hosts` hosts is recorded as the device
-`local`. Like the exit node, it refuses this computer, the LAN, the tailnet and
-IPv6 as destinations (a test): a page in a browser here could otherwise reach
-them through it by pointing its own name there (DNS rebinding). Those are in
-the system proxy's exceptions instead, so apps reach them directly, as without
+`local`. Its apps reach the LAN, VPNs and the tailnet as they would without it,
+by this computer's own lookups. It refuses IPv6, and a name that leads to this
+computer itself (loopback, its own addresses) or to a link-local address unless
+this computer's `/etc/hosts` gives it (a test): a page in a browser here could
+otherwise reach this computer's services through it by pointing its own name
+there (DNS rebinding). A page could still point its name at a LAN address; a
+browser going direct faces the same. This computer, the LAN and the tailnet are
+in the system proxy's exceptions, so apps reach them directly, as without
 reqcove. Apple's hosts are not decrypted. On macOS, `run` points the system's web
 proxies at it while it runs, keeping what they were in the state directory
 (0600) to put back when it stops (also on SIGHUP), at the next start, or with

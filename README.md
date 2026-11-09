@@ -203,10 +203,13 @@ command it prints. On Linux nothing is changed for you: point apps at it
   `--allow-hosts` hosts are decrypted and recorded, but those break in apps on
   this computer that do not trust Reqcove's CA (Safari on the Mac, say).
 - This computer, the LAN, the tailnet (`*.ts.net` too) and `*.local` are added to
-  the proxy's exceptions, so they are reached directly, as before; the proxy
-  itself refuses them, as the exit node does, so a site cannot reach them through
-  it by pointing its own name there. Names are looked up as this computer does
-  (VPNs and split DNS included), not with `--dns`.
+  the proxy's exceptions, so they are reached directly, as before (the address
+  forms there are not tried yet). Names are looked up as this computer does (VPNs,
+  split DNS, search domains), not with `--dns`, and names that lead to the LAN, a
+  VPN or the tailnet go on. A name that leads to this computer itself, or to a
+  link-local address, is refused unless this computer's `/etc/hosts` gives it: a
+  site pointing its own name at 127.0.0.1 (DNS rebinding) cannot reach this
+  computer's services through it.
 - While `run` runs, the system proxy is reqcove's. Ctrl-C, `kill` and closing the
   terminal put it back; if reqcove is killed outright (`kill -9`) or crashes,
   apps that use the system proxy cannot connect until the next `run` or

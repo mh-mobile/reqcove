@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -295,10 +297,18 @@ func TestRemoteProxyWeb(t *testing.T) {
 	}
 }
 
-// The local proxy: this computer's own apps, as the device Local. It refuses
-// this computer, the LAN, the tailnet and IPv6, sends 80/443 to mitmproxy,
-// and Apple and other ports direct.
+// The local proxy: this computer's own apps, as the device Local. A name that
+// leads to this computer itself (or link-local) is refused unless /etc/hosts
+// gives it (DNS rebinding); the LAN, VPNs and the tailnet go on, an address
+// the app gives too. IPv6 is refused; 80/443 go to mitmproxy.
 func TestLocalProxy(t *testing.T) {
+	hosts := filepath.Join(t.TempDir(), "hosts")
+	os.WriteFile(hosts, []byte("127.0.0.1 localhost\n127.0.0.1\tdev.test  # mine\n"), 0o600)
+	old := hostsFile
+	hostsFile = hosts
+	defer func() { hostsFile = old }()
+	names := map[string]string{"rebind.example": "127.0.0.1", "meta.example": "169.254.169.254", "dev.test": "127.0.0.1",
+		"api.staging.corp": "10.1.2.3", "nas.lan": "192.168.1.5", "api.example.com": "203.0.113.5"}
 	type dialed struct {
 		v      verdict
 		device string
@@ -306,7 +316,12 @@ func TestLocalProxy(t *testing.T) {
 	}
 	var got []dialed
 	rp := &remoteProxy{local: true, policy: func() *policy { return nil }, // no tailnet yet: the local proxy works all the same
-		resolve: func(_ context.Context, h string) (netip.Addr, error) { return netip.ParseAddr(h) },
+		resolve: func(_ context.Context, h string) (netip.Addr, error) {
+			if ip, ok := names[h]; ok {
+				return netip.MustParseAddr(ip), nil
+			}
+			return netip.ParseAddr(h)
+		},
 		dial: func(_ context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
 			got = append(got, dialed{v, device, dst.String()})
 			return nil, errors.New("recorded")
@@ -315,11 +330,15 @@ func TestLocalProxy(t *testing.T) {
 		url  string
 		want *dialed
 	}{
-		{"http://192.168.1.10/", nil}, // the LAN, this computer and the tailnet bypass it, and it refuses them (DNS rebinding)
-		{"http://127.0.0.1:3000/", nil},
-		{"http://203.0.113.5:443/", &dialed{socks, "local", "203.0.113.5:443"}},
-		{"http://203.0.113.5:3000/", &dialed{direct, "local", "203.0.113.5:3000"}},
-		{"http://100.64.0.9/", nil},
+		{"http://rebind.example/", nil},
+		{"http://meta.example/", nil},
+		{"http://dev.test:3000/", &dialed{direct, "local", "127.0.0.1:3000"}},
+		{"http://dev.test/", &dialed{socks, "local", "127.0.0.1:80"}},
+		{"http://api.staging.corp/", &dialed{socks, "local", "10.1.2.3:80"}},
+		{"http://nas.lan:5000/", &dialed{direct, "local", "192.168.1.5:5000"}},
+		{"http://192.168.1.10/", &dialed{socks, "local", "192.168.1.10:80"}},
+		{"http://api.example.com:443/", &dialed{socks, "local", "203.0.113.5:443"}},
+		{"http://100.64.0.9/", &dialed{direct, "local", "100.64.0.9:80"}},
 		{"http://17.253.144.10/", &dialed{direct, "local", "17.253.144.10:80"}},
 		{"http://[2001:db8::1]/", nil},
 	} {

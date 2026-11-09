@@ -20,7 +20,7 @@ func withSystemProxy(state string, on bool, f func() error) error {
 		return f()
 	}
 	if err := pointSystemProxy(state); err != nil {
-		log.Printf("WARN: could not point the system's web proxies at 127.0.0.1:%d (%v): set them yourself in System Settings, Network, Details, Proxies", localProxyPort, err)
+		log.Printf("WARN: the system's web proxies are left as they are (%v). The local proxy runs all the same, for apps pointed at it", err)
 		return f()
 	}
 	log.Printf("this computer's web proxies point at the local proxy until reqcove stops; the LAN, the tailnet and this computer bypass it")
@@ -56,7 +56,7 @@ func nsError(out string, err error) error {
 // bypass is what never goes through the local proxy: this computer, the LAN and
 // the tailnet go direct, so a site in a browser here cannot reach them through
 // it (DNS rebinding), and the proxy refuses them as the exit node does.
-var bypass = []string{"localhost", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254/16", "100.64.0.0/10", "*.local", "*.ts.net"}
+var bypass = []string{"localhost", "::1", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254/16", "100.64.0.0/10", "*.local", "*.ts.net"}
 
 // webProxy is one service's web proxy (HTTP) or secure web proxy (HTTPS).
 type webProxy struct {
@@ -115,7 +115,9 @@ func getProxy(kind, service string) (webProxy, error) {
 		}
 	}
 	if p.Server == ours.Server && p.Port == ours.Port {
-		p = webProxy{} // left pointed at us by a run with other state: not what to put back
+		// Pointed at a reqcove already (one with other state, running or not):
+		// that one holds what to put back, so this one must not save over it.
+		return p, fmt.Errorf("%s's proxy already points at 127.0.0.1:%d, from another reqcove run (another --state): stop it, or run its `reqcove cleanup --state …`", service, localProxyPort)
 	}
 	return p, nil
 }
@@ -224,10 +226,16 @@ func restoreSystemProxy(state string) error {
 	}
 	var errs []error
 	for _, s := range saved {
-		errs = append(errs, setProxy("webproxy", s.Service, s.Web), setProxy("securewebproxy", s.Service, s.Secure), setBypass(s.Service, s.Bypass))
+		for _, err := range []error{setProxy("webproxy", s.Service, s.Web), setProxy("securewebproxy", s.Service, s.Secure), setBypass(s.Service, s.Bypass)} {
+			if err != nil && strings.Contains(err.Error(), "Unable to find item") {
+				break // the service is gone (a VPN's, a USB adapter's): nothing to put back
+			}
+			errs = append(errs, err)
+		}
 	}
 	if err := errors.Join(errs...); err != nil {
-		return err // the file stays: the next start or cleanup tries again
+		// The file stays: the next start or cleanup tries again.
+		return fmt.Errorf("%w (once they are back, by hand in System Settings, Network, Details, Proxies, delete %s)", err, savedProxyFile(state))
 	}
 	return os.Remove(savedProxyFile(state))
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -216,7 +217,9 @@ func cleanup(args []string) error {
 			unlock()
 		}
 	}
-	fmt.Println("  5. iOS Simulator, if you used --local-proxy: xcrun simctl keychain booted reset (removes every certificate added to it).")
+	if runtime.GOOS == "darwin" {
+		fmt.Println("  5. iOS Simulator, if you used --local-proxy: xcrun simctl keychain booted reset (removes every certificate added to it).")
+	}
 	if !*del {
 		return nil
 	}

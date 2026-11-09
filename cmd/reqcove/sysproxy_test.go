@@ -21,6 +21,9 @@ func fakeNetworksetup(t *testing.T, proxies map[string]webProxy, failSet string)
 	networksetup = func(args ...string) (string, error) {
 		calls = append(calls, strings.Join(args, " "))
 		cmd := args[0]
+		if len(args) > 1 && args[1] != "Wi-Fi" && args[1] != "USB LAN" {
+			return "** Error: Unable to find item in network database.\n", errors.New("exit status 8")
+		}
 		switch {
 		case cmd == "-listallnetworkservices":
 			return "An asterisk (*) denotes that a network service is disabled.\nWi-Fi\nUSB LAN\n*Bluetooth PAN\n", nil
@@ -72,7 +75,7 @@ func TestSystemProxy(t *testing.T) {
 	if err := pointSystemProxy(state); err != nil {
 		t.Fatal(err)
 	}
-	if by := proxies["bypass|Wi-Fi"].Server; !strings.HasPrefix(by, "*.local,169.254/16,localhost,127.0.0.0/8") || !strings.Contains(by, "192.168.0.0/16") || !strings.Contains(by, "100.64.0.0/10") {
+	if by := proxies["bypass|Wi-Fi"].Server; !strings.HasPrefix(by, "*.local,169.254/16,localhost,::1,127.0.0.0/8") || !strings.Contains(by, "192.168.0.0/16") || !strings.Contains(by, "100.64.0.0/10") {
 		t.Errorf("bypass: %s", by)
 	}
 	ours := webProxy{true, "127.0.0.1", "8082"}
@@ -200,14 +203,37 @@ func TestSystemProxyKeepsTheOriginal(t *testing.T) {
 	if proxies["webproxy|Wi-Fi"] != corp {
 		t.Errorf("the original is lost: %+v", proxies["webproxy|Wi-Fi"])
 	}
+	// Pointed at a reqcove already (another --state holds the original): refused, nothing saved.
 	other := t.TempDir()
 	proxies["webproxy|Wi-Fi"] = webProxy{true, "127.0.0.1", "8082"}
-	if err := pointSystemProxy(other); err != nil {
+	if err := pointSystemProxy(other); err == nil || !strings.Contains(err.Error(), "another --state") {
+		t.Errorf("pointed over another reqcove's: %v", err)
+	}
+	if _, err := os.Stat(savedProxyFile(other)); !os.IsNotExist(err) {
+		t.Error("saved reqcove's own setting as the original")
+	}
+}
+
+// A service gone since (a VPN's, a USB adapter's) is skipped when putting back;
+// one that fails otherwise keeps the file, and the error says where it is.
+func TestRestoreSkipsGoneServices(t *testing.T) {
+	state := t.TempDir()
+	proxies := map[string]webProxy{}
+	fakeNetworksetup(t, proxies, "")
+	os.WriteFile(savedProxyFile(state), []byte(`[{"service":"Gone VPN","web":{"enabled":true,"server":"p","port":"1"}},{"service":"Wi-Fi","web":{"enabled":true,"server":"proxy.corp","port":"3128"}}]`), 0o600)
+	if err := restoreSystemProxy(state); err != nil {
 		t.Fatal(err)
 	}
-	restoreSystemProxy(other)
-	if proxies["webproxy|Wi-Fi"].Enabled {
-		t.Errorf("reqcove's own setting taken for the original: %+v", proxies["webproxy|Wi-Fi"])
+	if proxies["webproxy|Wi-Fi"] != (webProxy{true, "proxy.corp", "3128"}) {
+		t.Errorf("Wi-Fi: %+v", proxies["webproxy|Wi-Fi"])
+	}
+	if _, err := os.Stat(savedProxyFile(state)); !os.IsNotExist(err) {
+		t.Error("the file stayed")
+	}
+	fakeNetworksetup(t, proxies, "-setwebproxy Wi-Fi")
+	os.WriteFile(savedProxyFile(state), []byte(`[{"service":"Wi-Fi","web":{"enabled":true,"server":"proxy.corp","port":"3128"}}]`), 0o600)
+	if err := restoreSystemProxy(state); err == nil || !strings.Contains(err.Error(), savedProxyFile(state)) {
+		t.Errorf("a failure: %v", err)
 	}
 }
 

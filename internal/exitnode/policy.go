@@ -101,29 +101,28 @@ func decideUDP(p *policy, src, dst netip.AddrPort) bool {
 	return dst.Port() != 443 || apple.Contains(dst.Addr().Unmap())
 }
 
-// decideLocal is for the local proxy: this computer's own apps. This computer,
-// the LAN and the tailnet bypass it (the system proxy's exceptions), and it
-// refuses them as the exit node does, so a page in a browser here cannot reach
-// them through it with a name it points there (DNS rebinding). IPv6 is refused
-// too (apps fall back to IPv4).
-func decideLocal(dst netip.AddrPort) verdict {
+// decideLocal is for the local proxy: this computer's own apps, which reach
+// the LAN, VPNs and the tailnet as they would without it. Refused: IPv6 (apps
+// fall back to IPv4), and this computer itself (loopback, its own addresses)
+// and link-local when a name led there that this computer's /etc/hosts does not
+// give (trusted false): a page in a browser here pointing its own name at
+// 127.0.0.1 (DNS rebinding) cannot reach this computer's services through it.
+func decideLocal(dst netip.AddrPort, self []netip.Addr, trusted bool) verdict {
 	d := dst.Addr().Unmap()
-	if !d.Is4() {
-		return reject
-	}
-	for _, pfx := range denied {
-		if pfx.Contains(d) {
-			return reject
-		}
-	}
 	switch {
-	case apple.Contains(d):
+	case !d.Is4():
+		return reject
+	case !trusted && (d.IsLoopback() || d.IsUnspecified() || d.IsLinkLocalUnicast() || slices.Contains(self, d)):
+		return reject
+	case apple.Contains(d), tailnetRange.Contains(d):
 		return direct
 	case dst.Port() == 80 || dst.Port() == 443:
 		return socks
 	}
 	return direct
 }
+
+var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
 
 // decideTCP must stay a pure table lookup: tsnet calls it with its lock held.
 func decideTCP(p *policy, src, dst netip.AddrPort) verdict {

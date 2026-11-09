@@ -113,7 +113,7 @@ func Run(ctx context.Context, cfg Config) error {
 			Handler: &remoteProxy{
 				local:   true,
 				policy:  current.Load,
-				resolve: resolver(nil), // this computer's apps: its own DNS (VPNs, split DNS), as without the proxy
+				resolve: localResolve, // this computer's apps: its own lookups (VPNs, split DNS, search domains), as without the proxy
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
 					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
 				},

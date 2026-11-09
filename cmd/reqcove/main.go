@@ -68,7 +68,11 @@ func main() {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(capture.GoMemoryLimit)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP) // SIGHUP: the terminal closed; --local-proxy must still put the system proxy back
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) { // under nohup it stays ignored
+		sigs = append(sigs, syscall.SIGHUP) // the terminal closed: --local-proxy must still put the system proxy back
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), sigs...)
 	defer stop()
 	var err error
 	switch os.Args[1] {
@@ -348,7 +352,7 @@ func run(ctx context.Context, args []string) error {
 				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", caPEM)
 			}
 		} else {
-			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s) and have them trust the CA %s; recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
+			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s; recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
 		}
 	}
 	err = withSystemProxy(*state, *localProxy, func() error {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -210,7 +211,14 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 	dst := netip.AddrPortFrom(ip, uint16(pn))
 	v := decideTCP(rp.policy(), src, dst)
 	if rp.local {
-		v = decideLocal(dst)
+		// An address the app gave, or a name this computer's /etc/hosts gives, is the app's own choice.
+		_, literal := netip.ParseAddr(host)
+		var self []netip.Addr
+		trusted := literal == nil || inHostsFile(host)
+		if !trusted {
+			self, _ = interfaceAddrs()
+		}
+		v = decideLocal(dst, self, trusted)
 	}
 	if v == reject {
 		return nil, fmt.Errorf("%s (%v): %w", host, ip, errNotCarried)
@@ -305,4 +313,43 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 		}
 	}
 	return d.(proxy.ContextDialer).DialContext(ctx, "tcp", dst.String())
+}
+
+// localResolve looks host up as this computer's apps would (search domains,
+// /etc/hosts, a VPN's DNS), for the local proxy: IPv4.
+func localResolve(ctx context.Context, host string) (netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.Unmap(), nil
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	if len(ips) == 0 {
+		return netip.Addr{}, fmt.Errorf("%s: no IPv4 address", host)
+	}
+	return ips[0].Unmap(), nil
+}
+
+// hostsFile is read for inHostsFile; tests point it elsewhere.
+var hostsFile = "/etc/hosts"
+
+// inHostsFile: host is a name in this computer's hosts file (the user's own
+// mapping, as for a development domain pointed at 127.0.0.1).
+func inHostsFile(host string) bool {
+	b, err := os.ReadFile(hostsFile)
+	if err != nil {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		f := strings.Fields(line)
+		for _, name := range f[min(1, len(f)):] {
+			if strings.EqualFold(name, host) {
+				return true
+			}
+		}
+	}
+	return false
 }
