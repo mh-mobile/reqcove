@@ -55,6 +55,7 @@ type Config struct {
 	NoRedact     bool                          // keep secrets in the records (--no-redact)
 	CAName       string                        // name of a CA made for this confdir (mitmproxy's own is just "mitmproxy"); empty: mitmproxy's default
 	WebPort      int                           // run mitmweb on 127.0.0.1:WebPort instead of mitmdump (--web); 0: mitmdump
+	WebPassword  string                        // with WebPort: mitmweb's password (run keeps it in the state directory)
 	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
 	RulesReload  bool                          // --rules-reload: the addon also takes the file again whenever it changes
 	Upstream     string                        // host:port of an HTTP proxy decrypted requests go on to (--upstream-proxy); empty: none
@@ -164,7 +165,10 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		if cfg.Confdir == "" {
 			return fail(errors.New("--web needs a confdir"))
 		}
-		pw := rand.Text()
+		pw := cfg.WebPassword
+		if pw == "" {
+			return fail(errors.New("--web needs a password"))
+		}
 		if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 			return fail(err)
 		}

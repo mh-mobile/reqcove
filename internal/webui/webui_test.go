@@ -55,8 +55,10 @@ func ask(u *UI, dev string, all bool, path, cookieValue string) *http.Response {
 
 func body(r *http.Response) string { b, _ := io.ReadAll(r.Body); return string(b) }
 
+const testToken = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
 func TestToken(t *testing.T) {
-	u := New(store(t), nil)
+	u := New(store(t), testToken, nil)
 	if r := get(u, "devA", "/", ""); r.StatusCode != 403 {
 		t.Errorf("no cookie: %d", r.StatusCode)
 	}
@@ -66,7 +68,7 @@ func TestToken(t *testing.T) {
 	if r := get(u, "devA", "/?k=wrong", ""); r.StatusCode != 403 {
 		t.Errorf("wrong link: %d", r.StatusCode)
 	}
-	r := get(u, "devA", "/?k="+u.Token(), "")
+	r := get(u, "devA", "/?k="+testToken, "")
 	if r.StatusCode != http.StatusSeeOther || r.Header.Get("Location") != "/" {
 		t.Fatalf("link: %d %q", r.StatusCode, r.Header.Get("Location"))
 	}
@@ -76,7 +78,7 @@ func TestToken(t *testing.T) {
 			c = x
 		}
 	}
-	if c == nil || c.Value != u.Token() || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+	if c == nil || c.Value != testToken || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.MaxAge != 400*24*3600 {
 		t.Fatalf("cookie: %+v", c)
 	}
 	if r := get(u, "devA", "/", c.Value); r.StatusCode != 200 {
@@ -85,9 +87,9 @@ func TestToken(t *testing.T) {
 }
 
 func TestPageEscapesAndHeaders(t *testing.T) {
-	u := New(store(t), func(string, bool) []string { return []string{"<b>step</b>"} })
+	u := New(store(t), testToken, func(string, bool) []string { return []string{"<b>step</b>"} })
 	for _, path := range []string{"/", "/flow?id=fa"} {
-		r := get(u, "devA", path, u.Token())
+		r := get(u, "devA", path, testToken)
 		page := body(r)
 		if r.StatusCode != 200 {
 			t.Fatalf("%s: %d", path, r.StatusCode)
@@ -104,22 +106,22 @@ func TestPageEscapesAndHeaders(t *testing.T) {
 			t.Errorf("%s: headers %v", path, r.Header)
 		}
 	}
-	if page := body(get(u, "devA", "/flow?id=fa", u.Token())); !strings.Contains(page, "&lt;script&gt;") || !strings.Contains(page, "&#34;html&#34;: ") {
+	if page := body(get(u, "devA", "/flow?id=fa", testToken)); !strings.Contains(page, "&lt;script&gt;") || !strings.Contains(page, "&#34;html&#34;: ") {
 		t.Errorf("detail: headers or indented body missing:\n%s", page)
 	}
 }
 
 // A device sees only its own flows: not in the list, not by ID.
 func TestOwnFlowsOnly(t *testing.T) {
-	u := New(store(t), nil)
-	list := body(get(u, "devA", "/", u.Token()))
+	u := New(store(t), testToken, nil)
+	list := body(get(u, "devA", "/", testToken))
 	if !strings.Contains(list, "api.example.com") || strings.Contains(list, "other.example.com") {
 		t.Errorf("devA's list:\n%s", list)
 	}
-	if r := get(u, "devA", "/flow?id=fb", u.Token()); r.StatusCode != 404 {
+	if r := get(u, "devA", "/flow?id=fb", testToken); r.StatusCode != 404 {
 		t.Errorf("devB's flow from devA: %d", r.StatusCode)
 	}
-	if r := get(u, "devB", "/flow?id=fb", u.Token()); r.StatusCode != 200 {
+	if r := get(u, "devB", "/flow?id=fb", testToken); r.StatusCode != 200 {
 		t.Errorf("devB's own flow: %d", r.StatusCode)
 	}
 }
@@ -149,15 +151,15 @@ func TestOwnCountsAndSteps(t *testing.T) {
 	st := store(t)
 	st.SetDeviceNames(map[string]string{"devA": "alice-phone", "devB": "devA"})
 	var asked string
-	u := New(st, func(id string, _ bool) []string { asked = id; return []string{"approve the exit node"} })
-	page := body(get(u, "devB", "/", u.Token()))
+	u := New(st, testToken, func(id string, _ bool) []string { asked = id; return []string{"approve the exit node"} })
+	page := body(get(u, "devB", "/", testToken))
 	if asked != "devB" || !strings.Contains(page, "approve the exit node") {
 		t.Errorf("steps asked for %q:\n%s", asked, page)
 	}
 	if !strings.Contains(page, " 1 flows") {
 		t.Errorf("devB's count:\n%s", page)
 	}
-	if list := body(get(u, "devA", "/", u.Token())); strings.Contains(list, "other.example.com") {
+	if list := body(get(u, "devA", "/", testToken)); strings.Contains(list, "other.example.com") {
 		t.Errorf("devB, named devA, in devA's list:\n%s", list)
 	}
 	if !strings.Contains(page, `http-equiv="refresh" content="1"`) || !strings.Contains(page, "telephone=no") {
@@ -168,12 +170,12 @@ func TestOwnCountsAndSteps(t *testing.T) {
 // Records kept unmasked (--no-redact) say so on the page.
 func TestUnmaskedSaid(t *testing.T) {
 	st := store(t)
-	u := New(st, nil)
-	if page := body(get(u, "devA", "/", u.Token())); strings.Contains(page, "not masked") {
+	u := New(st, testToken, nil)
+	if page := body(get(u, "devA", "/", testToken)); strings.Contains(page, "not masked") {
 		t.Errorf("masked, said unmasked:\n%s", page)
 	}
 	st.SetScope(capture.HostRules{All: true}, false)
-	if page := body(get(u, "devA", "/", u.Token())); !strings.Contains(page, "not masked (--no-redact)") {
+	if page := body(get(u, "devA", "/", testToken)); !strings.Contains(page, "not masked (--no-redact)") {
 		t.Errorf("unmasked, not said:\n%s", page)
 	}
 }
@@ -181,8 +183,8 @@ func TestUnmaskedSaid(t *testing.T) {
 // /flows.json is the list's data, for app.js: this device's flows only, and
 // only with the cookie. app.js puts text in as text.
 func TestFlowsJSON(t *testing.T) {
-	u := New(store(t), func(string, bool) []string { return []string{"approve"} })
-	r := get(u, "devB", "/flows.json", u.Token())
+	u := New(store(t), testToken, func(string, bool) []string { return []string{"approve"} })
+	r := get(u, "devB", "/flows.json", testToken)
 	var d struct {
 		Line  string
 		Steps []string
@@ -197,7 +199,7 @@ func TestFlowsJSON(t *testing.T) {
 	if r := get(u, "devB", "/flows.json", ""); r.StatusCode != http.StatusForbidden {
 		t.Errorf("without the cookie: %d", r.StatusCode)
 	}
-	js := get(u, "devB", "/app.js", u.Token())
+	js := get(u, "devB", "/app.js", testToken)
 	src := body(js)
 	if !strings.HasPrefix(js.Header.Get("Content-Type"), "text/javascript") {
 		t.Errorf("app.js type %q", js.Header.Get("Content-Type"))
@@ -207,7 +209,7 @@ func TestFlowsJSON(t *testing.T) {
 			t.Errorf("app.js uses %s", bad)
 		}
 	}
-	if page := body(get(u, "devB", "/?pause=1", u.Token())); strings.Contains(page, "app.js") || strings.Contains(page, "refresh") {
+	if page := body(get(u, "devB", "/?pause=1", testToken)); strings.Contains(page, "app.js") || strings.Contains(page, "refresh") {
 		t.Errorf("paused, still following:\n%s", page)
 	}
 }
@@ -290,20 +292,20 @@ func TestOwnDeviceSeesAll(t *testing.T) {
 	st := store(t)
 	st.SetDeviceNames(map[string]string{"devA": "iphone", "devB": "ipad"})
 	var forAll bool
-	u := New(st, func(_ string, all bool) []string { forAll = all; return nil })
-	page := body(ask(u, "macbook", true, "/", u.Token()))
+	u := New(st, testToken, func(_ string, all bool) []string { forAll = all; return nil })
+	page := body(ask(u, "macbook", true, "/", testToken))
 	if !strings.Contains(page, "api.example.com") || !strings.Contains(page, "other.example.com") || !strings.Contains(page, " · iphone") || !strings.Contains(page, " 2 flows") || !forAll {
 		t.Errorf("own device's list (steps for all: %v):\n%s", forAll, page)
 	}
-	if r := ask(u, "macbook", true, "/flow?id=fa", u.Token()); r.StatusCode != 200 {
+	if r := ask(u, "macbook", true, "/flow?id=fa", testToken); r.StatusCode != 200 {
 		t.Errorf("another device's flow: %d", r.StatusCode)
 	}
 	var d struct{ Rows []row }
-	json.NewDecoder(ask(u, "macbook", true, "/flows.json", u.Token()).Body).Decode(&d)
+	json.NewDecoder(ask(u, "macbook", true, "/flows.json", testToken).Body).Decode(&d)
 	if len(d.Rows) != 2 || d.Rows[0].Device == "" {
 		t.Errorf("own device's data: %+v", d)
 	}
-	if page := body(get(u, "devB", "/", u.Token())); strings.Contains(page, "api.example.com") || strings.Contains(page, " · ipad") {
+	if page := body(get(u, "devB", "/", testToken)); strings.Contains(page, "api.example.com") || strings.Contains(page, " · ipad") {
 		t.Errorf("a --device device of another user sees more than its own:\n%s", page)
 	}
 }

@@ -228,12 +228,29 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer mitmLog.Close()
 	log.Printf("starting mitmproxy (%s) through uvx; the first run downloads it", *mitmSpec)
+	// The page's and mitmweb's tokens, kept across starts (tokens.go).
+	var uiToken, webToken string
+	for _, t := range []struct {
+		on   bool
+		name string
+		to   *string
+	}{{*uiFlag, "ui-token", &uiToken}, {*web, "web-token", &webToken}} {
+		if !t.on {
+			continue
+		}
+		var made bool
+		if *t.to, made, err = keptToken(*state, t.name); err != nil {
+			return fmt.Errorf("%s: %w", t.name, err)
+		} else if made {
+			log.Printf("a new token in %s", filepath.Join(*state, t.name))
+		}
+	}
 	cap, err := capture.Start(ctx, capture.Config{
 		Dir: *state, Confdir: filepath.Join(*state, "mitmproxy"),
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
-		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, RulesReload: *rulesReload, WebPort: webPort(*web),
+		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, RulesReload: *rulesReload, WebPort: webPort(*web), WebPassword: webToken,
 		Upstream: upstream, UpstreamCA: upstreamCAFile,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
@@ -307,7 +324,7 @@ func run(ctx context.Context, args []string) error {
 	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
 	var page *webui.UI
 	if *uiFlag {
-		page = webui.New(cap.Store, func(id string, all bool) []string {
+		page = webui.New(cap.Store, uiToken, func(id string, all bool) []string {
 			if all { // one of the user's own devices: the steps as `reqcove status` gives them
 				return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps
 			}
@@ -325,13 +342,13 @@ func run(ctx context.Context, args []string) error {
 		shown = true
 		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
 		if page != nil {
-			link := "http://" + ip + "/?k=" + page.Token()
-			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s", link)
+			link := "http://" + ip + "/?k=" + uiToken
+			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s (the same at each start: delete %s and start again to change it)", link, filepath.Join(*state, "ui-token"))
 			printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
 		}
 		if webAddr != "" {
 			link := strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
-			log.Printf("mitmweb from your own devices on the tailnet: %s", link)
+			log.Printf("mitmweb from your own devices on the tailnet: %s (the same at each start: delete %s and start again to change it)", link, filepath.Join(*state, "web-token"))
 			printQR(os.Stderr, link, "to open mitmweb on the iPhone, scan this with the camera (unmasked, and it can edit and replay)")
 		}
 	}

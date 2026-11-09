@@ -7,6 +7,8 @@
   device of another user its own. It follows new flows without reloading.
 - `run --web`: mitmweb also opens from your own devices on the tailnet, on the
   node's port 8081, with the link `run` prints.
+- The `--ui` and `--web` links stay the same across starts (their tokens are
+  kept in the state directory; delete `ui-token` or `web-token` to change one).
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
   traffic while Reqcove keeps its records. See "An upstream proxy" in the README.

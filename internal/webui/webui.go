@@ -8,7 +8,6 @@ package webui
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -21,8 +20,8 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 )
 
-// cookie holds the start's token: only the browser that opened the link with
-// it (the QR code reqcove run prints) reads the page, not any app on the device.
+// cookie holds the token: only the browser that opened the link with it (the
+// QR code reqcove run prints) reads the page, not any app on the device.
 const cookie = "reqcove"
 
 type UI struct {
@@ -31,12 +30,11 @@ type UI struct {
 	token string
 }
 
-func New(st *capture.Store, steps func(deviceID string, all bool) []string) *UI {
-	return &UI{store: st, steps: steps, token: rand.Text()}
+// New serves the page with token, what the link to it carries
+// (http://NODE/?k=TOKEN); run keeps it in the state directory.
+func New(st *capture.Store, token string, steps func(deviceID string, all bool) []string) *UI {
+	return &UI{store: st, steps: steps, token: token}
 }
-
-// Token is what the link to the page carries: http://NODE/?k=TOKEN.
-func (u *UI) Token() string { return u.token }
 
 // Serve answers a GET from the device deviceID (its StableID). With all (one of
 // the user's own devices) it shows every device's flows; else deviceID's only.
@@ -51,10 +49,12 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 	h.Set("Cache-Control", "no-store")
 	if k := r.URL.Query().Get("k"); k != "" {
 		if !u.valid(k) {
-			http.Error(w, "reqcove: this link is from an earlier start of reqcove run; open the one it prints now", http.StatusForbidden)
+			http.Error(w, "reqcove: this link's token was changed; open the link reqcove run prints now", http.StatusForbidden)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: cookie, Value: k, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		// Kept 400 days (the token lasts until its file is deleted), so a device that
+		// opened the link once opens the page after a restart too.
+		http.SetCookie(w, &http.Cookie{Name: cookie, Value: k, Path: "/", MaxAge: 400 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}

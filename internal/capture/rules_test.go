@@ -468,7 +468,7 @@ func TestRulesReload(t *testing.T) {
 }
 
 // TestRulesReloadSettles: a file still being written (here, changed every
-// 200 ms, faster than the 1 s look) is not taken; once it stays, it is, once.
+// 50 ms, faster than the 1 s look) is not taken; once it stays, it is, once.
 func TestRulesReloadSettles(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
@@ -496,9 +496,9 @@ func TestRulesReloadSettles(t *testing.T) {
 	taken := 0
 	h.c.Store.SetRulesLog(func(map[string]int, []string, string) { mu.Lock(); taken++; mu.Unlock() })
 	count := func() int { mu.Lock(); defer mu.Unlock(); return taken }
-	for i := 1; i <= 15; i++ { // 3 s of changes
+	for i := 1; i <= 60; i++ { // 3 s of changes, every 50 ms: settling would need a pause of a whole second
 		write(i)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	if n := count(); n != 0 {
 		t.Errorf("taken %d times while it was changing", n)

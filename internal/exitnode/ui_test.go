@@ -355,3 +355,39 @@ func TestLocalProxy(t *testing.T) {
 		}
 	}
 }
+
+// A link with mitmweb's token, once mitmweb took it, goes on to the URL
+// without it (with mitmweb's cookie): the password does not stay in the
+// address bar or history. A wrong token, or another request, is untouched.
+func TestWebRelayDropsToken(t *testing.T) {
+	mitmweb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("token") == "PW" {
+			http.SetCookie(w, &http.Cookie{Name: "mitmproxy-auth-8081", Value: "signed"})
+		} else if r.URL.Query().Has("token") {
+			http.Error(w, "no", http.StatusForbidden)
+			return
+		}
+		w.Write([]byte("mitmweb page"))
+	}))
+	defer mitmweb.Close()
+	me := netip.MustParseAddr("127.0.0.1")
+	p := &policy{own: map[netip.Addr]Device{me: {"nMAC", "macbook"}}, self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}
+	relay := webRelay(func() *policy { return p }, mitmweb.Listener.Addr().String())
+	ask := func(url string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", url, nil)
+		r.Host, r.RemoteAddr = "reqcove:8081", "127.0.0.1:5000"
+		w := httptest.NewRecorder()
+		relay.ServeHTTP(w, r)
+		return w
+	}
+	w := ask("/?token=PW&x=1")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/?x=1" || !strings.Contains(w.Header().Get("Set-Cookie"), "mitmproxy-auth-8081=signed") || strings.Contains(w.Body.String(), "mitmweb page") {
+		t.Errorf("with the token: %d %v %q", w.Code, w.Header(), w.Body.String())
+	}
+	if w := ask("/?token=wrong"); w.Code != http.StatusForbidden {
+		t.Errorf("a wrong token: %d", w.Code)
+	}
+	if w := ask("/flows"); w.Code != 200 || w.Body.String() != "mitmweb page" {
+		t.Errorf("another request: %d %q", w.Code, w.Body.String())
+	}
+}

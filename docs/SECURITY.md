@@ -173,9 +173,13 @@ MCP tools return, masked the same way. Who can read it (each a test):
 - Your own devices see every device's flows, with the device's name. A `--device`
   device of another user sees only its own flows, in the list and by ID, and its
   own counts and next steps (not the other devices', nor their names).
-- Only a browser holding the token of this start: the link `run` prints sets it
-  as an HttpOnly, SameSite=Strict cookie. Another app on the same iPhone can reach
-  the port, but not read the page without the token.
+- Only a browser holding the token: the link `run` prints sets it as an HttpOnly,
+  SameSite=Strict cookie kept 400 days. Another app on the same iPhone can reach
+  the port, but not read the page without the token. The token is kept in
+  `ui-token` in the state directory (0600) and is the same at each start, so a
+  link, a bookmark or a cookie keeps working until you delete that file and start
+  again; then they get 403. Your own devices and the `--device` devices reach the
+  page; a link that leaks works only from those.
 - Only requests that name the node (its MagicDNS name or tailnet address) in
   `Host`: a site the iPhone visits cannot point its own name at the node and read
   the page as its own (DNS rebinding).
@@ -186,7 +190,7 @@ MCP tools return, masked the same way. Who can read it (each a test):
   headers and bodies stays text (a test runs it over a stand-in DOM in node); it is not cached
   (`no-store`). Pages still go through Safari: its history may keep the URLs of
   the flow pages viewed, and the first link with the token (useless without the
-  device, and changed at each start). A JSON body nested deeper than 32 levels is
+  device; it lasts until `ui-token` is deleted). A JSON body nested deeper than 32 levels is
   shown as it is, not indented (indenting deep nesting takes memory that grows
   with the square of the depth).
 
@@ -195,8 +199,15 @@ MCP tools.
 
 ## mitmweb (`--web`)
 
-mitmweb listens on 127.0.0.1, with a password made at each start and passed
-through a 0600 file, never the command line. After v0.1.0, the node also relays
+mitmweb listens on 127.0.0.1, with a password kept in `web-token` in the state
+directory (0600; the same at each start until you delete that file and start
+again) and passed through a 0600 file, never the command line. A link with it
+(`?token=`) through the node is answered with a redirect to the same URL without
+it, once mitmweb has set its cookie (a test, with a stand-in for mitmweb), so the
+password does not stay in the address bar; whether Safari's history keeps the
+first URL is not checked, nor the terminal's scrollback, where `run` prints it.
+mitmweb's cookie does not outlast its restart (it signs it with a key made at
+each start), so after one the link is needed again. After v0.1.0, the node also relays
 its port 8081 to it for your own devices on the tailnet (the same user, untagged:
 not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).

@@ -25,7 +25,7 @@ func TestWeb(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	port, _ := freePort()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.WebPort = port })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.WebPort, c.WebPassword = port, "KEPTTOKENABCDEFGHIJKLMNOPQ" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,9 @@ func TestWeb(t *testing.T) {
 	}
 
 	base, token, _ := strings.Cut(h.c.WebURL, "?token=")
+	if token != "KEPTTOKENABCDEFGHIJKLMNOPQ" { // the password run keeps, not one of its own
+		t.Errorf("token %q", token)
+	}
 	get := func(url string) (int, string) {
 		r, err := http.Get(url)
 		if err != nil {
