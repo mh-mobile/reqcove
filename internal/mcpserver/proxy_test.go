@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,9 @@ func serve(t *testing.T, sock string, s *mcp.Server) func() {
 // agent is `reqcove mcp` with an agent connected to it.
 func agent(t *testing.T, sock string) *mcp.ClientSession {
 	t.Helper()
+	old := redialAfter
+	redialAfter = 0 // runs come back at once here
+	t.Cleanup(func() { redialAfter = old })
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	ct, st := mcp.NewInMemoryTransports()
@@ -55,7 +59,8 @@ func agent(t *testing.T, sock string) *mcp.ClientSession {
 	return cs
 }
 
-// ids calls list_flows: the flow ids, or the tool error's text.
+// ids calls list_flows: the flow ids, or the tool error's text. A note of
+// the proxy's (a restart) is taken out and checked to be one.
 func ids(t *testing.T, cs *mcp.ClientSession) (string, bool) {
 	t.Helper()
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_flows"})
@@ -64,6 +69,10 @@ func ids(t *testing.T, cs *mcp.ClientSession) (string, bool) {
 	}
 	if res.IsError {
 		return res.Content[0].(*mcp.TextContent).Text, true
+	}
+	lastNotes = nil
+	for _, c := range res.Content[1:] {
+		lastNotes = append(lastNotes, c.(*mcp.TextContent).Text)
 	}
 	var out ListOut
 	b, _ := json.Marshal(res.StructuredContent)
@@ -77,6 +86,15 @@ func ids(t *testing.T, cs *mcp.ClientSession) (string, bool) {
 
 // The agent's one session lives on while `run` is down, restarts, and comes
 // back: no reconnecting on its side (Claude Code's /mcp).
+var lastNotes []string
+
+// notes calls list_flows and returns the proxy's notes in its answer.
+func notes(t *testing.T, cs *mcp.ClientSession) []string {
+	t.Helper()
+	ids(t, cs)
+	return lastNotes
+}
+
 func TestProxyAcrossRestarts(t *testing.T) {
 	sock := sockPath(t)
 	cs := agent(t, sock)
@@ -97,13 +115,17 @@ func TestProxyAcrossRestarts(t *testing.T) {
 		t.Errorf("before run: %q %v", got, isErr)
 	}
 	stop := serve(t, sock, New(storeWith("a"), nil))
-	if got, _ := ids(t, cs); got != "a" {
-		t.Fatalf("first run: %q", got)
+	if got, _ := ids(t, cs); got != "a" || lastNotes != nil {
+		t.Fatalf("first run: %q %v", got, lastNotes)
 	}
 	stop()
 	stop = serve(t, sock, New(storeWith("b"), nil))
-	if got, _ := ids(t, cs); got != "b" { // no call in between: the dead session is found by this one
-		t.Fatalf("after a restart: %q", got)
+	if got, _ := ids(t, cs); got != "b" || len(lastNotes) != 1 || !strings.Contains(lastNotes[0], "flow ids and cursors from before it are gone") { // no call in between: the dead session is found by this one
+		t.Fatalf("after a restart: %q %v", got, lastNotes)
+	}
+	// The first answer after a restart says so, once: ids and cursors from before are gone.
+	if n := notes(t, cs); len(n) != 0 {
+		t.Errorf("the note again: %v", n)
 	}
 	stop()
 	if got, isErr := ids(t, cs); !isErr {
@@ -118,8 +140,8 @@ func TestProxyAcrossRestarts(t *testing.T) {
 // Calls that come together after a restart share one new session.
 func TestProxyOneDial(t *testing.T) {
 	sock := sockPath(t)
-	p := &proxy{sock: sock, client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
 	ctx := context.Background()
+	p := &proxy{sock: sock, ctx: ctx, client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
 	stop := serve(t, sock, New(storeWith("a"), nil))
 	dead, err := p.session(ctx, nil)
 	if err != nil {
@@ -149,8 +171,9 @@ func TestProxyOneDial(t *testing.T) {
 	}
 }
 
-// `run`'s own answers go back as they are, sent once: an error of the tool's
-// is not taken for `run` being down.
+// `run`'s own answers go back as they are, sent once: a tool a `run` of
+// another version lacks is not taken for `run` being down, and the
+// arguments reach it.
 func TestProxyRunAnswers(t *testing.T) {
 	sock := sockPath(t)
 	s := New(storeWith("a"), nil)
@@ -165,12 +188,99 @@ func TestProxyRunAnswers(t *testing.T) {
 	})
 	defer serve(t, sock, s)()
 	cs := agent(t, sock)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "search_flows", Arguments: map[string]any{}})
-	if err != nil || !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `missing properties: ["query"]`) || calls.Load() != 1 {
-		t.Errorf("search_flows without query: %v %q, %d calls", err, res.Content[0].(*mcp.TextContent).Text, calls.Load())
+	// New(…, nil) has no status tool: as an older run without one of the tools.
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "status"}); err == nil || calls.Load() != 1 {
+		t.Errorf("a tool run lacks: %v, %d calls", err, calls.Load())
 	}
-	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_flows", Arguments: map[string]any{"hots": "x"}}); err == nil && calls.Load() != 2 {
-		t.Errorf("a misspelt argument: %d calls", calls.Load())
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_flows", Arguments: map[string]any{"hots": "x"}})
+	if err != nil || !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "hots") || calls.Load() != 2 {
+		t.Errorf("a misspelt argument: %v %+v, %d calls", err, res, calls.Load())
+	}
+	for host, want := range map[string]int{"h.example": 1, "other.example": 0} { // the arguments reach run
+		got := call[ListOut](t, cs, "list_flows", map[string]any{"host": host})
+		if len(got.Flows) != want {
+			t.Errorf("host %s through the proxy: %d flows, want %d", host, len(got.Flows), want)
+		}
+	}
+}
+
+// A `run` of another version: its first answer says to reconnect the agent.
+func TestProxyOtherVersion(t *testing.T) {
+	sock := sockPath(t)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "0.0.1"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_flows"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, ListOut, error) {
+		return nil, ListOut{}, nil
+	})
+	defer serve(t, sock, s)()
+	cs := agent(t, sock)
+	if n := notes(t, cs); len(n) != 1 || !strings.Contains(n[0], "reqcove run is version 0.0.1") || !strings.Contains(n[0], "reconnect") {
+		t.Errorf("notes: %v", n)
+	}
+}
+
+// A `run` that takes the connection but never answers (stopped with Ctrl-Z):
+// calls together wait one handshake, not one each.
+func TestProxyHungRun(t *testing.T) {
+	sock := sockPath(t)
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	oldH, oldR := handshake, redialAfter
+	handshake, redialAfter = 200*time.Millisecond, time.Second
+	defer func() { handshake, redialAfter = oldH, oldR }()
+	p := &proxy{sock: sock, notRunning: "down", ctx: context.Background(), client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
+	start := time.Now()
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if res, _ := p.call(context.Background(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "list_flows"}}); res == nil || !res.IsError {
+				t.Errorf("hung run: %+v", res)
+			}
+		}()
+	}
+	wg.Wait()
+	if d := time.Since(start); d > 600*time.Millisecond {
+		t.Errorf("3 calls took %v: each waited its own handshake", d)
+	}
+}
+
+// A signal ends a call `run` does not answer (Proxy's context).
+func TestProxySignalEndsCall(t *testing.T) {
+	sock := sockPath(t)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
+	block := make(chan struct{})
+	defer close(block)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_flows"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct{}, error) {
+		<-block // not even the cancel
+		return nil, struct{}{}, nil
+	})
+	defer serve(t, sock, s)()
+	pctx, signal := context.WithCancel(context.Background())
+	p := &proxy{sock: sock, notRunning: "down", ctx: pctx, client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
+	done := make(chan struct{})
+	go func() {
+		p.call(context.Background(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "list_flows"}})
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	signal()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the call outlived the signal")
 	}
 }
 
@@ -178,11 +288,14 @@ func TestProxyRunAnswers(t *testing.T) {
 func TestProxyCancel(t *testing.T) {
 	sock := sockPath(t)
 	entered, cancelled := make(chan struct{}, 1), make(chan struct{}, 1)
-	s := mcp.NewServer(&mcp.Implementation{Name: "slow", Version: "0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "slow", Version: Version}, nil)
+	var first atomic.Bool
 	mcp.AddTool(s, &mcp.Tool{Name: "list_flows"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, struct{}, error) {
-		entered <- struct{}{}
-		<-ctx.Done()
-		cancelled <- struct{}{}
+		if first.CompareAndSwap(false, true) { // the first call waits for its cancel; later ones answer
+			entered <- struct{}{}
+			<-ctx.Done()
+			cancelled <- struct{}{}
+		}
 		return nil, struct{}{}, nil
 	})
 	defer serve(t, sock, s)()
@@ -195,5 +308,9 @@ func TestProxyCancel(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("run's handler never saw the cancel")
+	}
+	// The cancel was the agent's: the session to run stays, no note of a restart.
+	if n := notes(t, cs); len(n) != 0 {
+		t.Errorf("after a cancel: %v", n)
 	}
 }

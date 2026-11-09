@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -207,11 +208,36 @@ func TestUserAgentAndSimilarHosts(t *testing.T) {
 	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "even-realities.com", "since": "1m"}); len(got.Flows) != 0 || got.SimilarHosts != nil {
 		t.Errorf("host there, since empty: %+v", got)
 	}
-	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "c.om"}); got.SimilarHosts != nil { // too short to tell ("com" is in every .com)
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "xa.com"}); got.SimilarHosts != nil { // too short to tell ("xacom")
 		t.Errorf("short host: %v", got.SimilarHosts)
 	}
-	// A TLS failure has no headers: user_agent there is refused, not silently empty.
-	if res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_tls_failures", Arguments: map[string]any{"user_agent": "x"}}); err != nil || !res.IsError {
-		t.Errorf("list_tls_failures user_agent: %v %+v", err, res)
+	// A TLS failure has no headers nor response: those filters are refused, not silently empty.
+	for _, k := range []string{"user_agent", "status", "method"} {
+		if res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_tls_failures", Arguments: map[string]any{k: "x"}}); err != nil || !res.IsError {
+			t.Errorf("list_tls_failures %s: %v %+v", k, err, res)
+		}
+	}
+	// A URL, a port, a final dot: the host meant.
+	for _, h := range []string{"https://api.even-realities.com/x?y", "api.even-realities.com:443", "even-realities.com.", "EVEN-REALITIES.COM"} {
+		if got := call[ListOut](t, session, "list_flows", map[string]any{"host": h}); len(got.Flows) != 1 {
+			t.Errorf("host %q: %+v", h, got)
+		}
+	}
+}
+
+// Look-alikes: either way round, not short recorded hosts, at most n, sorted.
+func TestSimilarHostsStore(t *testing.T) {
+	st := capture.NewStore(100, 1<<20)
+	for i, h := range []string{"x.com", "s.com", "dropbox.com", "evenrealities.com", "a.evenrealities.net", "b.even-realities.com", "c.even-realities.com", "d.even-realities.com", "e.even-realities.com", "f.even-realities.com"} {
+		st.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":"%d","device":"d","host":"%s","url":"https://%s/"}`, i, h, h)))
+	}
+	if got := st.SimilarHosts("box.com", 5); !slices.Equal(got, []string{"dropbox.com"}) { // not x.com
+		t.Errorf("box.com: %v", got)
+	}
+	if got := st.SimilarHosts("api.evenrealities.com", 5); !slices.Equal(got, []string{"evenrealities.com"}) { // the other way round
+		t.Errorf("api.evenrealities.com: %v", got)
+	}
+	if got := st.SimilarHosts("even-realities.co", 3); !slices.Equal(got, []string{"b.even-realities.com", "c.even-realities.com", "d.even-realities.com"}) {
+		t.Errorf("at most 3: %v", got)
 	}
 }

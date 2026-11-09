@@ -82,7 +82,7 @@ func main() {
 	case "run":
 		err = run(ctx, os.Args[2:])
 	case "mcp":
-		err = runMCP(ctx, os.Args[2:])
+		err = runMCP(ctx, os.Args[2:], &mcp.StdioTransport{})
 	case "status":
 		err = status(ctx, os.Args[2:])
 	case "har":
@@ -575,14 +575,14 @@ func lockState(dir string) (func(), error) {
 	return func() { f.Close() }, nil
 }
 
-func runMCP(ctx context.Context, args []string) error {
+func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	// The agent's connection stays up while run restarts or is not running.
-	err := mcpserver.Proxy(ctx, filepath.Join(*state, "mcp.sock"), notRunningMsg(*state), &mcp.StdioTransport{})
+	err := mcpserver.Proxy(ctx, filepath.Join(*state, "mcp.sock"), notRunningMsg(*state), agent)
 	if ctx.Err() != nil {
 		return nil // a signal: not an error
 	}
@@ -591,7 +591,7 @@ func runMCP(ctx context.Context, args []string) error {
 
 // notRunningMsg is what the agent's tools answer while run is not running.
 func notRunningMsg(state string) string {
-	return fmt.Sprintf("reqcove is not running (%s): ask the user to start `%s` (or wait, if it is restarting), then call again. The records start empty after a restart.", state, withState("reqcove run --device NAME --allow-hosts HOSTS", state))
+	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal and leaves it running (if it is restarting, wait a few seconds). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
 }
 
 // printQR draws url as a QR code, with what it is for, when w is a terminal:

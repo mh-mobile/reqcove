@@ -381,7 +381,7 @@ type Filter struct {
 	Since, Until float64 // unix seconds; the request's start
 	Status       string  // "404", "4xx", or "none" (no response: open or failed)
 	Method       string
-	UserAgent    string // case-insensitive text in the request's User-Agent
+	UserAgent    string // text in the request's User-Agent, lowercase: matched case-insensitively
 	Query        string // case-insensitive text in the URL or header names and values (as stored, masked)
 	QueryBodies  bool   // Query also looks in the kept body heads
 	Before       int64  // cursor from a previous page: only older flows
@@ -452,7 +452,7 @@ func (q Filter) match(f *Flow, name string) bool {
 		q.Since != 0 && f.Start < q.Since,
 		q.Until != 0 && f.Start > q.Until,
 		q.Method != "" && !strings.EqualFold(f.Method, q.Method),
-		q.UserAgent != "" && !strings.Contains(strings.ToLower(header(f.ReqHeaders, "user-agent")), strings.ToLower(q.UserAgent)):
+		q.UserAgent != "" && !containsFold(header(f.ReqHeaders, "user-agent"), q.UserAgent):
 		return false
 	}
 	switch {
@@ -1114,8 +1114,10 @@ func (s *Store) SimilarHosts(host string, n int) []string {
 			return -1
 		}, strings.ToLower(h))
 	}
+	// Keys this short (x.com, news) are in too many others to tell alike from not.
+	const shortest = 6
 	want := key(host)
-	if len(want) < 4 { // too short to tell alike from not
+	if len(want) < shortest {
 		return nil
 	}
 	q := Filter{Host: host}
@@ -1131,7 +1133,7 @@ func (s *Store) SimilarHosts(host string, n int) []string {
 	s.mu.Unlock()
 	var out []string
 	for h := range seen {
-		if k := key(h); k != "" && (strings.Contains(k, want) || strings.Contains(want, k)) {
+		if k := key(h); len(k) >= shortest && (strings.Contains(k, want) || strings.Contains(want, k)) {
 			out = append(out, h)
 		}
 	}

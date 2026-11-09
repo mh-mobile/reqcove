@@ -3,13 +3,16 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,7 +25,7 @@ func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error 
 	if err != nil {
 		return err
 	}
-	p := &proxy{sock: sock, notRunning: notRunning, client: mcp.NewClient(&mcp.Implementation{Name: "reqcove-mcp", Version: Version}, nil)}
+	p := &proxy{sock: sock, notRunning: notRunning, ctx: ctx, client: mcp.NewClient(&mcp.Implementation{Name: "reqcove-mcp", Version: Version}, nil)}
 	defer p.close()
 	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
 	for _, tool := range tools {
@@ -60,10 +63,21 @@ func toolList(ctx context.Context) ([]*mcp.Tool, error) {
 type proxy struct {
 	sock, notRunning string
 	client           *mcp.Client
-	mu               sync.Mutex // held while dialling: concurrent calls share one session
-	cs               *mcp.ClientSession
-	dials            atomic.Int32 // for the tests
+	ctx              context.Context // Proxy's: ending it ends the calls in flight
+
+	mu       sync.Mutex // held while dialling: concurrent calls share one session
+	cs       *mcp.ClientSession
+	note     string    // said once, with the first answer of a new session: a restart, another version
+	failedAt time.Time // the last dial that failed: calls soon after it do not wait again
+	dials    atomic.Int32
 }
+
+// Dialling `run` again within this of a failure answers at once: a `run`
+// stopped with Ctrl-Z, say, would make each call wait for the handshake.
+var redialAfter = 2 * time.Second
+
+// handshake bounds a `run` that takes the connection but does not answer.
+var handshake = 5 * time.Second
 
 // session returns the kept session to `run`, or dials it when there is none or
 // the kept one is failed, the one a call just failed on (another call may have
@@ -74,23 +88,46 @@ func (p *proxy) session(ctx context.Context, failed *mcp.ClientSession) (*mcp.Cl
 	if p.cs != nil && p.cs != failed {
 		return p.cs, nil
 	}
-	if p.cs != nil {
-		p.cs.Close()
+	if old := p.cs; old != nil {
 		p.cs = nil
+		go old.Close() // it may wait for calls still on it; not under the lock
 	}
-	p.dials.Add(1)
+	if time.Since(p.failedAt) < redialAfter {
+		return nil, errNotRunning
+	}
+	cs, err := p.dial(ctx)
+	if err != nil {
+		if p.failedAt.IsZero() || time.Since(p.failedAt) > time.Minute { // stderr, Claude Code's MCP log; not each call
+			log.Printf("reqcove mcp: %s: %v", p.sock, err)
+		}
+		p.failedAt = time.Now()
+		return nil, errNotRunning
+	}
+	p.failedAt = time.Time{}
+	if n := p.dials.Add(1); n > 1 {
+		p.note = "reqcove run restarted: its records start anew, so flow ids and cursors from before it are gone."
+	}
+	if v := cs.InitializeResult().ServerInfo.Version; v != Version {
+		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: reconnect the agent's MCP server (/mcp in Claude Code) for the tools of the version running.", v, Version)
+	}
+	p.cs = cs
+	return cs, nil
+}
+
+var errNotRunning = errors.New("reqcove run is not running")
+
+func (p *proxy) dial(ctx context.Context) (*mcp.ClientSession, error) {
 	c, err := net.Dial("unix", p.sock)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // a `run` stuck in the handshake does not hold the lock
+	ctx, cancel := context.WithTimeout(ctx, handshake)
 	defer cancel()
 	cs, err := p.client.Connect(ctx, &mcp.IOTransport{Reader: c, Writer: c}, nil)
 	if err != nil {
 		c.Close()
 		return nil, err
 	}
-	p.cs = cs
 	return cs, nil
 }
 
@@ -102,10 +139,25 @@ func (p *proxy) close() {
 	}
 }
 
-// call forwards one tool call. A connection that failed (`run` restarted) is
+// takeNote returns the note for an answer from cs, once.
+func (p *proxy) takeNote(cs *mcp.ClientSession) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cs != cs {
+		return ""
+	}
+	n := p.note
+	p.note = ""
+	return n
+}
+
+// call forwards one tool call. A connection that closed (`run` restarted) is
 // dialled again and the call sent once more: every tool is read-only. `run`'s
 // own answers, errors included, go back as they are.
 func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(p.ctx, cancel)() // a signal ends a call `run` does not answer
 	params := &mcp.CallToolParams{Name: req.Params.Name}
 	if len(req.Params.Arguments) > 0 { // not a null for no arguments
 		params.Arguments = req.Params.Arguments
@@ -120,17 +172,25 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			return p.down(), nil
 		}
 		res, err := cs.CallTool(ctx, params)
-		var rpc *jsonrpc.Error
 		switch {
 		case err == nil:
 			// Only what the tool answered: not the session's own fields.
-			return &mcp.CallToolResult{Content: res.Content, StructuredContent: res.StructuredContent, IsError: res.IsError}, nil
-		case ctx.Err() != nil, errors.As(err, &rpc):
-			return nil, err // cancelled by the agent, or `run`'s own answer (an unknown tool, say)
+			out := &mcp.CallToolResult{Content: res.Content, StructuredContent: res.StructuredContent, IsError: res.IsError}
+			if n := p.takeNote(cs); n != "" {
+				out.Content = append(out.Content, &mcp.TextContent{Text: n})
+			}
+			return out, nil
+		case !closed(err):
+			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case try == 1:
 			return p.down(), nil
 		}
 	}
+}
+
+// closed says err is the connection to `run` gone, not an answer of its.
+func closed(err error) bool {
+	return errors.Is(err, mcp.ErrConnectionClosed) || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 // down is the tool error while `run` is not there.

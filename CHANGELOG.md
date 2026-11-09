@@ -31,14 +31,18 @@
 - `reqcove mcp` serves the tools itself and forwards each call to `run`,
   dialling it again when needed: the agent stays connected while `run`
   restarts (before, the relay ended with it, and Claude Code needed `/mcp`).
-  While `run` is not running, the tools say so. When `run` stops, the
-  agents' connections to it close at once.
+  While `run` is not running, the tools say so; the first answer after a
+  restart says flow ids and cursors from before it are gone, and one from a
+  `run` of another version says to reconnect the agent. When `run` stops,
+  the agents' connections to it close at once.
 - `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
   filter by text in the User-Agent, case-insensitive: one app's traffic, as
   summarize lists the User-Agents. A host filter that matches no flow answers
   with `similar_hosts`, recorded hosts that look alike (`even-realities.com`
-  for `evenrealities.com`). `list_tls_failures` refuses `user_agent` (a
-  failed handshake has no headers).
+  for `evenrealities.com`). The host filter takes a URL, a port or a final
+  dot too, and Unicode names (as punycode). `list_tls_failures` takes only
+  device, host, since, until and limit (before, status and method were
+  accepted and matched nothing: a failed handshake has no response).
 - Several exit nodes on one computer, one `run` per `--state`
   ([docs/several-exit-nodes.md](docs/several-exit-nodes.md)): a `--state`
   directory named `reqcove-NAME` names the node so, and the name is kept in it

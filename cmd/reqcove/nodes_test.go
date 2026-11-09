@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TestMain gives the tests a HOME of their own: run copies the CA of the
@@ -175,7 +176,7 @@ func TestStateTildeRefused(t *testing.T) {
 		"cleanup": func() error { return cleanup([]string{"--state=~/x", "--delete-state"}) },
 		"status":  func() error { return status(ctx, []string{"--state=~/x"}) },
 		"har":     func() error { return har(ctx, []string{"--state=~/x"}) },
-		"mcp":     func() error { return runMCP(ctx, []string{"--state", "~/x"}) },
+		"mcp":     func() error { return runMCP(ctx, []string{"--state", "~/x"}, nil) },
 	} {
 		if err := cmd(); err == nil || !strings.Contains(err.Error(), "the shell did not expand the ~") {
 			t.Errorf("%s: %v", name, err)
@@ -357,8 +358,22 @@ func TestStateCommandsFull(t *testing.T) {
 	if got := withState("reqcove status", "rel"); got != "reqcove status --state "+full {
 		t.Errorf("withState: %q", got)
 	}
-	if got := notRunningMsg("rel"); !strings.Contains(got, "reqcove run --device NAME --allow-hosts HOSTS --state "+full) {
-		t.Errorf("mcp's not running: %q", got)
+	// reqcove mcp --state rel, with no run there: its tools say which run to start.
+	ct, at := mcp.NewInMemoryTransports()
+	mctx, mcancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runMCP(mctx, []string{"--state", "rel"}, at) }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "0"}, nil).Connect(mctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := cs.CallTool(mctx, &mcp.CallToolParams{Name: "status"})
+	if err != nil || !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "reqcove run … --state "+full) || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "Do not start it yourself") {
+		t.Errorf("mcp's not running: %v %+v", err, res)
+	}
+	mcancel() // a signal: not an error
+	if err := <-done; err != nil {
+		t.Errorf("runMCP on a signal: %v", err)
 	}
 	unlock, err := openState("rel")
 	if err != nil {

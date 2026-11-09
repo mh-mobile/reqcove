@@ -94,7 +94,9 @@ through a `replace` directive.
    running: the tools then answer that it is not running, and work again once
    it is back, without reconnecting the agent (`/mcp` in Claude Code). Checked
    with tests (a stand-in `run` stopped and started again) and the binary over
-   stdin; not yet in a Claude Code session. A restart starts the records empty.
+   stdin; not yet in a Claude Code session. A restart starts the records empty
+   (the first answer after it says so). After upgrading reqcove, reconnect the
+   agent once for the new tools; the tools say so while the versions differ.
 
 Instead of the exit node, the iPhone can also set its Wi-Fi proxy (Manual) to the
 reqcove node's tailnet address, port 8080 (`--proxy-port`). Cellular has no proxy
@@ -105,9 +107,9 @@ setting, so this works on Wi-Fi only.
 | Tool | |
 |---|---|
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (after v0.1.0: text in it, such as an app's name; the app's bundle id is not in its traffic); paged. After v0.1.0, a host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`even-realities.com` for `evenrealities.com`) |
-| `search_flows` | text in URLs and headers (and body heads with `bodies`) |
+| `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
 | `get_flow` | one flow; bodies only with `bodies` |
-| `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters |
+| `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |

@@ -68,7 +68,7 @@ go build -o reqcove ./cmd/reqcove
 
    あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
-   v0.1.0 のあとは、`reqcove run` を起動し直す間や、止まっている間も、`reqcove mcp` は動き続けます。その間、ツールは「動いていない」と答え、run が戻ればまた使えます。エージェントをつなぎ直す（Claude Code の `/mcp`）必要はありません。テスト（run の代わりを止めて、また起動する）と、バイナリに stdin から送って確かめました。Claude Code のセッションでは、まだ試していません。起動し直すと、記録は空から始まります。
+   v0.1.0 のあとは、`reqcove run` を起動し直す間や、止まっている間も、`reqcove mcp` は動き続けます。その間、ツールは「動いていない」と答え、run が戻ればまた使えます。エージェントをつなぎ直す（Claude Code の `/mcp`）必要はありません。テスト（run の代わりを止めて、また起動する）と、バイナリに stdin から送って確かめました。Claude Code のセッションでは、まだ試していません。起動し直すと、記録は空から始まります（起動し直したあとの最初の答えが、そう伝えます）。reqcove の版を上げたら、新しいツールを使うために、エージェントを一度つなぎ直してください。版が違う間は、ツールがそう伝えます。
 
 Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）に、reqcove ノードの tailnet アドレスとポート 8080（`--proxy-port`）を指定する方法もあります。モバイル通信にはプロキシ設定がないため、こちらは Wi-Fi でのみ使えます。
 
@@ -77,9 +77,9 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | ツール | |
 |---|---|
 | `list_flows` | フローを新しい順に一覧します。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（v0.1.0 のあと。アプリの名前など、その中の文字で。アプリのバンドル ID は通信に入っていません）で絞り込めます。ページング対応。v0.1.0 のあとは、ホストが 1 件にも当たらないとき、似たホスト（`evenrealities.com` に対する `even-realities.com` など）を `similar_hosts` で返します |
-| `search_flows` | URL とヘッダーのテキストを検索します（`bodies` を指定するとボディの先頭も対象） |
+| `search_flows` | URL とヘッダーのテキストを検索します（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は list_flows と同じ |
 | `get_flow` | フローを 1 件取得します。ボディは `bodies` を指定したときだけ含まれます |
-| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みは list_flows と同じ |
+| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は list_flows と同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因です |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |

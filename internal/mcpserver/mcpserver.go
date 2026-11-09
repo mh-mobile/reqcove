@@ -9,10 +9,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/idna"
 )
 
 // FilterIn is shared by list_flows, search_flows and summarize.
@@ -36,6 +38,16 @@ type PageIn struct {
 type ListIn struct {
 	FilterIn
 	PageIn
+}
+
+// TLSIn is list_tls_failures's: a failed handshake has a device, a host (the
+// SNI) and a time, but no status, method or headers.
+type TLSIn struct {
+	Device string `json:"device,omitempty" jsonschema:"device name or StableID"`
+	Host   string `json:"host,omitempty" jsonschema:"host (the SNI); also matches its subdomains"`
+	Since  string `json:"since,omitempty" jsonschema:"only failures at or after this: RFC 3339 time, or a duration ago such as 10m or 2h"`
+	Until  string `json:"until,omitempty" jsonschema:"only failures at or before this: RFC 3339 time, or a duration ago"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"at most this many, newest first (default 50, at most 500)"`
 }
 
 type SearchIn struct {
@@ -139,11 +151,8 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 			return nil, DevicesOut{Devices: st.Devices()}, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "list_tls_failures", Description: "TLS handshakes a client refused, newest first, for hosts in --allow-hosts. These connections never became HTTP flows. A refusal is often certificate pinning, but can also be a CA the device does not trust yet, or other causes; msg is what mitmproxy saw. host is the SNI, or the IP address when the client sent none. Filters: device, host (with subdomains), since, until, limit."},
-		func(_ context.Context, _ *mcp.CallToolRequest, in ListIn) (*mcp.CallToolResult, TLSOut, error) {
-			if in.UserAgent != "" { // a failed handshake has no headers: nothing would match, silently
-				return nil, TLSOut{}, fmt.Errorf("user_agent: TLS failures have no User-Agent (they never became HTTP); filter by device or host")
-			}
-			q, err := filter(in, time.Now())
+		func(_ context.Context, _ *mcp.CallToolRequest, in TLSIn) (*mcp.CallToolResult, TLSOut, error) {
+			q, err := filter(ListIn{FilterIn: FilterIn{Device: in.Device, Host: in.Host, Since: in.Since, Until: in.Until}, PageIn: PageIn{Limit: in.Limit}}, time.Now())
 			if err != nil {
 				return nil, TLSOut{}, err
 			}
@@ -157,7 +166,7 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 }
 
 func filter(in ListIn, now time.Time) (capture.Filter, error) {
-	q := capture.Filter{Device: in.Device, Host: in.Host, Status: in.Status, Method: in.Method, UserAgent: in.UserAgent, Before: in.Cursor, Limit: min(max(in.Limit, 0), 500)}
+	q := capture.Filter{Device: in.Device, Host: hostOf(in.Host), Status: in.Status, Method: in.Method, UserAgent: strings.ToLower(in.UserAgent), Before: in.Cursor, Limit: min(max(in.Limit, 0), 500)}
 	if q.Limit == 0 {
 		q.Limit = 50
 	}
@@ -172,6 +181,23 @@ func filter(in ListIn, now time.Time) (capture.Filter, error) {
 		return q, fmt.Errorf("until: %w", err)
 	}
 	return q, nil
+}
+
+// hostOf is the host an agent meant: without a scheme, path, port or final
+// dot, and in the ASCII (punycode) form hosts are recorded in.
+func hostOf(h string) string {
+	if _, rest, ok := strings.Cut(h, "://"); ok {
+		h = rest
+	}
+	h, _, _ = strings.Cut(h, "/")
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	}
+	h = strings.TrimSuffix(strings.Trim(h, "[]"), ".")
+	if a, err := idna.Lookup.ToASCII(h); err == nil {
+		h = a
+	}
+	return strings.ToLower(h)
 }
 
 // similar is SimilarHosts for an answer with no flows and a host filter. It
