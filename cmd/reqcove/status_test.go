@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -301,5 +302,19 @@ func TestReadyBlock(t *testing.T) {
 	}
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
 		t.Errorf("the Mac step without the local proxy: %q", steps)
+	}
+}
+
+// Two codes go side by side when the terminal is wide enough, one above the
+// other when not; low error correction keeps each at 37 columns.
+func TestQRsSideBySide(t *testing.T) {
+	items := []qrItem{{"http://100.111.81.14/?k=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "page"}, {"http://100.111.81.14:8081/?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "mitmweb"}}
+	wide := strings.Split(strings.TrimRight(sideBySide(items, 100), "\n"), "\n")
+	if len(wide) != 20 || !strings.HasPrefix(wide[0], "page") || !strings.Contains(wide[0], "mitmweb") || utf8.RuneCountInString(wide[1]) != 37*2+3 {
+		t.Errorf("side by side: %d lines, first %q, width %d", len(wide), wide[0], utf8.RuneCountInString(wide[1]))
+	}
+	narrow := strings.Split(strings.TrimRight(sideBySide(items, 60), "\n"), "\n")
+	if len(narrow) != 40 || utf8.RuneCountInString(narrow[1]) != 37 {
+		t.Errorf("one above the other: %d lines, width %d", len(narrow), utf8.RuneCountInString(narrow[1]))
 	}
 }

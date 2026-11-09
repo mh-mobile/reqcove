@@ -30,12 +30,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 	"github.com/mh-mobile/reqcove/internal/webui"
 	"github.com/skip2/go-qrcode"
+	"golang.org/x/term"
 )
 
 // version is set at release builds: -ldflags "-X main.version=v0.1.0".
@@ -350,12 +352,14 @@ func run(ctx context.Context, args []string) error {
 			webLink = strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
 		}
 		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
+		var codes []qrItem
 		if uiLink != "" {
-			printQR(os.Stderr, uiLink, "the page: scan this with the iPhone's camera (the exit node or the Remote Proxy need not be on)")
+			codes = append(codes, qrItem{uiLink, "page (scan with the camera)"})
 		}
 		if webLink != "" {
-			printQR(os.Stderr, webLink, "mitmweb: scan this with the iPhone's camera (unmasked, and it can edit and replay)")
+			codes = append(codes, qrItem{webLink, "mitmweb (unmasked)"})
 		}
+		printQRs(os.Stderr, codes...)
 	}
 	localAddr := ""
 	if *localProxy {
@@ -506,15 +510,64 @@ func runMCP(ctx context.Context, args []string) error {
 
 // printQR draws url as a QR code, with what it is for, when w is a terminal:
 // typing http://mitm.it by hand is easy to get wrong (Safari tries https).
-func printQR(w *os.File, url, what string) {
+func printQR(w *os.File, url, what string) { printQRs(w, qrItem{url, what}) }
+
+type qrItem struct{ url, caption string }
+
+// printQRs prints QR codes for the terminal, side by side when it is wide
+// enough. Low error correction keeps them small: they are scanned off a screen.
+func printQRs(w *os.File, items ...qrItem) {
 	if fi, err := w.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return // a log file or pipe: the URL in the line above is enough
+		return // a log file or pipe: the URLs in the lines above are enough
 	}
-	q, err := qrcode.New(url, qrcode.Medium)
+	cols, _, err := term.GetSize(int(w.Fd()))
 	if err != nil {
-		return
+		cols = 80
 	}
-	fmt.Fprintf(w, "%s:\n%s", what, q.ToSmallString(false))
+	fmt.Fprint(w, sideBySide(items, cols))
+}
+
+func sideBySide(items []qrItem, cols int) string {
+	var blocks [][]string
+	width := 0
+	for _, it := range items {
+		q, err := qrcode.New(it.url, qrcode.Low)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(strings.TrimRight(q.ToSmallString(false), "\n"), "\n")
+		blocks = append(blocks, append([]string{it.caption}, lines...))
+		width = max(width, utf8.RuneCountInString(lines[0]))
+	}
+	const gap = "   "
+	var b strings.Builder
+	if len(blocks) < 2 || len(blocks)*(width+len(gap)) > cols {
+		for _, bl := range blocks {
+			fmt.Fprintf(&b, "%s:\n%s\n", bl[0], strings.Join(bl[1:], "\n"))
+		}
+		return b.String()
+	}
+	rows := 0
+	for _, bl := range blocks {
+		rows = max(rows, len(bl))
+	}
+	for r := 0; r < rows; r++ {
+		var row []string
+		for _, bl := range blocks {
+			cell := ""
+			if r < len(bl) {
+				cell = bl[r]
+			}
+			if n := utf8.RuneCountInString(cell); n > width {
+				cell = string([]rune(cell)[:width]) // a caption wider than its code
+			} else {
+				cell += strings.Repeat(" ", width-n)
+			}
+			row = append(row, cell)
+		}
+		b.WriteString(strings.TrimRight(strings.Join(row, gap), " ") + "\n")
+	}
+	return b.String()
 }
 
 // parseUpstream checks --upstream-proxy (http://HOST:PORT, answering now) and
