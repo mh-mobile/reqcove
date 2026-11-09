@@ -221,8 +221,11 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("using the CA of %s (copied): the iPhone's profile for it serves this node too", defaultState())
 		}
 	}
-	if !isDefaultState(*state) && hostname == "reqcove" {
-		log.Print("the node is named reqcove, as the default state's is: give --hostname, or name --state reqcove-NAME, to tell them apart")
+	if !isDefaultState(*state) {
+		log.Printf("this node's commands take --state too: %s", withState("reqcove status", *state))
+		if hostname == "reqcove" {
+			log.Print("the node is named reqcove, as the default state's is: give --hostname, or name --state reqcove-NAME, to tell them apart")
+		}
 	}
 	// A run that died with the system proxy pointed at it: put it back first.
 	if err := restoreSystemProxy(*state); err != nil {
@@ -819,7 +822,7 @@ func readyBlock(devices map[string]string, uiLink, webLink, state string, steps 
 			fmt.Fprintf(&b, "  %d. %s\n", i+1, strings.ReplaceAll(st, "\n", "\n     ")) // a command on a line of its own
 		}
 	} else {
-		fmt.Fprintf(&b, "\nnothing left to set up (`reqcove status` says the same later)\n")
+		fmt.Fprintf(&b, "\nnothing left to set up (`%s` says the same later)\n", withState("reqcove status", state))
 	}
 	fmt.Fprintf(&b, "──────────────────────────────────\n")
 	return b.String()

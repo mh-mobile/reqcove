@@ -210,12 +210,12 @@ func offlineStatus(state, uvx string) error {
 		fmt.Println("  uv:    found")
 	}
 	if _, err := os.Stat(filepath.Join(state, "tsnet", "tailscaled.state")); err != nil {
-		fmt.Println("  node:  never started here; `reqcove run` will ask you to log in")
+		fmt.Printf("  node:  never started here; `%s` will ask you to log in\n", withState("reqcove run", state))
 	} else {
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
 	printCA(filepath.Join(state, "mitmproxy"))
-	fmt.Println("start it with: reqcove run --device NAME --allow-hosts api.example.com")
+	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
 	return nil
 }
 
@@ -257,11 +257,7 @@ func cleanup(args []string) error {
 		fmt.Println("  2. On each iPhone: remove the reqcove CA profile, if you installed one.")
 	}
 	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", hostname)
-	del4 := "reqcove cleanup --delete-state"
-	if !isDefaultState(*state) {
-		del4 += " --state " + shellWord(*state)
-	}
-	fmt.Printf("  4. This computer: delete %s (`%s`).\n", *state, del4)
+	fmt.Printf("  4. This computer: delete %s (`%s`).\n", *state, withState("reqcove cleanup --delete-state", *state))
 	if _, err := os.Stat(savedProxyFile(*state)); err == nil { // --local-proxy left them pointed at reqcove
 		if unlock, err := lockState(*state); err != nil {
 			fmt.Println("  The system's web proxies point at the reqcove that is running; they go back when it stops.")

@@ -430,8 +430,9 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	return cmd.Run()
 }
 
-// caFiles are what mitmproxy and mitm.it use of a CA, the key last: it is what
-// says a confdir has a CA (ensureCA), so a copy cut short is redone.
+// CAFiles are what mitmproxy and mitm.it use of a CA, the key last: it is what
+// says a confdir has a CA (ensureCA), so a copy cut short never looks like one,
+// and the next start makes a CA of its own there.
 // Not copied: mitmproxy-ca.p12 (the key again, without a passphrase, which
 // mitmproxy does not read), the dhparam (made when missing) and config.yaml
 // (mitmweb's password).

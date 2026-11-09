@@ -78,6 +78,14 @@ func mcpHint(state, name string) string {
 	return fmt.Sprintf("claude mcp add %s -- reqcove mcp --state %s", name, shellWord(abs))
 }
 
+// withState is cmd for the node of state: with --state unless it is the default.
+func withState(cmd, state string) string {
+	if isDefaultState(state) {
+		return cmd
+	}
+	return cmd + " --state " + shellWord(state)
+}
+
 // shellWord quotes s for a POSIX shell when it needs it.
 func shellWord(s string) string {
 	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./+:@") == "" {

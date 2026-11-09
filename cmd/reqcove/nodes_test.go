@@ -15,15 +15,28 @@ import (
 
 // TestMain gives the tests a HOME of their own: run copies the CA of the
 // default state (~/.reqcove) into new ones, and must not take the real one.
+var testHome string
+
 func TestMain(m *testing.M) {
 	home, err := os.MkdirTemp("", "reqcove-home")
 	if err != nil {
 		panic(err)
 	}
+	testHome = home
 	os.Setenv("HOME", home)
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
+}
+
+// tempDefaultState is defaultState(), once sure it is under the tests' own
+// HOME: the real ~/.reqcove holds the keys the iPhone trusts.
+func tempDefaultState(t *testing.T) string {
+	t.Helper()
+	if testHome == "" || !strings.HasPrefix(defaultState(), testHome+string(filepath.Separator)) {
+		t.Fatalf("defaultState() %s is not under the tests' HOME %q", defaultState(), testHome)
+	}
+	return defaultState()
 }
 
 func TestNodeName(t *testing.T) {
@@ -74,7 +87,7 @@ func TestPickWebPort(t *testing.T) {
 
 // A new --state gets the default state's CA; one that was used before does not.
 func TestRunCopiesCAOnlyIntoANewState(t *testing.T) {
-	def := filepath.Join(defaultState(), "mitmproxy")
+	def := filepath.Join(tempDefaultState(t), "mitmproxy")
 	os.MkdirAll(def, 0o700)
 	defer os.RemoveAll(defaultState())
 	for _, name := range capture.CAFiles {
@@ -134,7 +147,7 @@ func TestMcpHint(t *testing.T) {
 
 // cleanup of a state with the default state's CA says the profile serves both.
 func TestCleanupSharedCA(t *testing.T) {
-	def := filepath.Join(defaultState(), "mitmproxy")
+	def := filepath.Join(tempDefaultState(t), "mitmproxy")
 	os.MkdirAll(def, 0o700)
 	defer os.RemoveAll(defaultState())
 	pem := testCAPEM(t)
@@ -153,5 +166,22 @@ func TestCleanupSharedCA(t *testing.T) {
 	}
 	if out := captureStdout(t, func() error { return cleanup(nil) }); strings.Contains(out, "It is the CA of") || strings.Contains(out, "--state") {
 		t.Errorf("the default state's own cleanup:\n%s", out)
+	}
+}
+
+// The commands printed for a node of another --state carry it.
+func TestCommandsCarryState(t *testing.T) {
+	if got := withState("reqcove status", defaultState()); got != "reqcove status" {
+		t.Errorf("default: %q", got)
+	}
+	if got := readyBlock(map[string]string{"n1": "iphone"}, "", "", "/x/.reqcove-b", nil); !strings.Contains(got, "`reqcove status --state /x/.reqcove-b` says") {
+		t.Errorf("ready block:\n%s", got)
+	}
+	other := filepath.Join(t.TempDir(), ".reqcove-b")
+	out := captureStdout(t, func() error { return offlineStatus(other, "/nonexistent/uvx") })
+	for _, want := range []string{"`reqcove run --state " + other + "` will ask", "reqcove run --device NAME --allow-hosts api.example.com --state " + other} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
 	}
 }
