@@ -341,8 +341,8 @@ var flowPage = template.Must(template.New("flow").Funcs(funcs).Parse(head + `</h
 
 const css = `:root{color-scheme:light dark;font:14px -apple-system,system-ui,sans-serif}
 body{margin:0 8px}header{position:sticky;top:0;background:Canvas;padding:6px 0;border-bottom:1px solid #8884}
-nav,.muted{color:#888;font-size:12px}table{width:100%;border-collapse:collapse}td,th{padding:4px;vertical-align:top;text-align:left}
+nav,.muted{color:#888;font-size:12px}table{width:100%;border-collapse:collapse;table-layout:fixed}td,th{padding:4px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
 tr{border-bottom:1px solid #8882}.s{font-weight:600;width:3em}
 .u{word-break:break-all;text-decoration:none;display:block}a{color:inherit}
 .bad{color:#d33}.warn{color:#c80}.open{color:#888}.step{color:#c80;font-size:12px;margin:2px 0}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}th{font-weight:600;word-break:break-all;width:30%}h1{font-size:16px}`
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}th{font-weight:600;width:30%}h1{font-size:16px}`
