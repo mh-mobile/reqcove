@@ -308,16 +308,26 @@ func TestReadyBlock(t *testing.T) {
 	}
 }
 
-// Two codes go side by side when the terminal is wide enough, one above the
-// other when not; low error correction keeps each at 37 columns.
+// Codes go side by side as many as the terminal's width takes, the rest on
+// the next rows; low error correction keeps each at 37 columns.
 func TestQRsSideBySide(t *testing.T) {
-	items := []qrItem{{"http://100.111.81.14/?k=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "page"}, {"http://100.111.81.14:8081/?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "mitmweb"}}
-	wide := strings.Split(strings.TrimRight(sideBySide(items, 100), "\n"), "\n")
-	if len(wide) != 20 || !strings.HasPrefix(wide[0], "page") || !strings.Contains(wide[0], "mitmweb") || utf8.RuneCountInString(wide[1]) != 37*2+3 {
-		t.Errorf("side by side: %d lines, first %q, width %d", len(wide), wide[0], utf8.RuneCountInString(wide[1]))
+	items := []qrItem{{"http://100.111.81.14/?k=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ui"}, {"http://100.111.81.14:8081/?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "web"}, {"http://mitm.it", "ca"}}
+	rows := func(cols int) (lines []string, captions int) {
+		lines = strings.Split(strings.TrimRight(sideBySide(items, cols), "\n"), "\n")
+		for _, l := range lines {
+			if strings.HasPrefix(l, "ui:") || strings.HasPrefix(l, "ca:") || strings.HasPrefix(l, "web:") {
+				captions++
+			}
+		}
+		return lines, captions
 	}
-	narrow := strings.Split(strings.TrimRight(sideBySide(items, 60), "\n"), "\n")
-	if len(narrow) != 40 || utf8.RuneCountInString(narrow[1]) != 37 {
-		t.Errorf("one above the other: %d lines, width %d", len(narrow), utf8.RuneCountInString(narrow[1]))
+	if lines, n := rows(130); n != 1 || utf8.RuneCountInString(lines[1]) > 130 || !strings.Contains(lines[0], "ca:") {
+		t.Errorf("130 columns: %d rows, %q", n, lines[0])
+	}
+	if lines, n := rows(90); n != 2 || utf8.RuneCountInString(lines[1]) > 90 || !strings.Contains(lines[0], "web:") {
+		t.Errorf("90 columns: %d rows (want 2 + 1), %q", n, lines[0])
+	}
+	if _, n := rows(40); n != 3 {
+		t.Errorf("40 columns: %d rows", n)
 	}
 }

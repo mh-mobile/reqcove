@@ -353,13 +353,13 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
 		var codes []qrItem
 		if uiLink != "" {
-			codes = append(codes, qrItem{uiLink, "--ui: the flows"})
+			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
 		}
 		if webLink != "" {
-			codes = append(codes, qrItem{webLink, "--web: mitmweb (unmasked)"})
+			codes = append(codes, qrItem{webLink, "--web (mitmweb, unmasked)"})
 		}
 		if len(devices) > 0 {
-			codes = append(codes, qrItem{"http://mitm.it", "the CA (exit node on)"})
+			codes = append(codes, qrItem{"http://mitm.it", "CA (with the exit node on)"})
 		}
 		printQRs(os.Stderr, codes...)
 	}
@@ -538,36 +538,34 @@ func sideBySide(items []qrItem, cols int) string {
 			continue
 		}
 		lines := strings.Split(strings.TrimRight(q.ToSmallString(false), "\n"), "\n")
-		blocks = append(blocks, append([]string{it.caption}, lines...))
+		blocks = append(blocks, append([]string{it.caption + ":"}, lines...))
 		width = max(width, utf8.RuneCountInString(lines[0]))
 	}
 	const gap = "   "
+	perRow := max(1, (cols+len(gap))/(width+len(gap))) // as many as fit, the rest on the next rows
 	var b strings.Builder
-	if len(blocks) < 2 || len(blocks)*(width+len(gap)) > cols {
-		for _, bl := range blocks {
-			fmt.Fprintf(&b, "%s:\n%s\n", bl[0], strings.Join(bl[1:], "\n"))
+	for start := 0; start < len(blocks); start += perRow {
+		row := blocks[start:min(start+perRow, len(blocks))]
+		lines := 0
+		for _, bl := range row {
+			lines = max(lines, len(bl))
 		}
-		return b.String()
-	}
-	rows := 0
-	for _, bl := range blocks {
-		rows = max(rows, len(bl))
-	}
-	for r := 0; r < rows; r++ {
-		var row []string
-		for _, bl := range blocks {
-			cell := ""
-			if r < len(bl) {
-				cell = bl[r]
+		for r := 0; r < lines; r++ {
+			var cells []string
+			for _, bl := range row {
+				cell := ""
+				if r < len(bl) {
+					cell = bl[r]
+				}
+				if n := utf8.RuneCountInString(cell); n > width {
+					cell = string([]rune(cell)[:width]) // a caption wider than its code
+				} else {
+					cell += strings.Repeat(" ", width-n)
+				}
+				cells = append(cells, cell)
 			}
-			if n := utf8.RuneCountInString(cell); n > width {
-				cell = string([]rune(cell)[:width]) // a caption wider than its code
-			} else {
-				cell += strings.Repeat(" ", width-n)
-			}
-			row = append(row, cell)
+			b.WriteString(strings.TrimRight(strings.Join(cells, gap), " ") + "\n")
 		}
-		b.WriteString(strings.TrimRight(strings.Join(row, gap), " ") + "\n")
 	}
 	return b.String()
 }
