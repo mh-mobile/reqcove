@@ -283,3 +283,27 @@ func trustInSimulators(caPEM string) ([]string, error) {
 	}
 	return done, nil
 }
+
+// security runs macOS's security tool; tests replace it. Its error is its exit status.
+var security = func(args ...string) error {
+	return exec.Command("security", args...).Run()
+}
+
+const loginKeychain = "~/Library/Keychains/login.keychain-db"
+
+// macTrusts reports whether this Mac trusts the CA in pem for TLS servers, as
+// its browsers would (-l: the certificate is a CA, -L -R offline: no network,
+// no prompt). Only on macOS.
+func macTrusts(pem string) bool {
+	return runtime.GOOS == "darwin" && security("verify-cert", "-c", pem, "-l", "-p", "ssl", "-L", "-R", "offline", "-q") == nil
+}
+
+// macTrustCommand trusts the CA for TLS only, for this user (macOS asks for the password).
+func macTrustCommand(pem string) string {
+	return "security add-trusted-cert -r trustRoot -p ssl -k " + loginKeychain + " " + pem
+}
+
+// macUntrustCommand removes the CA, by its fingerprint, and the trust in it.
+func macUntrustCommand(sha256 string) string {
+	return "security delete-certificate -t -Z " + strings.ReplaceAll(sha256, ":", "") + " " + loginKeychain
+}

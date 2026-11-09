@@ -18,6 +18,9 @@
   apps, such as the iOS Simulator, recorded as the device `local`. On macOS the
   system's web proxies point at it while `run` runs and go back when it stops,
   and the CA goes into the booted Simulators; on Linux, point apps at it.
+  `run` prints how to have this computer trust the CA too (its own browsers'
+  requests to allowed hosts are then recorded), and `status` and `cleanup` how
+  to stop.
 - `reqcove har > flows.har`: the recorded flows as a HAR 1.2 file, masked, with
   the same filters as `list_flows`.
 - `run --rules-reload`: the `--rules` file is read again when it changes; a

@@ -75,7 +75,7 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	for _, d := range devices {
 		if d.ID == exitnode.Local.ID {
 			if d.TLSFailures > 0 && d.Flows == 0 {
-				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert, with mitmproxy/mitmproxy-ca-cert.pem in the state directory), unless the app pins its certificates", ca.Name))
+				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert; this Mac: security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db; with mitmproxy/mitmproxy-ca-cert.pem in the state directory), unless the app pins its certificates", ca.Name))
 			}
 			continue // not a phone: no exit node to turn on
 		}
@@ -184,6 +184,9 @@ func printCA(confdir string) {
 	fmt.Println("    add on an iPhone:    with the exit node on, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,")
 	fmt.Println("                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
 	fmt.Printf("    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
+	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
+		fmt.Printf("    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
+	}
 }
 
 // cleanup lists how to undo reqcove, and with --delete-state removes the state directory.
@@ -219,6 +222,9 @@ func cleanup(args []string) error {
 	}
 	if runtime.GOOS == "darwin" {
 		fmt.Println("  5. iOS Simulator, if you used --local-proxy: xcrun simctl keychain booted reset (removes every certificate added to it).")
+		if caErr == nil && macTrusts(filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")) {
+			fmt.Printf("  6. This Mac trusts the CA: %s\n", macUntrustCommand(ca.SHA256))
+		}
 	}
 	if !*del {
 		return nil

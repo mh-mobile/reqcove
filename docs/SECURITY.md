@@ -251,7 +251,12 @@ proxies at it while it runs, keeping what they were in the state directory
 (0600) to put back when it stops (also on SIGHUP), at the next start, or with
 `reqcove cleanup`; it never saves over settings not put back yet, and cleanup
 will not delete the state while it holds them. If reqcove is killed outright,
-apps here that use the system proxy cannot connect until they are put back. Not
+apps here that use the system proxy cannot connect until they are put back.
+Reqcove never makes this computer trust its CA; `run` prints the command (TLS
+only, for this user). Once trusted, the CA's private key in `<state>/mitmproxy/`
+can impersonate any HTTPS site to this computer too, not only to the devices:
+keep the state directory, and its copies and backups, private, and remove the
+trust when done (`reqcove status` and `cleanup` print how, by its fingerprint). Not
 tried yet with the real `networksetup` and Simulator: the tests use stand-ins.
 
 ## Other processes on this computer

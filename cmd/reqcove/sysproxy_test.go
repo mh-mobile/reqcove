@@ -2,12 +2,21 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeNetworksetup keeps proxies and bypass lists per service and answers like
@@ -299,5 +308,63 @@ func TestCleanupKeepsSavedProxy(t *testing.T) {
 	}
 	if _, err := os.Stat(savedProxyFile(state)); err != nil {
 		t.Error("the saved settings are gone")
+	}
+}
+
+// This Mac's trust in the CA: checked without a prompt (-l for a CA, -L -R
+// offline), trusted for TLS only (-p ssl), and removed by fingerprint with
+// its trust (-t -Z).
+func TestMacTrust(t *testing.T) {
+	var asked []string
+	old := security
+	defer func() { security = old }()
+	security = func(args ...string) error { asked = args; return nil }
+	if got := macTrusts("/s/ca.pem"); got != (runtime.GOOS == "darwin") {
+		t.Errorf("trusted: %v on %s", got, runtime.GOOS)
+	}
+	if runtime.GOOS == "darwin" && strings.Join(asked, " ") != "verify-cert -c /s/ca.pem -l -p ssl -L -R offline -q" {
+		t.Errorf("asked %q", asked)
+	}
+	security = func(...string) error { return errors.New("exit status 1") }
+	if macTrusts("/s/ca.pem") {
+		t.Error("untrusted taken for trusted")
+	}
+	if c := macTrustCommand("/s/ca.pem"); c != "security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db /s/ca.pem" {
+		t.Errorf("trust: %s", c)
+	}
+	if c := macUntrustCommand("AB12"); c != "security delete-certificate -t -Z AB12 ~/Library/Keychains/login.keychain-db" {
+		t.Errorf("untrust: %s", c)
+	}
+}
+
+// cleanup tells how to stop this Mac trusting the CA, when it does.
+func TestCleanupMacTrust(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS only")
+	}
+	state := t.TempDir()
+	if unlock, err := openState(state); err != nil {
+		t.Fatal(err)
+	} else {
+		unlock()
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Reqcove CA (test)"}, NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	os.MkdirAll(filepath.Join(state, "mitmproxy"), 0o700)
+	os.WriteFile(filepath.Join(state, "mitmproxy", "mitmproxy-ca-cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+	old := security
+	defer func() { security = old }()
+	for _, trusted := range []bool{true, false} {
+		security = func(...string) error {
+			if trusted {
+				return nil
+			}
+			return errors.New("exit status 1")
+		}
+		out := captureStdout(t, func() error { return cleanup([]string{"--state", state}) })
+		if got := strings.Contains(out, "security delete-certificate -t -Z "); got != trusted {
+			t.Errorf("trusted %v: said %v:\n%s", trusted, got, out)
+		}
 	}
 }

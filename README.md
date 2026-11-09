@@ -218,6 +218,19 @@ command it prints. On Linux nothing is changed for you: point apps at it
   terminal put it back; if reqcove is killed outright (`kill -9`) or crashes,
   apps that use the system proxy cannot connect until the next `run` or
   `reqcove cleanup` puts it back (or you do, in System Settings).
+- This computer's own browsers: to have their requests to the allowed hosts
+  decrypted and recorded too (as `local`, mixed with the Simulator's) rather than
+  warned about, trust Reqcove's CA on this computer once. `run` prints the
+  command when it is not trusted yet; `reqcove status` and `reqcove cleanup` say
+  how to stop. Not tried yet on a real keychain or store.
+  - macOS (TLS only; it asks for your password):
+    `security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`.
+    Firefox may keep its own store.
+  - Linux, Debian and Ubuntu: `sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`;
+    Fedora: into `/etc/pki/ca-trust/source/anchors/` and `sudo update-ca-trust`;
+    Chrome and Chromium: `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`;
+    Node: `NODE_EXTRA_CA_CERTS=` that file; Python: the system's bundle once
+    updated, not that file alone (it would replace every other CA).
 - Automatic proxy configuration (PAC) and authenticated proxies are left as they
   are; not tried with them. Not tried yet with the real `networksetup` and
   Simulator either: the tests use stand-ins.

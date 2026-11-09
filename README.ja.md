@@ -142,6 +142,9 @@ reqcove run --allow-hosts api.example.com --local-proxy   # iPhone も記録す�
 - シミュレーターだけでなく、このコンピュータのアプリ全部が、このプロキシを通るようになります。復号して記録するのは `--allow-hosts` のホストだけですが、そのホストは、Reqcove の CA を信頼していないこのコンピュータのアプリ（Mac の Safari など）では、つながらなくなります。
 - このコンピュータ、LAN、tailnet（`*.ts.net` も）、`*.local` は、プロキシの例外に足すので、今までどおり直接つながります（例外でのアドレスの書き方は、まだ試していません）。名前は、このコンピュータと同じやり方で引きます（VPN、split DNS、検索ドメインも効きます）。`--dns` は使いません。LAN、VPN、tailnet に着く名前は、そのまま通します。このコンピュータ自身やリンクローカルのアドレスに着く名前は、このコンピュータの `/etc/hosts` が与えるものでなければ断ります。サイトが自分の名前を 127.0.0.1 に向けても（DNS rebinding）、プロキシ越しにこのコンピュータのサービスへは届きません。
 - `run` が動いている間、システムのプロキシは reqcove のものになります。Ctrl-C、`kill`、ターミナルを閉じたときは元に戻ります。reqcove を強制終了したとき（`kill -9`）や落ちたときは、システムのプロキシを使うアプリが、次の `run` か `reqcove cleanup` で戻るまで（またはシステム設定で自分で戻すまで）つながりません。
+- このコンピュータ自身のブラウザ：許可したホストへのリクエストを、警告で止めるのではなく、復号して記録したいときは（記録の上では `local` として、シミュレーターの通信と混ざります）、このコンピュータに Reqcove の CA を一度信頼させてください。まだ信頼していなければ、`run` がコマンドを表示します。やめ方は `reqcove status` と `reqcove cleanup` が表示します。本物のキーチェーンや証明書ストアでは、まだ試していません。
+  - macOS（HTTPS だけを信頼。パスワードを聞かれます）：`security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Firefox は、自分の証明書ストアを使うことがあります。
+  - Linux：Debian と Ubuntu は `sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`。Fedora は `/etc/pki/ca-trust/source/anchors/` に置いて `sudo update-ca-trust`。Chrome と Chromium は `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Node は `NODE_EXTRA_CA_CERTS=` にそのファイルを。Python は、更新したシステムの証明書の束を指してください（そのファイルだけを指すと、ほかの CA が全部使えなくなります）。
 - 自動プロキシ構成（PAC）と、認証付きのプロキシは、そのままにします。それらがある環境では試していません。本物の `networksetup` とシミュレーターでも、まだ試していません（テストは代わりのプログラムで確かめています）。
 
 ### HAR ファイルに書き出す

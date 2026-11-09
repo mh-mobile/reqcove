@@ -356,10 +356,19 @@ func run(ctx context.Context, args []string) error {
 	if *localProxy {
 		localAddr = fmt.Sprintf("127.0.0.1:%d", localProxyPort)
 		caPEM := filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")
-		if allow.All {
+		trusted := macTrusts(caPEM)
+		switch {
+		case allow.All && trusted:
+			log.Print("WARN: --local-proxy with --allow-hosts '*', and this computer trusts Reqcove's CA: every HTTPS site its apps open (but Apple's) is decrypted and recorded")
+		case allow.All:
 			log.Print("WARN: --local-proxy with --allow-hosts '*': every HTTPS site this computer's apps open is decrypted, and fails in those that do not trust Reqcove's CA (Safari here, say)")
 		}
 		if runtime.GOOS == "darwin" {
+			if trusted {
+				log.Printf("this Mac trusts Reqcove's CA: its own browsers' requests to the allowed hosts are decrypted and recorded too, as \"local\" (to stop: %s)", macUntrustCommand(cap.CA.SHA256))
+			} else {
+				log.Printf("this Mac's browsers warn on the allowed hosts; to have them decrypted and recorded too, trust Reqcove's CA once (TLS only; macOS asks for your password): %s", macTrustCommand(caPEM))
+			}
 			log.Printf("local proxy on %s, recorded as the device \"local\"", localAddr)
 			if sims, err := trustInSimulators(caPEM); err != nil {
 				log.Printf("WARN: the CA into the iOS Simulator: %v", err)
@@ -369,7 +378,7 @@ func run(ctx context.Context, args []string) error {
 				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", caPEM)
 			}
 		} else {
-			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s; recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
+			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s (README, The iOS Simulator, has the commands); recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
 		}
 	}
 	err = withSystemProxy(*state, *localProxy, func() error {
