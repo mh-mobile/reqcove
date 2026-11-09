@@ -277,3 +277,29 @@ func TestPrintQR(t *testing.T) {
 		t.Error("a QR code was written to a file")
 	}
 }
+
+// The ready block puts the devices, the links and the numbered next steps in
+// one place; the local proxy's step about this Mac is among them, but only
+// with the local proxy on.
+func TestReadyBlock(t *testing.T) {
+	old := localStep
+	defer func() { localStep = old }()
+	localStep = "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once"
+	ready := map[string]any{"state": "ready"}
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
+	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
+	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "/s", steps)
+	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "page:     http://100.1.2.3/?k=K", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("%q not in:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "mitmweb:") {
+		t.Errorf("mitmweb without --web:\n%s", got)
+	}
+	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
+		t.Errorf("the Mac step without the local proxy: %q", steps)
+	}
+}

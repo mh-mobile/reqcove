@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -277,7 +278,8 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			ids := fmt.Sprint(names)
 			if ids != lastIDs {
 				lastIDs = ids
-				log.Printf("carrying traffic from %v", names)
+				list := slices.Sorted(maps.Values(names))
+				log.Printf("carrying traffic from %s", strings.Join(list, ", "))
 				if cfg.OnDevices != nil {
 					cfg.OnDevices(names)
 				}

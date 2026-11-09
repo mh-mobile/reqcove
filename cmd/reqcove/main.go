@@ -340,16 +340,21 @@ func run(ctx context.Context, args []string) error {
 			return
 		}
 		shown = true
+		// One block when ready, so what to do is not lost among the lines above.
 		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
+		var uiLink, webLink string
 		if page != nil {
-			link := "http://" + ip + "/?k=" + uiToken
-			log.Printf("the page of the flows, for your own devices on the tailnet (and the --device devices, each its own): %s (the same at each start; to change it: rm %s, and start again)", link, filepath.Join(*state, "ui-token"))
-			printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
+			uiLink = "http://" + ip + "/?k=" + uiToken
 		}
 		if webAddr != "" {
-			link := strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
-			log.Printf("mitmweb from your own devices on the tailnet: %s (the same at each start; to change it: rm %s, and start again)", link, filepath.Join(*state, "web-token"))
-			printQR(os.Stderr, link, "to open mitmweb on the iPhone, scan this with the camera (unmasked, and it can edit and replay)")
+			webLink = strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
+		}
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
+		if uiLink != "" {
+			printQR(os.Stderr, uiLink, "the page: scan this with the iPhone's camera (the exit node or the Remote Proxy need not be on)")
+		}
+		if webLink != "" {
+			printQR(os.Stderr, webLink, "mitmweb: scan this with the iPhone's camera (unmasked, and it can edit and replay)")
 		}
 	}
 	localAddr := ""
@@ -367,7 +372,7 @@ func run(ctx context.Context, args []string) error {
 			if trusted {
 				log.Printf("this Mac trusts Reqcove's CA: its own browsers' requests to the allowed hosts are decrypted and recorded too, as \"local\" (to stop: %s)", macUntrustCommand(cap.CA.SHA256))
 			} else {
-				log.Printf("this Mac's browsers warn on the allowed hosts; to have them decrypted and recorded too, trust Reqcove's CA once (TLS only; macOS asks for your password): %s", macTrustCommand(caPEM))
+				localStep = "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password), then start reqcove again:\n" + macTrustCommand(caPEM)
 			}
 			log.Printf("local proxy on %s, recorded as the device \"local\"", localAddr)
 			if sims, err := trustInSimulators(caPEM); err != nil {
@@ -686,4 +691,36 @@ func firstIPv4(ips []string) string {
 		}
 	}
 	return ""
+}
+
+// readyBlock is what run prints once the node is up: the devices, the links
+// and the next steps, numbered, in one place.
+func readyBlock(devices map[string]string, uiLink, webLink, state string, steps []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n──────── reqcove is ready ────────\n")
+	var names []string
+	for _, n := range devices {
+		if n == exitnode.Local.Name {
+			n += fmt.Sprintf(" (this computer's apps, through 127.0.0.1:%d)", localProxyPort)
+		}
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
+	if uiLink != "" {
+		fmt.Fprintf(&b, "page:     %s  (QR code below; the same at each start, rm %s to change it)\n", uiLink, filepath.Join(state, "ui-token"))
+	}
+	if webLink != "" {
+		fmt.Fprintf(&b, "mitmweb:  %s  (QR code below; unmasked; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
+	}
+	if len(steps) > 0 {
+		fmt.Fprintf(&b, "\nnext:\n")
+		for i, st := range steps {
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, strings.ReplaceAll(st, "\n", "\n     ")) // a command on a line of its own
+		}
+	} else {
+		fmt.Fprintf(&b, "\nnothing left to set up (`reqcove status` says the same later)\n")
+	}
+	fmt.Fprintf(&b, "──────────────────────────────────\n")
+	return b.String()
 }

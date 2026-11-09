@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -49,6 +50,11 @@ func pageSteps(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	return statusOut(n, stats, allow, ca, mine).NextSteps
 }
 
+// localStep, when set by run, is a next step about this computer for the local
+// proxy (that it trusts the CA), checked once at start: nextSteps is asked
+// every second by the page, too often to run security each time.
+var localStep string
+
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
@@ -71,6 +77,9 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	}
 	if !allow.All && len(allow.Patterns) == 0 {
 		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
+	}
+	if localStep != "" && slices.ContainsFunc(devices, func(d capture.DeviceInfo) bool { return d.ID == exitnode.Local.ID }) {
+		steps = append(steps, localStep)
 	}
 	for _, d := range devices {
 		if d.ID == exitnode.Local.ID {
@@ -151,7 +160,7 @@ func status(ctx context.Context, args []string) error {
 	}
 	fmt.Println("next:")
 	for _, s := range out.NextSteps {
-		fmt.Println("  - " + s)
+		fmt.Println("  - " + strings.ReplaceAll(s, "\n", "\n    ")) // a command on a line of its own
 	}
 	return nil
 }
