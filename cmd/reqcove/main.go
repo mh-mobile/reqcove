@@ -314,7 +314,9 @@ func run(ctx context.Context, args []string) error {
 			printQR(os.Stderr, link, "to open it on the iPhone, scan this with the camera (the exit node or the Remote Proxy need not be on)")
 		}
 		if webAddr != "" {
-			log.Printf("mitmweb from your own devices on the tailnet: %s", strings.Replace(cap.WebURL, "127.0.0.1", ip, 1))
+			link := strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
+			log.Printf("mitmweb from your own devices on the tailnet: %s", link)
+			printQR(os.Stderr, link, "to open mitmweb on the iPhone, scan this with the camera (unmasked, and it can edit and replay)")
 		}
 	}
 	err = exitnode.Run(ctx, exitnode.Config{
