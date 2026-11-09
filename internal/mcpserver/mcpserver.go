@@ -1,12 +1,11 @@
 // Package mcpserver serves the captured flows as MCP tools. `reqcove run`
-// serves them on a Unix socket; `reqcove mcp`, which an agent launches,
-// relays its stdio to that socket.
+// serves them on a Unix socket; `reqcove mcp`, which an agent launches, serves
+// the same tools on its stdio and forwards the calls to that socket (Proxy).
 package mcpserver
 
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -225,26 +224,13 @@ func Serve(ctx context.Context, path string, server *mcp.Server) error {
 					c.Close()
 					return
 				}
+				// When `run` stops, its agents' connections close too, so their
+				// proxies dial the next `run` instead of reading this one's store.
+				stop := context.AfterFunc(ctx, func() { c.Close() })
+				defer stop()
 				ss.Wait()
 			}()
 		}
 	}()
-	return nil
-}
-
-// Relay connects stdin and stdout to the MCP socket at path.
-func Relay(ctx context.Context, path string, stdin io.Reader, stdout io.Writer) error {
-	c, err := net.Dial("unix", path)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(c, stdin); c.(*net.UnixConn).CloseWrite(); done <- struct{}{} }()
-	go func() { io.Copy(stdout, c); done <- struct{}{} }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
 	return nil
 }

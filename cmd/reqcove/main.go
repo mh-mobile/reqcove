@@ -36,6 +36,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 	"github.com/mh-mobile/reqcove/internal/webui"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/term"
 )
@@ -580,11 +581,17 @@ func runMCP(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	sock := filepath.Join(*state, "mcp.sock")
-	if err := mcpserver.Relay(ctx, sock, os.Stdin, os.Stdout); err != nil {
-		return fmt.Errorf("is `%s` running? %w", withState("reqcove run", *state), err)
+	// The agent's connection stays up while run restarts or is not running.
+	err := mcpserver.Proxy(ctx, filepath.Join(*state, "mcp.sock"), notRunningMsg(*state), &mcp.StdioTransport{})
+	if ctx.Err() != nil {
+		return nil // a signal: not an error
 	}
-	return nil
+	return err
+}
+
+// notRunningMsg is what the agent's tools answer while run is not running.
+func notRunningMsg(state string) string {
+	return fmt.Sprintf("reqcove is not running (%s): ask the user to start `%s` (or wait, if it is restarting), then call again. The records start empty after a restart.", state, withState("reqcove run --device NAME --allow-hosts HOSTS", state))
 }
 
 // printQR draws url as a QR code, with what it is for, when w is a terminal:

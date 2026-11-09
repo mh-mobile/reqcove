@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -105,8 +104,8 @@ func TestTools(t *testing.T) {
 	}
 }
 
-// TestServeAndRelay: an agent's stdio, relayed to the socket `run` serves, reaches the tools.
-func TestServeAndRelay(t *testing.T) {
+// TestServeAndProxy: an agent, through `reqcove mcp`, reaches the tools on the socket `run` serves.
+func TestServeAndProxy(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "rcvm-") // short socket path
 	if err != nil {
 		t.Fatal(err)
@@ -135,17 +134,15 @@ func TestServeAndRelay(t *testing.T) {
 	if fi, err := os.Stat(sock); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("MCP socket mode %v, want 0600", fi.Mode().Perm())
 	}
-	// The agent side: an in-memory pipe stands in for `reqcove mcp`'s stdio.
-	agentIn, relayIn := io.Pipe()   // agent writes -> relay's stdin
-	relayOut, agentOut := io.Pipe() // relay's stdout -> agent reads
-	go Relay(ctx, sock, agentIn, agentOut)
-	transport := &mcp.IOTransport{Reader: relayOut, Writer: relayIn}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, transport, nil)
+	// The agent side: in-memory transports stand in for `reqcove mcp`'s stdio.
+	ct, pt := mcp.NewInMemoryTransports()
+	go Proxy(ctx, sock, "down", pt)
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := call[ListOut](t, session, "list_flows", nil); len(got.Flows) != 1 {
-		t.Fatalf("list_flows through the relay = %+v", got.Flows)
+		t.Fatalf("list_flows through reqcove mcp = %+v", got.Flows)
 	}
 	session.Close()
 	cancel()

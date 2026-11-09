@@ -28,6 +28,11 @@
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
   file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- `reqcove mcp` serves the tools itself and forwards each call to `run`,
+  dialling it again when needed: the agent stays connected while `run`
+  restarts (before, the relay ended with it, and Claude Code needed `/mcp`).
+  While `run` is not running, the tools say so. When `run` stops, the
+  agents' connections to it close at once.
 - `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
   filter by text in the User-Agent, case-insensitive: one app's traffic, as
   summarize lists the User-Agents. A host filter that matches no flow answers

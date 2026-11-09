@@ -357,8 +357,8 @@ func TestStateCommandsFull(t *testing.T) {
 	if got := withState("reqcove status", "rel"); got != "reqcove status --state "+full {
 		t.Errorf("withState: %q", got)
 	}
-	if err := runMCP(context.Background(), []string{"--state", "rel"}); err == nil || !strings.Contains(err.Error(), "reqcove run --state "+full) {
-		t.Errorf("mcp: %v", err)
+	if got := notRunningMsg("rel"); !strings.Contains(got, "reqcove run --device NAME --allow-hosts HOSTS --state "+full) {
+		t.Errorf("mcp's not running: %q", got)
 	}
 	unlock, err := openState("rel")
 	if err != nil {

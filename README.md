@@ -90,6 +90,12 @@ through a `replace` directive.
    Then ask it things like "which requests to api.example.com failed in the last
    ten minutes?"
 
+   After v0.1.0, `reqcove mcp` stays up while `reqcove run` restarts or is not
+   running: the tools then answer that it is not running, and work again once
+   it is back, without reconnecting the agent (`/mcp` in Claude Code). Checked
+   with tests (a stand-in `run` stopped and started again) and the binary over
+   stdin; not yet in a Claude Code session. A restart starts the records empty.
+
 Instead of the exit node, the iPhone can also set its Wi-Fi proxy (Manual) to the
 reqcove node's tailnet address, port 8080 (`--proxy-port`). Cellular has no proxy
 setting, so this works on Wi-Fi only.
