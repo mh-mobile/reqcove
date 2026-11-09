@@ -180,7 +180,8 @@ func TestLeftSystemProxyGoesBack(t *testing.T) {
 		}
 		switch how {
 		case "run":
-			run(context.Background(), []string{"--local-proxy", "--allow-hosts", "api.example.com", "--state", state, "--uvx", "/usr/bin/false"})
+			// Any run puts them back: without --local-proxy, which wants 8082 free first.
+			run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--state", state, "--uvx", "/usr/bin/false"})
 		case "cleanup":
 			captureStdout(t, func() error { return cleanup([]string{"--state", state}) })
 		case "cleanup while running":
@@ -348,11 +349,8 @@ func TestCleanupMacTrust(t *testing.T) {
 	} else {
 		unlock()
 	}
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Reqcove CA (test)"}, NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
-	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	os.MkdirAll(filepath.Join(state, "mitmproxy"), 0o700)
-	os.WriteFile(filepath.Join(state, "mitmproxy", "mitmproxy-ca-cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+	os.WriteFile(filepath.Join(state, "mitmproxy", "mitmproxy-ca-cert.pem"), testCAPEM(t), 0o600)
 	old := security
 	defer func() { security = old }()
 	for _, trusted := range []bool{true, false} {
@@ -367,6 +365,18 @@ func TestCleanupMacTrust(t *testing.T) {
 			t.Errorf("trusted %v: said %v:\n%s", trusted, got, out)
 		}
 	}
+}
+
+// testCAPEM is a CA certificate, as mitmproxy-ca-cert.pem holds it.
+func testCAPEM(t *testing.T) []byte {
+	t.Helper()
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Reqcove CA (test)"}, NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 // networksetup runs in a process group of its own, out of reach of the

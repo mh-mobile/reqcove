@@ -27,6 +27,11 @@ import (
 	"tailscale.com/tsnet"
 )
 
+// WebPort is the node's port for mitmweb (--web), the same on every node, so
+// a link kept on the iPhone keeps working; mitmweb itself may listen on
+// another port of this computer (Config.Web).
+const WebPort = 8081
+
 type Config struct {
 	Dir         string           // tsnet state
 	Hostname    string           // tailnet node name
@@ -41,11 +46,12 @@ type Config struct {
 	// StableID; all says it is one of this user's own, which see every device's flows.
 	UI func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
 	// Web, if set, is mitmweb's address on this computer (127.0.0.1:PORT): the
-	// node relays its own PORT there, for this user's own devices only.
+	// node relays its own WebPort there, for this user's own devices only.
 	Web string
-	// LocalProxy, if set (127.0.0.1:PORT), is an HTTP proxy for this computer's
-	// own apps (the iOS Simulator), recorded as the device Local.
-	LocalProxy string
+	// LocalProxy, if set (listening on 127.0.0.1), serves an HTTP proxy for
+	// this computer's own apps (the iOS Simulator), recorded as the device Local.
+	// The caller listens, so a port taken stops run before anything changes.
+	LocalProxy net.Listener
 	Verbose    bool // log tsnet's backend and every flow decision
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
@@ -105,11 +111,7 @@ func Run(ctx context.Context, cfg Config) error {
 		s.UserLogf = func(string, ...any) {}
 	}
 	go logLoop()
-	if cfg.LocalProxy != "" {
-		ln, err := net.Listen("tcp", cfg.LocalProxy)
-		if err != nil {
-			return fmt.Errorf("local proxy: %w", err)
-		}
+	if ln := cfg.LocalProxy; ln != nil {
 		srv := &http.Server{
 			Handler: &remoteProxy{
 				local:   true,
@@ -210,11 +212,7 @@ func Run(ctx context.Context, cfg Config) error {
 		defer srv.Close()
 	}
 	if cfg.Web != "" {
-		_, port, err := net.SplitHostPort(cfg.Web)
-		if err != nil {
-			return fmt.Errorf("mitmweb: %w", err)
-		}
-		ln, err := s.Listen("tcp", ":"+port)
+		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", WebPort))
 		if err != nil {
 			return fmt.Errorf("mitmweb: %w", err)
 		}
@@ -267,7 +265,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			names := map[string]string{}
-			if cfg.LocalProxy != "" {
+			if cfg.LocalProxy != nil {
 				names[Local.ID] = Local.Name
 			}
 			for ip, d := range devices {

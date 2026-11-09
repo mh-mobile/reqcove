@@ -27,6 +27,14 @@ directory to yourself; when you stop using Reqcove, remove the profile from the
 iPhone first, then delete the directory (`reqcove cleanup` lists the steps).
 Copying the directory to another computer copies the key.
 
+After v0.1.0, a new `--state` directory gets a copy of `~/.reqcove`'s CA on its
+first start (several exit nodes on one computer, one profile on the iPhone):
+`mitmproxy-ca.pem` with the key, and the certificate files; not
+`mitmproxy-ca.p12`, nor mitmweb's password. The key is then in each such
+directory, each 0700 with the files 0600 (a test): deleting one leaves it in
+the others, and removing the profile from the iPhone is what stops them all.
+`cleanup` of such a directory says so.
+
 ## What is recorded
 
 - Only requests to hosts in `--allow-hosts` are decrypted and recorded. Two checks

@@ -121,10 +121,10 @@ func run(ctx context.Context, args []string) error {
 	})
 	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
-	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081, and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
+	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081 (8091-8099 while another run has it), and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
 	state := fs.String("state", defaultState(), "state directory")
-	hostname := fs.String("hostname", "reqcove", "tailnet node name")
+	fs.String("hostname", "reqcove", "tailnet node name (with a --state named reqcove-NAME, that name)")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
 	mitmSpec := fs.String("mitmproxy-spec", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
 	python := fs.String("python", "3.14", "Python for uvx")
@@ -138,6 +138,7 @@ func run(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	hostname := nodeName(fs, *state)
 	if len(devices) == 0 && !*localProxy {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
 		if names := iosDevices(); len(names) > 0 {
@@ -178,8 +179,8 @@ func run(ctx context.Context, args []string) error {
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
-	if *web && *proxyPort == webPort(true) {
-		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", webPort(true))
+	if *web && *proxyPort == exitnode.WebPort {
+		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
 	}
 	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
 		return fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
@@ -194,14 +195,35 @@ func run(ctx context.Context, args []string) error {
 		log.Print("WARN: --upstream-proxy with --allow-hosts '*': the proxy connects to HTTPS hosts by name, looked up again on this computer, so a site the iPhone visits can point it at this computer or the LAN. Keep --allow-hosts to the hosts you test.")
 	}
 
+	// First, before anything is changed: one --local-proxy per computer.
+	var localLn net.Listener
+	if *localProxy {
+		if localLn, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", localProxyPort)); err != nil {
+			return fmt.Errorf("--local-proxy: 127.0.0.1:%d is taken (%v); --local-proxy is one per computer: is another reqcove run using it?", localProxyPort, err)
+		}
+		defer localLn.Close()
+	}
 	if _, err := exec.LookPath(*uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", *uvx)
 	}
+	newState := isNew(*state)
 	unlock, err := openState(*state)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	if newState && !isDefaultState(*state) {
+		// One CA for every node here, so the iPhone's one profile serves them all.
+		from := filepath.Join(defaultState(), "mitmproxy")
+		if copied, err := capture.CopyCA(from, filepath.Join(*state, "mitmproxy")); err != nil {
+			return fmt.Errorf("copying the CA of %s: %w", from, err)
+		} else if copied {
+			log.Printf("using the CA of %s (copied): the iPhone's profile for it serves this node too", defaultState())
+		}
+	}
+	if !isDefaultState(*state) && hostname == "reqcove" {
+		log.Print("the node is named reqcove, as the default state's is: give --hostname, or name --state reqcove-NAME, to tell them apart")
+	}
 	// A run that died with the system proxy pointed at it: put it back first.
 	if err := restoreSystemProxy(*state); err != nil {
 		log.Printf("WARN: the system's web proxies, pointed at reqcove by a run that did not stop cleanly, could not be put back: %v. System Settings, Network, Details, Proxies", err)
@@ -229,6 +251,12 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer mitmLog.Close()
+	webLocal := 0
+	if *web {
+		if webLocal, err = pickWebPort(); err != nil {
+			return err
+		}
+	}
 	log.Printf("starting mitmproxy (%s) through uvx; the first run downloads it", *mitmSpec)
 	// The page's and mitmweb's tokens, kept across starts (tokens.go).
 	var uiToken, webToken string
@@ -252,7 +280,7 @@ func run(ctx context.Context, args []string) error {
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
-		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, RulesReload: *rulesReload, WebPort: webPort(*web), WebPassword: webToken,
+		AllowHosts: allow, NoRedact: *noRedact, Rules: *rules, RulesReload: *rulesReload, WebPort: webLocal, WebPassword: webToken,
 		Upstream: upstream, UpstreamCA: upstreamCAFile,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
@@ -297,6 +325,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *web {
 		log.Printf("mitmweb on %s", cap.WebURL)
+		if webLocal != exitnode.WebPort {
+			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
+		}
 		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all")
 	}
 
@@ -316,11 +347,11 @@ func run(ctx context.Context, args []string) error {
 	})); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
-	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: claude mcp add reqcove -- reqcove mcp)", mcpSock)
+	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s)", mcpSock, mcpHint(*state, hostname))
 
 	webAddr := ""
 	if cap.WebURL != "" {
-		webAddr = fmt.Sprintf("127.0.0.1:%d", webPort(true))
+		webAddr = fmt.Sprintf("127.0.0.1:%d", webLocal)
 	}
 	var pageFn func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
 	var page *webui.UI
@@ -331,6 +362,9 @@ func run(ctx context.Context, args []string) error {
 			}
 			return pageSteps(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices(), id)
 		})
+		if hostname != "reqcove" {
+			page.Node = hostname
+		}
 		pageFn = page.Serve
 	}
 	var shown bool
@@ -349,7 +383,7 @@ func run(ctx context.Context, args []string) error {
 			uiLink = "http://" + ip + "/?k=" + uiToken
 		}
 		if webAddr != "" {
-			webLink = strings.Replace(cap.WebURL, "127.0.0.1", ip, 1)
+			webLink = strings.Replace(cap.WebURL, webAddr, fmt.Sprintf("%s:%d", ip, exitnode.WebPort), 1)
 		}
 		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
 		var codes []qrItem
@@ -365,7 +399,7 @@ func run(ctx context.Context, args []string) error {
 		printQRs(os.Stderr, codes...)
 	}
 	localAddr := ""
-	if *localProxy {
+	if localLn != nil {
 		localAddr = fmt.Sprintf("127.0.0.1:%d", localProxyPort)
 		caPEM := filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")
 		trusted := macTrusts(caPEM)
@@ -394,11 +428,11 @@ func run(ctx context.Context, args []string) error {
 	}
 	err = withSystemProxy(*state, *localProxy, func() error {
 		return exitnode.Run(ctx, exitnode.Config{
-			Dir: filepath.Join(*state, "tsnet"), Hostname: *hostname, DNS: dns,
+			Dir: filepath.Join(*state, "tsnet"), Hostname: hostname, DNS: dns,
 			Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
 			UI:         pageFn,
 			Web:        webAddr,
-			LocalProxy: localAddr,
+			LocalProxy: localLn,
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})
@@ -417,13 +451,6 @@ func caName() string {
 	host, _ := os.Hostname()
 	host = strings.TrimSuffix(host, ".local")
 	return fmt.Sprintf("Reqcove CA (%s, %s)", host, time.Now().Format("2006-01-02"))
-}
-
-func webPort(on bool) int {
-	if on {
-		return 8081
-	}
-	return 0
 }
 
 func parseDNS(v string) ([]netip.AddrPort, error) {

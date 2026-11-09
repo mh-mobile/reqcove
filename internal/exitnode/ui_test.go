@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -258,7 +259,7 @@ func TestRemoteProxyWeb(t *testing.T) {
 	}
 	defer mitmweb.Close()
 	go http.Serve(mitmweb, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("mitmweb " + r.Host)) }))
-	_, port, _ := net.SplitHostPort(mitmweb.Addr().String())
+	port := strconv.Itoa(WebPort) // the node's port, not mitmweb's on this computer (another run may hold 8081 here)
 	me := netip.MustParseAddr("127.0.0.1")
 	own := &policy{devices: map[netip.Addr]Device{me: {"nPHONE", "phone"}}, own: map[netip.Addr]Device{me: {"nPHONE", "phone"}},
 		self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove"}}

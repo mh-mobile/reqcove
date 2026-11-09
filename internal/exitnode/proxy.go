@@ -29,7 +29,7 @@ type remoteProxy struct {
 	dial    func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error)
 	ui      http.Handler // the node's own page (--ui), for requests to the node's port 80
 	web     http.Handler // mitmweb's relay (--web), for requests to the node's webAddr port
-	webAddr string       // mitmweb on this computer, 127.0.0.1:PORT; the node's PORT goes there
+	webAddr string       // mitmweb on this computer, 127.0.0.1:PORT; the node's WebPort goes there
 	local   bool         // the local proxy: this computer's own apps, as the device Local
 
 	// One per device: a pooled connection carries one device's SOCKS user.
@@ -121,9 +121,8 @@ func (rp *remoteProxy) toWeb(hostport string) bool {
 	if rp.web == nil || !rp.policy().isSelf(hostport) {
 		return false
 	}
-	_, port, err1 := net.SplitHostPort(hostport)
-	_, webPort, err2 := net.SplitHostPort(rp.webAddr)
-	return err1 == nil && err2 == nil && port == webPort
+	_, port, err := net.SplitHostPort(hostport)
+	return err == nil && port == strconv.Itoa(WebPort)
 }
 
 func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip.AddrPort, dev Device) {

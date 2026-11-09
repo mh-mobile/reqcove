@@ -239,21 +239,29 @@ func printCA(confdir string) {
 func cleanup(args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
-	hostname := fs.String("hostname", "reqcove", "tailnet node name")
+	fs.String("hostname", "reqcove", "tailnet node name (with a --state named reqcove-NAME, that name)")
 	del := fs.Bool("delete-state", false, "delete the state directory (node key, CA and its private key, logs)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	hostname := nodeName(fs, *state)
 	ca, caErr := capture.ReadCA(filepath.Join(*state, "mitmproxy"))
 	fmt.Println("To undo reqcove:")
 	fmt.Printf("  1. On each iPhone: Tailscale app, Exit Node, None (or set the Wi-Fi proxy back to Off).\n")
 	if caErr == nil {
 		fmt.Printf("  2. On each iPhone: Settings, General, VPN & Device Management, %q, Remove Profile.\n", ca.Name)
+		if def, err := capture.ReadCA(filepath.Join(defaultState(), "mitmproxy")); err == nil && def.SHA256 == ca.SHA256 && !isDefaultState(*state) {
+			fmt.Printf("     It is the CA of %s too (copied): without the profile, that node no longer decrypts either. Keep it to go on using that one.\n", defaultState())
+		}
 	} else {
 		fmt.Println("  2. On each iPhone: remove the reqcove CA profile, if you installed one.")
 	}
-	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", *hostname)
-	fmt.Printf("  4. This computer: delete %s (`reqcove cleanup --delete-state`).\n", *state)
+	fmt.Printf("  3. Tailscale admin console, Machines: remove %q.\n", hostname)
+	del4 := "reqcove cleanup --delete-state"
+	if !isDefaultState(*state) {
+		del4 += " --state " + shellWord(*state)
+	}
+	fmt.Printf("  4. This computer: delete %s (`%s`).\n", *state, del4)
 	if _, err := os.Stat(savedProxyFile(*state)); err == nil { // --local-proxy left them pointed at reqcove
 		if unlock, err := lockState(*state); err != nil {
 			fmt.Println("  The system's web proxies point at the reqcove that is running; they go back when it stops.")

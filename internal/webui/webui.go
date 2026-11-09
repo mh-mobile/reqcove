@@ -30,6 +30,9 @@ type UI struct {
 	store *capture.Store
 	steps func(deviceID string, all bool) []string // the next steps for one device, or for all, as the status tool words them (no login URL)
 	token string
+	// Node, if set, is the node's name, in the page's title and header: with
+	// several exit nodes on one computer, their pages tell themselves apart.
+	Node string
 }
 
 // New serves the page with token, what the link to it carries
@@ -209,7 +212,7 @@ func (u *UI) view(r *http.Request, deviceID string, all bool) map[string]any {
 	return map[string]any{
 		"Rows": rows, "Empty": empty, "Host": f.Host, "Status": f.Status, "Q": f.Query, "Bodies": f.QueryBodies,
 		"Since": q.Get("since"), "Paused": q.Get("pause") != "", "P": params(q), "Statuses": statuses,
-		"Unmasked": stats["redacting"] == false, "Line": line, "Steps": steps,
+		"Unmasked": stats["redacting"] == false, "Line": line, "Steps": steps, "Node": u.Node,
 	}
 }
 
@@ -230,7 +233,8 @@ func (u *UI) flow(w http.ResponseWriter, r *http.Request, deviceID string, all b
 		ms = int64((v.End - v.Start) * 1000)
 	}
 	render(w, flowPage, map[string]any{
-		"F": v, "MS": ms, "Slow": ms >= 1000, "Time": time.Unix(0, int64(v.Start*1e9)).Format("15:04:05"),
+		"Node": u.Node,
+		"F":    v, "MS": ms, "Slow": ms >= 1000, "Time": time.Unix(0, int64(v.Start*1e9)).Format("15:04:05"),
 		"Query":   queryOf(v.URL),
 		"ReqBody": tokens(v.ReqBodyText), "ReqInfo": bodyInfo(v.ReqHeaders, v.ReqBody),
 		"RespBody": tokens(v.RespBodyText), "RespInfo": bodyInfo(v.RespHeaders, v.RespBody),
@@ -450,14 +454,14 @@ func class(status int, state string) string {
 const head = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="format-detection" content="telephone=no">
-<link rel="stylesheet" href="/style.css"><title>Reqcove</title>`
+<link rel="stylesheet" href="/style.css"><title>{{with .Node}}{{.}} · {{end}}Reqcove</title>`
 
 // The list follows new flows with /app.js, without reloading (a reload a second
 // made Safari's address bar flicker). Without scripts, it is a page to reload.
 var listPage = template.Must(template.New("list").Funcs(funcs).Parse(head + `
 <script src="/app.js" defer></script></head><body>
 <header>
-<div class="top"><b>Reqcove</b>{{if .Unmasked}} <b class="badge bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span></div>
+<div class="top"><b>Reqcove</b>{{with .Node}} <span class="muted">{{.}}</span>{{end}}{{if .Unmasked}} <b class="badge bad">not masked (--no-redact)</b>{{end}} <span id="line" class="muted">{{.Line}}</span></div>
 <form class="search" action="/" method="get" role="search">
 <input id="q" type="search" name="q" value="{{.Q}}" placeholder="Search URLs and headers" aria-label="Search URLs and headers" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false">
 <label class="check"><input id="bodies" type="checkbox" name="bodies" value="1"{{if .Bodies}} checked{{end}}> also search bodies (pauses live)</label>

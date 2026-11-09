@@ -430,6 +430,51 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	return cmd.Run()
 }
 
+// caFiles are what mitmproxy and mitm.it use of a CA, the key last: it is what
+// says a confdir has a CA (ensureCA), so a copy cut short is redone.
+// Not copied: mitmproxy-ca.p12 (the key again, without a passphrase, which
+// mitmproxy does not read), the dhparam (made when missing) and config.yaml
+// (mitmweb's password).
+var CAFiles = []string{"mitmproxy-ca-cert.pem", "mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.p12", "mitmproxy-ca.pem"}
+
+// CopyCA copies the CA of confdir src into dst, so one profile on the iPhone
+// serves both nodes. It does nothing when src has no CA or dst has one.
+func CopyCA(src, dst string) (bool, error) {
+	if _, err := os.Stat(filepath.Join(src, "mitmproxy-ca.pem")); err != nil {
+		return false, nil
+	}
+	if _, err := os.Stat(filepath.Join(dst, "mitmproxy-ca.pem")); err == nil {
+		return false, nil
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return false, err
+	}
+	for _, name := range CAFiles {
+		in, err := os.Open(filepath.Join(src, name))
+		if err != nil {
+			return false, err
+		}
+		tmp, err := os.CreateTemp(dst, name+".*")
+		if err == nil {
+			_, err = io.Copy(tmp, in) // CreateTemp makes it 0600
+			if cerr := tmp.Close(); err == nil {
+				err = cerr
+			}
+			if err == nil {
+				err = os.Rename(tmp.Name(), filepath.Join(dst, name))
+			}
+			if err != nil {
+				os.Remove(tmp.Name())
+			}
+		}
+		in.Close()
+		if err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 // freePort asks the kernel for an unused port.
 // ponytail: the port is free when asked, not guaranteed when mitmdump binds; retry if that ever races.
 func freePort() (int, error) {

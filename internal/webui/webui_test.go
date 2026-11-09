@@ -447,3 +447,21 @@ func TestFlowPagePieces(t *testing.T) {
 		t.Errorf("info %q", info)
 	}
 }
+
+// With several exit nodes, each page names its node, in the title and header.
+func TestNodeNamed(t *testing.T) {
+	u := New(store(t), testToken, nil)
+	if page := body(get(u, "devA", "/", testToken)); !strings.Contains(page, "<title>Reqcove</title>") {
+		t.Errorf("no node: %.300s", page)
+	}
+	u.Node = "reqcove-b"
+	for _, path := range []string{"/", "/flow?id=fa"} {
+		page := body(get(u, "devA", path, testToken))
+		if !strings.Contains(page, "<title>reqcove-b · Reqcove</title>") {
+			t.Errorf("%s: no node in the title: %.300s", path, page)
+		}
+	}
+	if page := body(get(u, "devA", "/", testToken)); !strings.Contains(page, `<b>Reqcove</b> <span class="muted">reqcove-b</span>`) {
+		t.Errorf("no node in the header: %.600s", page)
+	}
+}
