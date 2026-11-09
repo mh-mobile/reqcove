@@ -297,7 +297,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *web {
 		log.Printf("mitmweb on %s", cap.WebURL)
-		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps every flow until reqcove stops, so memory is not bounded.")
+		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

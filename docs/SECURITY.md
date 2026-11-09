@@ -225,7 +225,9 @@ node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
 open stays open if the device stops counting as yours. Tried from an iPhone on
 the exit node. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
-options. It shows every flow mitmproxy decrypted, including requests to hosts
+options. It shows bodies up to 2 MB each (after v0.1.0; Reqcove gives it them,
+as mitmproxy keeps no body it streams), whole and unmasked, and keeps the newest
+10,000 flows and 256 MB of bodies. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
 reuse): the per-request check keeps those out of Reqcove's records only.
 

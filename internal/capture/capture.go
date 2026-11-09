@@ -62,7 +62,11 @@ type Config struct {
 	UpstreamCA   string                        // PEM file of the upstream's CA, the only CA trusted then (--upstream-ca); empty: the public CAs
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
+	webMaxFlows  int                           // tests: fewer flows kept in mitmweb than its default
 }
+
+// WebKeep is the largest body (on the wire) given to mitmweb whole (--web).
+const WebKeep = 2 << 20
 
 // mitmdump is restarted when it exits, up to maxRestarts times in a row; a
 // run that stayed up for stableAfter resets the count.
@@ -213,6 +217,12 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	}
 	if cfg.WebPort != 0 {
 		c.args = append(c.args, "--set", "web_host=127.0.0.1", "--set", fmt.Sprintf("web_port=%d", cfg.WebPort), "--set", "web_open_browser=false")
+		// mitmweb keeps no streamed body: the addon gives it each one up to
+		// WebKeep, and drops its oldest flows past its own bounds.
+		c.args = append(c.args, "--set", fmt.Sprintf("reqcove_web_keep=%d", WebKeep))
+		if cfg.webMaxFlows > 0 {
+			c.args = append(c.args, "--set", fmt.Sprintf("reqcove_web_max_flows=%d", cfg.webMaxFlows))
+		}
 	}
 	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
 		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted

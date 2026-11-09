@@ -6,7 +6,9 @@
   code: your own devices on the tailnet see every device's flows, a `--device`
   device of another user its own. It follows new flows without reloading.
 - `run --web`: mitmweb also opens from your own devices on the tailnet, on the
-  node's port 8081, with the link `run` prints.
+  node's port 8081, with the link `run` prints. It now shows bodies (up to 2 MB
+  each; before, none: they stream past mitmproxy), and keeps the newest 10,000
+  flows and 256 MB of bodies instead of every flow.
 - The `--ui` and `--web` links stay the same across starts (their tokens are
   kept in the state directory; delete `ui-token` or `web-token` to change one).
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted

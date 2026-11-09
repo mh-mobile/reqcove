@@ -17,6 +17,7 @@ first; header, done and error events are kept so flows are never orphaned.
 """
 
 import asyncio
+import collections
 import base64
 import os
 import hmac
@@ -128,6 +129,9 @@ class _Head:
         self.addon, self.flow_id, self.dir = addon, flow.id, direction
         self.limit = addon.head_limit
         self.head = bytearray()
+        # --web: the whole body as on the wire, up to web_keep, for mitmweb (which
+        # keeps no streamed body); None once it is over.
+        self.addon, self.keep = addon, (bytearray() if addon.web_keep > 0 else None)
         self.size = 0  # bytes on the wire
         self.truncated = False
         self.decoding = True
@@ -145,6 +149,13 @@ class _Head:
     def __call__(self, data):
         try:
             self.size += len(data)
+            if self.keep is not None:
+                if len(self.keep) + len(data) <= self.addon.web_keep:
+                    self.keep += data
+                else:
+                    self.keep = None
+                if not data and self.keep is not None:
+                    self.addon.kept[(self.flow_id, self.dir)] = bytes(self.keep)
             room = self.limit - len(self.head)
             if data and room > 0 and self.decoding:
                 try:
@@ -243,6 +254,10 @@ class Resolve:
         self.replacements[name] = (str(addr), port)
 
 
+# --web: mitmweb's flows are bounded as Reqcove's records are.
+WEB_MAX_FLOWS = 10000
+WEB_MAX_BYTES = 256 << 20
+
 RULES_POLL = 1.0  # seconds between looks at the --rules file, with --rules-reload
 
 
@@ -314,6 +329,10 @@ class Reqcove:
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
+        self.web_keep = 0  # --web: bodies up to this many bytes kept for mitmweb
+        self.kept = {}  # (flow id, "request" or "response") -> the body to give mitmweb
+        self.web_flows = collections.deque()  # (flow, bytes kept): mitmweb's flows, oldest first
+        self.web_bytes = 0
         self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
         self.rules_stamp = None  # the file's (mtime, size, inode) when loaded, for --rules-reload
         self.rules_watch = None
@@ -329,11 +348,14 @@ class Reqcove:
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
         loader.add_option("reqcove_rules", str, "", "The --rules file.")
         loader.add_option("reqcove_rules_reload", bool, False, "Re-read the --rules file when it changes.")
+        loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
+        loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
         self.head_limit = ctx.options.reqcove_body_head
+        self.web_keep = ctx.options.reqcove_web_keep
         self.queue_limit = ctx.options.reqcove_queue_bytes
         if "reqcove_secret_file" in updated:
             try:
@@ -606,6 +628,38 @@ class Reqcove:
     def request(self, flow):
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "request", flow.request)
+        self._give_web(flow, "request", flow.request)
+
+    def _give_web(self, flow, direction, msg):
+        """--web: the streamed body, kept whole, goes into the flow mitmweb shows
+        (it was already sent on: this is the record only)."""
+        body = self.kept.pop((flow.id, direction), None)
+        if body is not None and msg is not None:
+            msg.raw_content = body
+
+    def _web_done(self, flow):
+        """--web: mitmweb keeps every flow; past WEB_MAX_FLOWS, or WEB_MAX_BYTES of
+        kept bodies, the oldest go (as Reqcove's own records do)."""
+        self.kept.pop((flow.id, "request"), None)
+        self.kept.pop((flow.id, "response"), None)
+        if not self.web_keep:
+            return
+        size = 0
+        for m in (flow.request, flow.response):
+            if m is not None and m.raw_content:
+                size += len(m.raw_content)
+        self.web_flows.append((flow, size))
+        self.web_bytes += size
+        old = []
+        while len(self.web_flows) > ctx.options.reqcove_web_max_flows or self.web_bytes > WEB_MAX_BYTES:
+            f, n = self.web_flows.popleft()
+            self.web_bytes -= n
+            old.append(f)
+        if old:
+            try:
+                ctx.master.commands.call("view.flows.remove", old)
+            except Exception:
+                pass
 
     def _copy_whole(self, flow, direction, msg):
         h = _Head(self, flow, direction, msg.headers)
@@ -631,6 +685,8 @@ class Reqcove:
 
     def response(self, flow):
         self.flow_rules.pop(flow.id, None)
+        self._give_web(flow, "response", flow.response)
+        self._web_done(flow)
         if flow.metadata.get("reqcove_skip"):
             return
         if flow.metadata.get("reqcove_local"):
@@ -639,6 +695,7 @@ class Reqcove:
 
     def error(self, flow):
         self.flow_rules.pop(flow.id, None)
+        self._web_done(flow)
         if flow.metadata.get("reqcove_skip"):
             return
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg[:SHORT]})
