@@ -264,8 +264,7 @@ func run(ctx context.Context, args []string) error {
 	s := cap.Store.Stats()
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
 	if ca := cap.CA; ca.Name != "" {
-		log.Printf("CA %q, SHA-256 %s, until %s: iPhones get it from http://mitm.it (the same CA as long as %s is kept)", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"), filepath.Join(*state, "mitmproxy"))
-		printQR(os.Stderr, "http://mitm.it", "to get the CA, scan this with the iPhone's camera while it uses the exit node (Safari opens http://mitm.it)")
+		log.Printf("CA %q, SHA-256 %s, until %s: iPhones get it from http://mitm.it (the same CA as long as %s is kept; its QR code comes with the others once the node is up)", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"), filepath.Join(*state, "mitmproxy"))
 	}
 	if upstream != "" {
 		trust := "the public CAs"
@@ -358,6 +357,9 @@ func run(ctx context.Context, args []string) error {
 		}
 		if webLink != "" {
 			codes = append(codes, qrItem{webLink, "--web: mitmweb (unmasked)"})
+		}
+		if len(devices) > 0 {
+			codes = append(codes, qrItem{"http://mitm.it", "the CA (exit node on)"})
 		}
 		printQRs(os.Stderr, codes...)
 	}
@@ -765,6 +767,9 @@ func readyBlock(devices map[string]string, uiLink, webLink, state string, steps 
 	}
 	if webLink != "" {
 		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
+	}
+	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
+		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on: QR code below; once per device)\n")
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")
