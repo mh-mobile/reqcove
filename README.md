@@ -270,7 +270,9 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   cannot reach a development server there directly; a rule can send an allowed
   host's requests to it (`map_remote` with `keep_host_header`, see Rules).
 - IPv6 is refused (apps fall back to IPv4 at once). QUIC is dropped except to Apple,
-  so apps fall back to TCP.
+  so apps fall back to TCP. This is by address, not by host: QUIC to hosts outside
+  `--allow-hosts` falls back too (and without `--allow-hosts` as well). QUIC on a
+  port other than 443 is not dropped; it goes on, and is not recorded.
 - Phone calls through the exit node have not been tried.
 - mitmproxy holds each WebSocket message until it is complete, so one huge message
   can use a lot of memory (if mitmproxy runs out, reqcove restarts it; when it is down again within a minute
