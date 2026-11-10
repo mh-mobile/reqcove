@@ -275,8 +275,8 @@ decrypted and every other app refused the CA.
 
 Tried: an Android 14 device (Chrome decrypted; every other app refused the
 CA), and a sample app, decrypted for the host it named this way in a
-`domain-config` and refusing the CA for another. Not tried: `debug-overrides`,
-for debug builds only.
+`domain-config` and refusing the CA for another; and a debuggable build of it
+with the `debug-overrides` above, which got answers from both hosts.
 
 ### The iOS Simulator (`--local-proxy`)
 

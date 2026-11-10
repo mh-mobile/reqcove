@@ -184,7 +184,7 @@ Android 7 以降向けに作られたアプリは、標準ではシステムの 
 </network-security-config>
 ```
 
-確認状況：Android 14 のデバイス（Chrome は復号、ほかのアプリはすべて拒否）と、サンプルアプリ（`domain-config` でこのように指定したホストは復号、指定していないホストは CA を拒否）で確認。未確認：デバッグビルドだけに効く `debug-overrides`。
+確認状況：Android 14 のデバイス（Chrome は復号、ほかのアプリはすべて拒否）と、サンプルアプリ（`domain-config` でこのように指定したホストは復号、指定していないホストは CA を拒否）と、上の `debug-overrides` を書いたデバッグ用のビルド（両方のホストから応答あり）で確認。
 
 ### iOS シミュレーターを記録する（`--local-proxy`）
 
