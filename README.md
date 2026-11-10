@@ -134,6 +134,7 @@ All of them, and what each does in full: [the guide](docs/guide.md#options).
 - [The flows on the iPhone](docs/guide.md#the-flows-on-the-iphone---ui) (`--ui`)
 - [The iOS Simulator](docs/guide.md#the-ios-simulator---local-proxy) (`--local-proxy`)
 - [A HAR file](docs/guide.md#a-har-file) (`reqcove har`)
+- [A web app's backend](docs/guide.md#a-web-apps-backend-rails-and-others) (Rails and others)
 - [An upstream proxy](docs/guide.md#an-upstream-proxy-burp-suite-and-others) (Burp Suite and others)
 - [Certificate pinning](docs/guide.md#certificate-pinning) (`--pass-hosts`)
 - [Agents on other devices](docs/guide.md#agents-on-other-devices---mcp-http), such as Grok Bot (`--mcp-http`)

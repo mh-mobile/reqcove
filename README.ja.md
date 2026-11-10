@@ -109,6 +109,7 @@ v0.1.0 のあとは、`reqcove run` をエージェントをつなぎ直さず�
 - [記録を iPhone で見る](docs/guide.ja.md#記録を-iphone-で見る--ui)（`--ui`）
 - [iOS シミュレーター](docs/guide.ja.md#ios-シミュレーター--local-proxy)（`--local-proxy`）
 - [HAR ファイルに書き出す](docs/guide.ja.md#har-ファイルに書き出す)（`reqcove har`）
+- [Web アプリのバックエンド](docs/guide.ja.md#web-アプリのバックエンドrails-など)（Rails など）
 - [上流のプロキシ](docs/guide.ja.md#上流のプロキシburp-suite-など)（Burp Suite など）
 - [証明書ピンニング](docs/guide.ja.md#証明書ピンニング)（`--pass-hosts`）
 - [ほかの端末のエージェント](docs/guide.ja.md#ほかの端末のエージェント--mcp-http)、Grok Bot など（`--mcp-http`）

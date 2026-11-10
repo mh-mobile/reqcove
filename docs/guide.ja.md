@@ -144,6 +144,24 @@ reqcove run --allow-hosts api.example.com --local-proxy   # iPhone も記録す�
 
 `reqcove run` が動いている間に `reqcove har > flows.har` を実行すると、記録を HAR 1.2 のファイルに、古い順で書き出します。デフォルトは新しい 1000 件までです（`--limit 0` で全部）。`--host`、`--device`、`--since 10m`、`--until`、`--status 4xx`、`--method`（v0.1.0 のあとは `--user-agent` も）で絞り込めます。中身は MCP の道具が返すものと同じです。受け取った時点でマスク済みで、本文は先頭だけです（切れた本文は、コメントにそう書きます）。マスクで確かめられなかった本文は入りません。`run --no-redact` のときは何もマスクされず、ファイルのコメントにそう書きます。HAR 1.2 の仕様の必須の項目に沿って書いています（仕様を読んで書いたもので、検証ツールにはかけていません）が、ほかのツール（ブラウザの開発者ツール、Charles、Proxyman）で開くのは、まだ試していません。
 
+## Web アプリのバックエンド（Rails など）
+
+> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
+
+Web アプリが自分でほかの API を呼ぶ通信（Rails のサーバーが決済の API を呼ぶ、など）は、iPhone ではなくサーバーから出ます。Reqcove に見えるのは、サーバーがその通信を Reqcove に通し、Reqcove の CA を信頼しているときだけです。tailnet にある自分のマシンで動くサーバーなら、そのマシンを `--device` に入れ、サーバーにノードの Remote Proxy を指定します。
+
+```sh
+reqcove run --device dev-server --allow-hosts api.example.com
+# dev-server で：変数は両方（Ruby の Net::HTTP は HTTPS でも http_proxy を見る）、
+# CA の束には Reqcove の CA を足す（システムの束と mitmproxy-ca-cert.pem をつなぐ）
+http_proxy=http://100.x.y.z:8080 https_proxy=http://100.x.y.z:8080 SSL_CERT_FILE=bundle.pem bin/rails server
+```
+
+- 記録は、そのマシンの名前で残ります。マシンの設定は変えず、サーバーの環境変数だけで済みます。
+- データベースや Redis への接続は、80 番と 443 番の HTTP(S) ではないので見えません。
+- ブラウザからアプリへのリクエストは別の道です。iPhone からなら、許可したホストへのリクエストを `map_remote` で開発サーバーに送ります（[ルール](#ルール)）。
+- この Mac を端末にして、Ruby の Net::HTTP で試しました。CA がないと Ruby は証明書を拒み（TLS の失敗が記録された）、CA があると呼び出しが記録されました。Rails のアプリそのもの、Faraday などほかのクライアント、別のマシンのサーバーでは試していません。
+
 ## 上流のプロキシ（Burp Suite など）
 
 > v0.1.0 にはありません。次のリリースまでは、ソースからビルドして使ってください。

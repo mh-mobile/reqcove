@@ -282,6 +282,34 @@ written to the HAR 1.2 spec's required fields (from reading the spec; no
 validator was run), but not opened in other tools yet (browsers' developer tools,
 Charles, Proxyman).
 
+## A web app's backend (Rails and others)
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+A web app's own calls to other APIs (a Rails server calling a payment API)
+leave from the server, not the phone: Reqcove sees them only when the server
+sends them through it and trusts its CA. For a server on one of your machines
+on the tailnet, name that machine with `--device` and point the server at the
+node's Remote Proxy:
+
+```sh
+reqcove run --device dev-server --allow-hosts api.example.com
+# on dev-server: both variables (Ruby's Net::HTTP reads http_proxy even for HTTPS),
+# and a CA bundle with Reqcove's CA added (cat the system's bundle and mitmproxy-ca-cert.pem)
+http_proxy=http://100.x.y.z:8080 https_proxy=http://100.x.y.z:8080 SSL_CERT_FILE=bundle.pem bin/rails server
+```
+
+- Its calls are recorded under that machine's name. Nothing on it changes
+  but the server's environment.
+- Connections to the database or Redis are not HTTP(S) on 80/443: not seen.
+- The browser's requests to the app are a different path: from the iPhone,
+  send an allowed host's requests to a development server with `map_remote`
+  ([Rules](#rules)).
+- Tried with Ruby's Net::HTTP on this Mac as the device: without the CA, Ruby
+  refused the certificate (a TLS failure was recorded); with it, the call was
+  recorded. Not tried: a Rails app itself, Faraday and other clients, a server
+  on another machine.
+
 ## An upstream proxy (Burp Suite and others)
 
 > Not in v0.1.0: until the next release, build from source to use it.
