@@ -20,7 +20,7 @@ import (
 // FilterIn is shared by list_flows, search_flows and summarize.
 type FilterIn struct {
 	Device string `json:"device,omitempty" jsonschema:"device name or StableID"`
-	Host   string `json:"host,omitempty" jsonschema:"host; also matches its subdomains (example.com matches api.example.com), not look-alikes (evenrealities.com is not even-realities.com): when it matches no flow, the answer lists similar_hosts"`
+	Host   string `json:"host,omitempty" jsonschema:"host; also matches its subdomains (example.com matches api.example.com), not look-alikes (acmeshop.com is not acme-shop.com): when it matches no flow, the answer lists similar_hosts"`
 	Since  string `json:"since,omitempty" jsonschema:"only requests started at or after this: RFC 3339 time, or a duration ago such as 10m or 2h"`
 	Until  string `json:"until,omitempty" jsonschema:"only requests started at or before this: RFC 3339 time, or a duration ago"`
 	Status string `json:"status,omitempty" jsonschema:"response status: 404, a class such as 4xx, or none for flows without a response (open or failed)"`
@@ -91,9 +91,12 @@ var Version = "dev"
 
 // StatusOut is what the status tool returns; `reqcove status` prints it.
 type StatusOut struct {
-	Node      any            `json:"node"`       // exitnode.Status
-	NextSteps []string       `json:"next_steps"` // what the user should do, most urgent first; empty when all is set
-	Capture   map[string]any `json:"capture"`    // capture_stats
+	Node      any      `json:"node"`       // exitnode.Status
+	NextSteps []string `json:"next_steps"` // what the user should do, most urgent first; empty when all is set
+	// AllowHosts is --allow-hosts: what is decrypted and recorded; anything
+	// else is carried, never recorded.
+	AllowHosts []string       `json:"allow_hosts"`
+	Capture    map[string]any `json:"capture"` // capture_stats
 }
 
 // New returns an MCP server with the read-only tools over st; status, when

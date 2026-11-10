@@ -12,6 +12,7 @@ import (
 type HostRules struct {
 	All      bool     // "*": everything (except Apple's hosts)
 	Patterns []string // anchored regexps over a lowercase host without port
+	Hosts    []string // the specs as given, lowercased: what the status tool shows
 	res      []*regexp.Regexp
 }
 
@@ -26,6 +27,9 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 			h = strings.TrimSuffix(raw, ".")
 			if h != raw && (h == "*" || h == "") {
 				return r, fmt.Errorf("--allow-hosts: bad host %q", raw) // "*." must not mean "*"
+			}
+			if h != "" {
+				r.Hosts = append(r.Hosts, h)
 			}
 			switch {
 			case h == "":

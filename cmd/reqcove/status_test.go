@@ -411,3 +411,15 @@ func TestUsageTwoDashes(t *testing.T) {
 		t.Errorf("help:\n%s", out)
 	}
 }
+
+// The status tool says which hosts are recorded, so an agent knows a host it
+// finds nothing for may be outside them; [] when none.
+func TestStatusAllowHosts(t *testing.T) {
+	allow, _ := capture.ParseAllowHosts([]string{"API.example.com, *.cdn.example"})
+	if got := statusOut(exitnode.Status{}, nil, allow, capture.CA{}, nil).AllowHosts; strings.Join(got, " ") != "api.example.com *.cdn.example" {
+		t.Errorf("allow_hosts %q", got)
+	}
+	if got := statusOut(exitnode.Status{}, nil, capture.HostRules{}, capture.CA{}, nil).AllowHosts; got == nil || len(got) != 0 {
+		t.Errorf("no --allow-hosts: %#v", got)
+	}
+}

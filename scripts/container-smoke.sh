@@ -17,6 +17,7 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; $c logs "$run" >&2 2>&1 || :; exit 1; }
 
 $c run --rm "$img" version | grep -q '^reqcove ' || fail "reqcove version"
+$c run --rm "$img" init --print | grep -q '^name: reqcove$' || fail "reqcove init --print: the skill is not in the image"
 
 $c volume create "$vol" >/dev/null
 $c run -d --init --network none --name "$run" -v "$vol:/home/nonroot/.reqcove" "$img" \

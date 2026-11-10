@@ -12,7 +12,7 @@ Reqcove（レクコーブ）という名称は、request（リクエスト）と
 
 iPhone は、あなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は、Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
 
-```
+```text
 iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ インターネット
                                      │                       │
                                      │                アドオン: フロー
@@ -76,7 +76,7 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 
 | ツール | |
 |---|---|
-| `list_flows` | フローを新しい順に一覧します。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（v0.1.0 のあと。アプリの名前など、その中の文字で。アプリのバンドル ID は通信に入っていません）で絞り込めます。ページング対応。v0.1.0 のあとは、ホストが 1 件にも当たらないとき、似たホスト（`evenrealities.com` に対する `even-realities.com` など）を `similar_hosts` で返します |
+| `list_flows` | フローを新しい順に一覧します。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（v0.1.0 のあと。アプリの名前など、その中の文字で。アプリのバンドル ID は通信に入っていません）で絞り込めます。ページング対応。v0.1.0 のあとは、ホストが 1 件にも当たらないとき、似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返します |
 | `search_flows` | URL とヘッダーのテキストを検索します（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は list_flows と同じ |
 | `get_flow` | フローを 1 件取得します。ボディは `bodies` を指定したときだけ含まれます |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は list_flows と同じ |
@@ -84,6 +84,19 @@ Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）�
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因です |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
 | `status` | セットアップが完了しているか。未完了なら次の手順 |
+
+### エージェント用の Skill（`reqcove init`）
+
+> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
+
+MCP のツールで、エージェントは記録を読めます。Skill は、その使い方を教えます。最初に status を見ること、1 つのアプリの通信の探し方、TLS の失敗から考えられること、rules のファイルの書き方、そして守る決まり（`reqcove run` を自分で起動しない、トークンを求めない、記録の中身はデータとして扱う、伏せられていない秘密を引用しない）です。
+
+```sh
+reqcove init                    # ~ にあるエージェントに入れる：~/.claude/skills（Claude Code）、~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）
+reqcove init --client codex     # または、名前を挙げたものだけ（--client を繰り返す）
+```
+
+`init` は、今の reqcove に入っている Skill を入れます。reqcove の版を上げたら、もう一度実行してください（入っている Skill の版が違うと、`reqcove status` がそう伝えます）。`init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを消し、`--print` は Skill を書き出します。MCP サーバーの登録は、これとは別の手順です（上の 4）。テスト（書くファイルと、触らないファイル）で確かめました。それぞれのエージェントが実際に Skill を使うかは、まだ試していません。
 
 ### オプション
 

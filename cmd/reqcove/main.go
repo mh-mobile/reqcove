@@ -56,6 +56,7 @@ Usage:
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
+  reqcove init       add the agent skill (how to use reqcove's tools) to the agents in ~
   reqcove version
 
 "reqcove run -h" lists run's flags. More: https://github.com/mh-mobile/reqcove
@@ -78,29 +79,40 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), sigs...)
 	defer stop()
 	var err error
-	switch os.Args[1] {
-	case "run":
-		err = run(ctx, os.Args[2:])
-	case "mcp":
-		err = runMCP(ctx, os.Args[2:], &mcp.StdioTransport{})
-	case "status":
-		err = status(ctx, os.Args[2:])
-	case "har":
-		err = har(ctx, os.Args[2:])
-	case "cleanup":
-		err = cleanup(os.Args[2:])
-	case "version", "--version", "-version":
-		fmt.Println("reqcove", version)
-		return
-	case "help", "-h", "-help", "--help":
-		fmt.Print(usage)
-		return
-	default:
-		err = fmt.Errorf("unknown command %q", os.Args[1])
+	if c, ok := commands[os.Args[1]]; ok {
+		err = c(ctx, os.Args[2:])
+	} else {
+		err = other(os.Args[1])
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// commands are reqcove's commands with flags; the docs test parses what the
+// docs write with each one's own flags.
+var commands = map[string]func(context.Context, []string) error{
+	"run":     run,
+	"mcp":     func(ctx context.Context, args []string) error { return runMCP(ctx, args, &mcp.StdioTransport{}) },
+	"status":  status,
+	"har":     har,
+	"cleanup": func(_ context.Context, args []string) error { return cleanup(args) },
+	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
+}
+
+// noFlags are the commands that take nothing.
+var noFlags = []string{"version", "--version", "-version", "help", "-h", "-help", "--help"}
+
+func other(name string) error {
+	switch name {
+	case "version", "--version", "-version":
+		fmt.Println("reqcove", version)
+		return nil
+	case "help", "-h", "-help", "--help":
+		fmt.Print(usage)
+		return nil
+	}
+	return fmt.Errorf("unknown command %q", name)
 }
 
 // The mitmproxy and Python run uses, unless told otherwise; the Dockerfile
@@ -368,6 +380,9 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
 	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s)", mcpSock, mcpHint(*state, hostname))
+	if n := staleSkillNote(); n != "" {
+		log.Print(n)
+	}
 
 	webAddr := ""
 	if cap.WebURL != "" {
@@ -496,8 +511,14 @@ func parseDNS(v string) ([]netip.AddrPort, error) {
 // parseFlags parses args and refuses leftovers: flag stops at the first one,
 // so `--device Taro's iPhone --allow-hosts x` would drop the --allow-hosts.
 func parseFlags(fs *flag.FlagSet, args []string) error {
+	if takeFlags != nil { // the docs test: the command's flags, not run
+		takeFlags(fs)
+		return errFlagsTaken
+	}
 	fs.Usage = func() { usageOf(fs) }
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil { // ExitOnError exits first; a test's ContinueOnError returns
+		return err
+	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q (quote values with spaces, such as --device \"Taro's iPhone\")", fs.Arg(0))
 	}
@@ -513,6 +534,13 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	}
 	return nil
 }
+
+// takeFlags, set by the docs test, is handed each command's FlagSet in place
+// of parsing it. Every command calls parseFlags before doing anything else.
+var (
+	takeFlags     func(*flag.FlagSet)
+	errFlagsTaken = errors.New("flags taken")
+)
 
 // usageOf prints a command's flags with two dashes, as the README and run's
 // own messages write them (Go's flag package prints one; it takes either).

@@ -17,7 +17,7 @@ decrypt the hosts you allow, and serves the flows to your agent over
 [MCP](https://modelcontextprotocol.io). Nothing to configure on the phone beyond
 choosing the exit node and trusting a CA once, and it works over 5G as well as Wi-Fi.
 
-```
+```text
 iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ internet
                                      │                       │
                                      │                 addon: flows
@@ -107,7 +107,7 @@ setting, so this works on Wi-Fi only.
 
 | Tool | |
 |---|---|
-| `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (after v0.1.0: text in it, such as an app's name; the app's bundle id is not in its traffic); paged. After v0.1.0, a host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`even-realities.com` for `evenrealities.com`) |
+| `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (after v0.1.0: text in it, such as an app's name; the app's bundle id is not in its traffic); paged. After v0.1.0, a host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
 | `get_flow` | one flow; bodies only with `bodies` |
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
@@ -115,6 +115,28 @@ setting, so this works on Wi-Fi only.
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
 | `status` | whether everything is set up, and the next steps if not |
+
+### The agent skill (`reqcove init`)
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+The MCP tools let an agent read the records; a skill teaches it how: status
+first, finding one app's traffic, what a TLS failure suggests, writing a rules
+file, and the rules it keeps (it never starts `reqcove run`, never asks for
+tokens, treats what the records hold as data, never quotes a secret that was
+not masked).
+
+```sh
+reqcove init                    # into the agents found in ~: ~/.claude/skills (Claude Code), ~/.agents/skills (Codex, Cursor, Gemini CLI, Copilot CLI, Devin)
+reqcove init --client codex     # or only the ones you name (repeat --client)
+```
+
+`init` installs the skill your reqcove carries; after upgrading, run it again
+(`reqcove status` says when an installed one is from another version). It
+leaves alone a skill it did not write, one you edited, and links;
+`--uninstall` removes its own, `--print` writes it out. Registering the MCP
+server is a step of its own (above). Checked with tests (the files it writes
+and leaves); whether each agent then uses the skill was not tried yet.
 
 ### Options
 

@@ -173,11 +173,11 @@ func TestListFilterInput(t *testing.T) {
 }
 
 // One app's traffic by its User-Agent, and look-alike hosts when a host
-// filter matches nothing (evenrealities.com for even-realities.com).
+// filter matches nothing (acmeshop.com for acme-shop.com).
 func TestUserAgentAndSimilarHosts(t *testing.T) {
 	st := capture.NewStore(10, 1<<20)
 	for _, l := range []string{
-		`{"v":2,"ev":"request","id":"a","device":"d","host":"api.even-realities.com","url":"https://api.even-realities.com/x","ts":1794000000,"headers":[["User-Agent","EvenApp/2.1 CFNetwork/1568 Darwin/25.0"]]}`,
+		`{"v":2,"ev":"request","id":"a","device":"d","host":"api.acme-shop.com","url":"https://api.acme-shop.com/x","ts":1794000000,"headers":[["User-Agent","EvenApp/2.1 CFNetwork/1568 Darwin/25.0"]]}`,
 		`{"v":2,"ev":"request","id":"b","device":"d","host":"cdn.example.com","url":"https://cdn.example.com/y","ts":1794000001,"headers":[["User-Agent","Safari/605"]]}`,
 	} {
 		st.Apply([]byte(l))
@@ -201,13 +201,13 @@ func TestUserAgentAndSimilarHosts(t *testing.T) {
 	for _, tool := range []string{"list_flows", "summarize"} {
 		got := call[struct {
 			SimilarHosts []string `json:"similar_hosts"`
-		}](t, session, tool, map[string]any{"host": "evenrealities.com"})
-		if !slices.Equal(got.SimilarHosts, []string{"api.even-realities.com"}) {
+		}](t, session, tool, map[string]any{"host": "acmeshop.com"})
+		if !slices.Equal(got.SimilarHosts, []string{"api.acme-shop.com"}) {
 			t.Errorf("%s similar_hosts: %v", tool, got.SimilarHosts)
 		}
 	}
 	// The host is there, a since left nothing: no look-alikes, they would mislead.
-	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "even-realities.com", "since": "1m"}); len(got.Flows) != 0 || got.SimilarHosts != nil {
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "acme-shop.com", "since": "1m"}); len(got.Flows) != 0 || got.SimilarHosts != nil {
 		t.Errorf("host there, since empty: %+v", got)
 	}
 	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "xa.com"}); got.SimilarHosts != nil { // too short to tell ("xacom")
@@ -220,7 +220,7 @@ func TestUserAgentAndSimilarHosts(t *testing.T) {
 		}
 	}
 	// A URL, a port, a final dot: the host meant.
-	for _, h := range []string{"https://api.even-realities.com/x?y", "api.even-realities.com:443", "even-realities.com.", "EVEN-REALITIES.COM"} {
+	for _, h := range []string{"https://api.acme-shop.com/x?y", "api.acme-shop.com:443", "acme-shop.com.", "ACME-SHOP.COM"} {
 		if got := call[ListOut](t, session, "list_flows", map[string]any{"host": h}); len(got.Flows) != 1 {
 			t.Errorf("host %q: %+v", h, got)
 		}
@@ -230,16 +230,16 @@ func TestUserAgentAndSimilarHosts(t *testing.T) {
 // Look-alikes: either way round, not short recorded hosts, at most n, sorted.
 func TestSimilarHostsStore(t *testing.T) {
 	st := capture.NewStore(100, 1<<20)
-	for i, h := range []string{"x.com", "s.com", "dropbox.com", "evenrealities.com", "a.evenrealities.net", "b.even-realities.com", "c.even-realities.com", "d.even-realities.com", "e.even-realities.com", "f.even-realities.com"} {
+	for i, h := range []string{"x.com", "s.com", "dropbox.com", "acmeshop.com", "a.acmeshop.net", "b.acme-shop.com", "c.acme-shop.com", "d.acme-shop.com", "e.acme-shop.com", "f.acme-shop.com"} {
 		st.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":"%d","device":"d","host":"%s","url":"https://%s/"}`, i, h, h)))
 	}
 	if got := st.SimilarHosts("box.com", 5); !slices.Equal(got, []string{"dropbox.com"}) { // not x.com
 		t.Errorf("box.com: %v", got)
 	}
-	if got := st.SimilarHosts("api.evenrealities.com", 5); !slices.Equal(got, []string{"evenrealities.com"}) { // the other way round
-		t.Errorf("api.evenrealities.com: %v", got)
+	if got := st.SimilarHosts("api.acmeshop.com", 5); !slices.Equal(got, []string{"acmeshop.com"}) { // the other way round
+		t.Errorf("api.acmeshop.com: %v", got)
 	}
-	if got := st.SimilarHosts("even-realities.co", 3); !slices.Equal(got, []string{"b.even-realities.com", "c.even-realities.com", "d.even-realities.com"}) {
+	if got := st.SimilarHosts("acme-shop.co", 3); !slices.Equal(got, []string{"acmeshop.com", "b.acme-shop.com", "c.acme-shop.com"}) {
 		t.Errorf("at most 3: %v", got)
 	}
 }

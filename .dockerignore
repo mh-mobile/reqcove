@@ -4,5 +4,6 @@
 !go.sum
 !cmd/
 !internal/
+!skills/
 **/*_test.go
 **/testdata/

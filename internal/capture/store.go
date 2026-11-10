@@ -1106,7 +1106,7 @@ func lowerASCII(c byte) byte {
 
 // SimilarHosts returns up to n recorded hosts that look like host (compared
 // lowercased with all but letters and digits left out, one containing the
-// other: evenrealities.com and api.even-realities.com), for an agent whose
+// other: acmeshop.com and api.acme-shop.com), for an agent whose
 // host filter matched nothing; nil when host or a subdomain of it is recorded.
 func (s *Store) SimilarHosts(host string, n int) []string {
 	key := func(h string) string {

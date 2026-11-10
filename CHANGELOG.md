@@ -28,6 +28,12 @@
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
   file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- `reqcove init`: the agent skill (`skills/reqcove/SKILL.md`, carried in the
+  binary) into `~/.claude/skills` and `~/.agents/skills` for the agents found
+  in `~` (or `--client`); it updates only its own unchanged file, and leaves
+  others' skills, edited ones and links alone. `reqcove status` and `run` say
+  when an installed one is from another version. The `status` tool now lists
+  `allow_hosts`.
 - A container image (`Dockerfile`, distroless, not root), built from the
   repository: one container and volume per environment, the agent through
   `docker run -i … reqcove mcp` ([docs/container.md](docs/container.md)).
@@ -45,8 +51,8 @@
 - `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
   filter by text in the User-Agent, case-insensitive: one app's traffic, as
   summarize lists the User-Agents. A host filter that matches no flow answers
-  with `similar_hosts`, recorded hosts that look alike (`even-realities.com`
-  for `evenrealities.com`). The host filter takes a URL, a port or a final
+  with `similar_hosts`, recorded hosts that look alike (`acme-shop.com`
+  for `acmeshop.com`). The host filter takes a URL, a port or a final
   dot too, and Unicode names (as punycode). `list_tls_failures` takes only
   device, host, since, until and limit (before, status and method were
   accepted and matched nothing: a failed handshake has no response).

@@ -35,7 +35,11 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 // puts this node in their own tailnet. The steps point at run's terminal instead.
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
-	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices)}
+	hosts := allow.Hosts
+	if hosts == nil {
+		hosts = []string{} // [], not null: nothing is recorded
+	}
+	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts}
 }
 
 // pageSteps are the next steps the --ui page shows the device id: built from it
@@ -146,6 +150,9 @@ func status(ctx context.Context, args []string) error {
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if n := staleSkillNote(); n != "" {
+		fmt.Fprintln(os.Stderr, "note: "+n) // stderr: --json stays clean
 	}
 
 	conn, err := net.Dial("unix", filepath.Join(*state, "mcp.sock"))
