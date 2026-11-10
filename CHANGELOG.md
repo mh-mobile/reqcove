@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0 — 2026-11-10
+## v0.2.0 — 2026-11-11
 
 - `reqcove status` knows Android devices (the OS Tailscale reports): their apps
   trust only the system's CAs, so it says to check the CA in Chrome and to keep
