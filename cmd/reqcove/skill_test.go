@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -167,5 +168,30 @@ func TestSkillFile(t *testing.T) {
 	}
 	if n := strings.Count(s, "\n"); n > 500 {
 		t.Errorf("%d lines: the spec suggests under 500", n)
+	}
+}
+
+// Builds from source are told apart by their commit; a release keeps its version.
+func TestBuildVersion(t *testing.T) {
+	info := func(kv ...string) *debug.BuildInfo {
+		b := &debug.BuildInfo{}
+		for i := 0; i < len(kv); i += 2 {
+			b.Settings = append(b.Settings, debug.BuildSetting{Key: kv[i], Value: kv[i+1]})
+		}
+		return b
+	}
+	for _, c := range []struct {
+		v    string
+		info *debug.BuildInfo
+		want string
+	}{
+		{"dev", info("vcs.revision", "77e6706abcdef", "vcs.modified", "false"), "dev-77e6706"},
+		{"dev", info("vcs.revision", "77e6706abcdef", "vcs.modified", "true"), "dev-77e6706-dirty"},
+		{"dev", info(), "dev"}, // go run, or no .git (the container's build)
+		{"0.2.0", info("vcs.revision", "77e6706abcdef"), "0.2.0"},
+	} {
+		if got := buildVersion(c.v, c.info); got != c.want {
+			t.Errorf("%s %v: %q, want %q", c.v, c.info.Settings, got, c.want)
+		}
 	}
 }

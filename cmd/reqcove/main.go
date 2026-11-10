@@ -44,6 +44,28 @@ import (
 // version is set at release builds: -ldflags "-X main.version=v0.1.0".
 var version = "dev"
 
+// buildVersion names a build from source by its commit (dev-77e6706, -dirty
+// with changes not committed), so `reqcove mcp` and a `run` of other builds
+// tell each other apart; a release keeps the version it was given.
+func buildVersion(v string, info *debug.BuildInfo) string {
+	if v != "dev" {
+		return v
+	}
+	var rev, dirty string
+	for _, s := range info.Settings {
+		switch {
+		case s.Key == "vcs.revision" && len(s.Value) >= 7:
+			rev = s.Value[:7]
+		case s.Key == "vcs.modified" && s.Value == "true":
+			dirty = "-dirty"
+		}
+	}
+	if rev == "" {
+		return v
+	}
+	return v + "-" + rev + dirty
+}
+
 const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
 
 Usage:
@@ -67,6 +89,9 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		version = buildVersion(version, info)
 	}
 	mcpserver.Version = version
 	if os.Getenv("GOMEMLIMIT") == "" {

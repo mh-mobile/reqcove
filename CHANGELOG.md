@@ -28,6 +28,9 @@
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
   file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- A build from source is versioned by its commit (`dev-77e6706`, `-dirty` with
+  uncommitted changes) instead of `dev`, so `reqcove mcp` can tell a `run` of
+  another build and say to reconnect.
 - `reqcove init`: the agent skill (`skills/reqcove/SKILL.md`, carried in the
   binary) into `~/.claude/skills` and `~/.agents/skills` for the agents found
   in `~` (or `--client`); it updates only its own unchanged file, and leaves
