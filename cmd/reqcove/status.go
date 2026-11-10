@@ -138,7 +138,11 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			steps = append(steps, fmt.Sprintf("no traffic from %s yet: turn on its exit node (%s). If it is on and sites do not load, turn the exit node off and on again: its DNS can stay stuck after reqcove was down", d.Name, node.Node))
 		}
 		if d.Carried && d.TLSFailures > 0 && d.Flows == 0 {
-			steps = append(steps, fmt.Sprintf("%s refuses every certificate so far: install and trust the CA %q on it (open http://mitm.it, typing http://), unless the app pins its certificates", d.Name, ca.Name))
+			if android(node, d.ID) {
+				steps = append(steps, fmt.Sprintf("%s refuses every certificate so far. It runs Android, whose apps trust only the system's CAs, not one you install: open a site in Chrome to check the CA %q (if Chrome warns, install it from http://mitm.it, typing http://, as a CA certificate in Settings). For your own app, a debug build that trusts user CAs (network_security_config)", d.Name, ca.Name))
+			} else {
+				steps = append(steps, fmt.Sprintf("%s refuses every certificate so far: install and trust the CA %q on it (open http://mitm.it, typing http://), unless the app pins its certificates", d.Name, ca.Name))
+			}
 		}
 	}
 	// Hosts a device refuses while it accepts the CA elsewhere, for these
@@ -164,9 +168,19 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			}
 		}
 		all = append(all, hosts...)
+		if android(node, d.ID) {
+			steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s. It runs Android: its apps trust only the system's CAs, so all but Chrome and apps built to trust user CAs (network_security_config) refuse it. Keep --allow-hosts to the hosts you test (the others pass undecrypted, and their apps work), or start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(all, ","))))
+			continue
+		}
 		steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s, while it accepts it for other hosts: certificate pinning, or an app with its own list of CAs. To let those apps work, start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(all, ","))))
 	}
 	return steps
+}
+
+// android: Tailscale says the device runs Android, whose apps trust only the
+// system's CAs (Android 7 and later, unless the app opts in).
+func android(node exitnode.Status, id string) bool {
+	return strings.EqualFold(node.DeviceOS[id], "android")
 }
 
 // status prints where a running reqcove stands, or, when none runs, what

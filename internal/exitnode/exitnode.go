@@ -80,8 +80,9 @@ type Status struct {
 	ExitApproved bool              `json:"exit_node_approved"` // the admin approved its exit routes
 	LockEnabled  bool              `json:"tailnet_lock"`
 	LockSigned   bool              `json:"tailnet_lock_signed"`
-	NodeKey      string            `json:"node_key,omitempty"` // to sign under Tailnet Lock
-	Devices      map[string]string `json:"devices"`            // carried: StableID -> name
+	NodeKey      string            `json:"node_key,omitempty"`  // to sign under Tailnet Lock
+	Devices      map[string]string `json:"devices"`             // carried: StableID -> name
+	DeviceOS     map[string]string `json:"device_os,omitempty"` // carried: StableID -> OS, as Tailscale has it (iOS, android, macOS, ...)
 	Problems     []string          `json:"device_problems,omitempty"`
 	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
@@ -325,6 +326,12 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.DeviceOS = map[string]string{}
+			for _, p := range peers {
+				if names[string(p.ID)] != "" && p.OS != "" {
+					status.DeviceOS[string(p.ID)] = p.OS
+				}
+			}
 			if cfg.OnStatus != nil {
 				cfg.OnStatus(status)
 			}

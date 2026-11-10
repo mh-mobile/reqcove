@@ -536,3 +536,24 @@ func TestPassSuggestionMerges(t *testing.T) {
 		t.Errorf("merged:\n%s", got)
 	}
 }
+
+// On Android (as Tailscale says), the steps say its apps trust only the
+// system's CAs, and narrowing --allow-hosts, rather than pinning or the CA.
+func TestAndroidSteps(t *testing.T) {
+	node := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, DeviceOS: map[string]string{"a": "android", "i": "iOS"}}
+	all := []capture.DeviceInfo{{ID: "a", Name: "beam-pro", Carried: true, TLSFailures: 40}, {ID: "i", Name: "iphone", Carried: true, TLSFailures: 3}}
+	got := strings.Join(nextSteps(node, map[string]any{"state": "ready"}, capture.HostRules{All: true}, capture.CA{Name: "Reqcove CA"}, all), "\n")
+	for _, want := range []string{"beam-pro refuses every certificate so far. It runs Android", "open a site in Chrome", "network_security_config", "iphone refuses every certificate so far: install and trust"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+	some := []capture.DeviceInfo{{ID: "a", Name: "beam-pro", Carried: true, Flows: 6}, {ID: "i", Name: "iphone", Carried: true, Flows: 9}}
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{{Device: "a", Host: "api.app.example", Refusals: 30}, {Device: "i", Host: "api.x.com", Refusals: 12}}}
+	got = strings.Join(nextSteps(node, stats, capture.HostRules{All: true}, capture.CA{}, some), "\n")
+	for _, want := range []string{"beam-pro refused Reqcove's certificate again and again for api.app.example (30). It runs Android", "Keep --allow-hosts to the hosts you test", "--pass-hosts api.app.example ", "iphone refused Reqcove's certificate again and again for api.x.com (12), while it accepts it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+}
