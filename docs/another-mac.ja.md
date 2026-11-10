@@ -15,7 +15,9 @@ reqcove run --device iphone --device macbook-sub --allow-hosts api.example.com -
 ## 2. 別の Mac で、Exit Node を選ぶ
 
 - メニューバーの Tailscale のアイコン › Exit Node › `reqcove` を選ぶ。または、
-- `tailscale set --exit-node=reqcove` を実行する。家の LAN（プリンターなど）にも直接届くようにしたいときは、`--exit-node-allow-lan-access=true` も付けます。
+- `tailscale set --exit-node=reqcove` を実行する。
+
+Exit Node をオンにすると、その Mac の通信は家の LAN 宛ても Reqcove に向かい、Reqcove は LAN 宛てを断ります。そのため、その Mac から家の LAN の機器（NAS など）に届かなくなります。届くようにするには、`--exit-node-allow-lan-access=true` も付けます。LAN 宛ての通信は Reqcove を通らずに直接届き、記録はされません。
 
 ## 3. HTTPS の中身も見るなら、その Mac に Reqcove の CA を信頼させる
 

@@ -18,8 +18,12 @@ lists them). Reqcove carries only the `--device` devices' traffic.
 ## 2. On the other Mac: choose the exit node
 
 - The Tailscale menu bar icon › Exit Node › `reqcove`, or
-- `tailscale set --exit-node=reqcove` (add `--exit-node-allow-lan-access=true`
-  to keep reaching your LAN, a printer say, directly).
+- `tailscale set --exit-node=reqcove`.
+
+With the exit node on, that Mac's traffic to your home LAN goes to Reqcove
+too, which refuses LAN destinations: the Mac no longer reaches devices on the
+LAN (a NAS, say). Add `--exit-node-allow-lan-access=true` to reach them
+directly; that traffic skips Reqcove and is not recorded.
 
 ## 3. To see HTTPS: trust Reqcove's CA on that Mac
 
