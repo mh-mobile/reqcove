@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -39,7 +40,7 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts}
+	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts}
 }
 
 // pageSteps are the next steps the --ui page shows the device id: built from it
@@ -136,6 +137,21 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		}
 		if d.Carried && d.TLSFailures > 0 && d.Flows == 0 {
 			steps = append(steps, fmt.Sprintf("%s refuses every certificate so far: install and trust the CA %q on it (open http://mitm.it, typing http://), unless the app pins its certificates", d.Name, ca.Name))
+		}
+	}
+	// Hosts a device refuses while it accepts the CA elsewhere, for these
+	// devices only (the --ui page of another user's device lists its own).
+	refused, _ := stats["refused_hosts"].([]capture.RefusedHost)
+	for _, d := range devices {
+		var hosts, counts []string
+		for _, r := range refused {
+			if r.Device == d.ID {
+				hosts = append(hosts, r.Host)
+				counts = append(counts, fmt.Sprintf("%s (%d)", r.Host, r.Refusals))
+			}
+		}
+		if len(hosts) > 0 {
+			steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s, while it accepts it for other hosts: certificate pinning, or an app with its own list of CAs. To let those apps work, start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(hosts, ","))))
 		}
 	}
 	return steps

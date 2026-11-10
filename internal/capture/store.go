@@ -45,6 +45,9 @@ type event struct {
 	FromClient  bool        `json:"from_client"`
 	Conn        string      `json:"conn"`
 	SNI         string      `json:"sni"`
+	Server      string      `json:"server"` // pass_open: where the connection went
+	ALPN        []string    `json:"alpn"`   // pass_open: what the client offered
+	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	// hello
@@ -145,7 +148,10 @@ type Store struct {
 	heldBytes     int
 	hello         event
 	tlsFailures   []TLSFailure
-	addonDropped  [2]int64 // bodies, events
+	passes        []*passthrough          // --pass-hosts connections, oldest first, at most maxPasses
+	passByConn    map[string]*passthrough // the open ones
+	passCount     int                     // all seen, evicted included
+	addonDropped  [2]int64                // bodies, events
 	badLines      int64
 	unknownVer    int64
 	orphanUpdates int64
@@ -191,6 +197,10 @@ func (s *Store) mitmdumpExited(why string) {
 			s.heldBytes += f.bytes() - before
 		}
 	}
+	for _, p := range s.passByConn { // mitmdump took them down with it
+		p.end, p.note = float64(time.Now().UnixNano())/1e9, why
+	}
+	clear(s.passByConn)
 	s.earlier[0] += s.addonDropped[0]
 	s.earlier[1] += s.addonDropped[1]
 	s.earlier[2] += s.addonOOS
@@ -237,7 +247,7 @@ const (
 
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
-	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, allow: HostRules{All: true}, redact: true, state: "starting"}
+	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, redact: true, state: "starting"}
 }
 
 func (s *Store) Apply(line []byte) {
@@ -265,6 +275,26 @@ func (s *Store) Apply(line []byte) {
 		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
 		if s.rulesLog != nil {
 			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
+		}
+		return
+	case "pass_open":
+		if !s.allow.Allowed(e.SNI) { // passed through for an allowed host only: checked here too
+			s.outOfScope++
+			return
+		}
+		p := &passthrough{conn: e.Conn, device: e.Device, host: e.SNI, server: e.Server, alpn: e.ALPN, start: e.TS}
+		s.passes = append(s.passes, p)
+		s.passByConn[e.Conn] = p
+		s.passCount++
+		if len(s.passes) > maxPasses {
+			delete(s.passByConn, s.passes[0].conn)
+			s.passes = s.passes[1:]
+		}
+		return
+	case "pass_close":
+		if p := s.passByConn[e.Conn]; p != nil {
+			p.end, p.up, p.down = e.TSEnd, e.Up, e.Down
+			delete(s.passByConn, e.Conn)
 		}
 		return
 	case "tls_failed":
@@ -778,8 +808,10 @@ func (s *Store) Stats() map[string]any {
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
-		"tls_failures": len(s.tlsFailures),
-		"mitmproxy":    s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
+		"tls_failures":   len(s.tlsFailures),
+		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),
+		"pass_hosts": s.allow.PassHosts, "refused_hosts": s.refusedLocked(),
+		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
 	}
@@ -1142,4 +1174,115 @@ func (s *Store) SimilarHosts(host string, n int) []string {
 	}
 	sort.Strings(out)
 	return out[:min(len(out), n)]
+}
+
+// maxPasses bounds the --pass-hosts connections kept, as TLS failures are.
+const maxPasses = 1000
+
+type passthrough struct {
+	conn, device, host, server, note string
+	alpn                             []string
+	start, end                       float64
+	up, down                         int64
+}
+
+// PassthroughView is a --pass-hosts connection as list_passthrough returns it:
+// what is outside TLS, nothing inside.
+type PassthroughView struct {
+	Time        string   `json:"time"`          // the connection's start
+	End         string   `json:"end,omitempty"` // empty while open
+	Open        bool     `json:"open"`          // still connected; bytes come when it ends
+	DurationMS  int64    `json:"duration_ms,omitempty"`
+	Host        string   `json:"host"` // the SNI the client sent
+	Device      string   `json:"device,omitempty"`
+	DeviceName  string   `json:"device_name,omitempty"`
+	Server      string   `json:"server,omitempty"` // IP:port connected to
+	ALPNOffered []string `json:"alpn_offered,omitempty"`
+	BytesUp     int64    `json:"bytes_up"` // from the client, TLS included, the whole connection
+	BytesDown   int64    `json:"bytes_down"`
+	Note        string   `json:"note,omitempty"` // why it ended early (mitmproxy restarted)
+	Conn        string   `json:"conn"`
+}
+
+// Passthroughs returns the newest --pass-hosts connections first. Of q, it
+// uses Device, Host, Since, Until and Limit.
+func (s *Store) Passthroughs(q Filter) []PassthroughView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []PassthroughView{}
+	for i := len(s.passes) - 1; i >= 0 && len(out) < q.Limit; i-- {
+		p := s.passes[i]
+		if !q.match(&Flow{Device: p.device, Host: p.host, Start: p.start}, s.names[p.device]) {
+			continue
+		}
+		v := PassthroughView{Host: p.host, Device: p.device, DeviceName: s.names[p.device], Server: p.server,
+			ALPNOffered: p.alpn, BytesUp: p.up, BytesDown: p.down, Note: p.note, Conn: p.conn, Open: p.end == 0}
+		if p.start > 0 {
+			v.Time = unixTime(p.start).Format("2006-01-02T15:04:05.000Z07:00")
+		}
+		if p.end > 0 {
+			v.End = unixTime(p.end).Format("2006-01-02T15:04:05.000Z07:00")
+			v.DurationMS = int64((p.end - p.start) * 1000)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// RefusedHost is a host a device refused Reqcove's certificate for, again and
+// again, while it accepted it elsewhere: what certificate pinning (or a client
+// with its own list of CAs) looks like. --pass-hosts lets it through.
+type RefusedHost struct {
+	Device     string `json:"device"`
+	DeviceName string `json:"device_name,omitempty"`
+	Host       string `json:"host"`
+	Refusals   int    `json:"refusals"`
+}
+
+// refusedAfter is how many refusals, alerts or hang-ups during the handshake,
+// make a host one: single ones happen (a cancelled request, a network blip).
+const refusedAfter = 3
+
+// refusedLocked lists the hosts refused at least refusedAfter times by a
+// device that has decrypted HTTPS flows, for none of which it is the host,
+// and that are not passed through already; the most refused first, at most 10.
+func (s *Store) refusedLocked() []RefusedHost {
+	type key struct{ device, host string }
+	counts := map[key]int{}
+	for _, f := range s.tlsFailures {
+		if strings.Contains(f.Msg, "does not trust the proxy's certificate") || strings.Contains(f.Msg, "disconnected during the handshake") {
+			counts[key{f.Device, f.Host}]++
+		}
+	}
+	if len(counts) == 0 {
+		return []RefusedHost{}
+	}
+	trusting := map[string]bool{} // devices with a decrypted request
+	seen := map[key]bool{}
+	for _, f := range s.flows {
+		if strings.HasPrefix(f.URL, "https://") {
+			trusting[f.Device] = true
+			seen[key{f.Device, strings.ToLower(f.Host)}] = true
+		}
+	}
+	out := []RefusedHost{}
+	for k, n := range counts {
+		// A host as a host name: an SNI is the phone's app's to choose, and these
+		// go into a command run suggests (--pass-hosts …).
+		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && validHost(k.host) {
+			out = append(out, RefusedHost{k.device, s.names[k.device], k.host, n})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Refusals > out[j].Refusals || out[i].Refusals == out[j].Refusals && out[i].Host < out[j].Host
+	})
+	return out[:min(len(out), 10)]
+}
+
+// PassHost reports whether host is one of --pass-hosts: carried undecrypted,
+// so no flow of it is ever recorded.
+func (s *Store) PassHost(host string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return host != "" && s.allow.Passed(host)
 }

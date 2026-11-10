@@ -37,6 +37,9 @@ import ruamel.yaml  # mitmproxy's own dependency
 from mitmproxy import connection, ctx, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
+from mitmproxy.net.tls import starts_like_tls_record
+from mitmproxy.proxy.layers import tcp as tcp_layer
+from mitmproxy.proxy.layers.tls import parse_client_hello
 from mitmproxy.utils import strutils
 from mitmproxy.utils.spec import parse_spec
 
@@ -326,6 +329,7 @@ class Reqcove:
         self.secret = None  # SOCKS5 password; None rejects every connection
         self.allow_all = False
         self.allow = []
+        self.passing = []  # --pass-hosts: allowed hosts carried undecrypted, their connections' metadata recorded
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
@@ -367,6 +371,7 @@ class Reqcove:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
+            self.passing = [re.compile(p) for p in rules.get("pass") or []]
         if "reqcove_upstream" in updated:
             host, _, port = ctx.options.reqcove_upstream.rpartition(":")
             self.upstream = (host.strip("[]"), int(port)) if host else None  # [::1]:8080
@@ -481,11 +486,20 @@ class Reqcove:
             flow.server_conn = connection.Server(address=(r.data.host, r.port))
             flow.server_conn.via = ("http", self.upstream)
 
-    def _in_scope(self, host):
+    def _allowed(self, host):
         host = host.lower().rstrip(".")
         if host == "mitm.it":
             return False  # decrypted so iPhones can get the CA; never recorded
         return self.allow_all or any(r.match(host) for r in self.allow)
+
+    def _passed(self, host):
+        host = host.lower().rstrip(".")
+        return any(r.match(host) for r in self.passing)
+
+    def _in_scope(self, host):
+        # A --pass-hosts host is not recorded as flows, even in a request riding
+        # an allowed host's decrypted connection (HTTP/2 coalescing).
+        return self._allowed(host) and not self._passed(host)
 
     def running(self):
         # Connect now, not on the first flow: reqcove waits for this hello
@@ -645,7 +659,7 @@ class Reqcove:
         if not self.web_keep:
             return
         size = 0
-        for m in (flow.request, flow.response):
+        for m in (getattr(flow, "request", None), getattr(flow, "response", None)):  # a TCP flow has neither
             if m is not None and m.raw_content:
                 size += len(m.raw_content)
         self.web_flows.append((flow, size))
@@ -712,7 +726,70 @@ class Reqcove:
         flow.websocket.messages.clear()  # mitmproxy would keep every message for the connection's life
 
     def tcp_message(self, flow):
+        p = flow.metadata.get("reqcove_pass")
+        if p is not None:
+            m = flow.messages[-1]
+            p["up" if m.from_client else "down"] += len(m.content)
         flow.messages.clear()  # same for raw TCP
+
+    def next_layer(self, nl):
+        """A --pass-hosts host is carried as raw TCP, undecrypted: a TCPLayer that
+        keeps a flow (unlike ignore_connection), so its hooks fire and its bytes
+        are counted. Only for allowed hosts, and not ones mitmproxy ignores
+        (Apple's): those it passes through itself, unrecorded. Script addons run
+        before mitmproxy's own NextLayer (12.3.1), which leaves a layer chosen
+        here; a change of that order fails TestPassHosts."""
+        if not self.passing or nl.layer is not None or len(nl.context.layers) != 1:
+            return
+        data = nl.data_client()
+        if not starts_like_tls_record(data):
+            return
+        try:
+            hello = parse_client_hello(data)
+        except ValueError:
+            return
+        if hello is None or not hello.sni:
+            return  # more to come (mitmproxy asks again), or no name to match
+        sni = hello.sni.lower().rstrip(".")
+        if not (self._allowed(sni) and self._passed(sni)):
+            return
+        port = nl.context.server.address[1] if nl.context.server.address else 443
+        if any(re.search(p, f"{sni}:{port}") for p in ctx.options.ignore_hosts):
+            return
+        layer = tcp_layer.TCPLayer(nl.context, ignore=False)
+        layer.flow.metadata["reqcove_pass"] = {
+            "device": self.conn_device.get(nl.context.client.id), "sni": sni, "up": 0, "down": 0,
+            "alpn": [a.decode(errors="replace")[:64] for a in hello.alpn_protocols[:8]],
+        }
+        nl.layer = layer
+
+    def tcp_start(self, flow):
+        p = flow.metadata.get("reqcove_pass")
+        if p is None:
+            return
+        s = flow.server_conn
+        addr = s.peername or s.address
+        self.put_event({
+            "v": VERSION, "ev": "pass_open", "conn": flow.client_conn.id, "device": p["device"],
+            "sni": p["sni"], "alpn": p["alpn"], "server": f"{addr[0]}:{addr[1]}" if addr else None,
+            "ts": flow.client_conn.timestamp_start or time.time(),
+        })
+
+    def tcp_end(self, flow):
+        self._pass_closed(flow)
+
+    def tcp_error(self, flow):
+        self._pass_closed(flow)
+
+    def _pass_closed(self, flow):
+        p = flow.metadata.get("reqcove_pass")
+        if p is None:
+            return
+        self.put_event({
+            "v": VERSION, "ev": "pass_close", "conn": flow.client_conn.id,
+            "ts_end": time.time(), "up": p["up"], "down": p["down"],
+        })
+        self._web_done(flow)
 
     def tls_failed_client(self, data):
         peer = data.context.client.peername

@@ -182,7 +182,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		}
 		webURL = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", cfg.WebPort, pw)
 	}
-	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns})
+	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
 		cfg: cfg, ln: ln, done: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)

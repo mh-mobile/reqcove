@@ -61,6 +61,19 @@ So "delete the directory" above means each of them.
   requests to others, as with HTTP/2 connection reuse). Requests and TLS failures
   outside the list are counted, never recorded.
 - Apple's hosts always pass through undecrypted.
+- After v0.1.0, `--pass-hosts` hosts (allowed hosts whose apps refuse
+  Reqcove's certificate) pass through undecrypted too, and only their
+  connections are recorded: the host the client named (its SNI), the server's
+  address, start and end, bytes each way, the protocols offered. Nothing inside
+  TLS is kept or seen. The record is checked against --allow-hosts again, so
+  a host outside it leaves nothing, and requests to a pass host riding another
+  host's decrypted connection (HTTP/2) are not recorded either. Bytes are the
+  whole connection's: another host's requests riding it count in them, unseen
+  (from reading code). The hosts `reqcove status` suggests for `--pass-hosts`
+  come from the phone's TLS (its SNI, the app's to choose): only names made of
+  host characters are suggested, and the command is quoted for a shell (a
+  test). `@FILE` lists are read as hosts, never run: a line that is not a host
+  stops `run`.
 - Secrets are masked as they arrive, so no tool can return them. A header, query
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,

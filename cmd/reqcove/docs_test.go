@@ -177,6 +177,9 @@ func parseDocumented(words []string) error {
 			}
 			continue // more flags
 		}
+		if strings.HasPrefix(a, "@") { // --allow-hosts @FILE: a file the reader has, not this test
+			a = "host.example.com"
+		}
 		args = append(args, a)
 	}
 	for i := 1; i < len(args); i++ { // NAME, N: a placeholder, valid for its flag

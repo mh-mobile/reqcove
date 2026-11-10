@@ -159,10 +159,16 @@ func run(ctx context.Context, args []string) error {
 		devices = append(devices, v)
 		return nil
 	})
-	var allowSpecs []string
-	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything. Without it, nothing is recorded.`, func(v string) error {
+	var allowSpecs, passSpecs []string
+	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything; @FILE reads them from a file, one a line. Without it, nothing is recorded.`, func(v string) error {
+		v, err := hostList(v)
 		allowSpecs = append(allowSpecs, v)
-		return nil
+		return err
+	})
+	fs.Func("pass-hosts", `allowed hosts carried undecrypted, as --allow-hosts' (not "*"; @FILE too): for apps that refuse Reqcove's certificate there (certificate pinning). Only their connections are recorded (host, times, bytes): no URL, headers or bodies`, func(v string) error {
+		v, err := hostList(v)
+		passSpecs = append(passSpecs, v)
+		return err
 	})
 	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
@@ -195,9 +201,23 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	allow, err := capture.ParseAllowHosts(hostsOnly(allowSpecs))
+	allow, err := capture.ParseAllowHosts(hostsOnly("--allow-hosts", allowSpecs))
 	if err != nil {
 		return err
+	}
+	if len(passSpecs) > 0 {
+		if !allow.All && len(allow.Patterns) == 0 {
+			return errors.New("--pass-hosts needs --allow-hosts: hosts outside it pass undecrypted already, and nothing about them is recorded")
+		}
+		if allow, err = allow.WithPass(hostsOnly("--pass-hosts", passSpecs)); err != nil {
+			return err
+		}
+		for _, h := range allow.PassHosts {
+			if !allow.Allowed(strings.TrimPrefix(h, "*.")) {
+				log.Printf("WARN: --pass-hosts %s: not in --allow-hosts, so it passes undecrypted already, and nothing about it is recorded", h)
+			}
+		}
+		log.Printf("--pass-hosts: %s carried undecrypted; their connections (host, times, bytes) are recorded, nothing inside them", strings.Join(allow.PassHosts, ", "))
 	}
 	switch {
 	case allow.All:
@@ -233,6 +253,9 @@ func run(ctx context.Context, args []string) error {
 	upstream, err := parseUpstream(*upstreamProxy, *upstreamCA)
 	if err != nil {
 		return err
+	}
+	if len(allow.PassHosts) > 0 && (*rules != "" || upstream != "") {
+		log.Print("WARN: --pass-hosts with --rules or --upstream-proxy: the hosts passed through skip both, and reach their own servers directly (a host --rules sends to staging reaches production)")
 	}
 	if upstream != "" && allow.All {
 		// Burp looks HTTPS names up again on this computer; a site can answer that
@@ -858,7 +881,36 @@ func iosDevices() []string {
 
 // hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
 // a port, saying so: only hosts are matched, not schemes, paths or ports.
-func hostsOnly(specs []string) []string {
+// hostList is a --allow-hosts or --pass-hosts value: as given, or with @FILE
+// the hosts in the file, one a line (or comma-separated), # starting a
+// comment. @~/ is the home directory: the shell expands no ~ after @.
+func hostList(v string) (string, error) {
+	path, ok := strings.CutPrefix(v, "@")
+	if !ok {
+		return v, nil
+	}
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, rest)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err // the flag package names the flag and the value
+	}
+	var hosts []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		if line = strings.TrimSpace(line); line != "" {
+			hosts = append(hosts, line)
+		}
+	}
+	return strings.Join(hosts, ","), nil
+}
+
+func hostsOnly(flagName string, specs []string) []string {
 	var out []string
 	for _, spec := range specs {
 		var hosts []string
@@ -872,7 +924,7 @@ func hostsOnly(specs []string) []string {
 				host = hh
 			}
 			if host != h {
-				log.Printf("--allow-hosts: %q taken as %q (hosts are matched, not paths or ports)", shown, host)
+				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
 			}
 			hosts = append(hosts, host)
 		}

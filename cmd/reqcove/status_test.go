@@ -423,3 +423,56 @@ func TestStatusAllowHosts(t *testing.T) {
 		t.Errorf("no --allow-hosts: %#v", got)
 	}
 }
+
+// Refused hosts become a step per device, with the --pass-hosts to add,
+// quoted for a shell; another device's page lists only its own.
+func TestRefusedHostsStep(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 5}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}}
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{
+		{Device: "a", Host: "api.x.com", Refusals: 12}, {Device: "a", Host: "*.weird", Refusals: 4}, {Device: "b", Host: "app4.paypay.ne.jp", Refusals: 19},
+	}}
+	got := strings.Join(nextSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices), "\n")
+	for _, want := range []string{"iphone refused Reqcove's certificate again and again for api.x.com (12), *.weird (4)", "--pass-hosts 'api.x.com,*.weird'", "ipad refused", "--pass-hosts app4.paypay.ne.jp "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+	got = strings.Join(pageSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices, "b"), "\n")
+	if strings.Contains(got, "api.x.com") || !strings.Contains(got, "app4.paypay.ne.jp") {
+		t.Errorf("b's page:\n%s", got)
+	}
+}
+
+// --pass-hosts and @FILE: hosts one a line, comments, ~/; a line that is not
+// a host stops run, nothing in it run.
+func TestPassHostsFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.WriteFile(filepath.Join(home, "pass.txt"), []byte("# pinned apps\n*.tiktokv.com\n\n api.x.com  # X\n"), 0o600)
+	if got, err := hostList("@~/pass.txt"); err != nil || got != "*.tiktokv.com,api.x.com" {
+		t.Errorf("@~/pass.txt: %q %v", got, err)
+	}
+	if got, _ := hostList("api.x.com"); got != "api.x.com" {
+		t.Errorf("plain: %q", got)
+	}
+	if _, err := hostList("@" + filepath.Join(home, "missing.txt")); err == nil {
+		t.Error("a missing file taken")
+	}
+	os.WriteFile(filepath.Join(home, "evil.txt"), []byte("api.x.com; rm -rf ~\n"), 0o600)
+	args := func(extra ...string) []string {
+		return append([]string{"--device", "phone", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"}, extra...)
+	}
+	for _, c := range []struct {
+		extra []string
+		want  string
+	}{
+		{[]string{"--allow-hosts", "*", "--pass-hosts", "@" + filepath.Join(home, "evil.txt")}, "bad host"},
+		{[]string{"--pass-hosts", "api.x.com"}, "--pass-hosts needs --allow-hosts"},
+		{[]string{"--allow-hosts", "*", "--pass-hosts", "*"}, `not "*"`},
+	} {
+		if err := run(context.Background(), args(c.extra...)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v", c.extra, err)
+		}
+	}
+}

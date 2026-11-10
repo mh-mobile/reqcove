@@ -1,6 +1,6 @@
 ---
 name: reqcove
-description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, get_flow, list_tls_failures, list_devices, capture_stats) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
+description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, get_flow, list_tls_failures, list_passthrough, list_devices, capture_stats) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
 ---
 
 # Reqcove
@@ -40,8 +40,9 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
 
 Call `status`. Its `next_steps` are what the user must do (log in, approve the
 exit node, sign for Tailnet Lock, turn on the exit node on the phone, trust the
-CA): pass them on as written. `allow_hosts` is what is recorded; anything else
-is carried but never recorded.
+CA, add hosts to `--pass-hosts`): pass them on as written. `allow_hosts` is
+what is recorded; anything else is carried but never recorded. `pass_hosts`
+are carried undecrypted: their connections only, in `list_passthrough`.
 
 If a tool answers that reqcove is not running: tell the user, wait, and call
 again once they have started it. Do not start it yourself.
@@ -76,7 +77,15 @@ Before saying something was not sent, check:
 - Is the host in `allow_hosts`? Apple's own hosts always pass undecrypted.
 - `list_tls_failures`: failures on one device and no flows usually mean the
   CA is not trusted on it; one host failing every time while others work is
-  often certificate pinning. Say "often", not "is".
+  often certificate pinning, or an app with its own list of CAs. Say "often",
+  not "is". `next_steps` then names those hosts, with the `--pass-hosts` that
+  lets the app work: the user restarts `reqcove run` with it, not you.
+- A host in `pass_hosts` never has flows. `list_passthrough` has its
+  connections: host, server, times, bytes. A connection is not a request (it
+  may carry many or none); there are no URLs or contents. Never say what was
+  requested, that a request was not sent, nor that it succeeded.
+- Pinning checked after the handshake (the app connects, then quits without a
+  request) shows nowhere, neither as a failure nor as a flow.
 - Only TCP ports 80 and 443 go through mitmproxy; QUIC falls back to TCP.
 - The window: `capture_stats` (`oldest_flow`, `evicted`); a restart of
   `reqcove run` starts the records empty.

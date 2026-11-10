@@ -31,6 +31,15 @@
 - A build from source is versioned by its commit (`dev-77e6706`, `-dirty` with
   uncommitted changes) instead of `dev`, so `reqcove mcp` can tell a `run` of
   another build and say to reconnect.
+- `run --pass-hosts HOSTS` (and `@FILE` for it and `--allow-hosts`, one host
+  a line): allowed hosts carried undecrypted, for apps that refuse Reqcove's
+  certificate there (certificate pinning; measured on an iPhone: TikTok, X's
+  API, some of PayPay's). Only their connections are recorded (host, server,
+  times, bytes; the new tool `list_passthrough`), no URL or contents; a host
+  filter naming one says so in a `note`. `reqcove status` names hosts a
+  device refused again and again while accepting the CA elsewhere, with the
+  `--pass-hosts` to add. They skip `--rules` and `--upstream-proxy` (`run`
+  warns).
 - `reqcove init`: the agent skill (`skills/reqcove/SKILL.md`, carried in the
   binary) into `~/.claude/skills` and `~/.agents/skills` for the agents found
   in `~` (or `--client`); it updates only its own unchanged file, and leaves

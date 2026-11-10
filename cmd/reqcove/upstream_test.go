@@ -186,7 +186,7 @@ func TestHostsOnly(t *testing.T) {
 	var logs strings.Builder
 	log.SetOutput(&logs)
 	defer log.SetOutput(os.Stderr)
-	got := hostsOnly([]string{"https://API.example.com/v1?access_token=S3CRET, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
+	got := hostsOnly("--allow-hosts", []string{"https://API.example.com/v1?access_token=S3CRET, api2.example.com:443", "*.example.org", "[2001:db8::1]:443"})
 	if want := []string{"API.example.com,api2.example.com", "*.example.org", "2001:db8::1"}; !slices.Equal(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}

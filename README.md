@@ -113,6 +113,7 @@ setting, so this works on Wi-Fi only.
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
+| `list_passthrough` | after v0.1.0: connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
 | `status` | whether everything is set up, and the next steps if not |
 
@@ -147,7 +148,8 @@ were not tried.
 | | |
 |---|---|
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more. Another Mac can be one too ([how](docs/another-mac.md)) |
-| `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), or `'*'` for all. Without it, traffic is carried but nothing is recorded |
+| `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), or `'*'` for all. Without it, traffic is carried but nothing is recorded. After v0.1.0, `@FILE` reads them from a file, one a line (`#` for comments) |
+| `--pass-hosts` | after v0.1.0: allowed hosts carried undecrypted, as `--allow-hosts` writes them (not `'*'`; `@FILE` too), for apps that refuse Reqcove's certificate there ([pinning](#certificate-pinning)) |
 | `--rules FILE` | YAML of rules for allowed hosts only (see below) |
 | `--rules-reload` | read that file again whenever it changes, while running (see below; after v0.1.0) |
 | `--upstream-proxy URL` | send decrypted requests on through an HTTP proxy, such as Burp Suite: `http://127.0.0.1:8080` (see below; after v0.1.0) |
@@ -349,6 +351,38 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
   stream). With `--web`, replaying a plain HTTP request from mitmweb sends it to
   the proxy itself.
 
+### Certificate pinning
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+Some apps refuse any certificate but their server's own (certificate pinning),
+or trust a list of CAs of their own (Flutter's, for one; not tried): they
+cannot be decrypted, and their requests to those hosts fail through Reqcove.
+On an iPhone (iOS 27.3), with `--allow-hosts '*'`, TikTok's API hosts, X's
+(`api.x.com`, not its images) and some of PayPay's did; most apps tried did
+not (Duolingo, Gmail, 1Password, LINE, Slack, banking apps).
+
+- `reqcove status` names the hosts a device refused again and again while it
+  accepts the CA elsewhere, with the `--pass-hosts` to add. A host fails once
+  or twice for other reasons, so one failure is not enough.
+- `--pass-hosts` carries those hosts undecrypted, so the app works (checked
+  with a test client that pins; on the iPhone not tried yet). For them only the
+  connection is recorded: the host the client named, the server, start and
+  end, bytes each way (`list_passthrough`); no URL, headers or bodies, and a
+  connection may carry many requests or none.
+- `--pass-hosts` hosts skip `--rules` and `--upstream-proxy`: they reach their
+  own servers directly (`run` warns).
+- Pinning checked after the handshake (the app connects, then quits without a
+  request; OkHttp's `CertificatePinner` on Android does this, from its docs)
+  shows nowhere, neither as a failure nor as a flow.
+- For your own app, a build without pinning (or that trusts user-installed CAs
+  in debug) is the way to see inside it.
+
+```sh
+reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.tiktokv.com,api.x.com'
+reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # one a line, # for comments
+```
+
 ## What it keeps safe, and what it does not
 
 - Only the hosts in `--allow-hosts` are decrypted and recorded; requests to other
@@ -376,7 +410,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limits
 
-- Apps that pin certificates cannot be decrypted (`list_tls_failures` shows them).
+- Apps that pin certificates cannot be decrypted; see [Certificate pinning](#certificate-pinning).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
 - The exit node refuses this computer and its LAN as destinations, so the phone
   cannot reach a development server there directly; a rule can send an allowed

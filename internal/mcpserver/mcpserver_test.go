@@ -243,3 +243,49 @@ func TestSimilarHostsStore(t *testing.T) {
 		t.Errorf("at most 3: %v", got)
 	}
 }
+
+// A --pass-hosts host: list_passthrough has its connections; a host filter
+// naming it says why no flow is there; the description keeps the agent from
+// saying what was requested, or that it was not sent.
+func TestPassthroughTool(t *testing.T) {
+	st := capture.NewStore(10, 1<<20)
+	allow, _ := capture.ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"api.x.com"})
+	st.SetScope(allow, true)
+	st.Apply([]byte(`{"v":2,"ev":"pass_open","conn":"c1","device":"d","sni":"api.x.com","server":"203.0.113.1:443","ts":1794000000}`))
+	ct, sst := mcp.NewInMemoryTransports()
+	server := New(st, nil)
+	if _, err := server.Connect(context.Background(), sst, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if got := call[PassOut](t, session, "list_passthrough", map[string]any{"host": "x.com"}); len(got.Connections) != 1 || !got.Connections[0].Open {
+		t.Errorf("list_passthrough: %+v", got)
+	}
+	for _, tool := range []string{"list_flows", "summarize"} {
+		if got := call[struct {
+			Note string `json:"note"`
+		}](t, session, tool, map[string]any{"host": "api.x.com"}); !strings.Contains(got.Note, "does not mean nothing was sent") {
+			t.Errorf("%s note: %q", tool, got.Note)
+		}
+	}
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "other.com"}); got.Note != "" {
+		t.Errorf("a note for another host: %q", got.Note)
+	}
+	for tool, err := range session.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tool.Name == "list_passthrough" {
+			for _, want := range []string{"A connection is not a request", "no URLs", "never say what was requested, that a request was not sent, nor that it succeeded"} {
+				if !strings.Contains(tool.Description, want) {
+					t.Errorf("description lacks %q", want)
+				}
+			}
+		}
+	}
+}
