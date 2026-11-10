@@ -4,7 +4,13 @@
 
 Another Mac (a second MacBook, say) can use Reqcove's exit node as an iPhone
 does: its HTTP(S) to the `--allow-hosts` hosts is recorded, its iOS Simulator's
-too. Not tried yet: these steps come from how the exit node works.
+too. Tried with a macOS 27 VM (the Tailscale app, `curl` with Reqcove's CA);
+not tried: trusting the CA in the keychain as below, and that Mac's Simulator.
+
+Use the Tailscale app (from the App Store or Tailscale's download) on that Mac.
+With Homebrew's open-source `tailscaled`, choosing the exit node shows it as
+on, but macOS keeps its own default route and the traffic goes out directly,
+not through Reqcove (seen in the same VM).
 
 ## 1. On the Mac running Reqcove: add it to `--device`
 

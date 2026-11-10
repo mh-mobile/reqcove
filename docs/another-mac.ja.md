@@ -2,7 +2,9 @@
 
 [English](another-mac.md)
 
-別の Mac（サブ機の MacBook など）も、iPhone と同じように Reqcove の Exit Node を使えます。`--allow-hosts` のホストへの HTTP(S) が記録され、その Mac の iOS シミュレーターの通信も記録されます。まだ試していません。以下は、Exit Node の仕組みから考えた手順です。
+別の Mac（サブ機の MacBook など）も、iPhone と同じように Reqcove の Exit Node を使えます。`--allow-hosts` のホストへの HTTP(S) が記録され、その Mac の iOS シミュレーターの通信も記録されます。macOS 27 の VM で確かめました（Tailscale のアプリ、Reqcove の CA を指定した `curl`）。下のキーチェーンで CA を信頼させる手順と、その Mac のシミュレーターは、まだ試していません。
+
+その Mac では、Tailscale のアプリ（App Store 版か、Tailscale の配布しているもの）を使ってください。Homebrew のオープンソース版の `tailscaled` では、Exit Node を選ぶと選ばれた表示になりますが、macOS が自分の既定の経路を使い続けるため、通信は Reqcove を通らずに直接出ます（同じ VM で見ました）。
 
 ## 1. Reqcove を動かしている Mac で、その Mac を `--device` で指定する
 

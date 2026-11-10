@@ -82,7 +82,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - `run` は、呼び出しごとにデバイスとツール名をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called "list_flows"`。引数は出しません）。トークンがない、または違うリクエストもログに出します。「確認します」と言うだけで呼んでいないエージェントは、ログに行が出ません。
 - 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
 
-確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。未確認：ほかのコンピュータからの利用。
+確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。ほかのコンピュータ（tailnet にいる macOS の VM）からも、ノードの名前と IP の両方で呼べることを確認。
 
 ## 自分でフローを見る
 
@@ -149,7 +149,7 @@ Reqcove が復号できるのは、クライアントが Reqcove を通して送
 | 本番の Web アプリ | デバイスとサーバーの間の通信（ページ、フロントエンドが呼ぶ API）。サーバーがその先へ送る通信は対象外 | iPhone |
 | 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Rails のアプリ（Net::HTTP、Faraday） |
 | このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome、iOS 27 のシミュレーターの Safari |
-| 別の Mac | Exit Node の `--device` として（[手順](#別の-mac-を記録する)） | 未確認 |
+| 別の Mac | Exit Node の `--device` として。Tailscale のアプリで（[手順](#別の-mac-を記録する)） | macOS 27 の VM |
 
 ### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
 
@@ -243,7 +243,7 @@ http_proxy=http://100.x.y.z:8080 https_proxy=http://100.x.y.z:8080 SSL_CERT_FILE
 
 ### 別の Mac を記録する
 
-`--device` に指定した Mac で Exit Node を選ぶと、iPhone と同じように記録されます。その Mac の iOS シミュレーターの通信も、シミュレーターが Reqcove の CA を信頼していれば、Mac の通信と一緒に通るはずです。未確認：[手順](another-mac.ja.md)。
+`--device` に指定した Mac で、Tailscale のアプリから Exit Node を選ぶと、iPhone と同じように記録されます（[手順](another-mac.ja.md)）。Homebrew のオープンソース版の `tailscaled` では、Exit Node は選ばれた表示になりますが、その Mac の通信は通りません。確認状況：macOS 27 の VM で確認。未確認：その Mac の iOS シミュレーター（シミュレーターが Reqcove の CA を信頼していれば、Mac の通信と一緒に通るはず）。
 
 ## リクエストの行き先を変える
 

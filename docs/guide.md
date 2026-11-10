@@ -132,8 +132,9 @@ What to know:
 
 Tried: Grok Bot (status, flows, bodies; the same chat after a restart of
 `run`; `run` in a container); Claude Code (`claude -p`) and Codex
-(`codex exec`) on this Mac over the tailnet (each read the status). Not tried:
-from another computer.
+(`codex exec`) on this Mac over the tailnet (each read the status); and a call
+from another computer, a macOS VM on the tailnet, by the node's name and by its
+address.
 
 ## Look at the flows yourself
 
@@ -230,7 +231,7 @@ Reqcove's CA. Who trusts it differs:
 | a web app in production | what the device and the server exchange (pages, the API its front end calls), not what the server sends on | an iPhone |
 | a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | a Rails app (Net::HTTP, Faraday) |
 | this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
-| another Mac | as a `--device` on the exit node ([how](#another-mac)) | not tried |
+| another Mac | as a `--device` on the exit node, with the Tailscale app ([how](#another-mac)) | a macOS 27 VM |
 
 ### Apps that pin certificates (`--pass-hosts`)
 
@@ -384,10 +385,12 @@ Tried on an iPhone: Safari's requests were recorded, and sites outside
 
 ### Another Mac
 
-A Mac named with `--device` that chooses the exit node is recorded as an
-iPhone is; its iOS Simulator's traffic should go through with the Mac's own,
-once the Simulator trusts Reqcove's CA. Not tried:
-[the steps](another-mac.md).
+A Mac named with `--device` that chooses the exit node in the Tailscale app is
+recorded as an iPhone is ([the steps](another-mac.md)). With Homebrew's
+open-source `tailscaled` the exit node shows as on, but that Mac's traffic does
+not go through it. Tried with a macOS 27 VM. Not tried: that Mac's iOS
+Simulator (it should go through with the Mac's own traffic, once it trusts
+Reqcove's CA).
 
 ## Change where requests go
 
