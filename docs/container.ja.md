@@ -4,7 +4,7 @@
 
 Reqcove は、コンテナでも動きます（Docker。Podman でも同じコマンドで動くはずです）。uv、Python、mitmproxy、CA の秘密鍵はコンテナの中に閉じ、コンテナと volume を消せば片付きます。環境ごとにコンテナを 1 つ起動すれば、1 台のマシンで、それぞれ閉じた Exit Node をいくつも動かせます。v0.1.0 のあとに追加しました。
 
-向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac が寝ないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
+向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac をスリープさせないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 
 **確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと、`docker run -i` で Claude Code（`claude -p`）が `status` を読むこと。**まだ試していないこと**：Linux のホストでの手の確認、Podman。
 
@@ -56,7 +56,7 @@ docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1
 ## コンテナで違うこと
 
 - `--local-proxy`、シミュレーター、このコンピュータで CA を信頼することは、コンテナではできません。
-- macOS：Mac が寝ると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
+- macOS：Mac がスリープすると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
 - `docker logs` には、コンテナを消すまで、ログイン用の URL と、トークン付きの `--ui`／`--web` のリンクが残ります（`--log-opt max-size=10m` で大きさを抑えられます）。トークンは、volume の中のファイルを消すまで有効です。
 - `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。
 - `run` が表示するコマンド（`claude mcp add … reqcove mcp`、`reqcove status`）は、ホスト向けの形です。上の形に読み替えてください。
