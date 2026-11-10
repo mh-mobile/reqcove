@@ -489,11 +489,15 @@ func TestPassHostsFlag(t *testing.T) {
 // pass hosts already given, and a device with only passed connections is not
 // told to turn its exit node on.
 func TestPassSuggestion(t *testing.T) {
-	hosts, counts := passSuggestion([]capture.RefusedHost{
+	hosts, counts := passSuggestion(nil, nil)
+	if hosts != nil {
+		t.Errorf("nothing refused: %q %q", hosts, counts)
+	}
+	hosts, counts = passSuggestion([]capture.RefusedHost{
 		{Host: "api31.tiktokv.com", Refusals: 30}, {Host: "log22.tiktokv.com", Refusals: 5},
 		{Host: "app4.paypay.ne.jp", Refusals: 19}, {Host: "events.paypay.ne.jp", Refusals: 6},
 		{Host: "api.x.com", Refusals: 4}, {Host: "34.102.215.99", Refusals: 61},
-	})
+	}, nil)
 	if strings.Join(hosts, ",") != "*.tiktokv.com,*.paypay.ne.jp,api.x.com,34.102.215.99" || !strings.Contains(strings.Join(counts, ";"), "2 hosts of tiktokv.com (35)") {
 		t.Errorf("%q %q", hosts, counts)
 	}
@@ -508,5 +512,20 @@ func TestPassSuggestion(t *testing.T) {
 	got = strings.Join(nextSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Passthroughs: 4}}), "\n")
 	if strings.Contains(got, "no traffic from iphone") {
 		t.Errorf("a device with passed connections told it has no traffic:\n%s", got)
+	}
+}
+
+// A new refused host under a domain a pass host has already becomes *.domain,
+// which replaces that pass host in the command.
+func TestPassSuggestionMerges(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	allow, _ := capture.ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"p16-sticker.ibyteimg.com", "app4.paypay.ne.jp", "api.x.com", "34.102.215.99"})
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{
+		{Device: "a", Host: "p16-asset.ibyteimg.com", Refusals: 19}, {Device: "a", Host: "events.paypay.ne.jp", Refusals: 3}, {Device: "a", Host: "new.example.org", Refusals: 3},
+	}}
+	got := strings.Join(nextSteps(ok, stats, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 1}}), "\n")
+	if !strings.Contains(got, "--pass-hosts 'api.x.com,34.102.215.99,*.ibyteimg.com,*.paypay.ne.jp,new.example.org'") {
+		t.Errorf("merged:\n%s", got)
 	}
 }

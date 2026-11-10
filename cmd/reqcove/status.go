@@ -154,9 +154,16 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		if len(mine) == 0 {
 			continue
 		}
-		hosts, counts := passSuggestion(mine)
-		// The hosts passed already stay: the command replaces the flag.
-		all := append(slices.Clone(allow.PassHosts), hosts...)
+		hosts, counts := passSuggestion(mine, allow.PassHosts)
+		// The hosts passed already stay (the command replaces the flag), but
+		// for those a *.domain now covers.
+		var all []string
+		for _, p := range allow.PassHosts {
+			if !slices.ContainsFunc(hosts, func(h string) bool { return h != p && strings.HasPrefix(h, "*.") && strings.HasSuffix(p, h[1:]) }) {
+				all = append(all, p)
+			}
+		}
+		all = append(all, hosts...)
 		steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s, while it accepts it for other hosts: certificate pinning, or an app with its own list of CAs. To let those apps work, start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(all, ","))))
 	}
 	return steps
@@ -364,9 +371,22 @@ func orDash(s string) string {
 }
 
 // passSuggestion groups refused hosts by their registered domain (the public
-// suffix list: paypay.ne.jp, not ne.jp): two or more under one become
-// *.domain. Addresses stay as they are.
-func passSuggestion(refused []capture.RefusedHost) (hosts, counts []string) {
+// suffix list: paypay.ne.jp, not ne.jp): two or more under one, or one under a
+// domain a pass host has already, become *.domain. Addresses stay as they are.
+func passSuggestion(refused []capture.RefusedHost, passed []string) (hosts, counts []string) {
+	domainOf := func(h string) string {
+		if _, err := netip.ParseAddr(h); err == nil {
+			return h
+		}
+		if d, err := publicsuffix.EffectiveTLDPlusOne(strings.TrimPrefix(h, "*.")); err == nil {
+			return d
+		}
+		return h
+	}
+	passedDomains := map[string]bool{}
+	for _, p := range passed {
+		passedDomains[domainOf(p)] = true
+	}
 	type group struct {
 		hosts []string
 		n     int
@@ -374,12 +394,7 @@ func passSuggestion(refused []capture.RefusedHost) (hosts, counts []string) {
 	groups := map[string]*group{}
 	var order []string
 	for _, r := range refused {
-		key := r.Host
-		if _, err := netip.ParseAddr(r.Host); err != nil {
-			if d, err := publicsuffix.EffectiveTLDPlusOne(r.Host); err == nil {
-				key = d
-			}
-		}
+		key := domainOf(r.Host)
 		if groups[key] == nil {
 			groups[key] = &group{}
 			order = append(order, key)
@@ -389,7 +404,7 @@ func passSuggestion(refused []capture.RefusedHost) (hosts, counts []string) {
 	}
 	for _, key := range order {
 		g := groups[key]
-		if len(g.hosts) == 1 {
+		if len(g.hosts) == 1 && (!passedDomains[key] || key == g.hosts[0]) {
 			hosts = append(hosts, g.hosts[0])
 			counts = append(counts, fmt.Sprintf("%s (%d)", g.hosts[0], g.n))
 			continue

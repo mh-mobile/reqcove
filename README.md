@@ -355,37 +355,21 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 
 > Not in v0.1.0: until the next release, build from source to use it.
 
-Some apps refuse any certificate but their server's own (certificate pinning),
-or trust a list of CAs of their own (Flutter's, for one; not tried): they
-cannot be decrypted, and their requests to those hosts fail through Reqcove.
-On an iPhone (iOS 27.3), with `--allow-hosts '*'`, TikTok's API hosts, X's
-(`api.x.com`, not its images) and some of PayPay's did; most apps tried did
-not (Duolingo, Gmail, 1Password, LINE, Slack, banking apps).
-
-- `reqcove status` names the hosts a device refused again and again while it
-  accepts the CA elsewhere, with the `--pass-hosts` to start `run` with (a
-  domain's hosts as `*.domain`, the hosts passed already kept). A host fails once
-  or twice for other reasons, so one failure is not enough. An app that names
-  no host (it dials an address) is passed by that address.
-- `--pass-hosts` carries those hosts undecrypted, so the app works: on the
-  iPhone, TikTok's videos and X's timeline did, with `--pass-hosts
-  '*.tiktokv.com,*.tiktokcdn.com,api.x.com,api.twitter.com,api-stream.twitter.com'`
-  (PayPay not tried), and a test client that pins does. For them only the
-  connection is recorded: the host the client named, the server, start and
-  end, bytes each way (`list_passthrough`); no URL, headers or bodies, and a
-  connection may carry many requests or none.
-- `--pass-hosts` hosts skip `--rules` and `--upstream-proxy`: they reach their
-  own servers directly (`run` warns).
-- Pinning checked after the handshake (the app connects, then quits without a
-  request; OkHttp's `CertificatePinner` on Android does this, from its docs)
-  shows nowhere, neither as a failure nor as a flow.
-- For your own app, a build without pinning (or that trusts user-installed CAs
-  in debug) is the way to see inside it.
+Apps that pin their certificates refuse Reqcove's, so their requests to those
+hosts fail. `reqcove status` names such hosts, with the `--pass-hosts` to start
+`run` with; those hosts are then carried undecrypted and the apps work (tried on
+an iPhone).
 
 ```sh
-reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.tiktokv.com,api.x.com'
-reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # one a line, # for comments
+reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.example-cdn.com,api.example.com'
+reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # one host a line
 ```
+
+- For those hosts only the connections are recorded (host, server, times,
+  bytes: `list_passthrough`), no URLs or contents.
+- They skip `--rules` and `--upstream-proxy`.
+- Pinning checked after the TLS handshake shows nowhere.
+- For your own app, use a build without pinning.
 
 ## What it keeps safe, and what it does not
 

@@ -199,18 +199,17 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 
 > v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
 
-アプリによっては、自分のサーバーの証明書しか受け付けない（証明書ピンニング）か、自分で持つ CA の一覧だけを信頼します（例えば Flutter。試していません）。こうしたアプリは復号できず、そのホストへのリクエストは、Reqcove を通すと失敗します。iPhone（iOS 27.3）で `--allow-hosts '*'` にして試すと、TikTok の API のホスト、X（`api.x.com`。画像は除く）、PayPay の一部がこうなりました。試したアプリの多く（Duolingo、Gmail、1Password、LINE、Slack、銀行のアプリ）は、こうなりませんでした。
-
-- `reqcove status` は、端末がほかのホストでは CA を受け入れているのに、何度も証明書を拒んだホストを、`run` を起動し直すときの `--pass-hosts` と一緒に示します（同じドメインのホストは `*.ドメイン` にまとめ、すでに指定しているホストも含めます）。ホストは、ほかの理由でも 1、2 回は失敗するので、1 回の失敗では示しません。ホスト名を送らず、IP に直接つなぐアプリは、その IP で通します。
-- `--pass-hosts` を付けると、そのホストは復号せずに通すので、アプリは動きます。iPhone では、`--pass-hosts '*.tiktokv.com,*.tiktokcdn.com,api.x.com,api.twitter.com,api-stream.twitter.com'` で、TikTok の動画と X のタイムラインが動きました（PayPay は試していません）。ピンニングするテスト用のクライアントでも確かめました。そのホストについて記録するのは接続だけです。クライアントが指定したホスト、宛先、始まりと終わり、送受信の量です（`list_passthrough`）。URL、ヘッダー、本文はなく、1 つの接続が多くのリクエストを運ぶことも、1 つも運ばないこともあります。
-- `--pass-hosts` のホストには、`--rules` も `--upstream-proxy` も効かず、本物のサーバーに直接届きます（`run` が WARN を出します）。
-- TLS が終わってから確かめるピンニング（アプリが接続したあと、リクエストを送らずにやめる。Android の OkHttp の `CertificatePinner` がこうすると、その文書にあります）は、失敗にも記録にも出ません。
-- 自分のアプリなら、ピンニングを外した（またはデバッグ用にユーザーの入れた CA も信頼する）ビルドを使うのが、中を見る方法です。
+証明書をピンニングしているアプリは、Reqcove の証明書を拒むので、そのホストへのリクエストは失敗します。`reqcove status` がそのホストを、`run` に付ける `--pass-hosts` と一緒に示します。付けて起動し直すと、そのホストは復号せずに通り、アプリが動きます（iPhone で試しました）。
 
 ```sh
-reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.tiktokv.com,api.x.com'
-reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1 行に 1 つ。# からあとはコメント
+reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.example-cdn.com,api.example.com'
+reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1 行に 1 ホスト
 ```
+
+- そのホストは、接続だけを記録します（ホスト、宛先、時刻、量：`list_passthrough`）。URL や中身はありません。
+- `--rules` と `--upstream-proxy` は効きません。
+- TLS が終わってから確かめるピンニングは、どこにも出ません。
+- 自分のアプリなら、ピンニングを外したビルドを使ってください。
 
 ## セキュリティ
 

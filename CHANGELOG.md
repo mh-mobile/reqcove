@@ -33,8 +33,7 @@
   another build and say to reconnect.
 - `run --pass-hosts HOSTS` (and `@FILE` for it and `--allow-hosts`, one host
   a line): allowed hosts carried undecrypted, for apps that refuse Reqcove's
-  certificate there (certificate pinning; measured on an iPhone: TikTok, X's
-  API, some of PayPay's). Only their connections are recorded (host, server,
+  certificate there (certificate pinning). Only their connections are recorded (host, server,
   times, bytes; the new tool `list_passthrough`), no URL or contents; a host
   filter naming one says so in a `note`. `reqcove status` names hosts a
   device refused again and again while accepting the CA elsewhere, with the
