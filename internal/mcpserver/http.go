@@ -1,7 +1,10 @@
 package mcpserver
 
 import (
+	"cmp"
+	"context"
 	"crypto/subtle"
+	"log"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,18 +21,37 @@ const Instructions = `Reqcove records an iPhone's HTTP(S) traffic. Rules:
 
 // HTTP serves server over Streamable HTTP, stateless (a restart of run breaks
 // no session), to callers that send "Authorization: Bearer token". Who may
-// connect, and by which Host, the node checks before this.
-func HTTP(server *mcp.Server, token string) http.Handler {
+// connect, and by which Host, the node checks before this; who names the
+// caller (its device), for the log: each tool call, and each wrong token.
+func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http.Handler {
+	server.AddReceivingMiddleware(logCalls)
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 	want := []byte("Bearer " + token)
 	return http.NewCrossOriginProtection().Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller := cmp.Or(who(r), r.RemoteAddr)
 		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			log.Printf("--mcp-http: %s sent no token or a wrong one", caller)
 			// No WWW-Authenticate: a client could take it for OAuth and go looking.
 			w.Header().Set("Connection", "close")
 			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove run printed", http.StatusUnauthorized)
 			return
 		}
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller)))
 	}))
+}
+
+type callerKey struct{}
+
+// logCalls logs the tool calls that came over HTTP (the socket's carry no
+// caller): which device, which tool; not the arguments.
+func logCalls(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if c, ok := ctx.Value(callerKey{}).(string); ok && method == "tools/call" {
+			if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
+				log.Printf("--mcp-http: %s called %s", c, p.Name)
+			}
+		}
+		return next(ctx, method, req)
+	}
 }

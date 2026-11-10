@@ -1,6 +1,8 @@
 package exitnode
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -41,20 +43,35 @@ func (g uiGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.serve(w, r, dev.ID, all)
 }
 
-// selfHost passes on requests asked by the node's own name or address: a page
-// a device visits cannot rebind its name to the node.
+// selfHost passes on requests asked by the node's own name or address (a page
+// a device visits cannot rebind its name to the node), with the caller in
+// their context (Caller).
 type selfHost struct {
 	policy func() *policy
 	next   http.Handler
 }
 
 func (g selfHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !g.policy().isSelf(r.Host) {
+	p := g.policy()
+	if !p.isSelf(r.Host) {
 		w.Header().Set("Connection", "close")
 		http.Error(w, "reqcove: ask by the node's name or address", http.StatusMisdirectedRequest)
 		return
 	}
+	if d, _, ok := viewerAt(p, r.RemoteAddr); ok {
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, fmt.Sprintf("%s (%s)", d.Name, ip)))
+	}
 	g.next.ServeHTTP(w, r)
+}
+
+type callerKey struct{}
+
+// Caller is the device that sent r to the node's MCP port: its name and
+// tailnet address; empty for other requests.
+func Caller(r *http.Request) string {
+	s, _ := r.Context().Value(callerKey{}).(string)
+	return s
 }
 
 // viewerAt is who at addr may see the page: one of this user's own devices

@@ -7,6 +7,7 @@
 - `run --mcp-http`: the MCP tools over HTTP on the node's port 8090, for agents
   on your own devices on the tailnet (Grok Bot, through Tailscale's OAuth apps),
   with a token `run` prints. Stateless: agents go on across restarts of `run`.
+  `run` logs each call over HTTP: the device and the tool.
 - The MCP server gives clients short instructions (the skill's rules), for
   agents without the skill. `capture_stats` has `started`, and a cursor from
   before a restart of `run` is refused instead of paging the new records.

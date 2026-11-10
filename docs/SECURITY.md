@@ -305,6 +305,8 @@ other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
 The tools are the same as over `reqcove mcp`, and give the same masked records.
+`run` logs each tool call over HTTP with the calling device and the tool's
+name (not its arguments), and each request with no token or a wrong one.
 Checked with tests (another user's device refused over a real tailnet; the
 token, `Host` and origin checks), from this Mac over the tailnet, and with
 Grok Bot.

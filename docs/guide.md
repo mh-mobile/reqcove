@@ -74,6 +74,10 @@ again to change it.
 - Across restarts of `run` the agent goes on without reconnecting (its calls
   fail while `run` is down); the records start empty, and an earlier cursor is
   refused.
+- `run` logs each tool call with the device that made it (`--mcp-http:
+  grokbot-user-1 (100.104.0.1) called list_flows`; not the arguments), and each
+  request with no token or a wrong one. An agent that says it is checking but
+  calls nothing shows no line.
 - Plain HTTP: the tailnet already encrypts it (WireGuard).
 - In a container: the same flag, and no port to publish (the node is in the
   container); the token is in `docker logs` ([container](container.md#3-the-agent)).

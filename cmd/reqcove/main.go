@@ -447,7 +447,7 @@ func run(ctx context.Context, args []string) error {
 	})
 	var mcpHandler http.Handler
 	if *mcpHTTP {
-		mcpHandler = mcpserver.HTTP(tools, mcpToken)
+		mcpHandler = mcpserver.HTTP(tools, mcpToken, exitnode.Caller)
 	}
 	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)

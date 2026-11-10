@@ -453,3 +453,20 @@ func TestRefusedTold(t *testing.T) {
 		ln.Close()
 	}
 }
+
+// TestCaller: the node names its own device that called MCP; others are
+// refused before this, and other requests carry no caller.
+func TestCaller(t *testing.T) {
+	p := &policy{self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, own: map[netip.Addr]Device{netip.MustParseAddr("100.64.0.7"): {"nGROK", "grokbot-user-1"}}}
+	var got string
+	h := selfHost{func() *policy { return p }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = Caller(r) })}
+	r := httptest.NewRequest("POST", "/mcp", nil)
+	r.Host, r.RemoteAddr = "100.64.0.9:8090", "100.64.0.7:41000"
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if got != "grokbot-user-1 (100.64.0.7)" {
+		t.Errorf("caller: %q", got)
+	}
+	if c := Caller(httptest.NewRequest("GET", "/", nil)); c != "" {
+		t.Errorf("a request without one: %q", c)
+	}
+}
