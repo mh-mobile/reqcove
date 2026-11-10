@@ -33,12 +33,16 @@ USER 65532:65532
 # reqcove's own: --python 3.14, uvExcludeNewer, --mitmproxy-spec.
 RUN uvx --python 3.14 --exclude-newer 2026-11-08T00:00:00Z --from mitmproxy==12.3.1 mitmdump --version \
  && test ! -e /home/nonroot/.mitmproxy
-# uv's entry points start with #!/bin/sh (a trampoline to the env's python),
-# and distroless has no shell: point them at that python. The lines after the
-# first are a string to Python, so the scripts run as they are.
-# ponytail: a sed on uv's script format; scripts/container-smoke.sh catches a change.
+# uv's entry points start with #!/bin/sh and a line of shell that runs the
+# env's python (a trampoline), and distroless has no shell: point them at that
+# python. The lines after the first are a string to Python, so the scripts run
+# as they are. Only uv's trampolines (second line '''exec'); the build stops if
+# another #!/bin/sh script is there, which could not run in the image.
+# ponytail: a sed on uv's script format; a change of it stops the build here.
 RUN for f in /opt/uv/cache/archive-v0/*/bin/*; do \
-      if [ -f "$f" ] && [ "$(head -c 9 "$f")" = '#!/bin/sh' ]; then sed -i "1s|.*|#!$(dirname "$f")/python|" "$f"; fi; \
+      [ -f "$f" ] && [ "$(sed -n 1p "$f")" = '#!/bin/sh' ] || continue; \
+      case "$(sed -n 2p "$f")" in "'''exec' "*) sed -i "1s|.*|#!$(dirname "$f")/python|" "$f" ;; \
+        *) echo "a shell script uv's rewrite does not know: $f" >&2; exit 1 ;; esac; \
     done
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab
