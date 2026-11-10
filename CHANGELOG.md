@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- In the container image, `run`'s log names the `docker run -i … reqcove mcp`
+  command for Claude Code, not `reqcove mcp` inside the container.
 - `run --mcp-http`: the MCP tools over HTTP on the node's port 8090, for agents
   on your own devices on the tailnet (Grok Bot, through Tailscale's OAuth apps),
   with a token `run` prints. Stateless: agents go on across restarts of `run`.

@@ -18,8 +18,12 @@ the image builds; with no network, mitmproxy
 and mitmweb start from what the image holds; a new volume's state directory is
 the container user's, 0700; `reqcove mcp` in another container reaches `run`
 through the volume; `docker exec … reqcove status` answers; a second `run` on the same volume is refused; `docker stop`
-ends it cleanly. **Not tried yet**: logging in to a tailnet from a container,
-an iPhone through it, an agent through `docker run -i`, Podman.
+ends it cleanly. By hand on OrbStack: logging in to a tailnet from a container
+(Tailnet Lock signed, the exit node approved), an iPhone through it (its own
+CA installed; GitHub's app recorded), `reqcove mcp` through `docker run -i`
+answering an MCP client, `docker exec … reqcove har`, and `--mcp-http` read by
+Grok Bot. **Not tried yet**: Claude Code through `docker run -i`, Linux hosts
+by hand, Podman.
 
 ## 1. Build the image
 
@@ -63,12 +67,19 @@ A container per agent session, reaching `run`'s socket through the volume
 fails at once if the run container is not there; `--log-driver none` keeps the
 tools' answers out of Docker's logs.
 
-`docker exec $NAME reqcove status` works as on the host (`har` should too; not tried).
+`docker exec $NAME reqcove status` and `reqcove har` work as on the host.
 
 An agent on another device of yours (Grok Bot): add `--mcp-http` to `run`.
 The node is in the container, so no port is published; the URL and the token
-are in `docker logs` ([how](guide.md#agents-on-other-devices---mcp-http); not
-tried in a container yet).
+are in `docker logs` ([how](guide.md#agents-on-other-devices---mcp-http); tried
+with Grok Bot). The image has no `cat`; to copy the header's value without
+showing it:
+
+```sh
+docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1/p' | tail -1 | tr -d '\n' | pbcopy
+```
+
+Times in the records carry the container's time zone, UTC by default.
 
 ## What is different in a container
 

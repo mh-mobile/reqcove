@@ -76,14 +76,14 @@ again to change it.
   refused.
 - Plain HTTP: the tailnet already encrypts it (WireGuard).
 - In a container: the same flag, and no port to publish (the node is in the
-  container).
+  container); the token is in `docker logs` ([container](container.md#3-the-agent)).
 
 Checked with tests (the token, the Host, another user's device refused over a
 real tailnet, a client going on across a restart); from this Mac over the
 tailnet (no token, a wrong one, another `Host` or origin refused); and with
 Grok Bot, which read the status, the flows and their bodies, and after a
-restart of `run` went on in the same chat, the records empty. Not tried yet:
-Claude Code from another computer, a container.
+restart of `run` went on in the same chat, the records empty; also from a
+container. Not tried yet: Claude Code from another computer.
 
 ## The agent skill (`reqcove init`)
 

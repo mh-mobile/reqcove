@@ -221,6 +221,12 @@ func TestLocalProxyTakenStopsFirst(t *testing.T) {
 }
 
 func TestMcpHint(t *testing.T) {
+	t.Setenv("REQCOVE_CONTAINER", "1")
+	host, _ := os.Hostname()
+	if got := mcpHint(defaultState(), "reqcove"); got != "claude mcp add "+shellWord(host)+" -- docker run -i --rm --network none --log-driver none --volumes-from "+shellWord(host)+" reqcove mcp" {
+		t.Errorf("in a container: %q", got)
+	}
+	os.Unsetenv("REQCOVE_CONTAINER")
 	if got := mcpHint(defaultState(), "reqcove"); got != "claude mcp add reqcove -- reqcove mcp" {
 		t.Errorf("default: %q", got)
 	}

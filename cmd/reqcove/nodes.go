@@ -120,6 +120,12 @@ func pickWebPort() (int, error) {
 
 // mcpHint is the command that registers this node's agent tools in Claude Code.
 func mcpHint(state, name string) string {
+	if os.Getenv("REQCOVE_CONTAINER") != "" {
+		// In the image: the container is named as its hostname (docs/container.md).
+		c, _ := os.Hostname()
+		c = shellWord(cmp.Or(c, "NAME"))
+		return fmt.Sprintf("claude mcp add %s -- docker run -i --rm --network none --log-driver none --volumes-from %s reqcove mcp", c, c)
+	}
 	if isDefaultState(state) {
 		return "claude mcp add reqcove -- reqcove mcp"
 	}

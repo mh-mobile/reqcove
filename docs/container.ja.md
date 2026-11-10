@@ -6,7 +6,7 @@ Reqcove は、コンテナでも動きます（Docker。Podman でも同じコ�
 
 向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac が寝ないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 
-**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。**まだ試していないこと**：コンテナから tailnet にログインすること、iPhone の通信をそのコンテナに通すこと、`docker run -i` でエージェントをつなぐこと、Podman。
+**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと。**まだ試していないこと**：`docker run -i` で Claude Code をつなぐこと、Linux のホストでの手の確認、Podman。
 
 ## 1. イメージを作る
 
@@ -43,9 +43,15 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 
 エージェントのセッションごとにコンテナを 1 つ起動し、volume を通して `run` のソケットにつなぎます（確かめのスクリプトで確かめました。Claude Code ではまだです）。`--volumes-from` は、run のコンテナがなければすぐに失敗します。`--log-driver none` は、ツールの答えを Docker のログに残さないためです。
 
-`docker exec $NAME reqcove status` は、ホストと同じように使えます（`har` も使えるはずですが、試していません）。
+`docker exec $NAME reqcove status` と `reqcove har` は、ホストと同じように使えます。
 
-ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかの端末のエージェント--mcp-http)。コンテナではまだ試していません）。
+ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかの端末のエージェント--mcp-http)。Grok Bot で試しました）。イメージには `cat` がないので、ヘッダーの値は、画面に出さずに次で写せます。
+
+```sh
+docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1/p' | tail -1 | tr -d '\n' | pbcopy
+```
+
+記録の時刻は、コンテナのタイムゾーン（既定は UTC）で付きます。
 
 ## コンテナで違うこと
 

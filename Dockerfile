@@ -52,6 +52,7 @@ COPY --from=mitmproxy --chown=65532:65532 /opt/uv /opt/uv
 # The state directory, 0700 and nonroot's: a new named volume takes both.
 COPY --from=mitmproxy --chown=65532:65532 /home/nonroot/.reqcove /home/nonroot/.reqcove
 COPY --from=build /out/reqcove /usr/local/bin/reqcove
-ENV HOME=/home/nonroot UV_CACHE_DIR=/opt/uv/cache UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_PYTHON_PREFERENCE=only-managed UV_OFFLINE=1
+# REQCOVE_CONTAINER: run tells agents to connect through docker run, not reqcove mcp here.
+ENV HOME=/home/nonroot UV_CACHE_DIR=/opt/uv/cache UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_PYTHON_PREFERENCE=only-managed UV_OFFLINE=1 REQCOVE_CONTAINER=1
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/reqcove"]
