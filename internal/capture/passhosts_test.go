@@ -97,7 +97,13 @@ func TestPassHosts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// The app's server, with its own certificate (httptest's: example.com, 127.0.0.1).
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "real server") }))
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/big" {
+			io.WriteString(w, strings.Repeat("d", 64<<10))
+			return
+		}
+		fmt.Fprint(w, "real server")
+	}))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
 	defer srv.Close()
@@ -105,9 +111,9 @@ func TestPassHosts(t *testing.T) {
 	pin.AddCert(srv.Certificate())
 	pinned := &tls.Config{RootCAs: pin, NextProtos: []string{"http/1.1"}} // the app pins: only its server's certificate
 
-	h, err := tryHarness(t, ctx, []string{"*.example.com", "trusted.example.net"}, func(c *Config) {
+	h, err := tryHarness(t, ctx, []string{"*.example.com", "trusted.example.net", "*.apple.com"}, func(c *Config) {
 		var err error
-		if c.AllowHosts, err = c.AllowHosts.WithPass([]string{"example.com", "other.org"}); err != nil {
+		if c.AllowHosts, err = c.AllowHosts.WithPass([]string{"example.com", "other.org", "www.apple.com"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -159,6 +165,28 @@ func TestPassHosts(t *testing.T) {
 	if _, issuer, err := p.get("dev", "trusted.example.net", &tls.Config{RootCAs: mitm}); err != nil || !strings.Contains(issuer, "mitmproxy") {
 		t.Errorf("allowed host: %v (issuer %q)", err, issuer)
 	}
+	// Bytes each way, the right way round: a 64 KiB answer is bytes_down.
+	hc := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{
+		DialContext:     func(ctx context.Context, _, _ string) (net.Conn, error) { return p.dial(ctx, "dev") },
+		TLSClientConfig: &tls.Config{RootCAs: pin, ServerName: "example.com"}, DisableKeepAlives: true,
+	}}
+	if r, err := hc.Get("https://" + p.addr + "/big"); err != nil {
+		t.Fatal(err)
+	} else {
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}
+	if big := waitPass(h.c.Store, "example.com", true); len(big) == 0 || big[0].BytesDown < 64<<10 || big[0].BytesUp > 8<<10 {
+		t.Errorf("bytes: %+v", big)
+	}
+	// One of Apple's: mitmproxy passes it itself, before --pass-hosts; nothing recorded.
+	if body, _, err := p.get("dev", "www.apple.com", &tls.Config{InsecureSkipVerify: true}); err != nil || body != "real server" {
+		t.Errorf("Apple's: %v %q", err, body)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if pt := h.c.Store.Passthroughs(Filter{Host: "apple.com", Limit: 10}); len(pt) != 0 {
+		t.Errorf("Apple's recorded: %+v", pt)
+	}
 	// A pass host outside --allow-hosts: mitmproxy passes it itself; nothing recorded.
 	oos := h.c.Store.Stats()["out_of_scope"]
 	if body, _, err := p.get("dev", "other.org", &tls.Config{InsecureSkipVerify: true}); err != nil || body != "real server" {
@@ -167,6 +195,18 @@ func TestPassHosts(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if pt := h.c.Store.Passthroughs(Filter{Host: "other.org", Limit: 10}); len(pt) != 0 || h.c.Store.Stats()["out_of_scope"] != oos {
 		t.Errorf("outside --allow-hosts recorded: %+v", pt)
+	}
+	// A client that names no host (dials an address): passed by the address.
+	h2, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.AllowHosts, _ = c.AllowHosts.WithPass([]string{"127.0.0.1"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2 := pinClient{h: h2, addr: p.addr}
+	if body, issuer, err := p2.get("dev", "", &tls.Config{RootCAs: pin}); err != nil || body != "real server" || strings.Contains(issuer, "mitmproxy") {
+		t.Errorf("no SNI, by address: %v %q (issuer %q)", err, body, issuer)
+	}
+	if ip := waitPass(h2.c.Store, "127.0.0.1", true); len(ip) != 1 || ip[0].Host != "127.0.0.1" {
+		t.Errorf("no SNI record: %+v", ip)
 	}
 }
 
@@ -214,7 +254,7 @@ func TestStorePassthroughs(t *testing.T) {
 	}
 	ev(`"ev":"pass_open","conn":"c3","device":"d","sni":"api.example.com","ts":1794000003`)
 	st.mitmdumpExited("mitmdump exited")
-	if p = st.Passthroughs(Filter{Limit: 10}); p[0].Open || p[0].Note != "mitmdump exited" {
+	if p = st.Passthroughs(Filter{Limit: 10}); p[0].Open || !strings.HasPrefix(p[0].Note, "mitmdump exited") || !p[0].BytesUnknown {
 		t.Errorf("after mitmdump went: %+v", p[0])
 	}
 	for i := range maxPasses + 5 {
@@ -264,5 +304,52 @@ func TestRefusedHosts(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"d hangs.example.com", "d pinned.example.com"}) {
 		t.Errorf("refused: %q", got)
+	}
+}
+
+// The review's cases: a pass host's failure stays (pass-through did not
+// apply: why it failed), marked; a pass_open for an allowed host that is not
+// a pass host is refused; a long open connection counts for a later since;
+// a host filter on a parent domain finds the pass host; mitm.it is never
+// suggested.
+func TestPassReviewCases(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	allow, _ := ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"api.x.com"})
+	st.SetScope(allow, true)
+	ev := func(s string) { st.Apply([]byte(`{"v":2,` + s + `}`)) }
+	ev(`"ev":"tls_failed","conn":"t1","device":"d","sni":"api.x.com","msg":"The client does not trust the proxy's certificate for api.x.com","ts":1794000000`)
+	if fs := st.TLSFailures(Filter{Limit: 10}); len(fs) != 1 || !strings.HasPrefix(fs[0].Msg, "not passed through") {
+		t.Errorf("pass host failure: %+v", fs)
+	}
+	ev(`"ev":"pass_open","conn":"c1","device":"d","sni":"img.other.com","ts":1794000000`)
+	if p := st.Passthroughs(Filter{Limit: 10}); len(p) != 0 {
+		t.Errorf("a pass_open for a host not in --pass-hosts: %+v", p)
+	}
+	ev(`"ev":"pass_open","conn":"c2","device":"d","sni":"api.x.com","ts":1794000000`)
+	if p := st.Passthroughs(Filter{Since: 1794000600, Limit: 10}); len(p) != 1 {
+		t.Errorf("a connection open since before since: %+v", p)
+	}
+	ev(`"ev":"pass_close","conn":"c2","ts_end":1794000100,"up":10,"down":20,"msg":"connect failed"`)
+	if p := st.Passthroughs(Filter{Since: 1794000600, Limit: 10}); len(p) != 0 {
+		t.Errorf("a connection closed before since: %+v", p)
+	}
+	if p := st.Passthroughs(Filter{Limit: 10}); p[0].Note != "connect failed" {
+		t.Errorf("close reason: %+v", p[0])
+	}
+	if !st.PassHost("x.com") || !st.PassHost("API.x.com") || st.PassHost("other.com") {
+		t.Error("PassHost by parent domain")
+	}
+	if d := st.Devices(); len(d) != 1 || d[0].Passthroughs != 1 || d[0].LastSeen == "" {
+		t.Errorf("devices: %+v", d)
+	}
+	st.Apply([]byte(`{"v":2,"ev":"request","id":"f1","device":"d","host":"ok.example.com","url":"https://ok.example.com/","ts":1794000000}`))
+	for i := range 3 {
+		ev(fmt.Sprintf(`"ev":"tls_failed","conn":"m%d","device":"d","sni":"mitm.it","msg":"The client does not trust the proxy's certificate for mitm.it","ts":1794000000`, i))
+	}
+	for _, r := range st.Stats()["refused_hosts"].([]RefusedHost) {
+		if r.Host == "mitm.it" || r.Host == "api.x.com" {
+			t.Errorf("suggested %s", r.Host)
+		}
 	}
 }

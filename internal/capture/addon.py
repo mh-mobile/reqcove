@@ -392,6 +392,8 @@ class Reqcove:
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
             for i, name in enumerate(rules["resolve"].replacements):
+                if self._passed(name):  # never decrypted, so no rule applies to it
+                    raise ValueError(f"resolve[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
                 if not self._in_scope(name):  # would never apply: a typo
                     raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
             return rules, ""
@@ -548,7 +550,8 @@ class Reqcove:
                 return  # the CA's page: served, never recorded, and not "out of scope" either
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
-            self._via_upstream(flow)  # decrypted all the same: only the upstream's CA may be trusted
+            if not self._passed(flow.request.pretty_host):  # a --pass-hosts host skips the upstream proxy, as its TLS does
+                self._via_upstream(flow)  # decrypted all the same: only the upstream's CA may be trusted
             return
         device = _device(flow)
         if device:
@@ -748,13 +751,16 @@ class Reqcove:
             hello = parse_client_hello(data)
         except ValueError:
             return
-        if hello is None or not hello.sni:
-            return  # more to come (mitmproxy asks again), or no name to match
-        sni = hello.sni.lower().rstrip(".")
-        if not (self._allowed(sni) and self._passed(sni)):
+        if hello is None:
+            return  # more to come: mitmproxy asks again (it waits, as it has ignore_hosts: Apple's, always)
+        ip, port = nl.context.server.address or ("", 443)
+        # The name the client sent, or without one (an app dialing an address),
+        # the address: what --pass-hosts names, and what status suggests.
+        sni = (hello.sni or ip).lower().rstrip(".")
+        if not sni or not (self._allowed(sni) and self._passed(sni)):
             return
-        port = nl.context.server.address[1] if nl.context.server.address else 443
-        if any(re.search(p, f"{sni}:{port}") for p in ctx.options.ignore_hosts):
+        # mitmproxy's own ignore_hosts (Apple's) come first, by name or address.
+        if any(re.search(p, f"{sni}:{port}") or re.search(p, f"{ip}:{port}") for p in ctx.options.ignore_hosts):
             return
         layer = tcp_layer.TCPLayer(nl.context, ignore=False)
         layer.flow.metadata["reqcove_pass"] = {
@@ -788,6 +794,7 @@ class Reqcove:
         self.put_event({
             "v": VERSION, "ev": "pass_close", "conn": flow.client_conn.id,
             "ts_end": time.time(), "up": p["up"], "down": p["down"],
+            "msg": (flow.error.msg if flow.error else "")[:SHORT],  # never connected, say
         })
         self._web_done(flow)
 

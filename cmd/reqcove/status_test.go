@@ -459,7 +459,16 @@ func TestPassHostsFlag(t *testing.T) {
 	if _, err := hostList("@" + filepath.Join(home, "missing.txt")); err == nil {
 		t.Error("a missing file taken")
 	}
-	os.WriteFile(filepath.Join(home, "evil.txt"), []byte("api.x.com; rm -rf ~\n"), 0o600)
+	// A line that is not a host (a command, or a wrong file's secret) stops it,
+	// named by its line number only.
+	os.WriteFile(filepath.Join(home, "evil.txt"), []byte("api.x.com\napi.x.com; rm -rf ~ # S3CRET\n"), 0o600)
+	if _, err := hostList("@~/evil.txt"); err == nil || !strings.Contains(err.Error(), "line 2 is not a host list") || strings.Contains(err.Error(), "rm -rf") || strings.Contains(err.Error(), "S3CRET") {
+		t.Errorf("evil.txt: %v", err)
+	}
+	os.WriteFile(filepath.Join(home, "empty.txt"), []byte("# nothing\n\n"), 0o600)
+	if _, err := hostList("@~/empty.txt"); err == nil || !strings.Contains(err.Error(), "has no hosts") {
+		t.Errorf("empty.txt: %v", err)
+	}
 	args := func(extra ...string) []string {
 		return append([]string{"--device", "phone", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"}, extra...)
 	}
@@ -467,12 +476,37 @@ func TestPassHostsFlag(t *testing.T) {
 		extra []string
 		want  string
 	}{
-		{[]string{"--allow-hosts", "*", "--pass-hosts", "@" + filepath.Join(home, "evil.txt")}, "bad host"},
 		{[]string{"--pass-hosts", "api.x.com"}, "--pass-hosts needs --allow-hosts"},
 		{[]string{"--allow-hosts", "*", "--pass-hosts", "*"}, `not "*"`},
 	} {
 		if err := run(context.Background(), args(c.extra...)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q: %v", c.extra, err)
 		}
+	}
+}
+
+// Suggestions group a domain's hosts (by the public suffix list), keep the
+// pass hosts already given, and a device with only passed connections is not
+// told to turn its exit node on.
+func TestPassSuggestion(t *testing.T) {
+	hosts, counts := passSuggestion([]capture.RefusedHost{
+		{Host: "api31.tiktokv.com", Refusals: 30}, {Host: "log22.tiktokv.com", Refusals: 5},
+		{Host: "app4.paypay.ne.jp", Refusals: 19}, {Host: "events.paypay.ne.jp", Refusals: 6},
+		{Host: "api.x.com", Refusals: 4}, {Host: "34.102.215.99", Refusals: 61},
+	})
+	if strings.Join(hosts, ",") != "*.tiktokv.com,*.paypay.ne.jp,api.x.com,34.102.215.99" || !strings.Contains(strings.Join(counts, ";"), "2 hosts of tiktokv.com (35)") {
+		t.Errorf("%q %q", hosts, counts)
+	}
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	allow, _ := capture.ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"api.x.com"})
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{{Device: "a", Host: "app4.paypay.ne.jp", Refusals: 9}}}
+	got := strings.Join(nextSteps(ok, stats, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 1}}), "\n")
+	if !strings.Contains(got, "--pass-hosts 'api.x.com,app4.paypay.ne.jp' ") {
+		t.Errorf("keeps the pass hosts given:\n%s", got)
+	}
+	got = strings.Join(nextSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Passthroughs: 4}}), "\n")
+	if strings.Contains(got, "no traffic from iphone") {
+		t.Errorf("a device with passed connections told it has no traffic:\n%s", got)
 	}
 }

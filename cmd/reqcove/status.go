@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"golang.org/x/net/publicsuffix"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,7 +132,7 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			}
 			continue // not a phone: no exit node to turn on
 		}
-		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && node.ExitApproved {
+		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && d.Passthroughs == 0 && node.ExitApproved {
 			// The PeerAPI port stays the same across restarts (derived from the IP), but a device
 			// that tried DNS while reqcove was down can stay DNS-dead (tailscale/tailscale#20870).
 			steps = append(steps, fmt.Sprintf("no traffic from %s yet: turn on its exit node (%s). If it is on and sites do not load, turn the exit node off and on again: its DNS can stay stuck after reqcove was down", d.Name, node.Node))
@@ -143,16 +145,19 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	// devices only (the --ui page of another user's device lists its own).
 	refused, _ := stats["refused_hosts"].([]capture.RefusedHost)
 	for _, d := range devices {
-		var hosts, counts []string
+		var mine []capture.RefusedHost
 		for _, r := range refused {
 			if r.Device == d.ID {
-				hosts = append(hosts, r.Host)
-				counts = append(counts, fmt.Sprintf("%s (%d)", r.Host, r.Refusals))
+				mine = append(mine, r)
 			}
 		}
-		if len(hosts) > 0 {
-			steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s, while it accepts it for other hosts: certificate pinning, or an app with its own list of CAs. To let those apps work, start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(hosts, ","))))
+		if len(mine) == 0 {
+			continue
 		}
+		hosts, counts := passSuggestion(mine)
+		// The hosts passed already stay: the command replaces the flag.
+		all := append(slices.Clone(allow.PassHosts), hosts...)
+		steps = append(steps, fmt.Sprintf("%s refused Reqcove's certificate again and again for %s, while it accepts it for other hosts: certificate pinning, or an app with its own list of CAs. To let those apps work, start run again with --pass-hosts %s (carried undecrypted: only their connections are recorded, no URL, headers or bodies)", cmp.Or(d.Name, d.ID), strings.Join(counts, ", "), shellWord(strings.Join(all, ","))))
 	}
 	return steps
 }
@@ -356,4 +361,41 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// passSuggestion groups refused hosts by their registered domain (the public
+// suffix list: paypay.ne.jp, not ne.jp): two or more under one become
+// *.domain. Addresses stay as they are.
+func passSuggestion(refused []capture.RefusedHost) (hosts, counts []string) {
+	type group struct {
+		hosts []string
+		n     int
+	}
+	groups := map[string]*group{}
+	var order []string
+	for _, r := range refused {
+		key := r.Host
+		if _, err := netip.ParseAddr(r.Host); err != nil {
+			if d, err := publicsuffix.EffectiveTLDPlusOne(r.Host); err == nil {
+				key = d
+			}
+		}
+		if groups[key] == nil {
+			groups[key] = &group{}
+			order = append(order, key)
+		}
+		groups[key].hosts = append(groups[key].hosts, r.Host)
+		groups[key].n += r.Refusals
+	}
+	for _, key := range order {
+		g := groups[key]
+		if len(g.hosts) == 1 {
+			hosts = append(hosts, g.hosts[0])
+			counts = append(counts, fmt.Sprintf("%s (%d)", g.hosts[0], g.n))
+			continue
+		}
+		hosts = append(hosts, "*."+key)
+		counts = append(counts, fmt.Sprintf("%d hosts of %s (%d)", len(g.hosts), key, g.n))
+	}
+	return hosts, counts
 }

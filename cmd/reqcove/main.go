@@ -213,8 +213,21 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		for _, h := range allow.PassHosts {
-			if !allow.Allowed(strings.TrimPrefix(h, "*.")) {
+			name := strings.TrimPrefix(h, "*.")
+			this, _ := capture.ParseAllowHosts([]string{h})
+			// Allowed by --allow-hosts, or covering one of its hosts (*.example.com
+			// over api.example.com).
+			covered := allow.Allowed(name) || slices.ContainsFunc(allow.Hosts, func(a string) bool { return this.Allowed(strings.TrimPrefix(a, "*.")) })
+			switch {
+			case capture.AppleIgnored(name):
+				log.Printf("WARN: --pass-hosts %s: one of Apple's, which mitmproxy passes undecrypted itself: nothing about it is recorded", h)
+			case !covered:
 				log.Printf("WARN: --pass-hosts %s: not in --allow-hosts, so it passes undecrypted already, and nothing about it is recorded", h)
+			}
+		}
+		for _, a := range allow.Hosts {
+			if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
+				log.Printf("WARN: --allow-hosts %s: connections to that address are decrypted whatever name they carry; --pass-hosts does not apply to them", a)
 			}
 		}
 		log.Printf("--pass-hosts: %s carried undecrypted; their connections (host, times, bytes) are recorded, nothing inside them", strings.Join(allow.PassHosts, ", "))
@@ -901,11 +914,22 @@ func hostList(v string) (string, error) {
 		return "", err // the flag package names the flag and the value
 	}
 	var hosts []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for i, line := range strings.Split(string(b), "\n") {
 		line, _, _ = strings.Cut(line, "#")
-		if line = strings.TrimSpace(line); line != "" {
-			hosts = append(hosts, line)
+		if line = strings.TrimSpace(line); line == "" {
+			continue
 		}
+		// Checked here, by line number only: a wrong file (.env, say) must not
+		// have its lines, secrets maybe, printed back.
+		for _, h := range strings.Split(line, ",") {
+			if _, err := capture.ParseAllowHosts([]string{h}); err != nil {
+				return "", fmt.Errorf("%s line %d is not a host list (one host a line, as the flag writes them)", path, i+1)
+			}
+		}
+		hosts = append(hosts, line)
+	}
+	if len(hosts) == 0 {
+		return "", fmt.Errorf("%s has no hosts", path)
 	}
 	return strings.Join(hosts, ","), nil
 }

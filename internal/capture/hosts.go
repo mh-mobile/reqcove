@@ -27,7 +27,7 @@ type HostRules struct {
 func (r HostRules) WithPass(specs []string) (HostRules, error) {
 	p, err := ParseAllowHosts(specs)
 	if err != nil {
-		return r, fmt.Errorf("--pass-hosts: %w", err)
+		return r, errors.New(strings.Replace(err.Error(), "--allow-hosts", "--pass-hosts", 1))
 	}
 	if p.All {
 		return r, errors.New("--pass-hosts: not \"*\": leave out --allow-hosts instead, and nothing is decrypted")

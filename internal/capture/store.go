@@ -197,8 +197,11 @@ func (s *Store) mitmdumpExited(why string) {
 			s.heldBytes += f.bytes() - before
 		}
 	}
-	for _, p := range s.passByConn { // mitmdump took them down with it
-		p.end, p.note = float64(time.Now().UnixNano())/1e9, why
+	// mitmdump took them down with it; their bytes went with it. A pass_open of
+	// the dead process read after this would stay open: lines are read in order,
+	// so only one cut off mid-write could.
+	for _, p := range s.passByConn {
+		p.end, p.note, p.unknown = float64(time.Now().UnixNano())/1e9, why+" (bytes unknown)", true
 	}
 	clear(s.passByConn)
 	s.earlier[0] += s.addonDropped[0]
@@ -278,7 +281,7 @@ func (s *Store) Apply(line []byte) {
 		}
 		return
 	case "pass_open":
-		if !s.allow.Allowed(e.SNI) { // passed through for an allowed host only: checked here too
+		if !s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI) { // passed through for an allowed --pass-hosts host only: checked here too
 			s.outOfScope++
 			return
 		}
@@ -293,7 +296,7 @@ func (s *Store) Apply(line []byte) {
 		return
 	case "pass_close":
 		if p := s.passByConn[e.Conn]; p != nil {
-			p.end, p.up, p.down = e.TSEnd, e.Up, e.Down
+			p.end, p.up, p.down, p.note = e.TSEnd, e.Up, e.Down, e.Msg
 			delete(s.passByConn, e.Conn)
 		}
 		return
@@ -302,11 +305,15 @@ func (s *Store) Apply(line []byte) {
 		if host == "" {
 			host = e.Host
 		}
-		if !s.allow.Match(host) {
+		if !s.allow.Allowed(host) {
 			s.outOfScope++ // only hosts in --allow-hosts are recorded, failures included
 			return
 		}
-		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, s.maskError(e.Msg), e.TS})
+		msg := s.maskError(e.Msg)
+		if s.allow.Passed(host) { // a --pass-hosts host was decrypted after all: say so, it is why it failed
+			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
+		}
+		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
 		}
@@ -650,12 +657,13 @@ func (s *Store) TLSFailures(q Filter) []TLSFailureView {
 
 // DeviceInfo is what list_devices returns.
 type DeviceInfo struct {
-	ID          string `json:"id"` // StableID
-	Name        string `json:"name,omitempty"`
-	Carried     bool   `json:"carried"` // one of --device now
-	Flows       int    `json:"flows"`
-	TLSFailures int    `json:"tls_failures"`
-	LastSeen    string `json:"last_seen,omitempty"` // newest request start
+	ID           string `json:"id"` // StableID
+	Name         string `json:"name,omitempty"`
+	Carried      bool   `json:"carried"` // one of --device now
+	Flows        int    `json:"flows"`
+	TLSFailures  int    `json:"tls_failures"`
+	Passthroughs int    `json:"passthroughs"`        // --pass-hosts connections kept
+	LastSeen     string `json:"last_seen,omitempty"` // newest request start
 }
 
 // Devices lists the --device devices and any other device with records.
@@ -684,6 +692,12 @@ func (s *Store) Devices() []DeviceInfo {
 	for _, f := range s.tlsFailures {
 		if f.Device != "" {
 			get(f.Device).TLSFailures++
+		}
+	}
+	for _, p := range s.passes {
+		if p.device != "" {
+			get(p.device).Passthroughs++
+			last[p.device] = max(last[p.device], p.start)
 		}
 	}
 	out := []DeviceInfo{}
@@ -810,7 +824,7 @@ func (s *Store) Stats() map[string]any {
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
 		"tls_failures":   len(s.tlsFailures),
 		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),
-		"pass_hosts": s.allow.PassHosts, "refused_hosts": s.refusedLocked(),
+		"pass_hosts": orNone(s.allow.PassHosts), "refused_hosts": s.refusedLocked(),
 		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
@@ -1184,24 +1198,26 @@ type passthrough struct {
 	alpn                             []string
 	start, end                       float64
 	up, down                         int64
+	unknown                          bool // the bytes went with mitmdump
 }
 
 // PassthroughView is a --pass-hosts connection as list_passthrough returns it:
 // what is outside TLS, nothing inside.
 type PassthroughView struct {
-	Time        string   `json:"time"`          // the connection's start
-	End         string   `json:"end,omitempty"` // empty while open
-	Open        bool     `json:"open"`          // still connected; bytes come when it ends
-	DurationMS  int64    `json:"duration_ms,omitempty"`
-	Host        string   `json:"host"` // the SNI the client sent
-	Device      string   `json:"device,omitempty"`
-	DeviceName  string   `json:"device_name,omitempty"`
-	Server      string   `json:"server,omitempty"` // IP:port connected to
-	ALPNOffered []string `json:"alpn_offered,omitempty"`
-	BytesUp     int64    `json:"bytes_up"` // from the client, TLS included, the whole connection
-	BytesDown   int64    `json:"bytes_down"`
-	Note        string   `json:"note,omitempty"` // why it ended early (mitmproxy restarted)
-	Conn        string   `json:"conn"`
+	Time         string   `json:"time"`          // the connection's start
+	End          string   `json:"end,omitempty"` // empty while open
+	Open         bool     `json:"open"`          // still connected; bytes come when it ends
+	DurationMS   int64    `json:"duration_ms,omitempty"`
+	Host         string   `json:"host"` // the SNI the client sent
+	Device       string   `json:"device,omitempty"`
+	DeviceName   string   `json:"device_name,omitempty"`
+	Server       string   `json:"server,omitempty"` // IP:port connected to
+	ALPNOffered  []string `json:"alpn_offered,omitempty"`
+	BytesUp      int64    `json:"bytes_up"` // from the client, TLS included, the whole connection
+	BytesDown    int64    `json:"bytes_down"`
+	BytesUnknown bool     `json:"bytes_unknown,omitempty"` // mitmproxy restarted mid-connection: the bytes above are not its
+	Note         string   `json:"note,omitempty"`          // why it ended early (mitmproxy restarted)
+	Conn         string   `json:"conn"`
 }
 
 // Passthroughs returns the newest --pass-hosts connections first. Of q, it
@@ -1212,11 +1228,17 @@ func (s *Store) Passthroughs(q Filter) []PassthroughView {
 	out := []PassthroughView{}
 	for i := len(s.passes) - 1; i >= 0 && len(out) < q.Limit; i-- {
 		p := s.passes[i]
-		if !q.match(&Flow{Device: p.device, Host: p.host, Start: p.start}, s.names[p.device]) {
+		// A connection open at since counts: a long one (an app's push channel)
+		// started before it.
+		t := p.start
+		if q.Since > 0 && t < q.Since && (p.end == 0 || p.end >= q.Since) {
+			t = q.Since
+		}
+		if !q.match(&Flow{Device: p.device, Host: p.host, Start: t}, s.names[p.device]) {
 			continue
 		}
 		v := PassthroughView{Host: p.host, Device: p.device, DeviceName: s.names[p.device], Server: p.server,
-			ALPNOffered: p.alpn, BytesUp: p.up, BytesDown: p.down, Note: p.note, Conn: p.conn, Open: p.end == 0}
+			ALPNOffered: p.alpn, BytesUp: p.up, BytesDown: p.down, BytesUnknown: p.unknown, Note: p.note, Conn: p.conn, Open: p.end == 0}
 		if p.start > 0 {
 			v.Time = unixTime(p.start).Format("2006-01-02T15:04:05.000Z07:00")
 		}
@@ -1269,14 +1291,14 @@ func (s *Store) refusedLocked() []RefusedHost {
 	for k, n := range counts {
 		// A host as a host name: an SNI is the phone's app's to choose, and these
 		// go into a command run suggests (--pass-hosts …).
-		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && validHost(k.host) {
+		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && validHost(k.host) && k.host != "mitm.it" {
 			out = append(out, RefusedHost{k.device, s.names[k.device], k.host, n})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Refusals > out[j].Refusals || out[i].Refusals == out[j].Refusals && out[i].Host < out[j].Host
 	})
-	return out[:min(len(out), 10)]
+	return out[:min(len(out), 30)] // run groups them by domain
 }
 
 // PassHost reports whether host is one of --pass-hosts: carried undecrypted,
@@ -1284,5 +1306,24 @@ func (s *Store) refusedLocked() []RefusedHost {
 func (s *Store) PassHost(host string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return host != "" && s.allow.Passed(host)
+	if host == "" {
+		return false
+	}
+	host = normHost(host)
+	if s.allow.Passed(host) {
+		return true
+	}
+	for _, p := range s.allow.PassHosts { // a host filter matches subdomains: so does this
+		if p = strings.TrimPrefix(p, "*."); strings.HasSuffix(p, "."+host) {
+			return true
+		}
+	}
+	return false
+}
+
+func orNone(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

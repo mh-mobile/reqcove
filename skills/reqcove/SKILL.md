@@ -81,7 +81,9 @@ Before saying something was not sent, check:
   not "is". `next_steps` then names those hosts, with the `--pass-hosts` that
   lets the app work: the user restarts `reqcove run` with it, not you.
 - A host in `pass_hosts` never has flows. `list_passthrough` has its
-  connections: host, server, times, bytes. A connection is not a request (it
+  connections: host, server, times, bytes (`since` includes connections still
+  open from before it). A TLS failure marked "not passed through" is a pass host
+  decrypted anyway: say so to the user. A connection is not a request (it
   may carry many or none); there are no URLs or contents. Never say what was
   requested, that a request was not sent, nor that it succeeded.
 - Pinning checked after the handshake (the app connects, then quits without a

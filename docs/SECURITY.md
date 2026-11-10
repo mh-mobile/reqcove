@@ -55,7 +55,7 @@ So "delete the directory" above means each of them.
 
 ## What is recorded
 
-- Only requests to hosts in `--allow-hosts` are decrypted and recorded. Two checks
+- Only requests to hosts in `--allow-hosts` (and not in `--pass-hosts`) are decrypted and recorded. Two checks
   enforce it: mitmproxy passes other connections through undecrypted, and each
   request's Host is checked again (a connection to an allowed host can carry
   requests to others, as with HTTP/2 connection reuse). Requests and TLS failures
@@ -70,10 +70,16 @@ So "delete the directory" above means each of them.
   host's decrypted connection (HTTP/2) are not recorded either. Bytes are the
   whole connection's: another host's requests riding it count in them, unseen
   (from reading code). The hosts `reqcove status` suggests for `--pass-hosts`
-  come from the phone's TLS (its SNI, the app's to choose): only names made of
-  host characters are suggested, and the command is quoted for a shell (a
-  test). `@FILE` lists are read as hosts, never run: a line that is not a host
-  stops `run`.
+  come from the phone's TLS (its SNI, the app's to choose): only host names
+  and IPv4 addresses (a client that names no host is passed by its
+  destination) are suggested, never mitm.it, and the command is quoted for a
+  shell (a test). `@FILE` lists are read as hosts, never run: a line that is
+  not a host stops `run`, named by its line number only, so a wrong file (a
+  .env, say) is not printed back (a test). A pass host's plain HTTP, and its
+  requests riding another host's decrypted connection, go to its server, not to
+  `--upstream-proxy`, and are counted as out of scope, not recorded. A pass
+  host on Apple's list is passed by mitmproxy itself and leaves no record (a
+  test); `run` warns.
 - Secrets are masked as they arrive, so no tool can return them. A header, query
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,

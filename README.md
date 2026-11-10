@@ -363,8 +363,10 @@ On an iPhone (iOS 27.3), with `--allow-hosts '*'`, TikTok's API hosts, X's
 not (Duolingo, Gmail, 1Password, LINE, Slack, banking apps).
 
 - `reqcove status` names the hosts a device refused again and again while it
-  accepts the CA elsewhere, with the `--pass-hosts` to add. A host fails once
-  or twice for other reasons, so one failure is not enough.
+  accepts the CA elsewhere, with the `--pass-hosts` to start `run` with (a
+  domain's hosts as `*.domain`, the hosts passed already kept). A host fails once
+  or twice for other reasons, so one failure is not enough. An app that names
+  no host (it dials an address) is passed by that address.
 - `--pass-hosts` carries those hosts undecrypted, so the app works (checked
   with a test client that pins; on the iPhone not tried yet). For them only the
   connection is recorded: the host the client named, the server, start and

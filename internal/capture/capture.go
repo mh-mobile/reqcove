@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +36,17 @@ var addonPy []byte
 //
 //go:embed apple-ignore-hosts.txt
 var appleIgnoreHosts string
+
+// AppleIgnored says host is on the Apple list mitmproxy passes through itself:
+// a --pass-hosts host there is never recorded.
+func AppleIgnored(host string) bool {
+	for _, re := range strings.Split(strings.TrimSpace(appleIgnoreHosts), "\n") {
+		if m, _ := regexp.MatchString(re, host+":443"); m {
+			return true
+		}
+	}
+	return false
+}
 
 // UVExcludeNewer: uv resolves mitmproxy's dependencies only from releases
 // before this, the versions tested with it, so a release made later (a
