@@ -4,7 +4,7 @@
 
 別の Mac（サブ機の MacBook など）も、iPhone と同じように Reqcove の Exit Node を使えます。`--allow-hosts` のホストへの HTTP(S) が記録され、その Mac の iOS シミュレーターの通信も記録されます。まだ試していません。以下は、Exit Node の仕組みから考えた手順です。
 
-## 1. Reqcove を動かしている Mac で、その Mac を `--device` に入れる
+## 1. Reqcove を動かしている Mac で、その Mac を `--device` で指定する
 
 ```sh
 reqcove run --device iphone --device macbook-sub --allow-hosts api.example.com --ui

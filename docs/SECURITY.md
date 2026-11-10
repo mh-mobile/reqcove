@@ -80,7 +80,8 @@ So "delete the directory" above means each of them.
   `--upstream-proxy`, and are counted as out of scope, not recorded. A pass
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
-- Secrets are masked as they arrive, so no tool can return them. A header, query
+- The secrets Reqcove recognises are masked as they arrive, so no tool can
+  return them. A header, query
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,
   jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket

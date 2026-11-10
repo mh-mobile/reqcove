@@ -60,6 +60,8 @@ git clone https://github.com/mh-mobile/reqcove && cd reqcove
 go build -o reqcove ./cmd/reqcove
 ```
 
+Then put `reqcove` on your `PATH` (or call it as `./reqcove`).
+
 `go install …@version` does not work: Reqcove uses a fork of Tailscale's tsnet
 through a `replace` directive.
 
@@ -119,9 +121,12 @@ All of them: [the guide](docs/guide.md#options).
 
 ## What it keeps safe, and what it does not
 
-- Only the hosts in `--allow-hosts` are decrypted and recorded. Apple's hosts
-  always pass undecrypted.
-- Secrets (tokens, keys, cookies, passwords) are masked as they arrive. **Other
+- Only requests to the hosts in `--allow-hosts` are recorded. A request to
+  another host that rides on an allowed host's connection (HTTP/2 connection
+  reuse) is decrypted too, and is not recorded, but `--web` shows it and
+  `--upstream-proxy` forwards it. Apple's hosts always pass undecrypted.
+- The secrets Reqcove recognises (tokens, keys, cookies, passwords) are masked
+  as they arrive. **Other
   secrets in a body, under names that do not say so, are not found**, and
   personal data such as e-mail addresses is not masked.
 - What the agent reads goes to its model provider. Bodies are written by remote

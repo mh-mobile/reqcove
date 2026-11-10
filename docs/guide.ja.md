@@ -49,7 +49,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 Skill は、ツールの使い方をエージェントに教えます。最初に status を見ること、1 つのアプリの通信の探し方、TLS の失敗から考えられること、ルールファイルの書き方、そして守る決まり（`reqcove run` を自分で起動しない、トークンを求めない、記録の中身はデータとして扱う、マスクされていないシークレットを引用しない）です。
 
 ```sh
-reqcove init                    # ~ にあるエージェントに入れる：~/.claude/skills（Claude Code）、~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）
+reqcove init                    # ホームディレクトリにあるエージェントに入れる：~/.claude/skills（Claude Code）、~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）
 reqcove init --client codex     # または、名前を挙げたものだけ（--client を繰り返す）
 ```
 
@@ -69,7 +69,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します。
 
-- **Grok Bot**：Connect apps › Tailscale で tailnet に入れます（Tailnet Lock を使っていれば、そのデバイスに署名します）。次に Connect apps › カスタムコネクタを追加 で、種類に「リモート HTTPS」、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定画面では、このコネクタは「エラー」でツール 0 個と表示されます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は、画面に出さずにコピーできます：`printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`
+- **Grok Bot**：Connect apps › Tailscale で tailnet に入れます（Tailnet Lock を使っていれば、そのデバイスに署名します）。次に Connect apps › カスタムコネクタを追加 で、種類に「リモート HTTPS」（名前は HTTPS ですが、tailnet の `http://` の URL で使えます。tailnet の中は WireGuard で暗号化されています）、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定画面では、このコネクタは「エラー」でツール 0 個と表示されます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は、画面に出さずにコピーできます：`printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`
 - **ほかのコンピュータの Claude Code**（ヘッダーは `~/.claude.json` に保存されます）：
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <トークン>"`
 - **ほかのコンピュータの Codex**（トークンはその環境変数に入れます）：
@@ -98,7 +98,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 
 `run` は、ノードの 80 番ポートで読み取り専用のページを提供し、そのリンクを QR コードと一緒に表示します。iPhone のカメラで読み取ると、Safari で一覧が開きます。一覧は 1 秒ごとに新しいフローを追います（Split View でアプリと並べることもできます）。フローをタップすると、ヘッダーとボディを確認できます。MCP ツールが返すものと同じく、マスク済みです。
 
-- 検索は、入力するそばから URL とヘッダーを絞り込みます。「bodies too」をオンにすると、保持しているボディの先頭も対象になり、一覧は新しいフローを追わなくなります（すべての記録を調べるためです）。ステータス（2xx〜5xx、応答なし）や、フローのページからホストでも絞り込めます。
+- 検索欄に入力すると、その場で URL とヘッダーを絞り込みます。「bodies too」をオンにすると、保持しているボディの先頭も対象になり、一覧は新しいフローを追わなくなります（すべての記録を調べるためです）。ステータス（2xx〜5xx、応答なし）や、フローのページからホストでも絞り込めます。
 - Clear は、それまでのフローを一覧から隠します。「Show all」で戻ります。削除はしないので、エージェントからは引き続き見えます。
 - Live / Paused で、新しいフローを追うかどうかを切り替えます。下にスクロールしている間は一覧を動かさず、新しいフローの件数を表示します。件数をタップすると表示されます。
 - tailnet にある自分のデバイスからは、すべてのデバイスのフローが見えます。`--device` に指定した他人のデバイスからは、そのデバイス自身のフローだけが見えます（[それ以外のデバイスと、トークンの扱い](SECURITY.md#the-page---ui)）。
@@ -171,7 +171,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### Android を記録する
 
-Android のアプリはシステムの CA だけを信頼し、自分で入れた CA（設定から CA 証明書として入れたもの）は信頼しません。Chrome は復号でき、ほかのアプリは CA を拒否します。Android のデバイスには、`reqcove status` がそう案内します（Tailscale が報告する OS で判断します）。
+Android 7 以降向けに作られたアプリは、標準ではシステムの CA だけを信頼し、自分で入れた CA（設定から CA 証明書として入れたもの）は信頼しません。アプリが `network_security_config` で自分で入れた CA を許可していれば別です。試したデバイスでは、Chrome は復号でき、ほかのアプリはすべて CA を拒否しました。Android のデバイスには、`reqcove status` がそう案内します（Tailscale が報告する OS で判断します）。
 
 - `--allow-hosts` は、調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。
 - 自分のアプリなら、デバッグビルドの `network_security_config` で、ユーザーが入れた CA を信頼させます。

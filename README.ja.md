@@ -38,7 +38,7 @@ Homebrew で入れます（macOS と Linux。ソースからビルドし、uv �
 brew install mh-mobile/tap/reqcove
 ```
 
-[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリを落として使うこともできます（Apple シリコンの macOS、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
+[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリをダウンロードして使うこともできます（Apple シリコンの macOS、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
 
 ソースからビルドすることもできます（Go 1.27）。
 
@@ -46,6 +46,8 @@ brew install mh-mobile/tap/reqcove
 git clone https://github.com/mh-mobile/reqcove && cd reqcove
 go build -o reqcove ./cmd/reqcove
 ```
+
+できた `reqcove` は、`PATH` の通ったディレクトリに置いてください（または `./reqcove` として実行します）。
 
 `go install …@version` は使えません。Reqcove は Tailscale の tsnet の fork を `replace` ディレクティブで使っているためです。
 
@@ -93,8 +95,8 @@ go build -o reqcove ./cmd/reqcove
 
 ## セキュリティ
 
-- 復号して記録するのは `--allow-hosts` のホストだけです。Apple のホストは、常に復号せずに通します。
-- シークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません。** メールアドレスなどの個人情報もマスクしません。
+- 記録するのは、`--allow-hosts` のホストへのリクエストだけです。ただし、許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあり（HTTP/2 の接続の再利用）、それも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` には転送されます。Apple のホストは、常に復号せずに通します。
+- Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません。** メールアドレスなどの個人情報もマスクしません。
 - エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、エージェントに指示しようとすることがあります。
 - Exit Node は、このコンピュータ、LAN、tailnet を宛先として拒否します。
 

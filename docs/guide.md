@@ -103,7 +103,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 - **Grok Bot**: Connect apps › Tailscale, to join your tailnet (under Tailnet
   Lock, sign its device). Then Connect apps › Add a custom connector: type
-  Remote HTTPS, the URL as server URL, header key `Authorization`, value
+  Remote HTTPS (an `http://` tailnet URL works there; WireGuard encrypts it),
+  the URL as server URL, header key `Authorization`, value
   `Bearer <token>`. Its settings show the connector with an error and no tools
   (it reaches the tailnet from its chats only): ask it in a chat. To copy the
   value unseen: `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`.
@@ -256,8 +257,10 @@ Tried: on an iPhone.
 
 ### Android
 
-Android apps trust only the system's CAs, not one you install (as a CA
-certificate, in Settings): Chrome is decrypted, other apps refuse the CA.
+Apps built for Android 7 and later trust only the system's CAs by default,
+not one you install (as a CA certificate, in Settings), unless the app allows
+user CAs in its `network_security_config`. On the device tried, Chrome was
+decrypted and every other app refused the CA.
 `reqcove status` says so for Android devices (from the OS Tailscale reports).
 
 - Keep `--allow-hosts` to the hosts you test: the others pass undecrypted and
