@@ -81,7 +81,9 @@ reqcove init --client codex     # or only the ones you name (repeat --client)
 - It does not register the MCP server: the command above does.
 
 Tried: Claude Code and Codex, each loading the skill when asked where an app
-connects, Reqcove not named. Not tried: Cursor, Gemini CLI, Copilot CLI, Devin.
+connects, Reqcove not named. Devin too: it loaded the skill from
+`~/.agents/skills`, and without the MCP server it asked for it and stopped.
+Not tried: Cursor, Gemini CLI, Copilot CLI.
 
 ### Agents on other devices (`--mcp-http`)
 

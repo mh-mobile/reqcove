@@ -15,6 +15,13 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
 - Never start, stop or restart `reqcove run`, nor run `reqcove cleanup` (it
   can put the system's proxy settings back). The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`.
+- Read the records only through the reqcove MCP tools and those commands. If
+  the tools are missing or do not connect, tell the user to add the MCP server,
+  whose command is `reqcove mcp` (Claude Code: `claude mcp add reqcove --
+  reqcove mcp`; other agents: their MCP settings), and stop. Do not reach the records another way: no scripts
+  that talk to `reqcove mcp` or its sockets, no reading the state directory
+  (`~/.reqcove`: logs, tokens, keys), no probing ports or processes, no
+  listing the tailnet's devices or this computer's apps.
 - Never ask for, copy or repeat a login URL, a `--ui` or `--web` link, a
   token (the `--mcp-http` header's too), a `tailscale lock sign` key or the CA's private key. They stay in the
   user's terminal.

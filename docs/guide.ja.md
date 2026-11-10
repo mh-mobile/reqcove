@@ -55,7 +55,7 @@ reqcove init --client codex     # または、名前を挙げたものだけ（-
 - `init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを削除し、`--print` は Skill を書き出します。
 - MCP サーバーの登録はしません。登録は、上のコマンドで行います。
 
-確認状況：Claude Code と Codex で確認（Reqcove の名前を出さずにアプリの通信先を尋ねると、どちらも Skill を読み込みました）。未確認：Cursor、Gemini CLI、Copilot CLI、Devin。
+確認状況：Claude Code と Codex で確認（Reqcove の名前を出さずにアプリの通信先を尋ねると、どちらも Skill を読み込みました）。Devin でも確認（`~/.agents/skills` の Skill を読み込み、MCP サーバーがないときは登録を頼んで止まりました）。未確認：Cursor、Gemini CLI、Copilot CLI。
 
 ### ほかのデバイスのエージェントから使う（`--mcp-http`）
 
