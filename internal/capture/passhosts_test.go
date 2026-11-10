@@ -305,6 +305,12 @@ func TestRefusedHosts(t *testing.T) {
 	if !slices.Equal(got, []string{"d hangs.example.com", "d pinned.example.com"}) {
 		t.Errorf("refused: %q", got)
 	}
+	// example.com has recorded hosts on d (ok., seen.): a *.example.com would stop them.
+	for _, r := range st.Stats()["refused_hosts"].([]RefusedHost) {
+		if !r.SiblingsRecorded {
+			t.Errorf("%s: siblings recorded not said", r.Host)
+		}
+	}
 }
 
 // The review's cases: a pass host's failure stays (pass-through did not

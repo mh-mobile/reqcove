@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/net/publicsuffix"
 	"net/url"
 	"regexp"
 	"sort"
@@ -1272,6 +1273,9 @@ type RefusedHost struct {
 	DeviceName string `json:"device_name,omitempty"`
 	Host       string `json:"host"`
 	Refusals   int    `json:"refusals"`
+	// SiblingsRecorded: the device has decrypted flows to another host of the
+	// same domain, so a *.domain in --pass-hosts would stop recording those.
+	SiblingsRecorded bool `json:"siblings_recorded,omitempty"`
 }
 
 // refusedAfter is how many refusals, alerts or hang-ups during the handshake,
@@ -1280,7 +1284,16 @@ const refusedAfter = 3
 
 // refusedLocked lists the hosts refused at least refusedAfter times by a
 // device that has decrypted HTTPS flows, for none of which it is the host,
-// and that are not passed through already; the most refused first, at most 10.
+// and that are not passed through already; the most refused first, at most 30.
+// registrable is host's registrable domain (example.co.uk for api.example.co.uk),
+// or host itself when it has none (an address, a bare name).
+func registrable(host string) string {
+	if d, err := publicsuffix.EffectiveTLDPlusOne(strings.TrimSuffix(host, ".")); err == nil {
+		return d
+	}
+	return host
+}
+
 func (s *Store) refusedLocked() []RefusedHost {
 	type key struct{ device, host string }
 	counts := map[key]int{}
@@ -1294,10 +1307,13 @@ func (s *Store) refusedLocked() []RefusedHost {
 	}
 	trusting := map[string]bool{} // devices with a decrypted request
 	seen := map[key]bool{}
+	domains := map[key]bool{} // (device, registrable domain) with decrypted flows
 	for _, f := range s.flows {
 		if strings.HasPrefix(f.URL, "https://") {
 			trusting[f.Device] = true
-			seen[key{f.Device, strings.ToLower(f.Host)}] = true
+			h := strings.ToLower(f.Host)
+			seen[key{f.Device, h}] = true
+			domains[key{f.Device, registrable(h)}] = true
 		}
 	}
 	out := []RefusedHost{}
@@ -1305,7 +1321,7 @@ func (s *Store) refusedLocked() []RefusedHost {
 		// A host as a host name: an SNI is the phone's app's to choose, and these
 		// go into a command run suggests (--pass-hosts …).
 		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && validHost(k.host) && k.host != "mitm.it" {
-			out = append(out, RefusedHost{k.device, s.names[k.device], k.host, n})
+			out = append(out, RefusedHost{k.device, s.names[k.device], k.host, n, domains[key{k.device, registrable(k.host)}]})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

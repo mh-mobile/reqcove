@@ -402,8 +402,10 @@ func passSuggestion(refused []capture.RefusedHost, passed []string) (hosts, coun
 		passedDomains[domainOf(p)] = true
 	}
 	type group struct {
-		hosts []string
-		n     int
+		hosts    []string
+		counts   []int
+		n        int
+		siblings bool // another host of the domain is recorded: no *.domain
 	}
 	groups := map[string]*group{}
 	var order []string
@@ -414,13 +416,17 @@ func passSuggestion(refused []capture.RefusedHost, passed []string) (hosts, coun
 			order = append(order, key)
 		}
 		groups[key].hosts = append(groups[key].hosts, r.Host)
+		groups[key].counts = append(groups[key].counts, r.Refusals)
 		groups[key].n += r.Refusals
+		groups[key].siblings = groups[key].siblings || r.SiblingsRecorded
 	}
 	for _, key := range order {
 		g := groups[key]
-		if len(g.hosts) == 1 && (!passedDomains[key] || key == g.hosts[0]) {
-			hosts = append(hosts, g.hosts[0])
-			counts = append(counts, fmt.Sprintf("%s (%d)", g.hosts[0], g.n))
+		if g.siblings || len(g.hosts) == 1 && (!passedDomains[key] || key == g.hosts[0]) {
+			for i, h := range g.hosts {
+				hosts = append(hosts, h)
+				counts = append(counts, fmt.Sprintf("%s (%d)", h, g.counts[i]))
+			}
 			continue
 		}
 		hosts = append(hosts, "*."+key)

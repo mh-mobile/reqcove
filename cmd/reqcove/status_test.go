@@ -561,3 +561,20 @@ func TestAndroidSteps(t *testing.T) {
 		}
 	}
 }
+
+// TestPassSuggestionKeepsRecorded: hosts refused under a domain whose other
+// hosts are decrypted and recorded are named one by one, never *.domain, which
+// would stop recording the app under test.
+func TestPassSuggestionKeepsRecorded(t *testing.T) {
+	refused := []capture.RefusedHost{
+		{Device: "d", Host: "auth.example.com", Refusals: 5, SiblingsRecorded: true},
+		{Device: "d", Host: "pay.example.com", Refusals: 4, SiblingsRecorded: true},
+		{Device: "d", Host: "a.cdn.example", Refusals: 3},
+		{Device: "d", Host: "b.cdn.example", Refusals: 3},
+	}
+	hosts, _ := passSuggestion(refused, nil)
+	got := strings.Join(hosts, ",")
+	if got != "auth.example.com,pay.example.com,*.cdn.example" {
+		t.Errorf("suggested %s", got)
+	}
+}
