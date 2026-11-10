@@ -49,7 +49,7 @@ func logCalls(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		if c, ok := ctx.Value(callerKey{}).(string); ok && method == "tools/call" {
 			if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
-				log.Printf("--mcp-http: %s called %s", c, p.Name)
+				log.Printf("--mcp-http: %s called %q", c, p.Name) // quoted: the client names it
 			}
 		}
 		return next(ctx, method, req)

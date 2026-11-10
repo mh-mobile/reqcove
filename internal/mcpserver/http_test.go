@@ -179,7 +179,7 @@ func TestHTTPLog(t *testing.T) {
 	call[ListOut](t, local, "list_flows", map[string]any{})
 
 	got := buf.String()
-	for _, w := range []string{"--mcp-http: grok-bot (100.64.0.7) sent no token or a wrong one", "--mcp-http: grok-bot (100.64.0.7) called search_flows"} {
+	for _, w := range []string{"--mcp-http: grok-bot (100.64.0.7) sent no token or a wrong one", `--mcp-http: grok-bot (100.64.0.7) called "search_flows"`} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in the log:\n%s", w, got)
 		}

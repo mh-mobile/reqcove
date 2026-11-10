@@ -127,7 +127,7 @@ What to know:
 - Restarting `run` needs no reconnecting (calls fail meanwhile); the records
   start empty, and an earlier cursor is refused.
 - `run` logs each call's device and tool, not its arguments (`--mcp-http:
-  grokbot-user-1 (100.104.0.1) called list_flows`), and requests with no token
+  grokbot-user-1 (100.104.0.1) called "list_flows"`), and requests with no token
   or a wrong one. An agent that only says it is checking leaves no line.
 - Plain HTTP, inside the tailnet's encryption (WireGuard). In a container: the
   same flag, no port to publish, the token in `docker logs`
