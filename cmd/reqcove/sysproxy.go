@@ -64,8 +64,10 @@ func nsError(out string, err error) error {
 }
 
 // bypass is what never goes through the local proxy: this computer, the LAN and
-// the tailnet go direct, so a site in a browser here cannot reach them through
-// it (DNS rebinding), and the proxy refuses them as the exit node does.
+// the tailnet, by address or by these names, go direct. A name that resolves to
+// the LAN, a VPN or the tailnet does reach the proxy, which lets it on (only
+// this computer and link-local are refused: decideLocal), so a browser here
+// does not see where such a name leads (DNS rebinding; docs/SECURITY.md).
 var bypass = []string{"localhost", "::1", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254/16", "100.64.0.0/10", "*.local", "*.ts.net"}
 
 // webProxy is one service's web proxy (HTTP) or secure web proxy (HTTPS).

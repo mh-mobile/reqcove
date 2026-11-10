@@ -325,8 +325,12 @@ by this computer's own lookups. It refuses IPv6, and a name that leads to this
 computer itself (loopback, its own addresses) or to a link-local address unless
 this computer's `/etc/hosts` gives it (a test): a page in a browser here could
 otherwise reach this computer's services through it by pointing its own name
-there (DNS rebinding). A page could still point its name at a LAN address; a
-browser going direct faces the same. This computer, the LAN and the tailnet are
+there (DNS rebinding). A page could still point its name at a LAN, VPN or
+tailnet address, and the proxy lets it on (so that names inside a VPN keep
+working). A browser going direct faces the same, but through the proxy it does
+not see the address, so its own protection for private networks (Chrome's
+Private Network Access) does not apply: keep `--local-proxy` on only while you
+need it. This computer, the LAN and the tailnet are
 in the system proxy's exceptions, so apps reach them directly, as without
 reqcove. Apple's hosts are not decrypted. On macOS, `run` points the system's web
 proxies at it while it runs, keeping what they were in the state directory
