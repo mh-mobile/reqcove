@@ -62,7 +62,7 @@ type SummarizeIn struct {
 	Top int `json:"top,omitempty" jsonschema:"keys kept per breakdown, most frequent first (default 10, at most 100)"`
 }
 type ListOut struct {
-	Flows        []capture.Summary `json:"flows"`
+	Flows        []capture.Summary `json:"flows"` // [] when none, not null
 	NextCursor   int64             `json:"next_cursor,omitempty"`   // more, older flows match: pass it as cursor
 	SimilarHosts []string          `json:"similar_hosts,omitempty"` // with a host no flow has: recorded hosts that look alike
 }
@@ -113,7 +113,7 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 				return nil, ListOut{}, err
 			}
 			flows, next := st.List(q)
-			return nil, ListOut{Flows: flows, NextCursor: next, SimilarHosts: similar(st, q, len(flows))}, nil
+			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, SimilarHosts: similar(st, q, len(flows))}, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "search_flows", Description: "Find flows whose URL or headers contain some text (and bodies, with bodies), newest first, with where it matched. Same filters and paging as list_flows."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in SearchIn) (*mcp.CallToolResult, ListOut, error) {
@@ -126,7 +126,7 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 			}
 			q.Query, q.QueryBodies = in.Query, in.Bodies
 			flows, next := st.List(q)
-			return nil, ListOut{Flows: flows, NextCursor: next, SimilarHosts: similar(st, q, len(flows))}, nil
+			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, SimilarHosts: similar(st, q, len(flows))}, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "summarize", Description: "Count the flows matching the filters by host, User-Agent, status, method, device and content type, with the time span. A User-Agent is not an app: several apps can share one, and one app can send several."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in SummarizeIn) (*mcp.CallToolResult, SummarizeOut, error) {
@@ -198,6 +198,13 @@ func hostOf(h string) string {
 		h = a
 	}
 	return strings.ToLower(h)
+}
+
+func orEmpty(flows []capture.Summary) []capture.Summary {
+	if flows == nil {
+		return []capture.Summary{}
+	}
+	return flows
 }
 
 // similar is SimilarHosts for an answer with no flows and a host filter. It

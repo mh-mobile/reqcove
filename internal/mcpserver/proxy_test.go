@@ -70,12 +70,19 @@ func ids(t *testing.T, cs *mcp.ClientSession) (string, bool) {
 	if res.IsError {
 		return res.Content[0].(*mcp.TextContent).Text, true
 	}
+	// The note is in the structured answer, which Claude Code shows the model,
+	// and in the text, as its JSON.
 	lastNotes = nil
-	for _, c := range res.Content[1:] {
-		lastNotes = append(lastNotes, c.(*mcp.TextContent).Text)
+	var m map[string]any
+	b, _ := json.Marshal(res.StructuredContent)
+	json.Unmarshal(b, &m)
+	if n, ok := m["note"].(string); ok {
+		lastNotes = append(lastNotes, n)
+		if len(res.Content) != 1 || res.Content[0].(*mcp.TextContent).Text != string(b) {
+			t.Errorf("the text is not the structured answer with its note: %v", res.Content)
+		}
 	}
 	var out ListOut
-	b, _ := json.Marshal(res.StructuredContent)
 	json.Unmarshal(b, &out)
 	var s []string
 	for _, f := range out.Flows {

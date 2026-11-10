@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -177,7 +178,7 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			// Only what the tool answered: not the session's own fields.
 			out := &mcp.CallToolResult{Content: res.Content, StructuredContent: res.StructuredContent, IsError: res.IsError}
 			if n := p.takeNote(cs); n != "" {
-				out.Content = append(out.Content, &mcp.TextContent{Text: n})
+				withNote(out, n)
 			}
 			return out, nil
 		case !closed(err):
@@ -186,6 +187,20 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			return p.down(), nil
 		}
 	}
+}
+
+// withNote puts the proxy's note in the answer where an agent reads it: in
+// the structured answer, which Claude Code shows the model instead of the
+// text beside it (seen with Claude Code), and in that text, its JSON.
+func withNote(out *mcp.CallToolResult, note string) {
+	if m, ok := out.StructuredContent.(map[string]any); ok {
+		m["note"] = note
+		if b, err := json.Marshal(m); err == nil {
+			out.Content = []mcp.Content{&mcp.TextContent{Text: string(b)}}
+			return
+		}
+	}
+	out.Content = append(out.Content, &mcp.TextContent{Text: note})
 }
 
 // closed says err is the connection to `run` gone, not an answer of its.

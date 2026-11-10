@@ -72,7 +72,7 @@ func TestTools(t *testing.T) {
 	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "example.net", "status": "2xx", "limit": 1}); len(got.Flows) != 1 {
 		t.Errorf("list_flows host+status = %+v", got)
 	}
-	if got := call[ListOut](t, session, "list_flows", map[string]any{"status": "4xx"}); len(got.Flows) != 0 {
+	if got := call[ListOut](t, session, "list_flows", map[string]any{"status": "4xx"}); len(got.Flows) != 0 || got.Flows == nil { // [], not null
 		t.Errorf("list_flows 4xx = %+v", got)
 	}
 	found := call[ListOut](t, session, "search_flows", map[string]any{"query": "API.EXAMPLE"})
@@ -199,7 +199,9 @@ func TestUserAgentAndSimilarHosts(t *testing.T) {
 		t.Errorf("summarize user_agent: %+v", got)
 	}
 	for _, tool := range []string{"list_flows", "summarize"} {
-		got := call[SummarizeOut](t, session, tool, map[string]any{"host": "evenrealities.com"})
+		got := call[struct {
+			SimilarHosts []string `json:"similar_hosts"`
+		}](t, session, tool, map[string]any{"host": "evenrealities.com"})
 		if !slices.Equal(got.SimilarHosts, []string{"api.even-realities.com"}) {
 			t.Errorf("%s similar_hosts: %v", tool, got.SimilarHosts)
 		}
