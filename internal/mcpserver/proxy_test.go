@@ -321,3 +321,14 @@ func TestProxyCancel(t *testing.T) {
 		t.Errorf("after a cancel: %v", n)
 	}
 }
+
+// TestWithNoteKeepsOwn: the proxy's note joins a tool's own note (a
+// --pass-hosts warning) rather than replacing it.
+func TestWithNoteKeepsOwn(t *testing.T) {
+	out := &mcp.CallToolResult{StructuredContent: map[string]any{"flows": []any{}, "note": "PASSNOTE"}}
+	withNote(out, "RESTARTNOTE")
+	m := out.StructuredContent.(map[string]any)
+	if n, _ := m["note"].(string); !strings.Contains(n, "RESTARTNOTE") || !strings.Contains(n, "PASSNOTE") {
+		t.Errorf("note: %q", n)
+	}
+}

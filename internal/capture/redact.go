@@ -84,7 +84,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		valEnd, valClosed := jsonStringEnd(s, j)
-		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd]) {
+		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) {
 			secret = false
 		}
 		switch {
@@ -133,9 +133,13 @@ var dottedName = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$`)
 // {"key": "service.name", "value": …} in an OTLP body. A key is mixed case, or
 // has no dots; and the shapes maskTokens knows (JWTs and others) are masked
 // after this, whatever the field.
-func attributeName(name, value string) bool {
-	return strings.EqualFold(name, "key") && len(value) <= 64 && dottedName.MatchString(value)
+func attributeName(name, value, after string) bool {
+	return strings.EqualFold(name, "key") && len(value) <= 64 && dottedName.MatchString(value) && valueNext.MatchString(after)
 }
+
+// valueNext: a "value" field comes right after, as in OpenTelemetry's
+// {"key": "http.method", "value": {...}}. A lone {"key": "live.a8f3…"} is a key.
+var valueNext = regexp.MustCompile(`^\s*,\s*"value"\s*:`)
 
 // maskInJSONString masks a JSON string literal whose text is JSON itself.
 func maskInJSONString(lit string, loneCode bool) (string, bool) {

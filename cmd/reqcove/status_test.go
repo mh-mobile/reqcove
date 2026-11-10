@@ -460,6 +460,10 @@ func TestPassHostsFlag(t *testing.T) {
 	if got, err := hostList("@~/pass.txt"); err != nil || got != "*.tiktokv.com,api.x.com" {
 		t.Errorf("@~/pass.txt: %q %v", got, err)
 	}
+	os.WriteFile(filepath.Join(home, "urls.txt"), []byte("https://api.example.com/v1\napi.example.com:443\n"), 0o600)
+	if _, err := hostList("@~/urls.txt"); err != nil { // as inline values: hostsOnly takes their hosts
+		t.Errorf("URL and host:port lines: %v", err)
+	}
 	if got, _ := hostList("api.x.com"); got != "api.x.com" {
 		t.Errorf("plain: %q", got)
 	}

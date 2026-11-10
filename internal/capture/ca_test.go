@@ -104,3 +104,13 @@ func TestCANamed(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesKeepGoing: a rules file that does not load stops a start, and a
+// restart without --rules-reload; under --rules-reload a restart goes on.
+func TestRulesKeepGoing(t *testing.T) {
+	for _, c := range []struct{ restarted, reload, want bool }{{false, false, false}, {false, true, false}, {true, false, false}, {true, true, true}} {
+		if got := rulesKeepGoing(c.restarted, c.reload); got != c.want {
+			t.Errorf("restarted=%v reload=%v: %v", c.restarted, c.reload, got)
+		}
+	}
+}

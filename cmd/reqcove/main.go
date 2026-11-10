@@ -943,7 +943,7 @@ func hostList(v string) (string, error) {
 		// Checked here, by line number only: a wrong file (.env, say) must not
 		// have its lines, secrets maybe, printed back.
 		for _, h := range strings.Split(line, ",") {
-			if _, err := capture.ParseAllowHosts([]string{h}); err != nil {
+			if _, err := capture.ParseAllowHosts([]string{hostOf(strings.TrimSpace(h))}); err != nil {
 				return "", fmt.Errorf("%s line %d is not a host list (one host a line, as the flag writes them)", path, i+1)
 			}
 		}
@@ -955,18 +955,26 @@ func hostList(v string) (string, error) {
 	return strings.Join(hosts, ","), nil
 }
 
+// hostOf is the host in a value given for one: a URL's, or host:port's.
+func hostOf(h string) string {
+	if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
+		return hh
+	}
+	return h
+}
+
 func hostsOnly(flagName string, specs []string) []string {
 	var out []string
 	for _, spec := range specs {
 		var hosts []string
 		for _, h := range strings.Split(spec, ",") {
 			h = strings.TrimSpace(h)
-			host, shown := h, h
+			host, shown := hostOf(h), h
 			if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
-				host = u.Hostname()
 				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
-			} else if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
-				host = hh
 			}
 			if host != h {
 				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)

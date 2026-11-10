@@ -194,6 +194,9 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 // text beside it (seen with Claude Code), and in that text, its JSON.
 func withNote(out *mcp.CallToolResult, note string) {
 	if m, ok := out.StructuredContent.(map[string]any); ok {
+		if own, _ := m["note"].(string); own != "" {
+			note += " " + own // the tool's own note (a --pass-hosts host) stays
+		}
 		m["note"] = note
 		if b, err := json.Marshal(m); err == nil {
 			out.Content = []mcp.Content{&mcp.TextContent{Text: string(b)}}

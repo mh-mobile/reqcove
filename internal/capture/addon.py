@@ -550,8 +550,9 @@ class Reqcove:
                 return  # the CA's page: served, never recorded, and not "out of scope" either
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
-            if not self._passed(flow.request.pretty_host):  # a --pass-hosts host skips the upstream proxy, as its TLS does
-                self._via_upstream(flow)  # decrypted all the same: only the upstream's CA may be trusted
+            # Decrypted all the same, a --pass-hosts host's too (coalesced onto an
+            # allowed connection): only the upstream's CA may be trusted.
+            self._via_upstream(flow)
             return
         device = _device(flow)
         if device:
@@ -680,6 +681,7 @@ class Reqcove:
 
     def _copy_whole(self, flow, direction, msg):
         h = _Head(self, flow, direction, msg.headers)
+        h.keep = None  # mitmweb holds a made message whole: nothing to keep for it (kept, it would never be freed)
         h(msg.raw_content or b"")
         h(b"")
 

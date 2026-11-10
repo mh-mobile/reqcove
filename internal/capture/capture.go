@@ -100,7 +100,9 @@ type Capture struct {
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
-	err    error
+	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
+	restarted bool
+	err       error
 }
 
 // proc is one mitmdump process.
@@ -286,13 +288,22 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 		}
 	}
 	if e, _ := c.Store.Stats()["rules_error"].(string); e != "" {
-		p.stop()
-		return nil, fmt.Errorf("--rules: %s", e)
+		if !rulesKeepGoing(c.restarted, c.cfg.RulesReload) {
+			p.stop()
+			return nil, fmt.Errorf("--rules: %s", e)
+		}
+		c.cfg.Logf("WARN: mitmdump restarted while the --rules file does not load (%s): no rules apply until it is fixed", e)
 	}
 	p.ready = time.Now()
 	c.Store.setState("ready", "")
 	return p, nil
 }
+
+// rulesKeepGoing: a rules file that does not load stops a start, but not a
+// restart under --rules-reload, where the user was told it can be fixed
+// while running: stopping then would cut every device off. The restarted
+// mitmdump has no rules until the file loads again.
+func rulesKeepGoing(restarted, reload bool) bool { return restarted && reload }
 
 // supervise restarts mitmdump until ctx ends or it fails maxRestarts times in a row.
 // While it is down the exit node cannot reach mitmdump, so the iPhone's
@@ -327,6 +338,7 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 				return
 			case <-time.After(delay):
 			}
+			c.restarted = true
 			if p, err = c.spawn(ctx); err != nil && ctx.Err() != nil {
 				return
 			}
