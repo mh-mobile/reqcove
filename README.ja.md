@@ -210,6 +210,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 - 新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します：`"autoApprovers": {"exitNode": ["you@example.com"]}`
 - 状態ディレクトリが同じであれば、CA も同じままです。2 台のコンピュータで 1 つの CA を使うには、`~/.reqcove/mitmproxy/` をディレクトリごと、もう 1 台の `~/.reqcove/` にコピーします（秘密鍵が含まれます）。もう 1 台の reqcove は止めておいてください（v0.1.0 のあとは、初めて起動する前でもかまいません）。
 - 1 台のコンピュータで、設定の違う Exit Node をいくつも動かし、iPhone の Tailscale アプリで切り替えられます。`--state` ごとに `run` を 1 つ動かします（[手順](docs/several-exit-nodes.ja.md)）。
+- コンテナ（Docker）でも動かせます。環境ごとに、uv、Python、mitmproxy、CA をコンテナの中に閉じられます。[docs/container.ja.md](docs/container.ja.md)（v0.1.0 のあと。向いているのは Linux です）。
 - `reqcove cleanup` は、すべてを元に戻す手順を表示します。`--delete-state` を付けると状態ディレクトリを削除します（reqcove が作ったものに限ります）。
 
 ## ライセンス

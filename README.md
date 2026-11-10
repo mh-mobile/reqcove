@@ -393,6 +393,8 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   before its first run).
 - Several exit nodes on one computer, each with its own settings, switched on the
   iPhone in the Tailscale app: one `run` per `--state` ([how](docs/several-exit-nodes.md)).
+- In a container (Docker), each environment closed in with uv, Python, mitmproxy
+  and its CA: [docs/container.md](docs/container.md) (after v0.1.0; Linux suits it best).
 - `reqcove cleanup` lists how to undo everything; `--delete-state` deletes the state
   directory (only one reqcove made).
 

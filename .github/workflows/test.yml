@@ -35,6 +35,20 @@ jobs:
           REQCOVE_E2E: "1"
         run: go test -count=1 ./internal/capture/
 
+  # The container image (Dockerfile), built and run without a tailnet login:
+  # mitmproxy offline, reqcove mcp from another container, the lock, docker stop.
+  container:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/container-smoke.sh
+
   checks:
     runs-on: ubuntu-latest
     steps:

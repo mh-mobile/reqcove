@@ -103,6 +103,13 @@ func main() {
 	}
 }
 
+// The mitmproxy and Python run uses, unless told otherwise; the Dockerfile
+// fetches the same (TestDockerfileInStep).
+const (
+	defaultMitmSpec = "mitmproxy==12.3.1"
+	defaultPython   = "3.14"
+)
+
 func defaultState() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".reqcove")
@@ -127,8 +134,8 @@ func run(ctx context.Context, args []string) error {
 	state := fs.String("state", defaultState(), "state directory")
 	fs.String("hostname", "reqcove", "tailnet node name, kept in the state for the next runs (with a new --state named reqcove-NAME, that name)")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
-	mitmSpec := fs.String("mitmproxy-spec", "mitmproxy==12.3.1", "uvx --from spec for mitmproxy")
-	python := fs.String("python", "3.14", "Python for uvx")
+	mitmSpec := fs.String("mitmproxy-spec", defaultMitmSpec, "uvx --from spec for mitmproxy")
+	python := fs.String("python", defaultPython, "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")

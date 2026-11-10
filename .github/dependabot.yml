@@ -12,3 +12,8 @@ updates:
       interval: weekly
     ignore:
       - dependency-name: tailscale.com
+  # The Dockerfile's base images, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

@@ -28,6 +28,10 @@
 - `run --rules-reload`: the `--rules` file is read again when it changes; a
   file that does not load leaves the rules before it, and says why.
 - `reqcove help` (also `-h`, `--help`) shows the commands.
+- A container image (`Dockerfile`, distroless, not root), built from the
+  repository: one container and volume per environment, the agent through
+  `docker run -i … reqcove mcp` ([docs/container.md](docs/container.md)).
+  `scripts/container-smoke.sh` checks it without a tailnet login; CI runs it.
 - `reqcove mcp` serves the tools itself and forwards each call to `run`,
   dialling it again when needed: the agent stays connected while `run`
   restarts (before, the relay ended with it, and Claude Code needed `/mcp`;

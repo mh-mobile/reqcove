@@ -18,6 +18,19 @@ v0.1.0.
   (a tagged node keeps the user ID of whoever tagged it); name other devices by
   machine name, IP or StableID.
 
+## In a container
+
+After v0.1.0 (docs/container.md). mitmproxy, which opens what sites send, runs
+in the container: a flaw there reaches the container (the records, the CA's key
+in its volume), not the rest of the user's files. The image has no shell or
+package manager and runs as a user of its own, not root. In exchange, whoever
+can use the Docker daemon's socket can read the volume, the CA's key included,
+and `docker logs` keeps the login URL and the `--ui`/`--web` links with their
+tokens until the container is removed. `reqcove mcp` runs with
+`--log-driver none`, so the tools' answers are not logged. Checked by
+`scripts/container-smoke.sh` (the state directory's owner and mode, no
+network needed), not by an attack.
+
 ## The CA's private key
 
 `~/.reqcove/mitmproxy/mitmproxy-ca.pem`, and `mitmproxy-ca.p12` next to it (a

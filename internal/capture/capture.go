@@ -36,10 +36,10 @@ var addonPy []byte
 //go:embed apple-ignore-hosts.txt
 var appleIgnoreHosts string
 
-// uvExcludeNewer: uv resolves mitmproxy's dependencies only from releases
+// UVExcludeNewer: uv resolves mitmproxy's dependencies only from releases
 // before this, the versions tested with it, so a release made later (a
 // compromised one included) never runs with the CA key. Move it with MitmSpec.
-const uvExcludeNewer = "2026-11-08T00:00:00Z"
+const UVExcludeNewer = "2026-11-08T00:00:00Z"
 
 type Config struct {
 	Dir          string // private directory (0700) for the addon and its socket; keep the path short (macOS caps socket paths at 104 bytes)
@@ -192,7 +192,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if cfg.WebPort != 0 {
 		tool = "mitmweb"
 	}
-	c.args = []string{"--python", cfg.Python, "--exclude-newer", uvExcludeNewer, "--from", cfg.MitmSpec, tool,
+	c.args = []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool,
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
 		"--set", "confdir=" + cfg.Confdir,
 		"--set", "proxyauth=any",
@@ -437,7 +437,7 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", uvExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
+	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
 	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
 	return cmd.Run()
 }
