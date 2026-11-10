@@ -28,6 +28,8 @@ func TestMaskBody(t *testing.T) {
 			[]string{"S3CRET8", "S3CRET9", "AKIAS3CRET", "ghp_S3CRET", "sk-S3CRET"}, []string{"auth: Bearer [redacted]"}},
 		{"run-together and acronym names", "application/json", `{"accesstoken":"S3CRET-10","APIToken":"S3CRET-11","verification_code":"S3CRET-12","token_type":"Bearer","error_code":"E1"}`,
 			[]string{"S3CRET-10", "S3CRET-11", "S3CRET-12"}, []string{`"token_type":"Bearer"`, `"error_code":"E1"`}},
+		{"a WebSocket's ticket", "application/json", `{"wsTicket":"S3CRET-17","ticket_id":"T-42"}`,
+			[]string{"S3CRET-17"}, []string{`"ticket_id":"T-42"`}},
 		{"escaped key", "application/json", `{"pass\u0077ord":"S3CRET-13"}`, []string{"S3CRET-13"}, nil},
 		{"cut right after a backslash", "application/json", `{"password":"S3CRET-14\`, []string{"S3CRET-14"}, nil},
 		{"JSON sent as a form", "application/x-www-form-urlencoded", `{"password":"S3CRET-15"}`, []string{"S3CRET-15"}, nil},
@@ -91,6 +93,10 @@ func TestMaskURLsNested(t *testing.T) {
 		if got := maskURLs(in); strings.Contains(got, "S3CRET") {
 			t.Errorf("nested secret survived: %s", got)
 		}
+	}
+	// A WebSocket's ticket in its URL (as an app sent one, seen in use).
+	if got := maskURLs("wss://app.example/ws?wsTicket=S3CRETtkt0123&room=1"); got != "wss://app.example/ws?wsTicket=REDACTED&room=1" {
+		t.Errorf("wsTicket: %s", got)
 	}
 	if got := maskURLs("https://app.example/s?q=hello&country_code=JP&sort_key=name"); got != "https://app.example/s?q=hello&country_code=JP&sort_key=name" {
 		t.Errorf("ordinary values masked: %s", got)

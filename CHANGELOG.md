@@ -30,11 +30,14 @@
 - `reqcove help` (also `-h`, `--help`) shows the commands.
 - `reqcove mcp` serves the tools itself and forwards each call to `run`,
   dialling it again when needed: the agent stays connected while `run`
-  restarts (before, the relay ended with it, and Claude Code needed `/mcp`).
+  restarts (before, the relay ended with it, and Claude Code needed `/mcp`;
+  tried in a Claude Code session).
   While `run` is not running, the tools say so; the first answer after a
   restart says flow ids and cursors from before it are gone, and one from a
   `run` of another version says to reconnect the agent. When `run` stops,
   the agents' connections to it close at once.
+- Names containing `ticket` (a WebSocket's `wsTicket`, seen unmasked) or
+  `dpop` are secrets too; `ticket_id` and `ticketNumber` are not.
 - `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
   filter by text in the User-Agent, case-insensitive: one app's traffic, as
   summarize lists the User-Agents. A host filter that matches no flow answers

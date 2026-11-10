@@ -51,12 +51,14 @@ So "delete the directory" above means each of them.
 - Secrets are masked as they arrive, so no tool can return them. A header, query
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,
-  jwt, apikey, privatekey, authorization, authentication, csrf or xsrf, even run
+  jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket
+  (after v0.1.0; a WebSocket's `wsTicket` was seen unmasked) or dpop, even run
   together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, pwd,
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word
-  (`country_code`, `error_code`, `sort_key`) and `token_type` are not secrets.
+  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id` and
+  `ticketNumber` are not secrets.
   Cookie values are masked (names stay), and query parameters wherever a URL
   appears (any header, such as `Referer`, `Location` or `Link`; fragments such
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error

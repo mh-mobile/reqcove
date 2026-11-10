@@ -881,6 +881,8 @@ var strongSecretParts = []string{
 	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
 	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
 	"authentication", "csrf", "xsrf",
+	"ticket", // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
+	"dpop",   // a DPoP proof, a JWT already, also when not shaped like one
 }
 
 var shortSecretWords = map[string]bool{
@@ -899,6 +901,7 @@ var everydayWords = map[string]bool{
 // notSecretNames look secret but carry what debugging needs (letters and digits only).
 var notSecretNames = map[string]bool{
 	"tokentype": true, "authenticationtype": true, "authenticationmethod": true,
+	"ticketid": true, "ticketnumber": true, // a support ticket's
 }
 
 // nameWords splits a name at non-alphanumerics and case changes, in lower
