@@ -39,7 +39,8 @@ Reqcove uses a fork of Tailscale's tsnet
   they say so. Update both READMEs and guides (English and Japanese) when behaviour changes.
 - **Secrets stay out.** Records are masked as they arrive; a change that adds a
   field reaching the MCP tools needs to say how secrets in it are handled.
-- Small, focused pull requests are easier to review.
+- Small, focused pull requests are easier to review. Open them against `dev`:
+  `main` holds the released version only.
 
 ## Reporting a bug
 
