@@ -62,7 +62,7 @@ type SummarizeIn struct {
 	Top int `json:"top,omitempty" jsonschema:"keys kept per breakdown, most frequent first (default 10, at most 100)"`
 }
 type ListOut struct {
-	Flows        []capture.Summary `json:"flows"` // [] when none, not null
+	Flows        []capture.Summary `json:"flows"`                   // [] when none, not null
 	NextCursor   int64             `json:"next_cursor,omitempty"`   // more, older flows match: pass it as cursor
 	SimilarHosts []string          `json:"similar_hosts,omitempty"` // with a host no flow has: recorded hosts that look alike
 }
