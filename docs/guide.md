@@ -76,6 +76,17 @@ Instead of the exit node, the iPhone can also set its Wi-Fi proxy (Manual) to th
 reqcove node's tailnet address, port 8080 (`--proxy-port`). Cellular has no proxy
 setting, so this works on Wi-Fi only.
 
+| | Exit node | Wi-Fi proxy |
+|---|---|---|
+| through this computer | everything the phone sends (DNS, HTTP(S), other ports) | HTTP(S) of the apps that use the proxy setting |
+| the rest | nothing else | straight to the internet from the phone's Wi-Fi, unrecorded |
+| cellular | yes | no |
+| in the Tailscale app | choose the exit node | stay connected only |
+
+What goes through it leaves for the internet from this computer, as with the
+exit node, and names are looked up here. Tried on an iPhone: Safari's requests
+were recorded, and sites outside `--allow-hosts` opened as before.
+
 ## Agents on other devices (`--mcp-http`)
 
 > Not in v0.1.0: until the next release, build from source to use it.
