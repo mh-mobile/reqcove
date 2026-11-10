@@ -340,8 +340,9 @@ Reqcove never makes this computer trust its CA; `run` prints the command (TLS
 only, for this user). Once trusted, the CA's private key in `<state>/mitmproxy/`
 can impersonate any HTTPS site to this computer too, not only to the devices:
 keep the state directory, and its copies and backups, private, and remove the
-trust when done (`reqcove status` and `cleanup` print how, by its fingerprint). Not
-tried yet with the real `networksetup` and Simulator: the tests use stand-ins.
+trust when done (`reqcove status` and `cleanup` print how, by its fingerprint).
+Tried with the real `networksetup` (set, and put back at Ctrl-C) and an iOS 27
+Simulator.
 
 ## Other processes on this computer
 

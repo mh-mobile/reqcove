@@ -165,8 +165,8 @@ headers and bodies, masked as the MCP tools return them.
   [Remote Proxy](#without-the-exit-node-the-wi-fi-proxy) need not be. The
   page's own requests are not recorded.
 
-Tried: opened on an iPhone from the camera. Not tried: this layout, search and
-Clear on an iPhone; a restart with Safari on the iPhone.
+Tried on an iPhone: opened from the camera, new flows following, search, Clear
+and Show all, and reopening the page in Safari after a restart of `run`.
 
 ### As a HAR file (`reqcove har`)
 
@@ -227,7 +227,7 @@ Reqcove's CA. Who trusts it differs:
 | Android: other apps | nothing: they trust only the system's CAs; your own app can opt in ([how](#android)) | the same, and a sample app |
 | a web app in production | what the device and the server exchange (pages, the API its front end calls), not what the server sends on | an iPhone |
 | a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | Ruby's Net::HTTP |
-| this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; the Simulator not yet |
+| this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
 | another Mac | as a `--device` on the exit node ([how](#another-mac)) | not tried |
 
 ### Apps that pin certificates (`--pass-hosts`)
@@ -327,9 +327,11 @@ The CA's key can then impersonate any HTTPS site to this computer too
 
 Tried on macOS 27: the trust command and Reqcove's check of it, the hint to
 stop, deleting the CA in Keychain Access, Chrome on the Mac opening an allowed
-host without a warning, recorded. Not tried: the real `networksetup` and
-Simulator, the address forms in the exceptions, PAC and authenticated proxies,
-Linux.
+host without a warning, recorded; the system's web proxies pointed at
+127.0.0.1:8082 by the real `networksetup` and put back at Ctrl-C, the CA added to the booted
+Simulators, and Safari on the iOS 27 Simulator decrypted and recorded as
+`local`. Not tried: the address forms in the exceptions, PAC and authenticated
+proxies, Linux.
 
 ### A web app's backend
 

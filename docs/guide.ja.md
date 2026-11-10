@@ -103,7 +103,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 - リンクは起動のたびに同じなので、再起動後もブックマークから開けるはずです。リンクを変えるには、状態ディレクトリの `ui-token` を削除して起動し直します。
 - Tailscale はオンにしておく必要があります。Exit Node や [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) は使っていなくてもかまいません。このページ自身の通信は記録されません。
 
-確認状況：iPhone のカメラから開けることを確認。未確認：iPhone でのこのレイアウト、検索、Clear の動作。iPhone の Safari での再起動後の動作。
+確認状況：iPhone で確認（カメラから開く、新しいフローを追う、検索、Clear と Show all、`run` の再起動後に Safari で開き直す）。
 
 ### HAR ファイルに書き出す（`reqcove har`）
 
@@ -148,7 +148,7 @@ Reqcove が復号できるのは、クライアントが Reqcove を通して送
 | Android のほかのアプリ | なし。システムの CA だけを信頼。自分のアプリは設定で変更可能（[手順](#android-を記録する)） | 同じデバイスと、サンプルアプリ |
 | 本番の Web アプリ | デバイスとサーバーの間の通信（ページ、フロントエンドが呼ぶ API）。サーバーがその先へ送る通信は対象外 | iPhone |
 | 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Ruby の Net::HTTP |
-| このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome。シミュレーターは未確認 |
+| このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome、iOS 27 のシミュレーターの Safari |
 | 別の Mac | Exit Node の `--device` として（[手順](#別の-mac-を記録する)） | 未確認 |
 
 ### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
@@ -207,7 +207,7 @@ reqcove run --allow-hosts api.example.com --local-proxy   # iPhone も記録す�
 - Debian と Ubuntu：`sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`。Fedora：`/etc/pki/ca-trust/source/anchors/` に置いて `sudo update-ca-trust`。
 - Linux の Chrome と Chromium：`certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Node：`NODE_EXTRA_CA_CERTS=` にそのファイルを指定します。Python：更新後のシステムの CA バンドルを指定します（そのファイルだけを指定すると、ほかの CA がすべて使えなくなります）。
 
-確認状況：macOS 27 で確認（信頼させるコマンドと Reqcove による信頼の確認、やめ方の表示、キーチェーンアクセスでの削除、Mac の Chrome で許可したホストが警告なしに開けて記録されること）。未確認：本物の `networksetup` とシミュレーター、プロキシの例外でのアドレスの書き方、PAC や認証付きプロキシのある環境、Linux。
+確認状況：macOS 27 で確認（信頼させるコマンドと Reqcove による信頼の確認、やめ方の表示、キーチェーンアクセスでの削除、Mac の Chrome で許可したホストが警告なしに開けて記録されること、本物の `networksetup` でシステムの Web プロキシが 127.0.0.1:8082 に向き、Ctrl-C で元に戻ること、起動中のシミュレーターに CA が入ること、iOS 27 のシミュレーターの Safari の通信が `local` として復号・記録されること）。未確認：プロキシの例外でのアドレスの書き方、PAC や認証付きプロキシのある環境、Linux。
 
 ### Web アプリのバックエンドを記録する
 
