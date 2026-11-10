@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Names with `sign` as a whole word (`sign`, `X-Sign`) are masked: an app's
+  request-signing header was seen unmasked. `design` and `signup` are not.
 - In the container image, `run`'s log names the `docker run -i … reqcove mcp`
   command for Claude Code, not `reqcove mcp` inside the container.
 - `run --mcp-http`: the MCP tools over HTTP on the node's port 8090, for agents

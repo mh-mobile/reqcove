@@ -85,7 +85,8 @@ So "delete the directory" above means each of them.
   secret, password, passwd, passphrase, passcode, credential, signature, session,
   jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket
   (after v0.1.0; a WebSocket's `wsTicket` was seen unmasked) or dpop, even run
-  together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, pwd,
+  together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, sign
+  (after v0.1.0; an app's request-signing header `sign` was seen unmasked), pwd,
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word

@@ -945,7 +945,7 @@ var strongSecretParts = []string{
 }
 
 var shortSecretWords = map[string]bool{
-	"auth": true, "key": true, "sid": true, "sig": true, "pwd": true, "otp": true, "totp": true,
+	"auth": true, "key": true, "sid": true, "sig": true, "sign": true, "pwd": true, "otp": true, "totp": true,
 	"pin": true, "code": true, "pass": true, "pw": true,
 }
 

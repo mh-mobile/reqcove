@@ -169,6 +169,7 @@ func TestSecretName(t *testing.T) {
 		"author": false, "keyword": false, "monkey": false, "page": false, "state": false, "User-Agent": false,
 		"Content-Type": false, "Accept": false, "view": false, "type": false, "codec": false,
 		"token_type": false, "country_code": false, "error_code": false, "sort_key": false, "WWW-Authenticate": false,
+		"sign": true, "X-Sign": true, "sign_type": true, "design": false, "signup": false, "assignee": false,
 		"wsTicket": true, "ticket": true, "X-Ticket": true, "DPoP": true, "ticket_id": false, "ticketNumber": false,
 	} {
 		if got := secretName(name); got != want {
