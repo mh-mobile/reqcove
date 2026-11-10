@@ -232,7 +232,7 @@ func TestOpenState(t *testing.T) {
 		unlock()
 	}
 	// ~/.reqcove before its first run, with a CA copied from another computer
-	// (README, Tips) and the list of copies another node made: taken. Another
+	// (docs/guide.md, Tips) and the list of copies another node made: taken. Another
 	// directory with a mitmproxy/ (a clone of mitmproxy, say), or ~/.reqcove's
 	// mitmproxy/ without a key, is not.
 	def := tempDefaultState(t)

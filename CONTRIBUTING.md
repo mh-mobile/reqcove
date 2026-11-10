@@ -34,9 +34,9 @@ Reqcove uses a fork of Tailscale's tsnet
 
 - **A test that fails without it.** For a fix, check that the test fails when the
   fix is taken out. Prefer local servers to the internet in tests.
-- **Docs that say only what was checked.** README and docs/SECURITY.md describe
+- **Docs that say only what was checked.** README, docs/guide.md and docs/SECURITY.md describe
   what was tried; when something comes from reading code or has not been tried,
-  they say so. Update both READMEs (English and Japanese) when behaviour changes.
+  they say so. Update both READMEs and guides (English and Japanese) when behaviour changes.
 - **Secrets stay out.** Records are masked as they arrive; a change that adds a
   field reaching the MCP tools needs to say how secrets in it are handled.
 - Small, focused pull requests are easier to review.

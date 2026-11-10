@@ -519,7 +519,7 @@ func run(ctx context.Context, args []string) error {
 				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", caPEM)
 			}
 		} else {
-			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s (README, The iOS Simulator, has the commands); recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
+			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s (docs/guide.md, The iOS Simulator, has the commands); recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
 		}
 	}
 	err = withSystemProxy(*state, *localProxy, func() error {
@@ -636,7 +636,7 @@ func openState(dir string) (func(), error) {
 			return true
 		case "mitmproxy", caCopies:
 			// ~/.reqcove before its first run: a CA copied from another computer
-			// (README, Tips), and the list of copies another node made of it.
+			// (docs/guide.md, Tips), and the list of copies another node made of it.
 			return isDefaultState(dir) && capture.HasCA(filepath.Join(dir, "mitmproxy"))
 		}
 		return false

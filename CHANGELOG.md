@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The README is shorter: what Reqcove does and how to start. Every option and
+  the details (rules, `--ui`, the Simulator, HAR, an upstream proxy, pinning,
+  the skill, more limits) moved to `docs/guide.md` (and `guide.ja.md`).
 - `run --ui`: a read-only page of the flows on the tailnet node, opened from a QR
   code: your own devices on the tailnet see every device's flows, a `--device`
   device of another user its own. It follows new flows without reloading.
@@ -13,7 +16,7 @@
   kept in the state directory; delete `ui-token` or `web-token` to change one).
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
-  traffic while Reqcove keeps its records. See "An upstream proxy" in the README.
+  traffic while Reqcove keeps its records. See "An upstream proxy" in docs/guide.md.
 - Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
 - `run --local-proxy`: an HTTP proxy on `127.0.0.1:8082` for this computer's own

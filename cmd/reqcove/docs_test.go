@@ -18,6 +18,7 @@ var documented = []string{
 	"skills/reqcove/SKILL.md",
 	"README.md", "README.ja.md", "CONTRIBUTING.md",
 	"docs/SECURITY.md",
+	"docs/guide.md", "docs/guide.ja.md",
 	"docs/another-mac.md", "docs/another-mac.ja.md",
 	"docs/container.md", "docs/container.ja.md",
 	"docs/several-exit-nodes.md", "docs/several-exit-nodes.ja.md",

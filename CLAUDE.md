@@ -2,7 +2,7 @@
 
 Hands an iPhone's HTTP(S) traffic to AI agents over MCP: a Tailscale exit node
 (tsnet) carries it, mitmproxy decrypts the allowed hosts, records are masked and
-kept in memory. How to use it: `README.md`. What it protects: `docs/SECURITY.md`.
+kept in memory. How to use it: `README.md`, in full `docs/guide.md`. What it protects: `docs/SECURITY.md`.
 How to contribute: `CONTRIBUTING.md`.
 
 ## Layout
@@ -26,7 +26,7 @@ How to contribute: `CONTRIBUTING.md`.
 ## Rules
 
 - Docs say only what was checked; what was not tried, or comes from reading code,
-  says so. Keep the English and Japanese READMEs in step.
+  says so. Keep the English and Japanese READMEs (and guides) in step.
 - Secrets must not reach the records, the MCP tools or the logs unmasked.
 - Ask the maintainer before anything that leaves this computer (pushing a tag, a
   release, issues or pull requests upstream).

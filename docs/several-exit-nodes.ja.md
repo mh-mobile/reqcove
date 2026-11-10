@@ -14,7 +14,7 @@ reqcove run --device iphone --allow-hosts api.staging.example.com --rules stagin
 それぞれ別のターミナルで動かします。1 つめは `~/.reqcove` を使い、名前は今までどおり `reqcove` です。`--state ~/x` は、スペースを空けて書いてください。`--state=~/x` と書くと、シェルが `~` をそのまま渡すので、reqcove のどのコマンドも断ります。
 
 - **名前**：新しい `--state` のフォルダの名前が `reqcove-名前` なら（先頭のドットは除きます）、ノードの名前は `reqcove-名前` になります。この例では `reqcove-staging` です。ほかの名前のフォルダでは `reqcove` になります。名前を決めたいときは `--hostname` を付けてください（2 つのノードが両方 `reqcove` だと、Tailscale が片方の名前を変えて区別します。Tailscale の説明によるもので、試していません）。名前は状態のフォルダ（`node-name`）に記録され、次の起動と `cleanup` はそれを使います。そのため、一度付けた `--hostname` は残ります（変えるときは、別の `--hostname` を付けます）。前の版の reqcove が使ったフォルダでは、`reqcove` のままです。
-- **ログインと承認は、ノードごとに 1 回**：初めてのときと同じです（足りないことは `reqcove status --state ~/.reqcove-staging` で分かります）。tailnet のポリシーに `autoApprovers` を書いておけば、承認は自動になります（README の Tips）。
+- **ログインと承認は、ノードごとに 1 回**：初めてのときと同じです（足りないことは `reqcove status --state ~/.reqcove-staging` で分かります）。tailnet のポリシーに `autoApprovers` を書いておけば、承認は自動になります（docs/guide.ja.md の Tips）。
 - **CA**：CA のない状態のフォルダでは、起動のときに `~/.reqcove` の CA を写します（どこに写したかを `run` が表示します）。そのため、iPhone にもう入っているプロファイルが、どのノードでも使えます。自分の CA があるフォルダでは、それをそのまま使います。`~/.reqcove` にまだ CA がなければ、そのノードは自分の CA を作ります（`run` がそう表示します）。先にデフォルトのノードを起動し、CA の行が出るまで待ってください（初めての起動では mitmproxy をダウンロードするので、数分かかります）。`~/.reqcove` の CA のファイルが欠けていれば、`run` はどれが欠けているかを示して止まります。ノードに自分だけの CA を持たせたいとき（あとで別々に信頼を外すテスターの端末用など）は、デフォルトのノードを止め、そのノードを初めて起動する間だけ `~/.reqcove/mitmproxy` をよそへ移し、そのあと元に戻します。
 
 ## 2. iPhone の Tailscale アプリで切り替える
