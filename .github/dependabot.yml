@@ -5,3 +5,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Go modules. tailscale.com is a fork through the replace in go.mod: moved by hand.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: tailscale.com
+  # The Dockerfile's base images, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

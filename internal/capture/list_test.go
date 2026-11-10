@@ -189,7 +189,7 @@ func TestTLSFailuresAndDevices(t *testing.T) {
 	}
 
 	got := fmt.Sprint(st.Devices())
-	want := fmt.Sprintf("[{nPAD ipad true 0 1 } {nPHONE iphone true 1 2 %s} {nOLD  false 1 0 %s}]",
+	want := fmt.Sprintf("[{nPAD ipad true 0 1 0 } {nPHONE iphone true 1 2 0 %s} {nOLD  false 1 0 0 %s}]",
 		unixTime(base+40).Format("2006-01-02T15:04:05.000Z07:00"), unixTime(base+50).Format("2006-01-02T15:04:05.000Z07:00"))
 	if got != want {
 		t.Errorf("devices:\n got %s\nwant %s", got, want)

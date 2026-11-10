@@ -76,3 +76,21 @@ func machineName(p *ipnstate.PeerStatus) string {
 	name, _, _ := strings.Cut(p.DNSName, ".")
 	return name
 }
+
+// ownDevices are the peers of this node's user (untagged, as sameUser has it),
+// by each of their tailnet IPs.
+func ownDevices(self *ipnstate.PeerStatus, peers []*ipnstate.PeerStatus) map[netip.Addr]Device {
+	out := map[netip.Addr]Device{}
+	if self == nil {
+		return out
+	}
+	for _, p := range peers {
+		if sameUser(p, self) {
+			d := Device{ID: string(p.ID), Name: machineName(p)}
+			for _, ip := range p.TailscaleIPs {
+				out[ip.Unmap()] = d
+			}
+		}
+	}
+	return out
+}

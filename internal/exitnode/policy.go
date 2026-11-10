@@ -28,10 +28,12 @@ type Device struct {
 type policy struct {
 	allowSrc []netip.Addr          // tailnet IPs whose traffic we carry
 	devices  map[netip.Addr]Device // the same IPs, with who they are
+	own      map[netip.Addr]Device // this user's own devices (untagged), carried or not: they may see every flow
 	self     []netip.Addr          // this tsnet node's tailnet IPs
 	local    []netip.Addr          // this Mac's interface addresses
 	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range
 	socks    bool                  // send TCP 80/443 to mitmproxy
+	names    []string              // this node's MagicDNS name and its first label, lower case
 }
 
 // Never carried: unspecified, loopback, tailnet, link-local, private LANs,
@@ -98,6 +100,29 @@ func decideUDP(p *policy, src, dst netip.AddrPort) bool {
 	// Drop QUIC except to Apple, so apps fall back to TCP, where mitmproxy sees them.
 	return dst.Port() != 443 || apple.Contains(dst.Addr().Unmap())
 }
+
+// decideLocal is for the local proxy: this computer's own apps, which reach
+// the LAN, VPNs and the tailnet as they would without it. Refused: IPv6 (apps
+// fall back to IPv4), and this computer itself (loopback, its own addresses)
+// and link-local when a name led there that this computer's /etc/hosts does not
+// give (trusted false): a page in a browser here pointing its own name at
+// 127.0.0.1 (DNS rebinding) cannot reach this computer's services through it.
+func decideLocal(dst netip.AddrPort, self []netip.Addr, trusted bool) verdict {
+	d := dst.Addr().Unmap()
+	switch {
+	case !d.Is4():
+		return reject
+	case !trusted && (d.IsLoopback() || d.IsUnspecified() || d.IsLinkLocalUnicast() || slices.Contains(self, d)):
+		return reject
+	case apple.Contains(d), tailnetRange.Contains(d):
+		return direct
+	case dst.Port() == 80 || dst.Port() == 443:
+		return socks
+	}
+	return direct
+}
+
+var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
 
 // decideTCP must stay a pure table lookup: tsnet calls it with its lock held.
 func decideTCP(p *policy, src, dst netip.AddrPort) verdict {

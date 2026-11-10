@@ -74,16 +74,25 @@ func TestTwoNodes(t *testing.T) {
 	outsider := startPeer(t, ctx, url, "outsider")
 	matched := make(chan map[string]string, 4)
 	runErr := make(chan error, 1)
+	localProxy, err := net.Listen("tcp", "127.0.0.1:0") // as run listens before Run, for --local-proxy
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		runErr <- Run(ctx, Config{
 			Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: url,
 			DNS: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:53")}, Devices: []string{"phone"},
 			SocksAddr: socks.addr, SocksSecret: "pw", ProxyPort: 8080, Verbose: true,
+			UI: func(w http.ResponseWriter, r *http.Request, id string, all bool) {
+				fmt.Fprint(w, "page for "+id, " all=", all)
+			},
+			MCP:        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "mcp") }),
+			LocalProxy: localProxy, StatusCmd: "reqcove status --state /s",
 			OnDevices: func(m map[string]string) { matched <- m },
 		})
 	}()
 	var names map[string]string
-	for len(names) == 0 { // the first reports come before login, with no devices
+	for len(names) <= 1 { // the first reports come before login, with Local only (or nothing)
 		select {
 		case names = <-matched:
 		case err := <-runErr:
@@ -104,10 +113,13 @@ func TestTwoNodes(t *testing.T) {
 	control.SetSubnetRoutes(reqcove.Key, tsaddr.ExitRoutes()) // the admin's approval
 	phoneID := useExitNode(t, ctx, phone, reqcove)
 	useExitNode(t, ctx, outsider, reqcove)
-	if names[phoneID] != "phone" || len(names) != 1 {
-		t.Fatalf("matched devices %v, want only phone (%s)", names, phoneID)
+	if names[phoneID] != "phone" || names[Local.ID] != Local.Name || len(names) != 2 {
+		t.Fatalf("matched devices %v, want phone (%s) and %s", names, phoneID, Local.ID)
 	}
 	rcIP := reqcove.Addresses[0].Addr()
+	if !strings.Contains(logBuf.String(), "(`reqcove status --state /s` says what is missing)") {
+		t.Error("the login wait does not name the node's status command")
+	}
 	// tsnet uploads its logs (they carry destination IPs) unless this is set.
 	// In tests logpolicy never uploads anyway, so the knob is what can be checked.
 	if !envknob.NoLogsNoSupport() {
@@ -161,6 +173,39 @@ func TestTwoNodes(t *testing.T) {
 		t.Errorf("IPv6 took %v to fail: new connections would wait for it", d)
 	}
 
+	// The page on the node's port 80: the device gets it, as itself, and the
+	// request is not carried (nothing reaches SOCKS5); the outsider gets nothing.
+	pageVia := func(n *tsnet.Server) (string, error) {
+		hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: n.Dial}}
+		r, err := hc.Get(fmt.Sprintf("http://%v/", rcIP))
+		if err != nil {
+			return "", err
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return string(b), nil
+	}
+	socksBefore := socks.count()
+	if got, err := pageVia(phone); err != nil || got != "page for "+phoneID+" all=false" { // testcontrol gives each node its own user
+		t.Errorf("phone to the page: %q %v", got, err)
+	}
+	if socks.count() != socksBefore {
+		t.Error("the page's request was carried to SOCKS5")
+	}
+	if got, err := pageVia(outsider); err == nil {
+		t.Errorf("outsider got the page: %q", got)
+	}
+	// MCP on the node's MCPPort: your own devices only, so not the --device
+	// phone of another user (testcontrol's), nor the outsider.
+	for name, n := range map[string]*tsnet.Server{"phone": phone, "outsider": outsider} {
+		hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: n.Dial}}
+		if r, err := hc.Post(fmt.Sprintf("http://%v:%d/mcp", rcIP, MCPPort), "application/json", strings.NewReader("{}")); err == nil {
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			t.Errorf("%s reached MCP: %d %q", name, r.StatusCode, b)
+		}
+	}
+
 	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.
 	if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err != nil {
 		t.Errorf("phone to the Remote Proxy: %v", err)
@@ -180,6 +225,19 @@ func TestTwoNodes(t *testing.T) {
 		pc.Close()
 		if r := socks.last(); r.dst != "203.0.113.7:80" || r.user != phoneID {
 			t.Errorf("plain HTTP on the Remote Proxy: SOCKS5 saw %+v", r)
+		}
+	}
+
+	// The local proxy, on the listener run gave: to SOCKS5 as the device Local.
+	if pc, err := net.Dial("tcp", localProxy.Addr().String()); err != nil {
+		t.Errorf("the local proxy: %v", err)
+	} else {
+		fmt.Fprint(pc, "GET http://203.0.113.8/x HTTP/1.1\r\nHost: 203.0.113.8\r\n\r\n")
+		pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+		http.ReadResponse(bufio.NewReader(pc), nil)
+		pc.Close()
+		if r := socks.last(); r.dst != "203.0.113.8:80" || r.user != Local.ID {
+			t.Errorf("the local proxy: SOCKS5 saw %+v", r)
 		}
 	}
 

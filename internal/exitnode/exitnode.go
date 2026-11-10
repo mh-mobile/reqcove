@@ -4,10 +4,12 @@
 package exitnode
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -26,6 +28,14 @@ import (
 	"tailscale.com/tsnet"
 )
 
+// WebPort is the node's port for mitmweb (--web), the same on every node, so
+// a link kept on the iPhone keeps working; mitmweb itself may listen on
+// another port of this computer (Config.Web).
+const WebPort = 8081
+
+// MCPPort is the node's port for the MCP tools over HTTP (--mcp-http), at /mcp.
+const MCPPort = 8090
+
 type Config struct {
 	Dir         string           // tsnet state
 	Hostname    string           // tailnet node name
@@ -35,7 +45,25 @@ type Config struct {
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
 	SocksSecret string           // its password
 	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
-	Verbose     bool             // log tsnet's backend and every flow decision
+	// UI, if set, serves Reqcove's own page on the node's port 80 to the
+	// --device devices and to this user's own devices, with the asking device's
+	// StableID; all says it is one of this user's own, which see every device's flows.
+	UI func(w http.ResponseWriter, r *http.Request, deviceID string, all bool)
+	// Web, if set, is mitmweb's address on this computer (127.0.0.1:PORT): the
+	// node relays its own WebPort there, for this user's own devices only.
+	Web string
+	// MCP, if set, serves the MCP tools on the node's MCPPort, at /mcp, to
+	// this user's own devices only, asked by the node's name or address. It
+	// checks the caller's token itself.
+	MCP http.Handler
+	// LocalProxy, if set (listening on 127.0.0.1), serves an HTTP proxy for
+	// this computer's own apps (the iOS Simulator), recorded as the device Local.
+	// The caller listens, so a port taken stops run before anything changes.
+	LocalProxy net.Listener
+	Verbose    bool // log tsnet's backend and every flow decision
+	// StatusCmd is the command that shows this node's status, for the log
+	// (with --state for a node of another state); empty: reqcove status.
+	StatusCmd string
 	// OnDevices is called with StableID -> machine name whenever the matched devices change.
 	OnDevices func(map[string]string)
 	// OnStatus is called every few seconds, from start, with where the node stands.
@@ -52,8 +80,9 @@ type Status struct {
 	ExitApproved bool              `json:"exit_node_approved"` // the admin approved its exit routes
 	LockEnabled  bool              `json:"tailnet_lock"`
 	LockSigned   bool              `json:"tailnet_lock_signed"`
-	NodeKey      string            `json:"node_key,omitempty"` // to sign under Tailnet Lock
-	Devices      map[string]string `json:"devices"`            // carried: StableID -> name
+	NodeKey      string            `json:"node_key,omitempty"`  // to sign under Tailnet Lock
+	Devices      map[string]string `json:"devices"`             // carried: StableID -> name
+	DeviceOS     map[string]string `json:"device_os,omitempty"` // carried: StableID -> OS, as Tailscale has it (iOS, android, macOS, ...)
 	Problems     []string          `json:"device_problems,omitempty"`
 	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
@@ -94,6 +123,23 @@ func Run(ctx context.Context, cfg Config) error {
 		s.UserLogf = func(string, ...any) {}
 	}
 	go logLoop()
+	if ln := cfg.LocalProxy; ln != nil {
+		srv := &http.Server{
+			Handler: &remoteProxy{
+				local:   true,
+				policy:  current.Load,
+				resolve: localResolve, // this computer's apps: its own lookups (VPNs, split DNS, search domains), as without the proxy
+				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
+					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
+				},
+			},
+			ReadHeaderTimeout: 30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(ln)
+		defer srv.Close()
+	}
 	// Registered before Start; until current is set, decideTCP rejects everything.
 	s.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (func(net.Conn), bool) {
 		p := current.Load()
@@ -118,7 +164,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// From the start, before login: the status is most useful while the node is stuck.
 	go watch(ctx, lc, cfg)
-	log.Printf("waiting for %s to log in (`reqcove status` says what is missing)", cfg.Hostname)
+	statusCmd := cmp.Or(cfg.StatusCmd, "reqcove status")
+	log.Printf("waiting for %s to log in (`%s` says what is missing)", cfg.Hostname, statusCmd)
 	if _, err := s.Up(ctx); err != nil {
 		return err
 	}
@@ -136,8 +183,18 @@ func Run(ctx context.Context, cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("remote proxy: %w", err)
 		}
+		var page, web http.Handler
+		if cfg.UI != nil {
+			page = uiGuard{policy: current.Load, serve: cfg.UI}
+		}
+		if cfg.Web != "" {
+			web = webRelay(current.Load, cfg.Web)
+		}
 		srv := &http.Server{
 			Handler: &remoteProxy{
+				ui:      page,
+				web:     web,
+				webAddr: cfg.Web,
 				policy:  current.Load,
 				resolve: resolver(cfg.DNS),
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
@@ -151,6 +208,59 @@ func Run(ctx context.Context, cfg Config) error {
 		go srv.Serve(onlyDevices{ln, current.Load})
 		defer srv.Close()
 		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
+	}
+	if cfg.UI != nil {
+		ln, err := s.Listen("tcp", ":80")
+		if err != nil {
+			return fmt.Errorf("page: %w", err)
+		}
+		srv := &http.Server{
+			Handler:           uiGuard{policy: current.Load, serve: cfg.UI},
+			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      pageWriteTimeout, // a slow reader does not hold a page's memory longer
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load})
+		defer srv.Close()
+	}
+	if cfg.Web != "" {
+		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", WebPort))
+		if err != nil {
+			return fmt.Errorf("mitmweb: %w", err)
+		}
+		srv := &http.Server{
+			Handler:           webRelay(current.Load, cfg.Web),
+			ReadHeaderTimeout: 30 * time.Second, // no WriteTimeout: mitmweb's updates are one long WebSocket
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load, ownOnly: true})
+		defer srv.Close()
+	}
+	if cfg.MCP != nil {
+		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", MCPPort))
+		if err != nil {
+			return fmt.Errorf("MCP over HTTP: %w", err)
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/mcp", selfHost{current.Load, cfg.MCP})
+		srv := &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      2 * time.Minute, // each call is one request and its answer
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		var once sync.Map
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load, ownOnly: true, refused: func(a net.Addr) {
+			if ap, err := netip.ParseAddrPort(a.String()); err == nil {
+				if _, seen := once.LoadOrStore(ap.Addr(), true); !seen {
+					log.Printf("--mcp-http: refused %v: only your own devices on the tailnet may call it (the same user as reqcove's node, neither tagged)", ap.Addr())
+				}
+			}
+		}})
+		defer srv.Close()
 	}
 	<-ctx.Done()
 	return nil
@@ -177,18 +287,24 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 					log.Print(step)
 				}
 			}
-			var self []netip.Addr
-			for _, ip := range st.TailscaleIPs {
-				self = append(self, ip)
-			}
+			self := slices.Clone(st.TailscaleIPs)
 			peers := make([]*ipnstate.PeerStatus, 0, len(st.Peer))
 			for _, p := range st.Peer {
 				peers = append(peers, p)
 			}
 			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
 			local, onLink := interfaceAddrs()
-			p := &policy{devices: devices, self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
+			p := &policy{devices: devices, own: ownDevices(st.Self, peers), self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
+			if st.Self != nil {
+				if fqdn := strings.ToLower(strings.TrimSuffix(st.Self.DNSName, ".")); fqdn != "" {
+					short, _, _ := strings.Cut(fqdn, ".")
+					p.names = []string{fqdn, short}
+				}
+			}
 			names := map[string]string{}
+			if cfg.LocalProxy != nil {
+				names[Local.ID] = Local.Name
+			}
 			for ip, d := range devices {
 				p.allowSrc = append(p.allowSrc, ip)
 				names[d.ID] = d.Name
@@ -197,7 +313,8 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			ids := fmt.Sprint(names)
 			if ids != lastIDs {
 				lastIDs = ids
-				log.Printf("carrying traffic from %v", names)
+				list := slices.Sorted(maps.Values(names))
+				log.Printf("carrying traffic from %s", strings.Join(list, ", "))
 				if cfg.OnDevices != nil {
 					cfg.OnDevices(names)
 				}
@@ -209,6 +326,12 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.DeviceOS = map[string]string{}
+			for _, p := range peers {
+				if names[string(p.ID)] != "" && p.OS != "" {
+					status.DeviceOS[string(p.ID)] = p.OS
+				}
+			}
 			if cfg.OnStatus != nil {
 				cfg.OnStatus(status)
 			}
@@ -230,7 +353,7 @@ func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Stat
 		s.Node = strings.TrimSuffix(st.Self.DNSName, ".")
 		s.ExitApproved = st.Self.AllowedIPs != nil && tsaddr.ContainsExitRoutes(*st.Self.AllowedIPs)
 	}
-	if ls, err := lc.NetworkLockStatus(ctx); err == nil {
+	if ls, err := lc.TailnetLockStatus(ctx); err == nil {
 		s.LockEnabled, s.LockSigned = ls.Enabled, ls.NodeKeySigned
 		if ls.NodeKey != nil {
 			s.NodeKey = ls.NodeKey.String()
@@ -291,7 +414,7 @@ func FirstStep(s Status) string {
 	case s.LockEnabled && s.NodeKey != "" && lockedOut(s.Health):
 		return "Tailnet Lock: on a signing device run `tailscale lock sign " + s.NodeKey + "`"
 	case s.Backend == "Running" && !s.ExitApproved:
-		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node"
+		return "approve the exit node: admin console, Machines, " + s.Node + ", Edit route settings, Use as exit node (to skip this next time, add \"autoApprovers\": {\"exitNode\": [\"you@example.com\"]} to the tailnet policy)"
 	}
 	return ""
 }

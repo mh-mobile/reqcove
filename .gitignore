@@ -1,5 +1,7 @@
 # 手元だけのメモ（リポジトリには入れない）
 /NOTES.md
+/CLAUDE.local.md
+/poc/
 /docs/poc-plan.ja.md
 /docs/plan.ja.md
 /docs/exit-node-howto.ja.md

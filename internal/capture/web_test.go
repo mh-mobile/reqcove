@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -25,11 +26,24 @@ func TestWeb(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	port, _ := freePort()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.WebPort = port })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.WebPort, c.WebPassword, c.webMaxFlows = port, "KEPTTOKENABCDEFGHIJKLMNOPQ", 2 })
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	big := strings.Repeat("b", WebKeep+1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/chunked": // no length: streamed in pieces
+			io.Copy(io.Discard, r.Body)
+			io.WriteString(w, "hello ")
+			w.(http.Flusher).Flush()
+			io.WriteString(w, "from web")
+		case "/big":
+			io.WriteString(w, big)
+		default:
+			io.WriteString(w, "ok")
+		}
+	}))
 	defer backend.Close()
 	if r, err := h.client("dev").Get(backend.URL + "/through-web"); err != nil {
 		t.Fatal(err)
@@ -41,6 +55,9 @@ func TestWeb(t *testing.T) {
 	}
 
 	base, token, _ := strings.Cut(h.c.WebURL, "?token=")
+	if token != "KEPTTOKENABCDEFGHIJKLMNOPQ" { // the password run keeps, not one of its own
+		t.Errorf("token %q", token)
+	}
 	get := func(url string) (int, string) {
 		r, err := http.Get(url)
 		if err != nil {
@@ -55,6 +72,57 @@ func TestWeb(t *testing.T) {
 	}
 	if code, body := get(base + "flows?token=" + token); code != 200 || !strings.Contains(body, "/through-web") {
 		t.Errorf("mitmweb with the password: %d %.200s", code, body)
+	}
+	// Bodies reach the app once and whole, and mitmweb shows them, up to WebKeep.
+	hc := h.client("dev")
+	r, err := hc.Post(backend.URL+"/chunked", "text/plain", strings.NewReader("posted body"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if string(got) != "hello from web" {
+		t.Errorf("the app got %q", got)
+	}
+	r, err = hc.Get(backend.URL + "/big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotBig, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if len(gotBig) != len(big) {
+		t.Errorf("the app got %d bytes of %d", len(gotBig), len(big))
+	}
+	h.doneFlow("/chunked", false)
+	h.doneFlow("/big", false)
+	_, list := get(base + "flows?token=" + token)
+	var flows []struct {
+		ID      string `json:"id"`
+		Request struct {
+			Path string `json:"path"`
+		} `json:"request"`
+	}
+	json.Unmarshal([]byte(list), &flows)
+	ids := map[string]string{}
+	for _, f := range flows {
+		ids[f.Request.Path] = f.ID
+	}
+	content := func(path, dir string) string {
+		_, b := get(base + "flows/" + ids[path] + "/" + dir + "/content.data?token=" + token)
+		return b
+	}
+	// mitmweb keeps the newest flows only (two in this test): /through-web went.
+	if _, ok := ids["/through-web"]; ok || len(flows) != 2 {
+		t.Errorf("mitmweb's flows past its bound: %d, /through-web kept %v", len(flows), ok)
+	}
+	if c := content("/chunked", "response"); c != "hello from web" {
+		t.Errorf("mitmweb's response body: %q", c)
+	}
+	if c := content("/chunked", "request"); c != "posted body" {
+		t.Errorf("mitmweb's request body: %q", c)
+	}
+	if c := content("/big", "response"); len(c) > WebKeep {
+		t.Errorf("mitmweb kept a body over WebKeep: %d bytes", len(c))
 	}
 	// Only on loopback: the Mac's other addresses do not answer.
 	addrs, _ := net.InterfaceAddrs()

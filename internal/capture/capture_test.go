@@ -259,7 +259,17 @@ func TestEndToEnd(t *testing.T) {
 	// undecrypted: a client that does not trust the mitmproxy CA still connects,
 	// sees the site's own certificate, and nothing is recorded.
 	socks, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: h.c.SocksSecret}, proxy.Direct)
-	plain := &http.Client{Transport: &http.Transport{DialContext: socks.(proxy.ContextDialer).DialContext}, Timeout: 30 * time.Second}
+	// As the exit node does, hand mitmproxy an IPv4 address, not a name to look
+	// up (on a runner whose IPv6 goes nowhere, mitmproxy's own lookup hung).
+	viaIPv4 := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, _ := net.SplitHostPort(addr)
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+		if err != nil {
+			return nil, err
+		}
+		return socks.(proxy.ContextDialer).DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	}
+	plain := &http.Client{Transport: &http.Transport{DialContext: viaIPv4}, Timeout: 30 * time.Second}
 	for _, u := range []string{"https://github.com/robots.txt", "https://www.apple.com/"} {
 		r, err := plain.Get(u)
 		if err != nil {

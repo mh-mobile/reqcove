@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,10 +37,21 @@ var addonPy []byte
 //go:embed apple-ignore-hosts.txt
 var appleIgnoreHosts string
 
-// uvExcludeNewer: uv resolves mitmproxy's dependencies only from releases
+// AppleIgnored says host is on the Apple list mitmproxy passes through itself:
+// a --pass-hosts host there is never recorded.
+func AppleIgnored(host string) bool {
+	for _, re := range strings.Split(strings.TrimSpace(appleIgnoreHosts), "\n") {
+		if m, _ := regexp.MatchString(re, host+":443"); m {
+			return true
+		}
+	}
+	return false
+}
+
+// UVExcludeNewer: uv resolves mitmproxy's dependencies only from releases
 // before this, the versions tested with it, so a release made later (a
 // compromised one included) never runs with the CA key. Move it with MitmSpec.
-const uvExcludeNewer = "2026-11-08T00:00:00Z"
+const UVExcludeNewer = "2026-11-08T00:00:00Z"
 
 type Config struct {
 	Dir          string // private directory (0700) for the addon and its socket; keep the path short (macOS caps socket paths at 104 bytes)
@@ -55,10 +68,18 @@ type Config struct {
 	NoRedact     bool                          // keep secrets in the records (--no-redact)
 	CAName       string                        // name of a CA made for this confdir (mitmproxy's own is just "mitmproxy"); empty: mitmproxy's default
 	WebPort      int                           // run mitmweb on 127.0.0.1:WebPort instead of mitmdump (--web); 0: mitmdump
+	WebPassword  string                        // with WebPort: mitmweb's password (run keeps it in the state directory)
 	Rules        string                        // --rules file (absolute); the addon loads it on every (re)start
+	RulesReload  bool                          // --rules-reload: the addon also takes the file again whenever it changes
+	Upstream     string                        // host:port of an HTTP proxy decrypted requests go on to (--upstream-proxy); empty: none
+	UpstreamCA   string                        // PEM file of the upstream's CA, the only CA trusted then (--upstream-ca); empty: the public CAs
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
+	webMaxFlows  int                           // tests: fewer flows kept in mitmweb than its default
 }
+
+// WebKeep is the largest body (on the wire) given to mitmweb whole (--web).
+const WebKeep = 2 << 20
 
 // mitmdump is restarted when it exits, up to maxRestarts times in a row; a
 // run that stayed up for stableAfter resets the count.
@@ -79,7 +100,9 @@ type Capture struct {
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
-	err    error
+	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
+	restarted bool
+	err       error
 }
 
 // proc is one mitmdump process.
@@ -161,7 +184,10 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		if cfg.Confdir == "" {
 			return fail(errors.New("--web needs a confdir"))
 		}
-		pw := rand.Text()
+		pw := cfg.WebPassword
+		if pw == "" {
+			return fail(errors.New("--web needs a password"))
+		}
 		if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 			return fail(err)
 		}
@@ -170,7 +196,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		}
 		webURL = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", cfg.WebPort, pw)
 	}
-	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns})
+	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
 		cfg: cfg, ln: ln, done: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
@@ -180,7 +206,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if cfg.WebPort != 0 {
 		tool = "mitmweb"
 	}
-	c.args = []string{"--python", cfg.Python, "--exclude-newer", uvExcludeNewer, "--from", cfg.MitmSpec, tool,
+	c.args = []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool,
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
 		"--set", "confdir=" + cfg.Confdir,
 		"--set", "proxyauth=any",
@@ -193,9 +219,25 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
+		if cfg.RulesReload {
+			c.args = append(c.args, "--set", "reqcove_rules_reload=true")
+		}
+	}
+	if cfg.Upstream != "" {
+		// lazy: otherwise mitmproxy connects to the server itself first, around the upstream.
+		c.args = append(c.args, "--set", "reqcove_upstream="+cfg.Upstream, "--set", "connection_strategy=lazy")
+		if cfg.UpstreamCA != "" {
+			c.args = append(c.args, "--set", "ssl_verify_upstream_trusted_ca="+cfg.UpstreamCA)
+		}
 	}
 	if cfg.WebPort != 0 {
 		c.args = append(c.args, "--set", "web_host=127.0.0.1", "--set", fmt.Sprintf("web_port=%d", cfg.WebPort), "--set", "web_open_browser=false")
+		// mitmweb keeps no streamed body: the addon gives it each one up to
+		// WebKeep, and drops its oldest flows past its own bounds.
+		c.args = append(c.args, "--set", fmt.Sprintf("reqcove_web_keep=%d", WebKeep))
+		if cfg.webMaxFlows > 0 {
+			c.args = append(c.args, "--set", fmt.Sprintf("reqcove_web_max_flows=%d", cfg.webMaxFlows))
+		}
 	}
 	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
 		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted
@@ -246,13 +288,22 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 		}
 	}
 	if e, _ := c.Store.Stats()["rules_error"].(string); e != "" {
-		p.stop()
-		return nil, fmt.Errorf("--rules: %s", e)
+		if !rulesKeepGoing(c.restarted, c.cfg.RulesReload) {
+			p.stop()
+			return nil, fmt.Errorf("--rules: %s", e)
+		}
+		c.cfg.Logf("WARN: mitmdump restarted while the --rules file does not load (%s): no rules apply until it is fixed", e)
 	}
 	p.ready = time.Now()
 	c.Store.setState("ready", "")
 	return p, nil
 }
+
+// rulesKeepGoing: a rules file that does not load stops a start, but not a
+// restart under --rules-reload, where the user was told it can be fixed
+// while running: stopping then would cut every device off. The restarted
+// mitmdump has no rules until the file loads again.
+func rulesKeepGoing(restarted, reload bool) bool { return restarted && reload }
 
 // supervise restarts mitmdump until ctx ends or it fails maxRestarts times in a row.
 // While it is down the exit node cannot reach mitmdump, so the iPhone's
@@ -287,6 +338,7 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 				return
 			case <-time.After(delay):
 			}
+			c.restarted = true
 			if p, err = c.spawn(ctx); err != nil && ctx.Err() != nil {
 				return
 			}
@@ -388,19 +440,125 @@ func ReadCA(confdir string) (CA, error) {
 
 // ensureCA makes the CA with mitmproxy's own CertStore.create_store, which
 // takes a name (mitmproxy always passes "mitmproxy"), so iPhones holding CAs
-// from several machines can tell them apart. An existing CA is never touched.
-// create_store is internal mitmproxy API: TestCANamed catches a change.
+// from several machines can tell them apart. An existing CA (its key) is never
+// touched: certificate files missing beside it are written again from
+// mitmproxy-ca.pem, which holds the certificate too, as create_store writes
+// them. create_store is internal mitmproxy API: TestCANamed catches a change.
 func ensureCA(ctx context.Context, cfg Config) error {
-	if _, err := os.Stat(filepath.Join(cfg.Confdir, "mitmproxy-ca.pem")); err == nil {
-		return nil
+	py := `import sys; from pathlib import Path; from mitmproxy.certs import CertStore; CertStore.create_store(Path(sys.argv[1]), "mitmproxy", 2048, organization="Reqcove", cn=sys.argv[2])`
+	if HasCA(cfg.Confdir) {
+		whole := true
+		for _, name := range CAFiles {
+			if _, err := os.Stat(filepath.Join(cfg.Confdir, name)); err != nil {
+				whole = false
+			}
+		}
+		if whole {
+			return nil
+		}
+		py = certsFromKey
 	}
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 		return err
 	}
-	const py = `import sys; from pathlib import Path; from mitmproxy.certs import CertStore; CertStore.create_store(Path(sys.argv[1]), "mitmproxy", 2048, organization="Reqcove", cn=sys.argv[2])`
-	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", uvExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
+	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
 	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
 	return cmd.Run()
+}
+
+// certsFromKey writes the certificate files missing beside mitmproxy-ca.pem
+// from the certificate in it, as create_store writes them.
+const certsFromKey = `import sys
+from pathlib import Path
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import pkcs12
+p = Path(sys.argv[1])
+ca = x509.load_pem_x509_certificates((p / "mitmproxy-ca.pem").read_bytes())[0]
+pem = ca.public_bytes(serialization.Encoding.PEM)
+for name, b in (("mitmproxy-ca-cert.pem", pem), ("mitmproxy-ca-cert.cer", pem),
+                ("mitmproxy-ca-cert.p12", pkcs12.serialize_key_and_certificates(name=b"mitmproxy", key=None, cert=ca, cas=None, encryption_algorithm=serialization.NoEncryption()))):
+    if not (p / name).exists():
+        (p / name).write_bytes(b)
+`
+
+// HasCA says confdir holds a CA: its key, mitmproxy-ca.pem (with the
+// certificate in it). Whatever else is missing, a CA there is never replaced.
+func HasCA(confdir string) bool {
+	_, err := os.Stat(filepath.Join(confdir, "mitmproxy-ca.pem"))
+	return err == nil
+}
+
+// CAFiles are what mitmproxy and mitm.it use of a CA, the key last, so a copy
+// cut short never looks like a CA (HasCA).
+// Not copied: mitmproxy-ca.p12 (the key again, without a passphrase, which
+// mitmproxy does not read), the dhparam (made when missing) and config.yaml
+// (mitmweb's password).
+var CAFiles = []string{"mitmproxy-ca-cert.pem", "mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.p12", "mitmproxy-ca.pem"}
+
+// CopyCA copies the CA of confdir src into dst, so one profile on the iPhone
+// serves both nodes. It does nothing when src has no CA or dst has one, and
+// copies nothing when src lacks one of CAFiles; a copy that fails is removed.
+func CopyCA(src, dst string) (bool, error) {
+	if !HasCA(src) || HasCA(dst) {
+		return false, nil
+	}
+	for _, name := range CAFiles {
+		if _, err := os.Stat(filepath.Join(src, name)); err != nil {
+			return false, fmt.Errorf("%s has a CA but no %s (its node writes it again at its next start)", src, name)
+		}
+	}
+	// Temporary files of a copy cut short (one may hold the key): NAME.DIGITS,
+	// as os.CreateTemp names them; nothing else, a .bak say, goes.
+	ents, _ := os.ReadDir(dst)
+	for _, e := range ents {
+		name, suffix, _ := strings.Cut(e.Name(), ".tmp")
+		if slices.Contains(CAFiles, name) && suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+			os.Remove(filepath.Join(dst, e.Name()))
+		}
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return false, err
+	}
+	var done []string
+	for _, name := range CAFiles {
+		if err := copyFile(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+			removeAll(done)
+			return false, err
+		}
+		done = append(done, filepath.Join(dst, name))
+	}
+	return true, nil
+}
+
+// copyFile copies src to dst, 0600, through a temporary file: dst is whole or absent.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp*") // 0600, NAME.tmpDIGITS
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(tmp, in)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), dst)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+func removeAll(paths []string) {
+	for _, p := range paths {
+		os.Remove(p)
+	}
 }
 
 // freePort asks the kernel for an unused port.

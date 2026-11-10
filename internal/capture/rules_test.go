@@ -316,6 +316,7 @@ func TestRulesRefused(t *testing.T) {
 	defer cancel()
 	for name, c := range map[string]struct{ yaml, want string }{
 		"other option":                {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
+		"misplaced rule as a key":     {"'|~q|Authorization|Bearer sekrit': 1\n", "not (a key that is not a name)"},
 		"missing file":                {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
 		"bad regex":                   {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
 		"not a mapping":               {"- a\n", "the file must map"},
@@ -324,6 +325,7 @@ func TestRulesRefused(t *testing.T) {
 		"resolve metadata":            {"resolve: [\"127.0.0.1=169.254.169.254\"]\n", "resolve[0]: 127.0.0.1: 169.254.169.254 cannot be a target"},
 		"resolve name target":         {"resolve: [\"127.0.0.1=localhost\"]\n", "resolve[0]: 127.0.0.1: the target must be an IPv4 address"},
 		"resolve wildcard":            {"resolve: [\"*.example=192.0.2.1\"]\n", "resolve[0]: write name=IPv4"},
+		"map_remote bad group":        {"map_remote: [\"|//a.example/|//b.example/\\\\2\"]\n", "map_remote[0]: "},
 		"keep host not bool":          {"keep_host_header: \"yes\"\n", "keep_host_header must be true or false"},
 		"resolve shared ip, one port": {"resolve: [\"127.0.0.1=192.0.2.1:8443\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
 		"resolve shared target":       {"resolve: [\"127.0.0.1=192.0.2.1\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
@@ -337,5 +339,172 @@ func TestRulesRefused(t *testing.T) {
 				t.Errorf("Start: %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+// TestRulesReload: with RulesReload, a changed file takes over for new
+// requests; a request under way keeps the rules it started with (its response
+// too); a file that does not load leaves the rules before it, and says why;
+// without RulesReload nothing is taken again.
+func TestRulesReload(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) }) // a failed test does not hold the server's Close
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			arrived <- struct{}{}
+			<-release
+		}
+		fmt.Fprint(w, r.Header.Get("X-Rule"))
+	}))
+	defer srv.Close()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(rules, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := "modify_headers:\n  - \"|~q|X-Rule|one\"\n  - \"|~s|X-Resp|one\"\n"
+	two := "modify_headers:\n  - \"|~q|X-Rule|two\"\n  - \"|~s|X-Resp|two\"\n  - \"|~q|X-Two|1\"\n"
+	for _, reload := range []bool{true, false} {
+		write(one)
+		h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules, c.RulesReload = rules, reload })
+		if err != nil {
+			t.Fatal(err)
+		}
+		hc := h.client("dev")
+		get := func(path string) (string, string) {
+			t.Helper()
+			resp, err := hc.Get(srv.URL + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return string(b), resp.Header.Get("X-Resp")
+		}
+		waitRules := func(want, problem string) {
+			t.Helper()
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+				got, e := fmt.Sprint(h.stats()["rules"]), fmt.Sprint(h.stats()["rules_error"])
+				if strings.Contains(got, want) && strings.Contains(e, problem) && (problem != "" || e == "") {
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("rules %s, error %q: want %s, %q", got, e, want, problem)
+				}
+			}
+		}
+		if req, resp := get("/r1"); req != "one" || resp != "one" {
+			t.Fatalf("first rules: %q %q", req, resp)
+		}
+		if !reload {
+			write(two)
+			time.Sleep(3 * time.Second)
+			if req, _ := get("/r2"); req != "one" {
+				t.Errorf("without RulesReload, taken again: %q", req)
+			}
+			continue
+		}
+		slow := make(chan [2]string, 1)
+		go func() {
+			resp, err := hc.Get(srv.URL + "/slow")
+			if err != nil {
+				slow <- [2]string{err.Error()}
+				return
+			}
+			resp.Body.Close()
+			slow <- [2]string{"", resp.Header.Get("X-Resp")}
+		}()
+		<-arrived
+		write(two)
+		waitRules("modify_headers:3", "")
+		releaseOnce.Do(func() { close(release) })
+		if r := <-slow; r[0] != "" || r[1] != "one" {
+			t.Errorf("the request under way got response rules %q (%s), not its own", r[1], r[0])
+		}
+		if req, resp := get("/r2"); req != "two" || resp != "two" {
+			t.Errorf("after the change: %q %q", req, resp)
+		}
+		write("modify_headers: [\n")
+		waitRules("modify_headers:3", "at line")
+		if req, _ := get("/r3"); req != "two" {
+			t.Errorf("a broken file changed the rules: %q", req)
+		}
+		write(one)
+		waitRules("modify_headers:2", "")
+		if req, _ := get("/r4"); req != "one" {
+			t.Errorf("fixed: %q", req)
+		}
+		// Saved by a rename, as editors do.
+		tmp := rules + ".tmp"
+		if err := os.WriteFile(tmp, []byte(two), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, rules); err != nil {
+			t.Fatal(err)
+		}
+		waitRules("modify_headers:3", "")
+		// The checks at start hold on a reload; an error quotes no rule.
+		write("resolve: [\"elsewhere.example=192.0.2.1\"]\n")
+		waitRules("modify_headers:3", "not in --allow-hosts")
+		write("map_remote:\n  - '|~h \"X-Key: sekrit123\" ~zz|//a/|//b/'\n")
+		waitRules("modify_headers:3", "map_remote[0]: ")
+		if e := fmt.Sprint(h.stats()["rules_error"]); strings.Contains(e, "sekrit123") {
+			t.Errorf("the error quotes the rule: %s", e)
+		}
+		os.Remove(rules)
+		waitRules("modify_headers:3", "the file is gone")
+		if req, _ := get("/r5"); req != "two" {
+			t.Errorf("after the file went: %q", req)
+		}
+	}
+}
+
+// TestRulesReloadSettles: a file still being written (here, changed every
+// 50 ms, faster than the 1 s look) is not taken; once it stays, it is, once.
+func TestRulesReloadSettles(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	write := func(n int) {
+		t.Helper()
+		var b strings.Builder
+		b.WriteString("modify_headers:\n")
+		for i := 0; i <= n%5; i++ {
+			fmt.Fprintf(&b, "  - \"|~q|X-R%d|%d\"\n", i, n)
+		}
+		if err := os.WriteFile(rules, []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(0)
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules, c.RulesReload = rules, true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	taken := 0
+	h.c.Store.SetRulesLog(func(map[string]int, []string, string) { mu.Lock(); taken++; mu.Unlock() })
+	count := func() int { mu.Lock(); defer mu.Unlock(); return taken }
+	for i := 1; i <= 60; i++ { // 3 s of changes, every 50 ms: settling would need a pause of a whole second
+		write(i)
+		time.Sleep(50 * time.Millisecond)
+	}
+	if n := count(); n != 0 {
+		t.Errorf("taken %d times while it was changing", n)
+	}
+	time.Sleep(3 * time.Second)
+	if n := count(); n != 1 {
+		t.Errorf("taken %d times once it stayed, want 1", n)
 	}
 }

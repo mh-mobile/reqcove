@@ -3,18 +3,38 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 	"tailscale.com/health/healthmsg"
 )
+
+// The page's steps are the viewing device's: names that overlap (iphone,
+// iphone-1) keep its own, and another device's problem or step is not there.
+func TestPageSteps(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, Problems: []string{`"ipad": no such device`}}
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true}, {ID: "b", Name: "iphone-1", Carried: true, TLSFailures: 2}}
+	got := strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "a"), "\n")
+	if !strings.Contains(got, "no traffic from iphone yet") || strings.Contains(got, "iphone-1") || strings.Contains(got, "ipad") {
+		t.Errorf("a's steps: %q", got)
+	}
+	got = strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "b"), "\n")
+	if !strings.Contains(got, "iphone-1 refuses") || strings.Contains(got, "no traffic") {
+		t.Errorf("b's steps: %q", got)
+	}
+}
 
 func TestNextSteps(t *testing.T) {
 	ready := map[string]any{"state": "ready"}
@@ -34,14 +54,18 @@ func TestNextSteps(t *testing.T) {
 		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
 		// Just after start the key looks unsigned until the netmap is checked: no step yet.
 		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
-		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net"}},
+		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net", "autoApprovers"}},
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},
+		{"rules reload failed", ok, map[string]any{"state": "ready", "rules_error": "map_remote[0]: bad"}, allow, nil, []string{"--rules file does not load (map_remote[0]: bad)", "rules before it still apply"}},
 		{"CA not trusted", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3}}, []string{"phone refuses", "Reqcove CA (mac, 2026-11-07)", "http://mitm.it"}},
 		{"CA fine", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3, Flows: 10}}, nil},
 		{"silent device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true}}, []string{"no traffic from phone yet", "reqcove.ts.net", "off and on again"}},
 		{"busy device", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, Flows: 1}}, nil},
+		// The local proxy is not a phone: no exit node to turn on, and its CA step names the Simulator.
+		{"local, silent", ok, ready, allow, []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true}}, nil},
+		{"local, CA", ok, ready, allow, []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, TLSFailures: 2}}, []string{"local proxy's apps refuse", "simctl keychain"}},
 	} {
 		got := strings.Join(nextSteps(c.node, c.stats, c.allow, ca, c.devices), "\n")
 		if len(c.want) == 0 && got != "" {
@@ -91,10 +115,12 @@ func captureStdout(t *testing.T, f func() error) string {
 	r, w, _ := os.Pipe()
 	old := os.Stdout
 	os.Stdout = w
+	read := make(chan []byte)
+	go func() { b, _ := io.ReadAll(r); read <- b }() // as it is written: a pipe holds only 64 KiB
 	err := f()
 	w.Close()
 	os.Stdout = old
-	b, _ := io.ReadAll(r)
+	b := <-read
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +231,31 @@ func TestOpenState(t *testing.T) {
 	} else {
 		unlock()
 	}
+	// ~/.reqcove before its first run, with a CA copied from another computer
+	// (docs/guide.md, Use one CA on two computers) and the list of copies another node made: taken. Another
+	// directory with a mitmproxy/ (a clone of mitmproxy, say), or ~/.reqcove's
+	// mitmproxy/ without a key, is not.
+	def := tempDefaultState(t)
+	defer os.RemoveAll(def)
+	os.MkdirAll(filepath.Join(def, "mitmproxy"), 0o700)
+	if unlock, err := openState(def); err == nil {
+		unlock()
+		t.Error("openState took ~/.reqcove with a mitmproxy/ without a key")
+	}
+	os.WriteFile(filepath.Join(def, "mitmproxy", "mitmproxy-ca.pem"), []byte("key"), 0o600)
+	os.WriteFile(filepath.Join(def, caCopies), []byte("/x/mitmproxy\n"), 0o600)
+	if unlock, err := openState(def); err != nil {
+		t.Errorf("openState refused ~/.reqcove with a copied CA: %v", err)
+	} else {
+		unlock()
+	}
+	clone := t.TempDir()
+	os.MkdirAll(filepath.Join(clone, "mitmproxy", "mitmproxy"), 0o755)
+	os.WriteFile(filepath.Join(clone, "mitmproxy", "mitmproxy-ca.pem"), []byte("key"), 0o600)
+	if unlock, err := openState(clone); err == nil {
+		unlock()
+		t.Error("openState took another directory holding a mitmproxy/")
+	}
 	fresh := filepath.Join(t.TempDir(), "state")
 	unlock, err := openState(fresh)
 	if err != nil {
@@ -253,5 +304,277 @@ func TestPrintQR(t *testing.T) {
 	printQR(f, "http://mitm.it", "scan")
 	if fi, _ := f.Stat(); fi.Size() != 0 {
 		t.Error("a QR code was written to a file")
+	}
+}
+
+// The ready block puts the devices, the links and the numbered next steps in
+// one place; the local proxy's step about this Mac is among them, but only
+// with the local proxy on.
+func TestReadyBlock(t *testing.T) {
+	oldCA, oldSec, oldTTL := localCA, security, macTrustTTL
+	defer func() { localCA, security, macTrustTTL = oldCA, oldSec, oldTTL }()
+	localCA, macTrustTTL = "/s/ca.pem", 0
+	trusted := false
+	security = func(...string) error {
+		if trusted {
+			return nil
+		}
+		return errors.New("exit status 1")
+	}
+	ready := map[string]any{"state": "ready"}
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
+	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
+	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps)
+	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("%q not in:\n%s", w, got)
+		}
+	}
+	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil); strings.Contains(only, "mitm.it") {
+		t.Errorf("the CA's link with the local proxy alone (the Simulator gets it by itself):\n%s", only)
+	}
+	if strings.Contains(got, "--web:") {
+		t.Errorf("mitmweb without --web:\n%s", got)
+	}
+	if strings.Contains(got, "--mcp-http") {
+		t.Errorf("MCP over HTTP without --mcp-http:\n%s", got)
+	}
+	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil)
+	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm /s/mcp-token") {
+		t.Errorf("the MCP line:\n%s", withMCP)
+	}
+	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
+		t.Errorf("the Mac step without the local proxy: %q", steps)
+	}
+	if steps := withoutMacStep(nextSteps(n, ready, allow, capture.CA{}, devs)); strings.Contains(strings.Join(steps, "\n"), "this Mac") || !strings.Contains(strings.Join(steps, "\n"), "no traffic from iphone") {
+		t.Errorf("the page's steps keep the Mac step, or lose others: %q", steps)
+	}
+	// Trusted while run runs: the step goes, without a restart (the check is macOS's).
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	trusted = true
+	if steps := nextSteps(n, ready, allow, capture.CA{}, devs); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
+		t.Errorf("the Mac step once it trusts the CA: %q", steps)
+	}
+}
+
+// Codes go side by side as many as the terminal's width takes, the rest on
+// the next rows; low error correction keeps each at 37 columns.
+func TestQRsSideBySide(t *testing.T) {
+	items := []qrItem{{"http://100.111.81.14/?k=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ui"}, {"http://100.111.81.14:8081/?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ", "web"}, {"http://mitm.it", "ca"}}
+	rows := func(cols int) (lines []string, captions int) {
+		lines = strings.Split(strings.TrimRight(sideBySide(items, cols), "\n"), "\n")
+		for _, l := range lines {
+			if strings.HasPrefix(l, "ui:") || strings.HasPrefix(l, "ca:") || strings.HasPrefix(l, "web:") {
+				captions++
+			}
+		}
+		return lines, captions
+	}
+	if lines, n := rows(130); n != 1 || utf8.RuneCountInString(lines[1]) > 130 || !strings.Contains(lines[0], "ca:") {
+		t.Errorf("130 columns: %d rows, %q", n, lines[0])
+	}
+	if lines, n := rows(90); n != 2 || utf8.RuneCountInString(lines[1]) > 90 || !strings.Contains(lines[0], "web:") {
+		t.Errorf("90 columns: %d rows (want 2 + 1), %q", n, lines[0])
+	}
+	if _, n := rows(40); n != 3 {
+		t.Errorf("40 columns: %d rows", n)
+	}
+}
+
+// The ready block waits for two Running polls that agree: the first one,
+// before the netmap says the exit node is approved, does not count.
+func TestReadyGate(t *testing.T) {
+	var g readyGate
+	unapproved := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}
+	approved := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	for i, c := range []struct {
+		s    exitnode.Status
+		want bool
+	}{{exitnode.Status{Backend: "Starting"}, false}, {unapproved, false}, {approved, false}, {approved, true}} {
+		if got := g.ready(c.s); got != c.want {
+			t.Errorf("poll %d: ready %v, want %v", i, got, c.want)
+		}
+	}
+}
+
+// Help lists flags with two dashes, as the README writes them.
+func TestUsageTwoDashes(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.Bool("ui", false, "serve the page")
+	fs.String("state", "", "state directory")
+	r, w, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = w
+	usageOf(fs)
+	w.Close()
+	os.Stderr = old
+	b, _ := io.ReadAll(r)
+	out := string(b)
+	if !strings.Contains(out, "Usage: reqcove run [flags]") || !strings.Contains(out, "  --ui\n") || !strings.Contains(out, "  --state string") || strings.Contains(out, "\n  -ui") {
+		t.Errorf("help:\n%s", out)
+	}
+}
+
+// The status tool says which hosts are recorded, so an agent knows a host it
+// finds nothing for may be outside them; [] when none.
+func TestStatusAllowHosts(t *testing.T) {
+	allow, _ := capture.ParseAllowHosts([]string{"API.example.com, *.cdn.example"})
+	if got := statusOut(exitnode.Status{}, nil, allow, capture.CA{}, nil).AllowHosts; strings.Join(got, " ") != "api.example.com *.cdn.example" {
+		t.Errorf("allow_hosts %q", got)
+	}
+	if got := statusOut(exitnode.Status{}, nil, capture.HostRules{}, capture.CA{}, nil).AllowHosts; got == nil || len(got) != 0 {
+		t.Errorf("no --allow-hosts: %#v", got)
+	}
+}
+
+// Refused hosts become a step per device, with the --pass-hosts to add,
+// quoted for a shell; another device's page lists only its own.
+func TestRefusedHostsStep(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 5}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}}
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{
+		{Device: "a", Host: "api.x.com", Refusals: 12}, {Device: "a", Host: "*.weird", Refusals: 4}, {Device: "b", Host: "app4.paypay.ne.jp", Refusals: 19},
+	}}
+	got := strings.Join(nextSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices), "\n")
+	for _, want := range []string{"iphone refused Reqcove's certificate again and again for api.x.com (12), *.weird (4)", "--pass-hosts 'api.x.com,*.weird'", "ipad refused", "--pass-hosts app4.paypay.ne.jp "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+	got = strings.Join(pageSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices, "b"), "\n")
+	if strings.Contains(got, "api.x.com") || !strings.Contains(got, "app4.paypay.ne.jp") {
+		t.Errorf("b's page:\n%s", got)
+	}
+}
+
+// --pass-hosts and @FILE: hosts one a line, comments, ~/; a line that is not
+// a host stops run, nothing in it run.
+func TestPassHostsFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.WriteFile(filepath.Join(home, "pass.txt"), []byte("# pinned apps\n*.tiktokv.com\n\n api.x.com  # X\n"), 0o600)
+	if got, err := hostList("@~/pass.txt"); err != nil || got != "*.tiktokv.com,api.x.com" {
+		t.Errorf("@~/pass.txt: %q %v", got, err)
+	}
+	os.WriteFile(filepath.Join(home, "urls.txt"), []byte("https://api.example.com/v1\napi.example.com:443\n"), 0o600)
+	if _, err := hostList("@~/urls.txt"); err != nil { // as inline values: hostsOnly takes their hosts
+		t.Errorf("URL and host:port lines: %v", err)
+	}
+	if got, _ := hostList("api.x.com"); got != "api.x.com" {
+		t.Errorf("plain: %q", got)
+	}
+	if _, err := hostList("@" + filepath.Join(home, "missing.txt")); err == nil {
+		t.Error("a missing file taken")
+	}
+	// A line that is not a host (a command, or a wrong file's secret) stops it,
+	// named by its line number only.
+	os.WriteFile(filepath.Join(home, "evil.txt"), []byte("api.x.com\napi.x.com; rm -rf ~ # S3CRET\n"), 0o600)
+	if _, err := hostList("@~/evil.txt"); err == nil || !strings.Contains(err.Error(), "line 2 is not a host list") || strings.Contains(err.Error(), "rm -rf") || strings.Contains(err.Error(), "S3CRET") {
+		t.Errorf("evil.txt: %v", err)
+	}
+	os.WriteFile(filepath.Join(home, "empty.txt"), []byte("# nothing\n\n"), 0o600)
+	if _, err := hostList("@~/empty.txt"); err == nil || !strings.Contains(err.Error(), "has no hosts") {
+		t.Errorf("empty.txt: %v", err)
+	}
+	args := func(extra ...string) []string {
+		return append([]string{"--device", "phone", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"}, extra...)
+	}
+	for _, c := range []struct {
+		extra []string
+		want  string
+	}{
+		{[]string{"--pass-hosts", "api.x.com"}, "--pass-hosts needs --allow-hosts"},
+		{[]string{"--allow-hosts", "*", "--pass-hosts", "*"}, `not "*"`},
+	} {
+		if err := run(context.Background(), args(c.extra...)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v", c.extra, err)
+		}
+	}
+}
+
+// Suggestions group a domain's hosts (by the public suffix list), keep the
+// pass hosts already given, and a device with only passed connections is not
+// told to turn its exit node on.
+func TestPassSuggestion(t *testing.T) {
+	hosts, counts := passSuggestion(nil, nil)
+	if hosts != nil {
+		t.Errorf("nothing refused: %q %q", hosts, counts)
+	}
+	hosts, counts = passSuggestion([]capture.RefusedHost{
+		{Host: "api31.tiktokv.com", Refusals: 30}, {Host: "log22.tiktokv.com", Refusals: 5},
+		{Host: "app4.paypay.ne.jp", Refusals: 19}, {Host: "events.paypay.ne.jp", Refusals: 6},
+		{Host: "api.x.com", Refusals: 4}, {Host: "34.102.215.99", Refusals: 61},
+	}, nil)
+	if strings.Join(hosts, ",") != "*.tiktokv.com,*.paypay.ne.jp,api.x.com,34.102.215.99" || !strings.Contains(strings.Join(counts, ";"), "2 hosts of tiktokv.com (35)") {
+		t.Errorf("%q %q", hosts, counts)
+	}
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	allow, _ := capture.ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"api.x.com"})
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{{Device: "a", Host: "app4.paypay.ne.jp", Refusals: 9}}}
+	got := strings.Join(nextSteps(ok, stats, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 1}}), "\n")
+	if !strings.Contains(got, "--pass-hosts 'api.x.com,app4.paypay.ne.jp' ") {
+		t.Errorf("keeps the pass hosts given:\n%s", got)
+	}
+	got = strings.Join(nextSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Passthroughs: 4}}), "\n")
+	if strings.Contains(got, "no traffic from iphone") {
+		t.Errorf("a device with passed connections told it has no traffic:\n%s", got)
+	}
+}
+
+// A new refused host under a domain a pass host has already becomes *.domain,
+// which replaces that pass host in the command.
+func TestPassSuggestionMerges(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	allow, _ := capture.ParseAllowHosts([]string{"*"})
+	allow, _ = allow.WithPass([]string{"p16-sticker.ibyteimg.com", "app4.paypay.ne.jp", "api.x.com", "34.102.215.99"})
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{
+		{Device: "a", Host: "p16-asset.ibyteimg.com", Refusals: 19}, {Device: "a", Host: "events.paypay.ne.jp", Refusals: 3}, {Device: "a", Host: "new.example.org", Refusals: 3},
+	}}
+	got := strings.Join(nextSteps(ok, stats, allow, capture.CA{}, []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, Flows: 1}}), "\n")
+	if !strings.Contains(got, "--pass-hosts 'api.x.com,34.102.215.99,*.ibyteimg.com,*.paypay.ne.jp,new.example.org'") {
+		t.Errorf("merged:\n%s", got)
+	}
+}
+
+// On Android (as Tailscale says), the steps say its apps trust only the
+// system's CAs, and narrowing --allow-hosts, rather than pinning or the CA.
+func TestAndroidSteps(t *testing.T) {
+	node := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, DeviceOS: map[string]string{"a": "android", "i": "iOS"}}
+	all := []capture.DeviceInfo{{ID: "a", Name: "beam-pro", Carried: true, TLSFailures: 40}, {ID: "i", Name: "iphone", Carried: true, TLSFailures: 3}}
+	got := strings.Join(nextSteps(node, map[string]any{"state": "ready"}, capture.HostRules{All: true}, capture.CA{Name: "Reqcove CA"}, all), "\n")
+	for _, want := range []string{"beam-pro refuses every certificate so far. It runs Android", "open a site in Chrome", "network_security_config", "iphone refuses every certificate so far: install and trust"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+	some := []capture.DeviceInfo{{ID: "a", Name: "beam-pro", Carried: true, Flows: 6}, {ID: "i", Name: "iphone", Carried: true, Flows: 9}}
+	stats := map[string]any{"state": "ready", "refused_hosts": []capture.RefusedHost{{Device: "a", Host: "api.app.example", Refusals: 30}, {Device: "i", Host: "api.x.com", Refusals: 12}}}
+	got = strings.Join(nextSteps(node, stats, capture.HostRules{All: true}, capture.CA{}, some), "\n")
+	for _, want := range []string{"beam-pro refused Reqcove's certificate again and again for api.app.example (30). It runs Android", "Keep --allow-hosts to the hosts you test", "--pass-hosts api.app.example ", "iphone refused Reqcove's certificate again and again for api.x.com (12), while it accepts it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
+		}
+	}
+}
+
+// TestPassSuggestionKeepsRecorded: hosts refused under a domain whose other
+// hosts are decrypted and recorded are named one by one, never *.domain, which
+// would stop recording the app under test.
+func TestPassSuggestionKeepsRecorded(t *testing.T) {
+	refused := []capture.RefusedHost{
+		{Device: "d", Host: "auth.example.com", Refusals: 5, SiblingsRecorded: true},
+		{Device: "d", Host: "pay.example.com", Refusals: 4, SiblingsRecorded: true},
+		{Device: "d", Host: "a.cdn.example", Refusals: 3},
+		{Device: "d", Host: "b.cdn.example", Refusals: 3},
+	}
+	hosts, _ := passSuggestion(refused, nil)
+	got := strings.Join(hosts, ",")
+	if got != "auth.example.com,pay.example.com,*.cdn.example" {
+		t.Errorf("suggested %s", got)
 	}
 }

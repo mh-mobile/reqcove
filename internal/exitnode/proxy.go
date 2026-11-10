@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,10 @@ type remoteProxy struct {
 	policy  func() *policy
 	resolve func(ctx context.Context, host string) (netip.Addr, error)
 	dial    func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error)
+	ui      http.Handler // the node's own page (--ui), for requests to the node's port 80
+	web     http.Handler // mitmweb's relay (--web), for requests to the node's webAddr port
+	webAddr string       // mitmweb on this computer, 127.0.0.1:PORT; the node's WebPort goes there
+	local   bool         // the local proxy: this computer's own apps, as the device Local
 
 	// One per device: a pooled connection carries one device's SOCKS user.
 	// ponytail: never pruned; bounded by the devices seen in this run.
@@ -68,9 +73,18 @@ func deviceAt(p *policy, addr string) (Device, bool) {
 	return d, ok
 }
 
+// pageWriteTimeout bounds writing the page to a slow reader (a variable for tests).
+var pageWriteTimeout = time.Minute
+
+// Local is the device the local proxy's requests are recorded as.
+var Local = Device{ID: "local", Name: "local"}
+
 func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	src, _ := netip.ParseAddrPort(r.RemoteAddr)
 	dev, ok := deviceAt(rp.policy(), r.RemoteAddr)
+	if rp.local {
+		dev, ok = Local, true // on 127.0.0.1: this computer's own apps, trusted as its user is
+	}
 	if !ok {
 		w.Header().Set("Connection", "close")
 		http.Error(w, "reqcove: this device is not one of reqcove's --device", http.StatusForbidden)
@@ -84,11 +98,47 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reqcove is a proxy: send absolute http:// URLs, or CONNECT", http.StatusBadRequest)
 		return
 	}
+	if rp.toWeb(r.URL.Host) {
+		rp.web.ServeHTTP(w, r) // mitmweb from a phone on the Remote Proxy, which sends it here too
+		return
+	}
+	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
+		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
+			// A phone on the Remote Proxy sends the page's requests here too. As on port 80, a
+			// slow reader does not hold a page's memory longer. net/http lifts the deadline
+			// once the response is written, before the next request on the connection (read in
+			// Go 1.27's conn.serve; TestRemoteProxyPageDeadline checks it).
+			http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pageWriteTimeout))
+			rp.ui.ServeHTTP(w, r)
+			return
+		}
+	}
 	rp.reverseProxy(src, dev).ServeHTTP(w, r)
 }
 
+// toWeb: hostport is the node's own mitmweb port.
+func (rp *remoteProxy) toWeb(hostport string) bool {
+	if rp.web == nil || !rp.policy().isSelf(hostport) {
+		return false
+	}
+	_, port, err := net.SplitHostPort(hostport)
+	return err == nil && port == strconv.Itoa(WebPort)
+}
+
 func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip.AddrPort, dev Device) {
-	out, err := rp.open(r.Context(), src, dev, r.Host)
+	var out net.Conn
+	var err error
+	if rp.toWeb(r.Host) {
+		// mitmweb's WebSocket through the proxy (Safari tunnels ws:// with CONNECT):
+		// to mitmweb itself, for the user's own devices only, as the relay is.
+		if _, all, _ := viewerAt(rp.policy(), r.RemoteAddr); !all {
+			http.Error(w, "reqcove: mitmweb is for your own devices only", http.StatusForbidden)
+			return
+		}
+		out, err = (&net.Dialer{Timeout: 5 * time.Second}).DialContext(r.Context(), "tcp", rp.webAddr)
+	} else {
+		out, err = rp.open(r.Context(), src, dev, r.Host)
+	}
 	if err != nil {
 		logEvent("proxy %v CONNECT %s: %v", src, r.Host, err)
 		http.Error(w, "reqcove: "+err.Error(), statusFor(err))
@@ -159,6 +209,16 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 	}
 	dst := netip.AddrPortFrom(ip, uint16(pn))
 	v := decideTCP(rp.policy(), src, dst)
+	if rp.local {
+		// An address the app gave, or a name this computer's /etc/hosts gives, is the app's own choice.
+		_, literal := netip.ParseAddr(host)
+		var self []netip.Addr
+		trusted := literal == nil || inHostsFile(host)
+		if !trusted {
+			self, _ = interfaceAddrs()
+		}
+		v = decideLocal(dst, self, trusted)
+	}
 	if v == reject {
 		return nil, fmt.Errorf("%s (%v): %w", host, ip, errNotCarried)
 	}
@@ -252,4 +312,43 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 		}
 	}
 	return d.(proxy.ContextDialer).DialContext(ctx, "tcp", dst.String())
+}
+
+// localResolve looks host up as this computer's apps would (search domains,
+// /etc/hosts, a VPN's DNS), for the local proxy: IPv4.
+func localResolve(ctx context.Context, host string) (netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.Unmap(), nil
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	if len(ips) == 0 {
+		return netip.Addr{}, fmt.Errorf("%s: no IPv4 address", host)
+	}
+	return ips[0].Unmap(), nil
+}
+
+// hostsFile is read for inHostsFile; tests point it elsewhere.
+var hostsFile = "/etc/hosts"
+
+// inHostsFile: host is a name in this computer's hosts file (the user's own
+// mapping, as for a development domain pointed at 127.0.0.1).
+func inHostsFile(host string) bool {
+	b, err := os.ReadFile(hostsFile)
+	if err != nil {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		f := strings.Fields(line)
+		for _, name := range f[min(1, len(f)):] {
+			if strings.EqualFold(name, host) {
+				return true
+			}
+		}
+	}
+	return false
 }

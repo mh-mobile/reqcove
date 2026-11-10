@@ -1,0 +1,9 @@
+# Only what the build needs: not local notes, records or a CA's key.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!skills/
+**/*_test.go
+**/testdata/

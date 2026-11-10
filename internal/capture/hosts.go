@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -12,7 +13,61 @@ import (
 type HostRules struct {
 	All      bool     // "*": everything (except Apple's hosts)
 	Patterns []string // anchored regexps over a lowercase host without port
+	Hosts    []string // the specs as given, lowercased: what the status tool shows
 	res      []*regexp.Regexp
+	// Pass (--pass-hosts) are allowed hosts carried undecrypted: not recorded
+	// as flows, only their connections' metadata. Set with WithPass.
+	Pass      []string // anchored regexps, as Patterns
+	PassHosts []string // the specs as given
+	passRes   []*regexp.Regexp
+}
+
+// WithPass adds --pass-hosts specs (as --allow-hosts', but "*" is refused:
+// passing everything is not recording anything).
+func (r HostRules) WithPass(specs []string) (HostRules, error) {
+	p, err := ParseAllowHosts(specs)
+	if err != nil {
+		return r, errors.New(strings.Replace(err.Error(), "--allow-hosts", "--pass-hosts", 1))
+	}
+	if p.All {
+		return r, errors.New("--pass-hosts: not \"*\": leave out --allow-hosts instead, and nothing is decrypted")
+	}
+	r.Pass, r.PassHosts, r.passRes = p.Patterns, p.Hosts, p.res
+	return r, nil
+}
+
+// Passed reports whether host is one of --pass-hosts.
+func (r HostRules) Passed(host string) bool {
+	host = normHost(host)
+	for _, re := range r.passRes {
+		if re.MatchString(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// Allowed reports whether host is in --allow-hosts, --pass-hosts or not:
+// whether anything about it may be recorded.
+func (r HostRules) Allowed(host string) bool {
+	if r.All {
+		return true
+	}
+	host = normHost(host)
+	for _, re := range r.res {
+		if re.MatchString(host) {
+			return true
+		}
+	}
+	return false
+}
+
+func normHost(host string) string {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if h, _, ok := strings.Cut(host, ":"); ok && !strings.Contains(h, ":") {
+		host = h // drop a port
+	}
+	return host
 }
 
 // ParseAllowHosts turns --allow-hosts specs into rules. A spec is a host
@@ -27,6 +82,9 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 			if h != raw && (h == "*" || h == "") {
 				return r, fmt.Errorf("--allow-hosts: bad host %q", raw) // "*." must not mean "*"
 			}
+			if h != "" {
+				r.Hosts = append(r.Hosts, h)
+			}
 			switch {
 			case h == "":
 			case h == "*":
@@ -36,6 +94,8 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
 				}
 				r.Patterns = append(r.Patterns, `^(.+\.)?`+regexp.QuoteMeta(h[2:])+`$`)
+			case strings.HasPrefix(h, "."):
+				return r, fmt.Errorf("--allow-hosts: bad host %q (for the domain and its subdomains, write *%s)", h, h)
 			default:
 				if !validHost(h) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
@@ -65,21 +125,10 @@ func validHost(h string) bool {
 	return h != ""
 }
 
-// Match reports whether host (as in the Host header or SNI) is allowed.
+// Match reports whether host (as in the Host header or SNI) is recorded as
+// flows: allowed, and not passed through.
 func (r HostRules) Match(host string) bool {
-	if r.All {
-		return true
-	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if h, _, ok := strings.Cut(host, ":"); ok && !strings.Contains(h, ":") {
-		host = h // drop a port
-	}
-	for _, re := range r.res {
-		if re.MatchString(host) {
-			return true
-		}
-	}
-	return false
+	return r.Allowed(host) && !r.Passed(host)
 }
 
 // mitmAllowHosts is the value for mitmproxy's allow_hosts, which matches

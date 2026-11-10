@@ -28,6 +28,14 @@ func TestMaskBody(t *testing.T) {
 			[]string{"S3CRET8", "S3CRET9", "AKIAS3CRET", "ghp_S3CRET", "sk-S3CRET"}, []string{"auth: Bearer [redacted]"}},
 		{"run-together and acronym names", "application/json", `{"accesstoken":"S3CRET-10","APIToken":"S3CRET-11","verification_code":"S3CRET-12","token_type":"Bearer","error_code":"E1"}`,
 			[]string{"S3CRET-10", "S3CRET-11", "S3CRET-12"}, []string{`"token_type":"Bearer"`, `"error_code":"E1"`}},
+		{"OpenTelemetry attributes: a key that names one stays", "application/json",
+			`{"attributes":[{"key":"service.name","value":{"stringValue":"app"}},{"key":"http.request.method","value":{"stringValue":"GET"}}]}`,
+			nil, []string{`"key":"service.name"`, `"key":"http.request.method"`}},
+		{"a key that is one: masked", "application/json",
+			`{"a":{"key":"AIzaS3CRET-18abcdefghijklmn"},"b":{"key":"sk_live_s3cret19abcdef"},"c":{"key":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRET20sig"},"d":{"api_key":"s3cret21.dotted.value"},"e":{"KEY":"S3CRET22.Abc"},"f":{"key":"live.s3cret23a8f3c9d2"},"g":{"key":"v1.s3cret24","note":"x"}}`,
+			[]string{"S3CRET-18", "s3cret19", "S3CRET20", "s3cret21", "S3CRET22", "s3cret23", "s3cret24"}, nil},
+		{"a WebSocket's ticket", "application/json", `{"wsTicket":"S3CRET-17","ticket_id":"T-42"}`,
+			[]string{"S3CRET-17"}, []string{`"ticket_id":"T-42"`}},
 		{"escaped key", "application/json", `{"pass\u0077ord":"S3CRET-13"}`, []string{"S3CRET-13"}, nil},
 		{"cut right after a backslash", "application/json", `{"password":"S3CRET-14\`, []string{"S3CRET-14"}, nil},
 		{"JSON sent as a form", "application/x-www-form-urlencoded", `{"password":"S3CRET-15"}`, []string{"S3CRET-15"}, nil},
@@ -91,6 +99,14 @@ func TestMaskURLsNested(t *testing.T) {
 		if got := maskURLs(in); strings.Contains(got, "S3CRET") {
 			t.Errorf("nested secret survived: %s", got)
 		}
+	}
+	// In a URL, key= stays a secret whatever its value (Google's API keys).
+	if got := maskURLs("https://maps.example/api?key=service.name"); got != "https://maps.example/api?key=REDACTED" {
+		t.Errorf("key= in a URL: %s", got)
+	}
+	// A WebSocket's ticket in its URL (as an app sent one, seen in use).
+	if got := maskURLs("wss://app.example/ws?wsTicket=S3CRETtkt0123&room=1"); got != "wss://app.example/ws?wsTicket=REDACTED&room=1" {
+		t.Errorf("wsTicket: %s", got)
 	}
 	if got := maskURLs("https://app.example/s?q=hello&country_code=JP&sort_key=name"); got != "https://app.example/s?q=hello&country_code=JP&sort_key=name" {
 		t.Errorf("ordinary values masked: %s", got)
@@ -174,7 +190,7 @@ func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
 	start := time.Now()
 	maskURLs(v)
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > slow*200*time.Millisecond {
 		t.Errorf("8192 levels took %v", d)
 	}
 }
@@ -267,7 +283,7 @@ func TestSearchLongQueryIsLinear(t *testing.T) {
 	}
 	start := time.Now()
 	st.List(Filter{Query: strings.Repeat("a", 2000) + "b", QueryBodies: true, Limit: 100})
-	if d := time.Since(start); d > time.Second {
+	if d := time.Since(start); d > slow*time.Second {
 		t.Errorf("search took %v", d)
 	}
 }
@@ -279,7 +295,7 @@ func TestFourthReview(t *testing.T) {
 	start := time.Now()
 	maskBody([]byte("x?q=1"+chain), "text/plain", false)
 	maskURLs("https://h/x?q=1" + chain + chain + chain + chain) // 256 KiB, a header's bound
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > slow*2*time.Second {
 		t.Errorf("';' chains took %v", d)
 	}
 

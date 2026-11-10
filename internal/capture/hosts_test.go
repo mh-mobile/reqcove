@@ -2,6 +2,7 @@ package capture
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,12 @@ func TestHostRules(t *testing.T) {
 		if _, err := ParseAllowHosts([]string{bad}); err == nil {
 			t.Errorf("ParseAllowHosts(%q) accepted a bad host", bad)
 		}
+	}
+}
+
+// A leading dot is refused, with the spelling that means the domain and its subdomains.
+func TestHostRulesLeadingDot(t *testing.T) {
+	if _, err := ParseAllowHosts([]string{".example.com"}); err == nil || !strings.Contains(err.Error(), "write *.example.com") {
+		t.Errorf("got %v", err)
 	}
 }
