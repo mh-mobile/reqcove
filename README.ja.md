@@ -96,7 +96,7 @@ reqcove init                    # ~ にあるエージェントに入れる：~/
 reqcove init --client codex     # または、名前を挙げたものだけ（--client を繰り返す）
 ```
 
-`init` は、今の reqcove に入っている Skill を入れます。reqcove の版を上げたら、もう一度実行してください（入っている Skill の版が違うと、`reqcove status` がそう伝えます）。`init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを消し、`--print` は Skill を書き出します。MCP サーバーの登録は、これとは別の手順です（上の 4）。テスト（書くファイルと、触らないファイル）で確かめました。それぞれのエージェントが実際に Skill を使うかは、まだ試していません。
+`init` は、今の reqcove に入っている Skill を入れます。reqcove の版を上げたら、もう一度実行してください（入っている Skill の版が違うと、`reqcove status` がそう伝えます）。`init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを消し、`--print` は Skill を書き出します。MCP サーバーの登録は、これとは別の手順です（上の 4）。テスト（書くファイルと、触らないファイル）と、Claude Code と Codex のセッションで確かめました。Reqcove の名前を出さずに「iPhone のアプリがどこに通信しているか」を頼むと、どちらも Skill を読み、status、summarize、アプリの User-Agent の順に調べ、そのアプリのものと言う前に本文で裏を取りました。Cursor、Gemini CLI、Copilot CLI、Devin は試していません。
 
 ### オプション
 

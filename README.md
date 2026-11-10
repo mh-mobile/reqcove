@@ -136,7 +136,11 @@ reqcove init --client codex     # or only the ones you name (repeat --client)
 leaves alone a skill it did not write, one you edited, and links;
 `--uninstall` removes its own, `--print` writes it out. Registering the MCP
 server is a step of its own (above). Checked with tests (the files it writes
-and leaves); whether each agent then uses the skill was not tried yet.
+and leaves), and in a Claude Code and a Codex session: asked where an app on
+the phone connects, without naming Reqcove, each loaded the skill and went
+status, summarize, then the app's User-Agent, checking with bodies before
+saying a request was the app's. Cursor, Gemini CLI, Copilot CLI and Devin
+were not tried.
 
 ### Options
 
