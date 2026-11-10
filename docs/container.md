@@ -12,7 +12,8 @@ colima): the Simulator and `--local-proxy` are not there, and the Mac must stay
 awake. To run several exit nodes on a Mac, one `run` per `--state` on the Mac
 itself ([several exit nodes](several-exit-nodes.md)) keeps those.
 
-**What was checked**: `scripts/container-smoke.sh` on OrbStack (macOS, arm64):
+**What was checked**: `scripts/container-smoke.sh` on OrbStack (macOS, arm64)
+and in CI (Linux, amd64 and arm64):
 the image builds; with no network, mitmproxy
 and mitmweb start from what the image holds; a new volume's state directory is
 the container user's, 0700; `reqcove mcp` in another container reaches `run`

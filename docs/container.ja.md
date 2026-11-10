@@ -6,7 +6,7 @@ Reqcove は、コンテナでも動きます（Docker。Podman でも同じコ�
 
 向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac が寝ないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 
-**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。**まだ試していないこと**：コンテナから tailnet にログインすること、iPhone の通信をそのコンテナに通すこと、`docker run -i` でエージェントをつなぐこと、Podman。
+**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。**まだ試していないこと**：コンテナから tailnet にログインすること、iPhone の通信をそのコンテナに通すこと、`docker run -i` でエージェントをつなぐこと、Podman。
 
 ## 1. イメージを作る
 
