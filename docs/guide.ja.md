@@ -38,7 +38,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します。トークンは状態ディレクトリの `mcp-token` に置かれ、起動するたびに同じです。変えるには、そのファイルを消して起動し直します。
 
-- Grok Bot：Connect apps › Tailscale のあと、その URL とヘッダーで、プライベートな MCP サーバーを足します。
+- Grok Bot：Connect apps › Tailscale で tailnet に入れます（Tailnet Lock なら、その端末に署名します）。次に Connect apps › カスタムコネクタを追加 で、種類「リモート HTTPS」、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定の画面では、このコネクタは「エラー」でツール 0 個と出ます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は、画面に出さずに `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy` で写せます。
 - ほかのコンピュータの Claude Code：
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <トークン>"`
   （ヘッダーは `~/.claude.json` に残ります）。
@@ -48,7 +48,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - HTTP のままです。tailnet の中は WireGuard で暗号化されています。
 - コンテナでも同じフラグで動き、ポートを開ける必要はありません（ノードがコンテナの中にあるため）。
 
-テスト（トークン、Host、本物の tailnet で別のユーザーの端末を断ること、再起動をまたいで使い続けること）で確かめました。Grok Bot、ほかのコンピュータの Claude Code、コンテナでは、まだ試していません。
+テスト（トークン、Host、本物の tailnet で別のユーザーの端末を断ること、再起動をまたいで使い続けること）、この Mac から tailnet 越しに（トークンなし、違うトークン、ほかの `Host` や Origin を断ること）、そして Grok Bot で確かめました（status、フローの一覧と本文を読めました。`run` を起動し直したあとも、同じチャットのまま使え、記録は空から始まりました）。ほかのコンピュータの Claude Code、コンテナでは、まだ試していません。
 
 ## エージェント用の Skill（`reqcove init`）
 

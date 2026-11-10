@@ -55,8 +55,13 @@ to give the agent, `Authorization: Bearer <token>`. The token is kept in
 `mcp-token` in the state directory, the same at each start; delete it and start
 again to change it.
 
-- Grok Bot: Connect apps › Tailscale, then add a private MCP server by that URL,
-  with the header.
+- Grok Bot: in Connect apps › Tailscale, let it join your tailnet (under
+  Tailnet Lock, sign its device). Then Connect apps › Add a custom connector:
+  type Remote HTTPS, the URL as server URL, and the header (key
+  `Authorization`, value `Bearer <token>`). Its settings show the connector
+  with an error and no tools: Grok Bot reaches the tailnet from its chats only.
+  Ask it in a chat. To copy the header's value without showing it:
+  `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`.
 - Claude Code on another computer:
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <token>"`
   (it keeps the header in `~/.claude.json`).
@@ -74,7 +79,10 @@ again to change it.
   container).
 
 Checked with tests (the token, the Host, another user's device refused over a
-real tailnet, a client going on across a restart). Not tried yet: Grok Bot,
+real tailnet, a client going on across a restart); from this Mac over the
+tailnet (no token, a wrong one, another `Host` or origin refused); and with
+Grok Bot, which read the status, the flows and their bodies, and after a
+restart of `run` went on in the same chat, the records empty. Not tried yet:
 Claude Code from another computer, a container.
 
 ## The agent skill (`reqcove init`)
