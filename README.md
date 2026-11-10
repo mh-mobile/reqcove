@@ -130,6 +130,7 @@ All of them, and what each does in full: [the guide](docs/guide.md#options).
 
 ### More
 
+- [Which clients can be decrypted](docs/guide.md#which-clients-can-be-decrypted): iPhone apps, Android, web apps, the Simulator
 - [Rules](docs/guide.md#rules): send an app's requests to a development server, or answer them from a file
 - [The flows on the iPhone](docs/guide.md#the-flows-on-the-iphone---ui) (`--ui`)
 - [The iOS Simulator](docs/guide.md#the-ios-simulator---local-proxy) (`--local-proxy`)

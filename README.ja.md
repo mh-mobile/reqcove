@@ -105,6 +105,7 @@ v0.1.0 のあとは、`reqcove run` をエージェントをつなぎ直さず�
 
 ### ほかの使い方
 
+- [復号できるクライアント](docs/guide.ja.md#復号できるクライアント)：iPhone のアプリ、Android、Web アプリ、シミュレーター
 - [ルール](docs/guide.ja.md#ルール)：アプリのリクエストを開発サーバーに送る、ファイルで答える
 - [記録を iPhone で見る](docs/guide.ja.md#記録を-iphone-で見る--ui)（`--ui`）
 - [iOS シミュレーター](docs/guide.ja.md#ios-シミュレーター--local-proxy)（`--local-proxy`）

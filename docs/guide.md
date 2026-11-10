@@ -31,6 +31,45 @@ agent once for the new tools; the tools say so while the versions differ.
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
 | `status` | whether everything is set up, and the next steps if not |
 
+## Which clients can be decrypted
+
+Reqcove decrypts what a client sends through it, once the client trusts
+Reqcove's CA. Who trusts it differs:
+
+| Client | What is decrypted | Tried on |
+|---|---|---|
+| iPhone apps, Safari and apps' web views (Flutter's `dart:io` and React Native too; a web view inside an app that pins its own API) | everything to `--allow-hosts` | an iPhone |
+| apps that pin their certificates | nothing: with `--pass-hosts` they work, and only their connections are recorded ([how](#certificate-pinning)) | an iPhone |
+| Android: Chrome | as on the iPhone | an Android 14 device |
+| Android: other apps | nothing: they trust only the system's CAs; your own app can opt in ([below](#android)) | the same, and a sample app |
+| a web app in production | what the device and the server exchange (pages, the API its front end calls), not what the server sends on | an iPhone |
+| a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend-rails-and-others)) | Ruby's Net::HTTP |
+| this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; the Simulator not yet |
+| another Mac | as a `--device` on the exit node ([how](another-mac.md)) | not tried |
+
+### Android
+
+Android apps trust only the system's CAs, not one you install: with the CA
+installed (as a CA certificate, in Settings), Chrome was decrypted and every
+other app refused it. `reqcove status` says so for Android devices (from the OS
+Tailscale reports). Keep `--allow-hosts` to the hosts you test: the others pass
+undecrypted and their apps work. For your own app, let a debug build trust
+user CAs in its `network_security_config`:
+
+```xml
+<network-security-config>
+  <debug-overrides>
+    <trust-anchors>
+      <certificates src="user" />
+    </trust-anchors>
+  </debug-overrides>
+</network-security-config>
+```
+
+A sample app was decrypted for the host it named this way (in a
+`domain-config`) and refused the CA for another; `debug-overrides`, for debug
+builds only, was not tried.
+
 ## Without the exit node: a Wi-Fi proxy
 
 Instead of the exit node, the iPhone can also set its Wi-Fi proxy (Manual) to the
@@ -377,29 +416,8 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
   bytes: `list_passthrough`), no URLs or contents.
 - They skip `--rules` and `--upstream-proxy`.
 - Pinning checked after the TLS handshake shows nowhere.
-- For your own app, use a build without pinning.
-- On iOS, apps built with Flutter (`dart:io`) and React Native trusted
-  Reqcove's CA as other apps do (tried on an iPhone).
-- On Android, apps trust only the system's CAs, not one you install: with
-  the CA installed, Chrome was decrypted and every other app refused it (tried
-  on an Android 14 device). `reqcove status` says so for Android devices (from
-  the OS Tailscale reports). Keep `--allow-hosts` to the hosts you test: the
-  others pass undecrypted and their apps work. For your own app, let a debug
-  build trust user CAs in its `network_security_config`; a sample app was
-  decrypted for the host it named and refused the CA for another:
-
-  ```xml
-  <network-security-config>
-    <debug-overrides>
-      <trust-anchors>
-        <certificates src="user" />
-      </trust-anchors>
-    </debug-overrides>
-  </network-security-config>
-  ```
-
-  (The sample named its host in a `domain-config`; `debug-overrides`, for
-  debug builds only, was not tried.)
+- For your own app, use a build without pinning. Android apps refuse the CA
+  for another reason ([Android](#android)).
 
 ## More limits
 

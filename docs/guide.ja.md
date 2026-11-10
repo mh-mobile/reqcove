@@ -22,6 +22,37 @@ v0.1.0 のあとは、`reqcove run` を起動し直す間や、止まってい�
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
 | `status` | セットアップが完了しているか。未完了なら次の手順 |
 
+## 復号できるクライアント
+
+Reqcove が復号できるのは、クライアントが Reqcove を通して送り、Reqcove の CA を信頼している通信です。信頼するかどうかは、クライアントによって違います。
+
+| クライアント | 復号できるもの | 試したもの |
+|---|---|---|
+| iPhone のアプリ、Safari、アプリの中の Web 画面（Flutter の `dart:io`、React Native も。自分の API にピンニングをするアプリの中の Web 画面も） | `--allow-hosts` のホストへの通信すべて | iPhone |
+| 証明書ピンニングをするアプリ | なし。`--pass-hosts` で通せば動き、接続だけが記録される（[手順](#証明書ピンニング)） | iPhone |
+| Android の Chrome | iPhone と同じ | Android 14 の端末 |
+| Android のほかのアプリ | なし。システムの CA しか信頼しない。自分のアプリなら設定で変えられる（[下](#android)） | 同じ端末と、サンプルのアプリ |
+| 本番の Web アプリ | 端末とサーバーの間の通信（ページ、フロントが呼ぶ API）。サーバーがその先へ送る通信は見えない | iPhone |
+| 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy を通す（[手順](#web-アプリのバックエンドrails-など)） | Ruby の Net::HTTP |
+| このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で（[手順](#ios-シミュレーター--local-proxy)） | この Mac の Chrome。シミュレーターはまだ |
+| 別の Mac | Exit Node の `--device` として（[手順](another-mac.ja.md)） | 試していない |
+
+### Android
+
+Android のアプリは、システムの CA しか信頼せず、自分で入れた CA（Reqcove の CA など）は信頼しません。CA を（設定から CA 証明書として）入れたあと、Chrome は復号でき、ほかのアプリはすべて拒みました。Android の端末なら、`reqcove status` がそう案内します（Tailscale が知らせる OS から判断）。`--allow-hosts` は調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。自分のアプリなら、デバッグ用のビルドで、`network_security_config` に自分で入れた CA を信頼すると書きます。
+
+```xml
+<network-security-config>
+  <debug-overrides>
+    <trust-anchors>
+      <certificates src="user" />
+    </trust-anchors>
+  </debug-overrides>
+</network-security-config>
+```
+
+サンプルのアプリで、こう書いたホスト（`domain-config` で指定）は復号でき、書いていないホストは CA を拒むことを確かめました。デバッグ用のビルドだけに効く `debug-overrides` の形は試していません。
+
 ## Exit Node を使わない：Wi-Fi のプロキシ
 
 Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）に、reqcove ノードの tailnet アドレスとポート 8080（`--proxy-port`）を指定する方法もあります。モバイル通信にはプロキシ設定がないため、こちらは Wi-Fi でのみ使えます。
@@ -194,22 +225,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 - そのホストは、接続だけを記録します（ホスト、宛先、時刻、量：`list_passthrough`）。URL や中身はありません。
 - `--rules` と `--upstream-proxy` は効きません。
 - TLS が終わってから確かめるピンニングは、どこにも出ません。
-- 自分のアプリなら、ピンニングを外したビルドを使ってください。
-- iOS では、Flutter（`dart:io`）や React Native で作られたアプリも、ほかのアプリと同じく Reqcove の CA を信頼しました（iPhone で試しました）。
-- Android では、アプリはシステムの CA しか信頼せず、自分で入れた CA は信頼しません。CA を入れたあと、Chrome は復号でき、ほかのアプリはすべて拒みました（Android 14 の端末で試しました）。Android の端末なら、`reqcove status` がそう案内します（Tailscale が知らせる OS から判断）。`--allow-hosts` は調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。自分のアプリなら、デバッグ用のビルドで、`network_security_config` に自分で入れた CA を信頼すると書きます。サンプルのアプリで、書いたホストは復号でき、書いていないホストは CA を拒むことを確かめました。
-
-  ```xml
-  <network-security-config>
-    <debug-overrides>
-      <trust-anchors>
-        <certificates src="user" />
-      </trust-anchors>
-    </debug-overrides>
-  </network-security-config>
-  ```
-
-  （サンプルはホストを `domain-config` で指定しました。デバッグ用のビルドだけに効く `debug-overrides` の形は試していません。）
-
+- 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒むのは、別の理由です（[Android](#android)）。
 
 ## そのほかの制限事項
 
