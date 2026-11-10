@@ -86,30 +86,16 @@ through a `replace` directive.
 
    ```sh
    claude mcp add reqcove -- reqcove mcp
-   reqcove init   # not in v0.1.0 yet
+   reqcove init
    ```
 
    Then ask it things like "which requests to api.example.com failed in the last
    ten minutes?"
 
-After v0.1.0, `reqcove run` can restart without reconnecting the agent; the
-records start empty. `reqcove cleanup` lists how to undo everything.
-
-### MCP tools
-
-| Tool | |
-|---|---|
-| `summarize` | counts by host, User-Agent, status, device: what is there |
-| `list_flows` | flows, newest first; filter by device, host, time (`since: "10m"`), status, method, User-Agent |
-| `search_flows` | text in URLs and headers (and bodies) |
-| `get_flow` | one flow, with its bodies if asked |
-| `list_devices` | the devices carried |
-| `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
-| `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes |
-| `capture_stats` | mitmproxy's state, the window the records cover |
-| `status` | whether everything is set up, and the next steps if not |
-
-In full: [the guide](docs/guide.md#mcp-tools).
+The agent reads the records through MCP tools such as `summarize`, `list_flows`,
+`search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)).
+`reqcove cleanup` lists how to undo everything; stopping, restarting and
+updating are in [the guide](docs/guide.md#stop-restart-update).
 
 ### Options
 
@@ -119,27 +105,16 @@ In full: [the guide](docs/guide.md#mcp-tools).
 | `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, `'*'` for all, `@FILE` |
 | `--pass-hosts` | allowed hosts to carry undecrypted, for apps that pin certificates |
 | `--rules FILE` | rewrite where allowed hosts' requests go (`map_remote`, `map_local`, …) |
-| `--upstream-proxy URL` | send decrypted requests on through Burp Suite or another proxy |
-| `--local-proxy` | record this computer's own apps too, such as the iOS Simulator; on macOS it points the system's web proxies at Reqcove while `run` runs |
-| `--ui` | a page of the flows on the iPhone itself |
-| `--web` | mitmweb instead (no masking) |
-| `--mcp-http` | the tools over HTTP too, for agents on your other devices (Grok Bot) |
 | `--state DIR` | where the node key and the CA live, `~/.reqcove` by default |
 
-All of them, and what each does in full: [the guide](docs/guide.md#options).
+All of them: [the guide](docs/guide.md#options).
 
 ### More
 
-- [Which clients can be decrypted](docs/guide.md#which-clients-can-be-decrypted): iPhone apps, Android, web apps, the Simulator
-- [Rules](docs/guide.md#rules): send an app's requests to a development server, or answer them from a file
-- [The flows on the iPhone](docs/guide.md#the-flows-on-the-iphone---ui) (`--ui`)
-- [The iOS Simulator](docs/guide.md#the-ios-simulator---local-proxy) (`--local-proxy`)
-- [A HAR file](docs/guide.md#a-har-file) (`reqcove har`)
-- [A web app's backend](docs/guide.md#a-web-apps-backend-rails-and-others) (Rails and others)
-- [An upstream proxy](docs/guide.md#an-upstream-proxy-burp-suite-and-others) (Burp Suite and others)
-- [Certificate pinning](docs/guide.md#certificate-pinning) (`--pass-hosts`)
-- [Agents on other devices](docs/guide.md#agents-on-other-devices---mcp-http), such as Grok Bot (`--mcp-http`)
-- [The agent skill](docs/guide.md#the-agent-skill-reqcove-init) (`reqcove init`)
+- [Read the traffic with an agent](docs/guide.md#read-the-traffic-with-an-agent): the skill, agents on your other devices
+- [Look at the flows yourself](docs/guide.md#look-at-the-flows-yourself): on the iPhone, as a HAR file, in mitmweb
+- [Record clients other than iPhone apps](docs/guide.md#record-clients-other-than-iphone-apps): apps that pin certificates, Android, the iOS Simulator, a web app's backend
+- [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 
 ## What it keeps safe, and what it does not
@@ -157,7 +132,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limits
 
-- Apps that pin certificates refuse Reqcove's; see [Certificate pinning](docs/guide.md#certificate-pinning).
+- Apps that pin certificates refuse Reqcove's; see [`--pass-hosts`](docs/guide.md#apps-that-pin-certificates---pass-hosts).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
 - IPv6 is refused and QUIC dropped (except to Apple); apps fall back to IPv4 and TCP.
 - The phone cannot reach this computer or its LAN directly; a rule can send an
@@ -168,7 +143,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 - The computer must stay awake: `reqcove run` keeps macOS from idle sleep, not
   from a closed lid.
 
-More in [the guide](docs/guide.md#more-limits).
+More in [the guide](docs/guide.md#limits).
 
 ## License
 

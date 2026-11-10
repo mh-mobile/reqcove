@@ -2,44 +2,179 @@
 
 [English](guide.md) · [README](../README.ja.md)
 
-README に書いていない詳しいこと：MCP ツールとすべてのオプションの詳細、エージェント用の Skill、ルール、ほかのつなぎ方（iOS シミュレーター、上流のプロキシ）、証明書ピンニング、そのほかの制限事項です。試していないことは、その旨を書いています。
+README の 4 つの手順を終えたあとに読むガイドです。各節の最後に、試したことと試していないことを「確認状況」として書いています。
 
-## 起動し直すときと、版を上げるとき
+> このガイドは `main` の内容です。`reqcove init`、`reqcove har`、`--pass-hosts`、`--rules-reload`、`--upstream-proxy`、`--local-proxy`、`--ui`、`--mcp-http` などは、v0.1.0 より新しい機能です（[CHANGELOG](../CHANGELOG.md)）。次のリリースまでは、ソースからビルドして使ってください。
 
-v0.1.0 のあとは、`reqcove run` を起動し直す間や、止まっている間も、`reqcove mcp` は動き続けます。その間、ツールは「動いていない」と答え、run が戻ればまた使えます。エージェントをつなぎ直す（Claude Code の `/mcp`）必要はありません。テスト（run の代わりを止めて、また起動する）と、Claude Code のセッションで確かめました（run を止めている間はツールがそう答え、起動し直したあとは `/mcp` なしで使えました）。起動し直すと、記録は空から始まります（起動し直したあとの最初の答えが、`note` でそう伝えます。Claude Code でも確かめました）。reqcove の版を上げたら、新しいツールを使うために、エージェントを一度つなぎ直してください。版が違う間は、ツールがそう伝えます。
+1. [セットアップする](#セットアップする)
+2. [エージェントに通信を読ませる](#エージェントに通信を読ませる)
+3. [自分でフローを見る](#自分でフローを見る)
+4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)
+5. [リクエストの行き先を変える](#リクエストの行き先を変える)
+6. リファレンス：[オプション](#オプション) · [MCP ツール](#mcp-ツール) · [制限事項](#制限事項) · [セキュリティ](#セキュリティ)
 
-## MCP ツール
+## セットアップする
 
-| ツール | |
-|---|---|
-| `list_flows` | フローを新しい順に一覧します。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（v0.1.0 のあと。アプリの名前など、その中の文字で。アプリのバンドル ID は通信に入っていません）で絞り込めます。ページング対応。v0.1.0 のあとは、ホストが 1 件にも当たらないとき、似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返します |
-| `search_flows` | URL とヘッダーのテキストを検索します（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は list_flows と同じ |
-| `get_flow` | フローを 1 件取得します。ボディは `bodies` を指定したときだけ含まれます |
-| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は list_flows と同じ |
-| `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
-| `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因です |
-| `list_passthrough` | v0.1.0 のあと。`--pass-hosts` のホストへの接続。ホスト、宛先、時刻、送受信の量。URL や中身はありません |
-| `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
-| `status` | セットアップが完了しているか。未完了なら次の手順 |
+4 つの手順は [README](../README.ja.md#使い方) にあります。
 
-## 復号できるクライアント
+### 初回の起動：ログインと承認
 
-Reqcove が復号できるのは、クライアントが Reqcove を通して送り、Reqcove の CA を信頼している通信です。信頼するかどうかは、クライアントによって違います。
+残っている手順は `run` が表示し、`reqcove status` でも確認できます。表示された URL でログインし、tailnet が Tailnet Lock を使っていればノードに署名し、Exit Node を承認します。
 
-| クライアント | 復号できるもの | 試したもの |
+- ログイン用の URL は、`run` のターミナルにだけ表示されます。最初に開いた人の tailnet にノードが入るためです（[SECURITY](SECURITY.md#the-login-url)）。
+- 新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します：`"autoApprovers": {"exitNode": ["you@example.com"]}`
+
+### 2 台のコンピュータで同じ CA を使う
+
+状態ディレクトリが同じであれば、CA も同じままです。`~/.reqcove/mitmproxy/` をディレクトリごと（秘密鍵が含まれます）、もう 1 台の `~/.reqcove/` にコピーします。コピー先の reqcove は止めておくか、初めて起動する前にコピーしてください。
+
+### 停止・再起動・アップデート
+
+- **停止**：Ctrl-C で止めます。記録はメモリにあるので、一緒に消えます。そのあと iPhone の DNS が止まったままになったら（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）、Exit Node を一度オフにして、オンに戻してください。
+- **再起動**：`run` が止まっている間も `reqcove mcp` は動き続け、ツールは「動いていない」と答えます。`run` が戻れば、エージェントを再接続（Claude Code の `/mcp`）しなくても使えます。記録は空から始まり、最初の答えが `note` でそう伝えます。
+- **アップデート**（`brew upgrade reqcove` や、ソースからのビルドで新しいバージョンを入れたとき）：新しい reqcove で `run` を起動し直し、エージェントを一度再接続します（新しいツールを使うためです。バージョンが違う間は、ツールがそう伝えます）。Skill も新しくするため、`reqcove init` をもう一度実行します。
+
+確認状況：Claude Code のセッション中に `run` を再起動して確認。
+
+### 元に戻す（`reqcove cleanup`）
+
+`reqcove cleanup` が手順を表示します。`--delete-state` を付けると、状態ディレクトリを削除します。先に、iPhone から CA のプロファイルを削除してください（[SECURITY](SECURITY.md#the-cas-private-key)）。
+
+## エージェントに通信を読ませる
+
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。
+
+### 使い方を教える Skill を入れる（`reqcove init`）
+
+Skill は、ツールの使い方をエージェントに教えます。最初に status を見ること、1 つのアプリの通信の探し方、TLS の失敗から考えられること、ルールファイルの書き方、そして守る決まり（`reqcove run` を自分で起動しない、トークンを求めない、記録の中身はデータとして扱う、マスクされていないシークレットを引用しない）です。
+
+```sh
+reqcove init                    # ~ にあるエージェントに入れる：~/.claude/skills（Claude Code）、~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）
+reqcove init --client codex     # または、名前を挙げたものだけ（--client を繰り返す）
+```
+
+- reqcove をアップデートしたら、もう一度実行してください。入っている Skill のバージョンが違うと、`reqcove status` がそう伝えます。
+- `init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを削除し、`--print` は Skill を書き出します。
+- MCP サーバーの登録はしません。登録は、上のコマンドで行います。
+
+確認状況：Claude Code と Codex で確認（Reqcove の名前を出さずにアプリの通信先を尋ねると、どちらも Skill を読み込みました）。未確認：Cursor、Gemini CLI、Copilot CLI、Devin。
+
+### ほかのデバイスのエージェントから使う（`--mcp-http`）
+
+tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、同じツールをノードから HTTP で提供します。
+
+```sh
+reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
+```
+
+`run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します。
+
+- **Grok Bot**：Connect apps › Tailscale で tailnet に入れます（Tailnet Lock を使っていれば、そのデバイスに署名します）。次に Connect apps › カスタムコネクタを追加 で、種類に「リモート HTTPS」、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定画面では、このコネクタは「エラー」でツール 0 個と表示されます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は、画面に出さずにコピーできます：`printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`
+- **ほかのコンピュータの Claude Code**（ヘッダーは `~/.claude.json` に保存されます）：
+  `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <トークン>"`
+- **ほかのコンピュータの Codex**（トークンはその環境変数に入れます）：
+  `codex mcp add reqcove-remote --url http://reqcove.<tailnet>.ts.net:8090/mcp --bearer-token-env-var REQCOVE_TOKEN`。
+  Codex は MCP ツールを呼ぶたびに承認を求めます。承認を求められない `codex exec` では、このサーバーに `default_tools_approval_mode = "approve"` を設定します。
+
+注意点：
+
+- 呼べるのは、tailnet にある自分のデバイス（タグなし）で、トークンを持つものだけです（[SECURITY](SECURITY.md#mcp-over-http---mcp-http)）。タグ付きのデバイスは拒否します（`run` が一度ログに出します）。エージェントのデバイスを制限する目的で、タグを付けないでください。
+- エージェントが読んだものは、そのエージェントのコンピュータと、モデルの提供元に渡ります（Grok Bot なら xAI のクラウド）。エージェントを止めるには、状態ディレクトリの `mcp-token` を削除して `run` を再起動するか（削除しない限り、トークンは起動のたびに同じです）、そのデバイスを tailnet から外します。
+- `run` を再起動しても、再接続は要りません（止まっている間の呼び出しは失敗します）。記録は空から始まり、再起動前のカーソルは拒否します。
+- `run` は、呼び出しごとにデバイスとツール名をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called list_flows`。引数は出しません）。トークンがない、または違うリクエストもログに出します。「確認します」と言うだけで呼んでいないエージェントは、ログに行が出ません。
+- 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
+
+確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。未確認：ほかのコンピュータからの利用。
+
+## 自分でフローを見る
+
+### iPhone で見る（`--ui`）
+
+通信を送っているアプリの横で、フローを見たいときに使います。
+
+```sh
+reqcove run --device iphone --allow-hosts 'api.example.com' --ui
+```
+
+`run` は、ノードの 80 番ポートで読み取り専用のページを提供し、そのリンクを QR コードと一緒に表示します。iPhone のカメラで読み取ると、Safari で一覧が開きます。一覧は 1 秒ごとに新しいフローを追います（Split View でアプリと並べることもできます）。フローをタップすると、ヘッダーとボディを確認できます。MCP ツールが返すものと同じく、マスク済みです。
+
+- 検索は、入力するそばから URL とヘッダーを絞り込みます。「bodies too」をオンにすると、保持しているボディの先頭も対象になり、一覧は新しいフローを追わなくなります（すべての記録を調べるためです）。ステータス（2xx〜5xx、応答なし）や、フローのページからホストでも絞り込めます。
+- Clear は、それまでのフローを一覧から隠します。「Show all」で戻ります。削除はしないので、エージェントからは引き続き見えます。
+- Live / Paused で、新しいフローを追うかどうかを切り替えます。下にスクロールしている間は一覧を動かさず、新しいフローの件数を表示します。件数をタップすると表示されます。
+- tailnet にある自分のデバイスからは、すべてのデバイスのフローが見えます。`--device` に指定した他人のデバイスからは、そのデバイス自身のフローだけが見えます（[それ以外のデバイスと、トークンの扱い](SECURITY.md#the-page---ui)）。
+- リンクは起動のたびに同じなので、再起動後もブックマークから開けるはずです。リンクを変えるには、状態ディレクトリの `ui-token` を削除して起動し直します。
+- Tailscale はオンにしておく必要があります。Exit Node や [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) は使っていなくてもかまいません。このページ自身の通信は記録されません。
+
+確認状況：iPhone のカメラから開けることを確認。未確認：iPhone でのこのレイアウト、検索、Clear の動作。iPhone の Safari での再起動後の動作。
+
+### HAR ファイルに書き出す（`reqcove har`）
+
+`reqcove run` が動いている間に実行します。
+
+```sh
+reqcove har > flows.har
+```
+
+フローを HAR 1.2 のファイルに、古い順で書き出します。デフォルトは新しい 1000 件です（`--limit 0` ですべて）。`--host`、`--device`、`--since 10m`、`--until`、`--status 4xx`、`--method`、`--user-agent` で絞り込めます。
+
+- 中身は MCP ツールが返すものと同じです。届いた時点でマスク済みで、ボディは先頭だけです（切り詰めたボディは、コメントにその旨が入ります）。マスクで確認できなかったボディは含まれません。`run --no-redact` のときは何もマスクされず、ファイルのコメントにその旨が入ります。
+- ファイルのパーミッションはシェルの設定に従うので、ほかのユーザーから読めることがあります（[SECURITY](SECURITY.md#what-is-recorded)）。
+
+未確認：ほかのツール（ブラウザの開発者ツール、Charles、Proxyman）で開くこと。仕様から：HAR 1.2 の必須項目を出力（検証ツールは未実行）。
+
+### mitmweb で見る（`--web`）
+
+リクエストの編集やリプレイができる、mitmproxy 自身の画面を使いたいときに使います。
+
+```sh
+reqcove run --device iphone --allow-hosts 'api.example.com' --web
+```
+
+mitmdump の代わりに mitmweb が起動します。このコンピュータでは `http://127.0.0.1:8081`（ほかの run が 8081 を使っていれば 8091〜8099。[アドレスは 2 つ](several-exit-nodes.ja.md#ポート)）、tailnet にある自分のデバイスからはノードの 8081 番ポートで、`run` が表示するリンクか QR コードから開けます。
+
+- 何もマスクされません（[SECURITY](SECURITY.md#mitmweb---web)）。ボディは 1 つ 2 MB まで表示し、新しい 1 万件のフローと、合計 256 MB までのボディを保持します。
+- リンクは起動のたびに同じです（トークンは状態ディレクトリの `web-token`）。再起動後は、リンクをもう一度開いてください。トークンなしのブックマークでは、トークンの入力を求められます。
+- Capture タブの「Run SOCKS Proxy」は、オンのままにしてください。オフにすると、デバイスの HTTP(S) が止まります。そこにあるほかのモードは、Reqcove では使いません。変更した設定は、reqcove を再起動すると元に戻ります。
+
+確認状況：Exit Node を使っている iPhone から確認。コードから（未確認）：mitmweb で設定を変えても、Reqcove の記録の範囲とマスクは変わらない。
+
+## iPhone アプリ以外のクライアントを記録する
+
+Reqcove が復号できるのは、クライアントが Reqcove を通して送り、かつ Reqcove の CA を信頼している通信です。CA を信頼するかどうかは、クライアントによって違います。
+
+| クライアント | 復号できるもの | 確認に使ったもの |
 |---|---|---|
-| iPhone のアプリ、Safari、アプリの中の Web 画面（Flutter の `dart:io`、React Native も。自分の API にピンニングをするアプリの中の Web 画面も） | `--allow-hosts` のホストへの通信すべて | iPhone |
-| 証明書ピンニングをするアプリ | なし。`--pass-hosts` で通せば動き、接続だけが記録される（[手順](#証明書ピンニング)） | iPhone |
-| Android の Chrome | iPhone と同じ | Android 14 の端末 |
-| Android のほかのアプリ | なし。システムの CA しか信頼しない。自分のアプリなら設定で変えられる（[下](#android)） | 同じ端末と、サンプルのアプリ |
-| 本番の Web アプリ | 端末とサーバーの間の通信（ページ、フロントが呼ぶ API）。サーバーがその先へ送る通信は見えない | iPhone |
-| 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy を通す（[手順](#web-アプリのバックエンドrails-など)） | Ruby の Net::HTTP |
-| このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で（[手順](#ios-シミュレーター--local-proxy)） | この Mac の Chrome。シミュレーターはまだ |
-| 別の Mac | Exit Node の `--device` として（[手順](another-mac.ja.md)） | 試していない |
+| iPhone のアプリ、Safari、アプリ内の WebView（Flutter の `dart:io`、React Native も。自分の API にピンニングをするアプリ内の WebView も） | `--allow-hosts` のホストへの通信すべて | iPhone |
+| 証明書ピンニングをするアプリ | なし。`--pass-hosts` で通せば動作し、接続だけを記録（[手順](#証明書ピンニングをするアプリを通す--pass-hosts)） | iPhone |
+| Android の Chrome | iPhone と同じ | Android 14 のデバイス |
+| Android のほかのアプリ | なし。システムの CA だけを信頼。自分のアプリは設定で変更可能（[手順](#android-を記録する)） | 同じデバイスと、サンプルアプリ |
+| 本番の Web アプリ | デバイスとサーバーの間の通信（ページ、フロントエンドが呼ぶ API）。サーバーがその先へ送る通信は対象外 | iPhone |
+| 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Ruby の Net::HTTP |
+| このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome。シミュレーターは未確認 |
+| 別の Mac | Exit Node の `--device` として（[手順](#別の-mac-を記録する)） | 未確認 |
 
-### Android
+### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
 
-Android のアプリは、システムの CA しか信頼せず、自分で入れた CA（Reqcove の CA など）は信頼しません。CA を（設定から CA 証明書として）入れたあと、Chrome は復号でき、ほかのアプリはすべて拒みました。Android の端末なら、`reqcove status` がそう案内します（Tailscale が知らせる OS から判断）。`--allow-hosts` は調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。自分のアプリなら、デバッグ用のビルドで、`network_security_config` に自分で入れた CA を信頼すると書きます。
+証明書ピンニングをするアプリは Reqcove の証明書を拒否するので、そのホストへのリクエストは失敗します。`reqcove status` が、該当するホストと、`run` に付ける `--pass-hosts` を表示します。付けて起動すると、そのホストは復号せずに通り、アプリが動きます。
+
+```sh
+reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.example-cdn.com,api.example.com'
+reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1 行に 1 ホスト
+```
+
+- そのホストは、接続だけを記録します（ホスト、接続先サーバー、時刻、バイト数：`list_passthrough`）。URL や中身は記録しません。
+- `--rules` と `--upstream-proxy` の対象外になります。
+- TLS ハンドシェイクのあとで行うピンニングは、どこにも表示されません。
+- 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒否するのは、別の理由です（[Android](#android-を記録する)）。
+
+確認状況：iPhone で確認。
+
+### Android を記録する
+
+Android のアプリはシステムの CA だけを信頼し、自分で入れた CA（設定から CA 証明書として入れたもの）は信頼しません。Chrome は復号でき、ほかのアプリは CA を拒否します。Android のデバイスには、`reqcove status` がそう案内します（Tailscale が報告する OS で判断します）。
+
+- `--allow-hosts` は、調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。
+- 自分のアプリなら、デバッグビルドの `network_security_config` で、ユーザーが入れた CA を信頼させます。
 
 ```xml
 <network-security-config>
@@ -51,201 +186,198 @@ Android のアプリは、システムの CA しか信頼せず、自分で入�
 </network-security-config>
 ```
 
-サンプルのアプリで、こう書いたホスト（`domain-config` で指定）は復号でき、書いていないホストは CA を拒むことを確かめました。デバッグ用のビルドだけに効く `debug-overrides` の形は試していません。
+確認状況：Android 14 のデバイス（Chrome は復号、ほかのアプリはすべて拒否）と、サンプルアプリ（`domain-config` でこのように指定したホストは復号、指定していないホストは CA を拒否）で確認。未確認：デバッグビルドだけに効く `debug-overrides`。
 
-## Exit Node を使わない：Wi-Fi のプロキシ
+### iOS シミュレーターを記録する（`--local-proxy`）
 
-Exit Node の代わりに、iPhone の Wi-Fi のプロキシ設定（手動）に、reqcove ノードの tailnet アドレスとポート 8080（`--proxy-port`）を指定する方法もあります。モバイル通信にはプロキシ設定がないため、こちらは Wi-Fi でのみ使えます。
-
-| | Exit Node | Wi-Fi のプロキシ |
-|---|---|---|
-| このコンピュータを通る通信 | iPhone のすべての通信（DNS、HTTP(S)、ほかのポート） | プロキシ設定に従うアプリの HTTP(S) だけ |
-| それ以外 | なし | iPhone の Wi-Fi から直接インターネットへ（記録されない） |
-| モバイル通信 | 使える | 使えない |
-| Tailscale アプリ | Exit Node を選ぶ | つないでおくだけ |
-
-プロキシを通った通信は、Exit Node のときと同じく、このコンピュータからインターネットに出ます。名前の解決もこちらで行います。iPhone で試しました。Safari の通信が記録され、`--allow-hosts` にないサイトもふつうに開けました。
-
-## ほかの端末のエージェント（`--mcp-http`）
-
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
-
-`reqcove mcp` がツールを渡せるのは、`run` を動かしているコンピュータのエージェントだけです。tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、`run --mcp-http` が同じツールを、ノードの HTTP で渡します。
-
-```sh
-reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
-```
-
-`run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します。トークンは状態ディレクトリの `mcp-token` に置かれ、起動するたびに同じです。変えるには、そのファイルを消して起動し直します。
-
-- Grok Bot：Connect apps › Tailscale で tailnet に入れます（Tailnet Lock なら、その端末に署名します）。次に Connect apps › カスタムコネクタを追加 で、種類「リモート HTTPS」、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定の画面では、このコネクタは「エラー」でツール 0 個と出ます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は、画面に出さずに `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy` で写せます。
-- ほかのコンピュータの Claude Code：
-  `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <トークン>"`
-  （ヘッダーは `~/.claude.json` に残ります）。
-- ほかのコンピュータの Codex：`codex mcp add reqcove-remote --url http://reqcove.<tailnet>.ts.net:8090/mcp --bearer-token-env-var REQCOVE_TOKEN` として、トークンをその環境変数に入れます。Codex は MCP のツールを呼ぶたびに承認を求めます。承認を聞けない `codex exec` では、このサーバーに `default_tools_approval_mode = "approve"` を設定します。
-- 呼べるのは、tailnet の自分の端末（reqcove のノードと同じユーザーで、どちらにもタグがない）で、トークンを持つものだけです。タグの付いた端末は断ります（`run` が一度ログに出します）。Grok Bot の端末を絞るためにタグを付けないでください。
-- エージェントが読んだものは、そのエージェントのコンピュータと、モデルの提供元に渡ります。Grok Bot なら xAI のクラウドです。Grok Bot はトークンを持ち続けます。止めるには、`mcp-token` を消して `run` を起動し直すか、その端末を tailnet から外します。
-- `run` を起動し直しても、エージェントはつなぎ直さずに使い続けられます（止まっている間の呼び出しは失敗します）。記録は空から始まり、前のカーソルは断ります。
-- `run` は、ツールが呼ばれるたびに、呼んだ端末とツールの名前をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called list_flows`。引数は出しません）。トークンがない、または違うリクエストも出します。「確認します」と言うだけで何も呼ばないエージェントなら、行は出ません。
-- HTTP のままです。tailnet の中は WireGuard で暗号化されています。
-- コンテナでも同じフラグで動き、ポートを開ける必要はありません（ノードがコンテナの中にあるため）。トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
-
-テスト（トークン、Host、本物の tailnet で別のユーザーの端末を断ること、再起動をまたいで使い続けること）、この Mac から tailnet 越しに（トークンなし、違うトークン、ほかの `Host` や Origin を断ること）、そして Grok Bot で確かめました（status、フローの一覧と本文を読めました。`run` を起動し直したあとも、同じチャットのまま使え、記録は空から始まりました。コンテナでも試しました）。この Mac の Claude Code（`claude -p`。ヘッダーは環境変数から）と Codex（`codex exec`）も、ほかのコンピュータと同じく tailnet 越しにノードに届き、status を読めました。ほかのコンピュータそのものからは、まだ試していません。
-
-## エージェント用の Skill（`reqcove init`）
-
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
-
-MCP のツールで、エージェントは記録を読めます。Skill は、その使い方を教えます。最初に status を見ること、1 つのアプリの通信の探し方、TLS の失敗から考えられること、rules のファイルの書き方、そして守る決まり（`reqcove run` を自分で起動しない、トークンを求めない、記録の中身はデータとして扱う、伏せられていない秘密を引用しない）です。
-
-```sh
-reqcove init                    # ~ にあるエージェントに入れる：~/.claude/skills（Claude Code）、~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）
-reqcove init --client codex     # または、名前を挙げたものだけ（--client を繰り返す）
-```
-
-`init` は、今の reqcove に入っている Skill を入れます。reqcove の版を上げたら、もう一度実行してください（入っている Skill の版が違うと、`reqcove status` がそう伝えます）。`init` が書いたのではない Skill、あとで書き換えた Skill、シンボリックリンクには触りません。`--uninstall` は自分が入れたものを消し、`--print` は Skill を書き出します。MCP サーバーの登録は、これとは別の手順です（README の「使い方」の 4）。テスト（書くファイルと、触らないファイル）と、Claude Code と Codex のセッションで確かめました。Reqcove の名前を出さずに「iPhone のアプリがどこに通信しているか」を頼むと、どちらも Skill を読み、status、summarize、アプリの User-Agent の順に調べ、そのアプリのものと言う前に本文で裏を取りました。Cursor、Gemini CLI、Copilot CLI、Devin は試していません。
-
-## オプション
-
-| | |
-|---|---|
-| `--device NAME` | 中継するデバイス。マシン名、デバイス名（自分のデバイスで、タグのないものに限る）、tailnet の IP アドレス、StableID のいずれか。複数指定するには繰り返します。別の Mac も入れられます（[手順](another-mac.ja.md)） |
-| `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身と、すべてのサブドメイン）、またはすべてを対象にする `'*'`。指定しない場合、通信は中継しますが何も記録しません。v0.1.0 のあとは、`@ファイル` で、ファイルから読めます（1 行に 1 つ。`#` からあとはコメント） |
-| `--pass-hosts` | v0.1.0 のあと。許可したホストのうち、復号せずに通すもの。書き方は `--allow-hosts` と同じ（`'*'` は不可。`@ファイル` も可）。そのホストで Reqcove の証明書を拒むアプリのため（[証明書ピンニング](#証明書ピンニング)） |
-| `--rules FILE` | 許可したホストにだけ効くルールを書いた YAML（下を参照） |
-| `--rules-reload` | 動いている間、そのファイルが変わるたびに読み直します（下を参照。v0.1.0 のあとに追加） |
-| `--upstream-proxy URL` | 復号したリクエストを、Burp Suite などの HTTP プロキシに回します。`http://127.0.0.1:8080` など（下を参照。v0.1.0 のあとに追加） |
-| `--upstream-ca FILE` | そのプロキシの CA（PEM か DER）。自分で復号するプロキシのときに渡します。このコンピュータの Burp なら、自動で取ってきます |
-| `--local-proxy` | このコンピュータ自身のアプリ（iOS シミュレーターなど）用の HTTP プロキシを `127.0.0.1:8082` に開きます（下を参照。v0.1.0 のあとに追加） |
-| `--ui` | 記録を iPhone 自身で見る、読むだけのページを、ノードの 80 番で出します（下を参照。v0.1.0 のあとに追加） |
-| `--web` | 代わりに mitmweb を `http://127.0.0.1:8081` で起動します（v0.1.0 のあとは、ほかの run が 8081 を使っていれば 8091〜8099 で。[入り口は 2 つ](several-exit-nodes.ja.md#ポート)。マスクなし。編集とリプレイができます。v0.1.0 のあとは、1 つ 2MB までの本文を表示し、新しい 1 万件と、本文の合計 256MB までを保持します）。v0.1.0 のあとは、tailnet の自分の端末からも、ノードの 8081 番で開けます（`run` が出すリンクか QR コードで。リンクは起動のたびに同じで、トークンは状態のフォルダの `web-token` に保存されます。起動し直したあとは、リンクをもう一度開いてください（トークンなしのブックマークでは、パスワードを聞かれます）。Exit Node を使っている iPhone から試しました） |
-| `--mcp-http` | MCP のツールを、ノードの 8090 番で HTTP でも出します。tailnet の自分の端末のエージェント用で、トークンが要ります（[手順](#ほかの端末のエージェント--mcp-http)。v0.1.0 のあとに追加） |
-| `--dns` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省けます。v0.1.0 のあとに追加）。`system` を指定すると `/etc/resolv.conf` の最初の nameserver を使います |
-| `--no-redact` | シークレットをマスクせずに記録します |
-| `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵が入ります。新しいか空のディレクトリ、または reqcove が前に使ったものに限ります。v0.1.0 のあとは、CA のないディレクトリには `~/.reqcove` の CA を写し、`reqcove-名前` という名前の新しいディレクトリでは、ノードの名前もそれになります（[複数の Exit Node](several-exit-nodes.ja.md)）。`--state ~/x` は、スペースを空けて書いてください（`--state=~/x` は断ります） |
-
-## ルール
-
-```yaml
-map_remote:                     # mitmproxy の書式（map_local、modify_headers も同じ）
-  - "|https://api.example.com/|http://localhost:3000/"
-keep_host_header: true          # Reqcove 独自：map_remote でもアプリの Host を残す
-resolve:                        # Reqcove 独自：Host と SNI はそのままで、つなぐ先だけ変える
-  - "shop.example.com=203.0.113.10"
-  - "auth.example.com=192.168.1.20:8443"
-```
-
-- `map_remote`、`map_local`、`modify_headers` は mitmproxy の書式で、mitmproxy 自身のコードが処理します。相対パスは、ルールのファイルがある場所から数えます。
-- `map_remote` は URL を書き換えるので、`Host` ヘッダーも変わります。`keep_host_header` を true にすると、`Host` はアプリが送ったままになります。このコンピュータの開発サーバー（`http://localhost:3000` など）につなぐなら、こちらを使います。アプリは `https` で送るので、上の例のようにスキームも書き換えてください（平文のサーバーは TLS に答えられません）。
-- `resolve` は、その名前へのリクエストを、書いた IPv4 アドレスへ送ります。このコンピュータや LAN のアドレスも使えます。`Host`、SNI、記録される URL は変わらず、TLS もその名前で確かめます。そのため、向け先のサーバーには、その名前の証明書が必要です（ステージングや新しいロードバランサーなど）。証明書のない手元の HTTPS サーバーでは 502 になります。
-  - `map_remote` が効いたときは、書き換えたあとの URL のホスト名で照らし、それが SNI にもなります。
-  - ポートを書かないと、リクエストのポート（アプリがつないだ 80 番か 443 番、または `map_remote` の URL のポート）を使います。平文の HTTP は、証明書で確かめられません。
-  - 名前は今までどおり引かれ（Exit Node では iPhone が、Remote Proxy ではこのコンピュータが引きます）、まず本物のサーバーにつなぎます。そのため、公開の DNS で引けない名前や、本物のサーバーがつながらないときは、向け先を変えられません。
-  - 名前は `--allow-hosts` に入っている必要があります。また、名前ごとに別のアドレス（かポート）にしてください。mitmproxy は、接続をアドレスで使い回すためです。
-  - `0.0.0.0/8`、リンクローカル（クラウドのメタデータを含む）、マルチキャスト、Tailscale の 100.100.100.100 は拒みます。
-- 他人が作ったルールのファイルは、中身を読んでから使ってください。ルールは、アプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
-- ファイルは mitmproxy が起動するときに読みます（`run` の起動のときと、落ちた mitmproxy を reqcove が起動し直すとき）。`--rules-reload`（v0.1.0 のあとに追加）を付けると、書き換えが落ち着いてから、2 秒ほどで（コードからの見積もり）読み直し、そのあとに始まるリクエストから効きます。途中のリクエストは、始まったときのルールのままです。読めないファイルにしたときは、前のルールのまま動き、`run` と `reqcove status` が理由を出します。ただし、その間に mitmproxy が起動し直すと、起動のときと同じく `run` が止まります。これを付けると、ファイルを書けるもの（エージェントを含む）が、起動し直さずに、デバイスのリクエストの行き先を変えられます。
-
-## 記録を iPhone で見る（`--ui`）
-
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドして使ってください。
-
-`reqcove run --ui` は、tailnet のノードに、記録を見るための読むだけのページを出し、そのリンクを QR コードで表示します。iPhone のカメラで読むと、Safari で一覧が開きます。一覧は 1 秒ごとに新しい記録を追います。Split View で、アプリと並べても使えます。記録を押すと、ヘッダーと本文が見られます（MCP の道具と同じく、マスク済みです）。
-
-- 検索：URL とヘッダーを、打つそばから絞り込みます。「bodies too」を入れると、残している本文の先頭も探します（全部の記録をなめるので、そのあいだ一覧は新しい記録を追いません）。ステータス（2xx〜5xx、応答なし）や、ホスト（記録のページから）でも絞れます。
-- Clear：それまでの記録を一覧から隠し、これから来る分だけを見られます。「Show all」で戻ります。消すわけではなく、エージェントからは今までどおり見えます。
-- Live / Paused：新しい記録を追うのを、止めたり再開したりします。下にスクロールしている間は一覧を動かさず、新しい記録の数だけを出します。押すと表示します。
-- iPhone のカメラから開けることは試しました。この画面、検索、Clear を iPhone で使うのは、まだ試していません（テストでは、ページのスクリプトを node で動かして確かめています）。
-
-- tailnet にある自分の端末（自分のアカウントでログインしている iPhone、サブ機の MacBook、iPad など）なら開けて、全端末の記録が見えます。`--device` に入れた他人の端末は、その端末自身の記録だけです。それ以外の端末は入れません。読めるのは、リンクを開いたブラウザだけです。リンクは起動のたびに同じです（トークンは状態のフォルダの `ui-token` に保存されます。変えるには、それを消して起動し直してください）。一度開いた端末には Cookie が 400 日残るので、起動し直してもブックマークから開けるはずです（Cookie はテストで確かめました。iPhone の Safari で起動し直すのは、まだ試していません）。
-- Tailscale はオンにしておく必要があります。Exit Node でも Remote Proxy でも、どちらも使っていなくても開けます。このページを見る通信は、記録されません。
-
-## iOS シミュレーター（`--local-proxy`）
-
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドして使ってください。
+シミュレーターのアプリはこのコンピュータのネットワークを使うので、Exit Node では中継できません。`--local-proxy` を付けると、代わりに `127.0.0.1:8082` に HTTP プロキシを開き、そこを通ったリクエストを `local` というデバイスとして記録します。
 
 ```sh
 reqcove run --allow-hosts api.example.com --local-proxy   # iPhone も記録するなら --device も
 ```
 
-シミュレーターのアプリは、このコンピュータのネットワークを使うので、Exit Node では運べません。`--local-proxy` を付けると、代わりに `127.0.0.1:8082` に HTTP プロキシを開き、そこを通ったリクエストを `local` という端末として記録します。macOS では、Charles や Proxyman と同じように、`run` がシステムの Web プロキシ（HTTP と HTTPS、有効なネットワークサービスすべて）をそこへ向け、止まるときに元へ戻します。異常終了したときは、次の起動か `reqcove cleanup` で戻ります。起動しているシミュレーターには、Reqcove の CA も入れます（`xcrun simctl keychain … add-root-cert`）。あとから起動したシミュレーターには、表示されるコマンドで入れてください。Linux では何も書き換えません。アプリをプロキシに向け（`HTTPS_PROXY=http://127.0.0.1:8082`）、CA を信頼させてください。
+- macOS：Charles や Proxyman と同じように、`run` がシステムの Web プロキシ（HTTP と HTTPS、有効なネットワークサービスすべて）をこのプロキシに向け、止まるとき（Ctrl-C、`kill`、ターミナルを閉じたとき）に元の設定へ戻します。起動中のシミュレーターには、Reqcove の CA も追加します（`xcrun simctl keychain … add-root-cert`）。あとから起動したシミュレーターには、表示されるコマンドで追加してください。
+- Linux：設定は何も変更しません。アプリをプロキシに向け（`HTTPS_PROXY=http://127.0.0.1:8082`）、CA を信頼させてください。
+- シミュレーターだけでなく、このコンピュータのすべてのアプリがこのプロキシを通ります。復号して記録するのは `--allow-hosts` のホストだけですが、そのホストは、Reqcove の CA を信頼していないアプリ（Mac の Safari など）ではつながらなくなります。
+- `kill -9` や異常終了のあとは、次の `run` か `reqcove cleanup` がプロキシの設定を戻すまで（またはシステム設定で自分で戻すまで）、システムのプロキシを使うアプリがつながりません。
+- このコンピュータ、LAN、tailnet（`*.ts.net` も）、`*.local` はプロキシの例外に入れるので、これまでどおり直接つながります。名前解決はこのコンピュータと同じ方法で行い（VPN、split DNS、検索ドメインも有効）、`--dns` は使いません。このコンピュータ自身やリンクローカルアドレスに解決される名前は、`/etc/hosts` にあるものを除いて拒否します（[SECURITY](SECURITY.md#the-local-proxy---local-proxy)）。
+- 自動プロキシ構成（PAC）と認証付きプロキシの設定は、変更しません。
 
-- シミュレーターだけでなく、このコンピュータのアプリ全部が、このプロキシを通るようになります。復号して記録するのは `--allow-hosts` のホストだけですが、そのホストは、Reqcove の CA を信頼していないこのコンピュータのアプリ（Mac の Safari など）では、つながらなくなります。
-- このコンピュータ、LAN、tailnet（`*.ts.net` も）、`*.local` は、プロキシの例外に足すので、今までどおり直接つながります（例外でのアドレスの書き方は、まだ試していません）。名前は、このコンピュータと同じやり方で引きます（VPN、split DNS、検索ドメインも効きます）。`--dns` は使いません。LAN、VPN、tailnet に着く名前は、そのまま通します。このコンピュータ自身やリンクローカルのアドレスに着く名前は、このコンピュータの `/etc/hosts` が与えるものでなければ断ります。サイトが自分の名前を 127.0.0.1 に向けても（DNS rebinding）、プロキシ越しにこのコンピュータのサービスへは届きません。
-- `run` が動いている間、システムのプロキシは reqcove のものになります。Ctrl-C、`kill`、ターミナルを閉じたときは元に戻ります。reqcove を強制終了したとき（`kill -9`）や落ちたときは、システムのプロキシを使うアプリが、次の `run` か `reqcove cleanup` で戻るまで（またはシステム設定で自分で戻すまで）つながりません。
-- このコンピュータ自身のブラウザ：許可したホストへのリクエストを、警告で止めるのではなく、復号して記録したいときは（記録の上では `local` として、シミュレーターの通信と混ざります）、このコンピュータに Reqcove の CA を一度信頼させてください。まだ信頼していなければ、`run` がコマンドを表示します。やめ方は `reqcove status` と `reqcove cleanup` が表示します。macOS 27 で試しました（コマンド、Reqcove による信頼の確かめ、やめ方の表示、Mac の Chrome で許可したホストが警告なしに開けて記録されること）。Linux では試していません。
-  - macOS（HTTPS だけを信頼。パスワードを聞かれます）：`security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Firefox は、自分の証明書ストアを使うことがあります。やめるときは、`reqcove status` が出すコマンドを実行するか、キーチェーンアクセスで CA を削除してください（信頼の設定も一緒に消えます。試しました）。
-  - Linux：Debian と Ubuntu は `sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`。Fedora は `/etc/pki/ca-trust/source/anchors/` に置いて `sudo update-ca-trust`。Chrome と Chromium は `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Node は `NODE_EXTRA_CA_CERTS=` にそのファイルを。Python は、更新したシステムの証明書の束を指してください（そのファイルだけを指すと、ほかの CA が全部使えなくなります）。
-- 自動プロキシ構成（PAC）と、認証付きのプロキシは、そのままにします。それらがある環境では試していません。本物の `networksetup` とシミュレーターでも、まだ試していません（テストは代わりのプログラムで確かめています）。
+このコンピュータのブラウザも、警告で止めるのではなく記録したいときは（`local` として、シミュレーターの通信と一緒に記録されます）、このコンピュータに Reqcove の CA を一度信頼させます。コマンドは `run` が表示し、やめ方は `reqcove status` と `reqcove cleanup` が表示します。信頼させると、CA の秘密鍵を持つ人は、このコンピュータに対しても任意の HTTPS サイトになりすませます（[SECURITY](SECURITY.md#the-local-proxy---local-proxy)）。
 
-## HAR ファイルに書き出す
+- macOS（TLS だけを信頼。パスワードを求められます）：`security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Firefox は、独自の証明書ストアを使うことがあります。やめるには、`reqcove status` が表示するコマンドを実行するか、キーチェーンアクセスで CA を削除します（信頼の設定も一緒に消えます）。
+- Debian と Ubuntu：`sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`。Fedora：`/etc/pki/ca-trust/source/anchors/` に置いて `sudo update-ca-trust`。
+- Linux の Chrome と Chromium：`certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Node：`NODE_EXTRA_CA_CERTS=` にそのファイルを指定します。Python：更新後のシステムの CA バンドルを指定します（そのファイルだけを指定すると、ほかの CA がすべて使えなくなります）。
 
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドして使ってください。
+確認状況：macOS 27 で確認（信頼させるコマンドと Reqcove による信頼の確認、やめ方の表示、キーチェーンアクセスでの削除、Mac の Chrome で許可したホストが警告なしに開けて記録されること）。未確認：本物の `networksetup` とシミュレーター、プロキシの例外でのアドレスの書き方、PAC や認証付きプロキシのある環境、Linux。
 
-`reqcove run` が動いている間に `reqcove har > flows.har` を実行すると、記録を HAR 1.2 のファイルに、古い順で書き出します。デフォルトは新しい 1000 件までです（`--limit 0` で全部）。`--host`、`--device`、`--since 10m`、`--until`、`--status 4xx`、`--method`（v0.1.0 のあとは `--user-agent` も）で絞り込めます。中身は MCP の道具が返すものと同じです。受け取った時点でマスク済みで、本文は先頭だけです（切れた本文は、コメントにそう書きます）。マスクで確かめられなかった本文は入りません。`run --no-redact` のときは何もマスクされず、ファイルのコメントにそう書きます。HAR 1.2 の仕様の必須の項目に沿って書いています（仕様を読んで書いたもので、検証ツールにはかけていません）が、ほかのツール（ブラウザの開発者ツール、Charles、Proxyman）で開くのは、まだ試していません。
+### Web アプリのバックエンドを記録する
 
-## Web アプリのバックエンド（Rails など）
-
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
-
-Web アプリが自分でほかの API を呼ぶ通信（Rails のサーバーが決済の API を呼ぶ、など）は、iPhone ではなくサーバーから出ます。Reqcove に見えるのは、サーバーがその通信を Reqcove に通し、Reqcove の CA を信頼しているときだけです。tailnet にある自分のマシンで動くサーバーなら、そのマシンを `--device` に入れ、サーバーにノードの Remote Proxy を指定します。
+Web アプリがほかの API を呼ぶ通信（Rails のサーバーが決済 API を呼ぶ、など）は、iPhone ではなくサーバーから出ます。Reqcove に見えるのは、サーバーがその通信を Reqcove に通し、Reqcove の CA を信頼しているときだけです。tailnet にある自分のマシンで動くサーバーなら、そのマシンを `--device` に指定し、サーバーにノードの [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) を指定します。
 
 ```sh
 reqcove run --device dev-server --allow-hosts api.example.com
-# dev-server で：変数は両方（Ruby の Net::HTTP は HTTPS でも http_proxy を見る）、
-# CA の束には Reqcove の CA を足す（システムの束と mitmproxy-ca-cert.pem をつなぐ）
+# dev-server で：変数は両方指定（Ruby の Net::HTTP は HTTPS でも http_proxy を見る）
+# CA バンドルには Reqcove の CA を追加（システムの CA バンドルと mitmproxy-ca-cert.pem を連結）
 http_proxy=http://100.x.y.z:8080 https_proxy=http://100.x.y.z:8080 SSL_CERT_FILE=bundle.pem bin/rails server
 ```
 
-- 記録は、そのマシンの名前で残ります。マシンの設定は変えず、サーバーの環境変数だけで済みます。
-- データベースや Redis への接続は、80 番と 443 番の HTTP(S) ではないので見えません。
-- ブラウザからアプリへのリクエストは別の道です。iPhone からなら、許可したホストへのリクエストを `map_remote` で開発サーバーに送ります（[ルール](#ルール)）。
-- この Mac を端末にして、Ruby の Net::HTTP で試しました。CA がないと Ruby は証明書を拒み（TLS の失敗が記録された）、CA があると呼び出しが記録されました。Rails のアプリそのもの、Faraday などほかのクライアント、別のマシンのサーバーでは試していません。
+- 呼び出しは、そのマシンの名前で記録されます。変更するのは、サーバーの環境変数だけです。
+- データベースや Redis への接続は、80 番・443 番の HTTP(S) ではないので見えません。
+- ブラウザからアプリへのリクエストは、別の経路です。iPhone からなら、許可したホストへのリクエストを `map_remote` で開発サーバーに送れます（[ルール](#ルールを書く--rules)）。
 
-## 上流のプロキシ（Burp Suite など）
+確認状況：この Mac をデバイスにして、Ruby の Net::HTTP で確認（CA がないと Ruby が証明書を拒否して TLS の失敗が記録され、CA があると呼び出しが記録されました）。未確認：Rails アプリそのもの、Faraday などほかのクライアント、別のマシンのサーバー。
 
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドして使ってください。
+### Exit Node を使わずに Wi-Fi のプロキシでつなぐ
 
-Reqcove の記録を残したまま、同じリクエストを Burp Suite（や ZAP、Charles など）でも見るには、そちらに回します。
+ノードは **Remote Proxy** も提供しています。ノードの tailnet アドレスのポート 8080（`--proxy-port`）で動く HTTP プロキシで、`--device` のデバイスが使えます。iPhone では、Exit Node を選ぶ代わりに、Wi-Fi のプロキシ設定（手動）にこれを指定できます。モバイル通信にはプロキシ設定がないので、Wi-Fi でのみ使えます。
+
+| | Exit Node | Wi-Fi のプロキシ |
+|---|---|---|
+| このコンピュータを通る通信 | iPhone のすべての通信（DNS、HTTP(S)、ほかのポート） | プロキシ設定に従うアプリの HTTP(S) |
+| それ以外 | なし | iPhone の Wi-Fi から直接インターネットへ（記録なし） |
+| モバイル通信 | 利用可 | 利用不可 |
+| Tailscale アプリ | Exit Node を選択 | 接続したままにするだけ |
+
+プロキシを通った通信は、Exit Node のときと同じく、このコンピュータからインターネットに出ます。名前解決も、このコンピュータで行います。
+
+確認状況：iPhone で確認（Safari の通信が記録され、`--allow-hosts` にないサイトもこれまでどおり開けました）。
+
+### 別の Mac を記録する
+
+`--device` に指定した Mac で Exit Node を選ぶと、iPhone と同じように記録されます。その Mac の iOS シミュレーターの通信も、シミュレーターが Reqcove の CA を信頼していれば、Mac の通信と一緒に通るはずです。未確認：[手順](another-mac.ja.md)。
+
+## リクエストの行き先を変える
+
+### ルールを書く（`--rules`）
+
+ルールは YAML ファイルに書き、`--allow-hosts` のホストにだけ適用されます。アプリのリクエストを、このコンピュータの開発サーバーに送る例です。
+
+```yaml
+map_remote:                     # mitmproxy の書式（map_local、modify_headers も同じ）
+  - "|https://api.example.com/|http://localhost:3000/"
+keep_host_header: true          # Reqcove 独自：map_remote でもアプリの Host を残す
+```
+
+```sh
+reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
+```
+
+- `map_remote`、`map_local`、`modify_headers` は mitmproxy の機能で、mitmproxy 自身のコードが処理します。相対パスは、ルールファイルの場所が基準です。
+- `map_remote` は URL を書き換えるので、`keep_host_header` を true にしない限り、`Host` ヘッダーも変わります。上の例のように、スキームも書いてください。アプリは `https` で送り、平文のサーバーは TLS に応答できないためです。
+- `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET にも応答し、一緒に送られてきたボディはすべて保持します。こうしたリクエストを送るのは、自分のデバイスだけです。
+- 他人が作ったルールファイルは、中身を読んでから使ってください。ルールは、アプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
+
+`resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
+
+```yaml
+resolve:                        # Reqcove 独自：Host と SNI はそのままで、接続先だけ変える
+  - "shop.example.com=203.0.113.10"
+  - "auth.example.com=192.168.1.20:8443"
+```
+
+- その名前へのリクエストを、指定した IPv4 アドレスへ送ります（このコンピュータや LAN のアドレスも指定できます）。`Host`、SNI、記録される URL は変わらず、TLS もその名前で検証します。接続先のサーバーには、その名前の証明書が必要です（証明書のないローカルの HTTPS サーバーでは 502 になります）。平文の HTTP は検証されません。
+- ポートを省略すると、リクエストのポート（アプリの 80 番か 443 番、または `map_remote` の URL のポート）を使います。`map_remote` のあとでは、書き換え後の URL のホストが対象の名前になり、SNI もそれになります。
+- 名前解決はこれまでどおり行われ（iPhone が行い、Remote Proxy ではこのコンピュータが行います）、先に本物のサーバーへ接続します。公開の DNS で解決できない名前や、接続を拒否する本物のサーバーは、接続先を変えられません。
+- 名前は `--allow-hosts` に入っている必要があり、名前ごとに別のアドレス（またはポート）が必要です。mitmproxy が、接続をアドレス単位で使い回すためです。
+- 拒否するもの：`0.0.0.0/8`、リンクローカル（クラウドのメタデータ）、マルチキャスト、Tailscale の 100.100.100.100（[SECURITY](SECURITY.md#rules---rules)）。`--upstream-proxy` と一緒に使う `resolve` も拒否します。
+
+ファイルは、mitmproxy の起動時に読み込みます（`run` の起動時と、reqcove が mitmproxy を再起動するとき）。`--rules-reload` を付けると、変更が落ち着いた時点で読み直し、そのあとに始まるリクエストから適用します。処理中のリクエストは、始まったときのルールのままです。
+
+- 読み込めないファイルのときは前のルールのまま動き、`run` と `reqcove status` が理由を表示します。ただし、その間に mitmproxy が再起動すると、起動時と同じく `run` が止まります。
+- ファイルに書き込めるもの（エージェントを含む）が、再起動なしで、デバイスのリクエストの行き先を変えられるようになります。
+
+コードから：変更は 2 秒ほどで読み直される。
+
+### 上流プロキシに回す（`--upstream-proxy`）
+
+Reqcove で記録しながら、同じリクエストを Burp Suite（や ZAP、Charles など）でも見たいときに使います。
 
 ```sh
 reqcove run --device iphone --allow-hosts 'api.example.com' \
   --upstream-proxy http://127.0.0.1:8080
 ```
 
-- 復号したリクエストは、プロキシを通ります（HTTPS は CONNECT のトンネルで、平文の HTTP はプロキシのリクエストとして）。本物のサーバーへ直接つなぐことはありません。`--allow-hosts` の外のホストへの接続は、今までどおり直接通ります。ただし、許可したホストへの復号した接続に相乗りした、ほかのホスト宛てのリクエスト（HTTP/2 の接続の使い回し）も、記録はしませんが、プロキシを通ります。Burp の Intercept はオフにしてください。オンだと、リクエストがそこで止まります。
-- Reqcove は、iPhone がつないだアドレス（IP）をプロキシに渡します。ただ、Burp は HTTPS では、SNI の名前をこのコンピュータで引き直して、そちらにつなぎます（試して確かめました）。そのため、Exit Node が「このコンピュータと LAN は宛先にしない」と拒んでいても、Burp のつなぐ先には効きません。しかも、iPhone で開いたサイトが、その引き直しにこのコンピュータや LAN のアドレスを返すこともできます（DNS rebinding。コードを読んで考えたことで、試してはいません）。`--allow-hosts` は、試すホストだけにしてください（`'*'` のときは、`run` が警告を出します）。同じ理由で、`resolve` のルールは `--upstream-proxy` と一緒には使えません。プロキシ自身の設定（Burp の Hostname resolution overrides）を使ってください。平文の HTTP は、Burp では IP で表示され、名前は `Host` ヘッダーで分かります。
-- プロキシを通る HTTPS は、プロキシの CA だけで確かめます。このコンピュータで動いていて、Burp のように `http://burp/cert` で CA を配るプロキシなら、起動のときに自動で取ってきます。ほかの、自分で復号するプロキシ（ZAP、Charles など）は、`--upstream-ca FILE`（PEM か DER）で CA を渡してください。どちらでもなければ、公開の CA で確かめます（自分では復号しないプロキシ向け）。
-- Reqcove はプロキシに自分で直接つなぎ、システムのプロキシの設定は見ません。ただ、起動するとシステムのプロキシを自分に向けるプロキシ（Charles は、Proxy メニューの「macOS Proxy」を切らない限りそうします）と `--local-proxy`（v0.1.0 のあとに追加）は、同じ設定を取り合い、止めるときには相手の設定へ戻してしまいます。`--local-proxy` と一緒に使うときは、プロキシの側のその動きを切ってください。Charles では試していません。
-- プロキシを通るのは HTTP(S) だけです。許可したホストへの、ほかのプロトコル（MQTT など）は、本物のサーバーへ直接つながります（コードを読んで確かめたこと）。TLS の上のものは、プロキシの CA を使っているとき（`--upstream-ca` で渡したときも、Burp の CA を自動で取ってきたときも）、サーバーの証明書をその CA で確かめることになるので、失敗します。また、サーバーの名前（SNI）を送らない、IP アドレスへの HTTPS は、Burp を通すと失敗します。Burp が、そのアドレスを mitmproxy の受け付けない形で証明書に入れるためです。
-- プロキシは、マスクしていない中身を全部見ます。Burp は、それをプロジェクトに残します。Burp Suite Community 2026.10 で試しました。ほかのプロキシは試していません。Burp で見えたこと：リクエストの本文は、全部届くまで Burp が溜めます。HTTP/1.1 のクライアントへの SSE（サーバーから流すイベント）は失敗します（iOS のアプリの多くが使う HTTP/2 なら流れます）。`--web` と一緒に使うと、mitmweb から平文の HTTP のリクエストを送り直したときに、プロキシ自身に送られます。
+復号したリクエストはプロキシへ送り（HTTPS は CONNECT トンネル、平文の HTTP はプロキシ宛てのリクエスト）、サーバーへは直接接続しません。プロキシにはマスクされていない中身がすべて見え、Burp はそれをプロジェクトに保存します。Burp の Intercept はオフにしてください。オンのままだと、リクエストがそこで止まります。
 
-## 証明書ピンニング
+- `--allow-hosts` にないホストへの接続は、これまでどおり直接通ります。ただし、許可したホストへの復号済みの接続に相乗りした、ほかのホスト宛てのリクエスト（HTTP/2 の接続の再利用）は、記録されないままプロキシを通ります。許可したホストへのほかのプロトコル（MQTT など）は、サーバーへ直接接続します。TLS を使うものは、プロキシの CA を使っている間は失敗します（サーバーの証明書を、その CA で検証するためです）。
+- Burp は HTTPS のホストに、SNI の名前をこのコンピュータで名前解決し直して接続します。そのため、Exit Node がこのコンピュータと LAN を宛先として拒否していても、Burp の接続先には効きません（[SECURITY](SECURITY.md#an-upstream-proxy---upstream-proxy)）。`--allow-hosts` は、調べるホストだけにしてください（`'*'` のときは `run` が警告します）。同じ理由で、`resolve` のルールは拒否します。プロキシ側の設定（Burp の Hostname resolution overrides）を使ってください。
+- プロキシを通る HTTPS は、プロキシの CA だけで検証します。このコンピュータの Burp の CA は、起動時に `http://burp/cert` から取得します。ほかの復号するプロキシ（ZAP、Charles など）には、`--upstream-ca FILE`（PEM か DER）で CA を指定してください。どちらでもなければ、公開の CA で検証します（復号しないプロキシ向け）。
+- Reqcove はプロキシに直接接続し、システムのプロキシ設定は使いません。ただし、システムのプロキシを自分に向けるプロキシ（Charles は、Proxy メニューの「macOS Proxy」をオフにしない限りそうします）と `--local-proxy` は、同じ設定を取り合い、止まるときに相手の設定へ戻してしまいます。`--local-proxy` と一緒に使うときは、プロキシ側のその機能をオフにしてください。
+- Burp での動作：平文の HTTP は IP アドレスで表示され、名前は `Host` ヘッダーで分かります。リクエストのボディは、すべて届くまで Burp が保持します。HTTP/1.1 のクライアントへの Server-Sent Events は失敗します（iOS アプリの多くが使う HTTP/2 では流れます）。SNI のない、IP アドレス宛ての HTTPS は失敗します（Burp が証明書に入れるアドレスの形式を、mitmproxy が受け付けないためです）。`--web` と一緒に使うと、mitmweb からリプレイした平文の HTTP リクエストは、プロキシ自身に送られます。
 
-> v0.1.0 にはありません。次のリリースまでは、ソースからビルドしてください。
+確認状況：Burp Suite Community 2026.10 で確認（SNI の名前で名前解決し直すことを含む）。未確認：ほかのプロキシ（Charles を含む）。コードから：ほかのプロトコルがサーバーへ直接接続すること。
 
-証明書をピンニングしているアプリは、Reqcove の証明書を拒むので、そのホストへのリクエストは失敗します。`reqcove status` がそのホストを、`run` に付ける `--pass-hosts` と一緒に示します。付けて起動し直すと、そのホストは復号せずに通り、アプリが動きます（iPhone で試しました）。
+## オプション
 
-```sh
-reqcove run --device iphone --allow-hosts '*' --pass-hosts '*.example-cdn.com,api.example.com'
-reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1 行に 1 ホスト
-```
+`reqcove run` のオプション：
 
-- そのホストは、接続だけを記録します（ホスト、宛先、時刻、量：`list_passthrough`）。URL や中身はありません。
-- `--rules` と `--upstream-proxy` は効きません。
-- TLS が終わってから確かめるピンニングは、どこにも出ません。
-- 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒むのは、別の理由です（[Android](#android)）。
+| | |
+|---|---|
+| `--device NAME` | 中継するデバイス。マシン名、デバイス名（タグのない自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数は繰り返して指定 |
+| `--allow-hosts HOSTS` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身とすべてのサブドメイン）、すべてを対象にする `'*'`、または `@FILE`（1 行に 1 つ。`#` 以降はコメント）。指定しない場合、通信は中継するが記録しない |
+| `--pass-hosts HOSTS` | 許可したホストのうち、復号せずに通すもの。書き方は同じ（`'*'` は不可）。[証明書ピンニング](#証明書ピンニングをするアプリを通す--pass-hosts) |
+| `--rules FILE` | 許可したホストに適用する[ルール](#ルールを書く--rules) |
+| `--rules-reload` | そのファイルが変わるたびに読み直す |
+| `--upstream-proxy URL` | 復号したリクエストを[上流の HTTP プロキシ](#上流プロキシに回す--upstream-proxy)に回す |
+| `--upstream-ca FILE` | そのプロキシの CA（PEM か DER） |
+| `--local-proxy` | このコンピュータのアプリ用のプロキシ（`127.0.0.1:8082`）。[iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) |
+| `--proxy-port N` | [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) のポート。デフォルトは 8080。0 で無効 |
+| `--ui` | [フローを見る読み取り専用のページ](#iphone-で見る--ui)。ノードの 80 番ポート |
+| `--web` | mitmdump の代わりに [mitmweb](#mitmweb-で見る--web) を起動。マスクなし |
+| `--mcp-http` | [MCP ツールを HTTP でも提供](#ほかのデバイスのエージェントから使う--mcp-http)。ノードの 8090 番ポート |
+| `--dns SERVERS` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省略可）。`system` で `/etc/resolv.conf` の最初の nameserver |
+| `--no-redact` | シークレットをマスクせずに記録 |
+| `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
+| `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
+| `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
+| `--uvx PATH` | 使用する uvx |
+| `--python VERSION` | uvx が取得する Python。デフォルトは 3.14 |
+| `--mitmproxy-spec SPEC` | uvx が取得する mitmproxy。デフォルトは `mitmproxy==12.3.1` |
 
-## そのほかの制限事項
+ほかのコマンド（`init` と `version` 以外は、`--state DIR` も指定可能）：
 
-- IPv6 は拒否します（アプリはすぐに IPv4 にフォールバックします）。QUIC は Apple 宛て以外をドロップするので、アプリは TCP にフォールバックします。見分けるのはアドレスで、ホストではありません。そのため、`--allow-hosts` に入っていないホストの QUIC も（`--allow-hosts` がないときも）TCP に切り替わります。443 以外のポートを使う QUIC は止めずにそのまま通し、記録もしません。
-- Exit Node 経由の通話は試していません。
-- mitmweb（`--web`）では、mitmproxy の設定を変えられます。Capture のタブの「Run SOCKS Proxy」は、オンのままにしてください。Reqcove がデバイスの通信を mitmproxy に渡す入り口で、外すとデバイスの HTTP(S) がつながらなくなります。そこにあるほかのモードは、Reqcove では使いません。変えた設定は reqcove を起動し直すと戻り、Reqcove の記録の範囲とマスクは崩れません（コードを読んで考えたことで、試してはいません）。
-- Reqcove を動かしているコンピュータの iOS シミュレーターには、`--local-proxy` が要ります（上を参照。v0.1.0 のあとに追加）。別の Mac を `--device` に入れ、その Mac で Reqcove の Exit Node を使えば（[手順](another-mac.ja.md)）、シミュレーターの通信も、その Mac の通信と一緒に通るはずです。シミュレーターに Reqcove の CA を入れる必要があります（試していません）。
-- mitmproxy は WebSocket のメッセージを、届ききるまで1つずつ溜めます。巨大なメッセージが来るとメモリを多く使います（mitmproxy が落ちたら、reqcove が起動し直します。起動し直しても 1 分以内に落ちるのが 5 回続くと、`run` が止まります）。
-- `map_local` が答えるのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET には答えるので、そこにデバイスがボディを付けて送ってくると、まるごと溜めます。こうしたリクエストを送るのは、自分のデバイスだけです。
+| | |
+|---|---|
+| `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
+| `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
+| `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
+| `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |
+| `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
+| `reqcove version` | バージョンの表示 |
 
-## Tips
+コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
 
-- 新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します：`"autoApprovers": {"exitNode": ["you@example.com"]}`
-- 状態ディレクトリが同じであれば、CA も同じままです。2 台のコンピュータで 1 つの CA を使うには、`~/.reqcove/mitmproxy/` をディレクトリごと、もう 1 台の `~/.reqcove/` にコピーします（秘密鍵が含まれます）。もう 1 台の reqcove は止めておいてください（v0.1.0 のあとは、初めて起動する前でもかまいません）。
+## MCP ツール
+
+| ツール | |
+|---|---|
+| `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
+| `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
+| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ |
+| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
+| `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
+| `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
+| `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
+| `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
+| `status` | セットアップが完了しているか。未完了なら次の手順 |
+
+## 制限事項
+
+主な制限事項は [README](../README.ja.md#制限事項) にあります。そのほかの制限事項は次のとおりです。
+
+- IPv6 は拒否します。アプリは、すぐに IPv4 にフォールバックします。
+- QUIC は Apple 宛てを除いてドロップするので、アプリは TCP にフォールバックします。判定はホストではなくアドレスで行うため、`--allow-hosts` にないホストの QUIC も（`--allow-hosts` を指定しないときも）フォールバックします。443 番以外のポートの QUIC はそのまま通し、記録しません。
+- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。巨大なメッセージが来ると、メモリを多く使います。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` が止まります。
+- Exit Node 経由の通話は未確認です。
+- 機能ごとの制限事項は、それぞれの節にあります：[`--ui`](#iphone-で見る--ui)、[`--web`](#mitmweb-で見る--web)、[`--local-proxy`](#ios-シミュレーターを記録する--local-proxy)、[ルール](#ルールを書く--rules)、[上流プロキシ](#上流プロキシに回す--upstream-proxy)。
+
+## セキュリティ
+
+詳しくは [SECURITY.md](SECURITY.md)（英語）にあります。オプションごとの注意は、上の各節からリンクしています。それ以外の主な項目は次のとおりです。
+
+- [記録するもの](SECURITY.md#what-is-recorded)：`--allow-hosts` のホストだけで、Apple のホストは対象外。マスクで見つかるものと、見つからないもの。
+- [エージェントが読んだものの行き先](SECURITY.md#what-the-agent-sees-goes-further)：モデルの提供元。ボディがエージェントに指示しようとすることもあります（[プロンプトインジェクション](SECURITY.md#prompt-injection)）。
+- [デバイスから届く範囲](SECURITY.md#what-the-devices-can-reach)：このコンピュータ、LAN、tailnet は対象外。
+- [CA の秘密鍵](SECURITY.md#the-cas-private-key)：状態ディレクトリに保存。
+- [Exit Node の DNS](SECURITY.md#the-exit-nodes-dns)（`--dns`）と、[コンテナ](SECURITY.md#in-a-container)。

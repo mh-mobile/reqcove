@@ -29,7 +29,7 @@ the shell leaves the `~` as it is, and every reqcove command refuses it.
   keeps `reqcove`.
 - **Log in and approve each node once**, as the first time (`reqcove status
   --state ~/.reqcove-staging` says what is missing). An `autoApprovers` entry in
-  the tailnet policy approves them for you (docs/guide.md, Tips).
+  the tailnet policy approves them for you ([guide](guide.md#first-start)).
 - **The CA.** A state directory without a CA gets a copy of `~/.reqcove`'s at
   start (`run` says where), so the profile already on the iPhone serves every
   node. One with a CA of its own keeps it. If `~/.reqcove` has no CA yet, the

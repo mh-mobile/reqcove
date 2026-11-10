@@ -657,7 +657,7 @@ func openState(dir string) (func(), error) {
 			return true
 		case "mitmproxy", caCopies:
 			// ~/.reqcove before its first run: a CA copied from another computer
-			// (docs/guide.md, Tips), and the list of copies another node made of it.
+			// (docs/guide.md, Use one CA on two computers), and the list of copies another node made of it.
 			return isDefaultState(dir) && capture.HasCA(filepath.Join(dir, "mitmproxy"))
 		}
 		return false

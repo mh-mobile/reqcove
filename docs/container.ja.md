@@ -45,7 +45,7 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 
 `docker exec $NAME reqcove status` と `reqcove har` は、ホストと同じように使えます。
 
-ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかの端末のエージェント--mcp-http)。Grok Bot で試しました）。イメージには `cat` がないので、ヘッダーの値は、画面に出さずに次で写せます。
+ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかのデバイスのエージェントから使う--mcp-http)。Grok Bot で試しました）。イメージには `cat` がないので、ヘッダーの値は、画面に出さずに次で写せます。
 
 ```sh
 docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1/p' | tail -1 | tr -d '\n' | pbcopy

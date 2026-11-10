@@ -38,7 +38,7 @@ Homebrew で入れます（macOS と Linux。ソースからビルドし、uv �
 brew install mh-mobile/tap/reqcove
 ```
 
-[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリを落として使うこともできます（macOS の Apple silicon、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
+[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリを落として使うこともできます（Apple シリコンの macOS、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
 
 ソースからビルドすることもできます（Go 1.27）。
 
@@ -48,6 +48,7 @@ go build -o reqcove ./cmd/reqcove
 ```
 
 `go install …@version` は使えません。Reqcove は Tailscale の tsnet の fork を `replace` ディレクティブで使っているためです。
+
 ## 使い方
 
 1. コンピュータ側で起動します。中継する iPhone（`tailscale status` に表示される名前）と、記録するホストを指定します。
@@ -63,79 +64,52 @@ go build -o reqcove ./cmd/reqcove
 
    ```sh
    claude mcp add reqcove -- reqcove mcp
-   reqcove init   # v0.1.0 にはまだありません
+   reqcove init
    ```
 
    あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
-v0.1.0 のあとは、`reqcove run` をエージェントをつなぎ直さずに起動し直せます（記録は空から始まります）。`reqcove cleanup` は、すべてを元に戻す手順を表示します。
-
-### MCP ツール
-
-| ツール | |
-|---|---|
-| `summarize` | ホスト、User-Agent、ステータスコード、デバイスごとの件数。まず何があるかを見る |
-| `list_flows` | フローを新しい順に。デバイス、ホスト、時間（`since: "10m"`）、ステータスコード、メソッド、User-Agent で絞り込み |
-| `search_flows` | URL とヘッダー（とボディ）の中の文字を検索 |
-| `get_flow` | フローを 1 件。ボディは頼んだときだけ |
-| `list_devices` | 中継しているデバイス |
-| `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA |
-| `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、宛先、時刻、送受信の量 |
-| `capture_stats` | mitmproxy の状態、記録がカバーしている期間 |
-| `status` | セットアップが完了しているか。未完了なら次の手順 |
-
-詳しくは[ガイド](docs/guide.ja.md#mcp-ツール)にあります。
+エージェントは、`summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。`reqcove cleanup` は、すべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
 
 ### オプション
 
 | | |
 |---|---|
-| `--device NAME` | 中継するデバイス（`tailscale status` の名前）。複数なら繰り返す |
-| `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、すべてなら `'*'`、`@ファイル` |
-| `--pass-hosts` | 許可したホストのうち、復号せずに通すもの。証明書ピンニングをするアプリのため |
-| `--rules FILE` | 許可したホストへのリクエストの行き先を書き換える（`map_remote`、`map_local` など） |
-| `--upstream-proxy URL` | 復号したリクエストを Burp Suite などのプロキシに回す |
-| `--local-proxy` | このコンピュータ自身のアプリ（iOS シミュレーターなど）も記録する。macOS では、`run` の間、システムの Web プロキシを Reqcove に向ける |
-| `--ui` | 記録を iPhone 自身で見るページ |
-| `--web` | 代わりに mitmweb を使う（マスクなし） |
-| `--mcp-http` | ツールを HTTP でも出す。ほかの端末のエージェント（Grok Bot）用 |
-| `--state DIR` | ノードの鍵と CA を置く場所。既定は `~/.reqcove` |
+| `--device NAME` | 中継するデバイス（`tailscale status` の名前）。複数は繰り返して指定 |
+| `--allow-hosts` | 復号して記録するホスト。`api.example.com`、`*.example.com`、すべてなら `'*'`、`@FILE` |
+| `--pass-hosts` | 許可したホストのうち、復号せずに通すもの。証明書ピンニングをするアプリ向け |
+| `--rules FILE` | 許可したホストへのリクエストの行き先を書き換えるルール（`map_remote`、`map_local` など） |
+| `--state DIR` | ノードキーと CA を置く状態ディレクトリ。デフォルトは `~/.reqcove` |
 
-すべてのオプションと、それぞれの詳しい説明は[ガイド](docs/guide.ja.md#オプション)にあります。
+すべてのオプションは[ガイド](docs/guide.ja.md#オプション)にあります。
 
 ### ほかの使い方
 
-- [復号できるクライアント](docs/guide.ja.md#復号できるクライアント)：iPhone のアプリ、Android、Web アプリ、シミュレーター
-- [ルール](docs/guide.ja.md#ルール)：アプリのリクエストを開発サーバーに送る、ファイルで答える
-- [記録を iPhone で見る](docs/guide.ja.md#記録を-iphone-で見る--ui)（`--ui`）
-- [iOS シミュレーター](docs/guide.ja.md#ios-シミュレーター--local-proxy)（`--local-proxy`）
-- [HAR ファイルに書き出す](docs/guide.ja.md#har-ファイルに書き出す)（`reqcove har`）
-- [Web アプリのバックエンド](docs/guide.ja.md#web-アプリのバックエンドrails-など)（Rails など）
-- [上流のプロキシ](docs/guide.ja.md#上流のプロキシburp-suite-など)（Burp Suite など）
-- [証明書ピンニング](docs/guide.ja.md#証明書ピンニング)（`--pass-hosts`）
-- [ほかの端末のエージェント](docs/guide.ja.md#ほかの端末のエージェント--mcp-http)、Grok Bot など（`--mcp-http`）
-- [エージェント用の Skill](docs/guide.ja.md#エージェント用の-skillreqcove-init)（`reqcove init`）
+- [エージェントに通信を読ませる](docs/guide.ja.md#エージェントに通信を読ませる)：Skill、ほかのデバイスのエージェント
+- [自分でフローを見る](docs/guide.ja.md#自分でフローを見る)：iPhone で、HAR ファイルで、mitmweb で
+- [iPhone アプリ以外のクライアントを記録する](docs/guide.ja.md#iphone-アプリ以外のクライアントを記録する)：証明書ピンニングをするアプリ、Android、iOS シミュレーター、Web アプリのバックエンド
+- [リクエストの行き先を変える](docs/guide.ja.md#リクエストの行き先を変える)：開発サーバーへ送る、別のプロキシに回す
 - [1 台で複数の Exit Node](docs/several-exit-nodes.ja.md)、[コンテナ](docs/container.ja.md)、[別の Mac をデバイスに](docs/another-mac.ja.md)
 
 ## セキュリティ
 
 - 復号して記録するのは `--allow-hosts` のホストだけです。Apple のホストは、常に復号せずに通します。
-- 秘密（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中で、秘密と分からない名前の下にある秘密は見つけられません。** メールアドレスなどの個人情報もマスクしません。
+- シークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません。** メールアドレスなどの個人情報もマスクしません。
 - エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、エージェントに指示しようとすることがあります。
-- Exit Node は、このコンピュータ、LAN、tailnet を宛先として拒みます。
+- Exit Node は、このコンピュータ、LAN、tailnet を宛先として拒否します。
 
 詳しくは [docs/SECURITY.md](docs/SECURITY.md) を見てください（英語）。
 
 ## 制限事項
 
-- 証明書ピンニングを行うアプリは、Reqcove の証明書を拒みます。[証明書ピンニング](docs/guide.ja.md#証明書ピンニング)を見てください。
+- 証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。[`--pass-hosts`](docs/guide.ja.md#証明書ピンニングをするアプリを通す--pass-hosts) を見てください。
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
 - IPv6 は拒否し、QUIC は（Apple 宛て以外）ドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
 - iPhone が使用中に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。
 - コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません。
 
-ほかの制限事項は[ガイド](docs/guide.ja.md#そのほかの制限事項)にあります。
+ほかの制限事項は[ガイド](docs/guide.ja.md#制限事項)にあります。
 
 ## ライセンス
 
