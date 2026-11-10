@@ -65,6 +65,10 @@ again to change it.
 - Claude Code on another computer:
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <token>"`
   (it keeps the header in `~/.claude.json`).
+- Codex on another computer: `codex mcp add reqcove-remote --url http://reqcove.<tailnet>.ts.net:8090/mcp --bearer-token-env-var REQCOVE_TOKEN`,
+  with the token in that variable. Codex asks before each MCP tool call; in
+  `codex exec`, which cannot ask, set `default_tools_approval_mode = "approve"`
+  for this server.
 - Who can call it: your own devices on the tailnet (the same user as reqcove's
   node, neither tagged), with the token. A tagged device is refused (`run` logs
   it once), so do not tag Grok Bot's device to restrict it.
@@ -87,7 +91,10 @@ real tailnet, a client going on across a restart); from this Mac over the
 tailnet (no token, a wrong one, another `Host` or origin refused); and with
 Grok Bot, which read the status, the flows and their bodies, and after a
 restart of `run` went on in the same chat, the records empty; also from a
-container. Not tried yet: Claude Code from another computer.
+container. Claude Code (`claude -p`, the header from an environment variable)
+and Codex (`codex exec`) on this Mac reached the node over the tailnet as
+another computer would, and read the status. Not tried yet: from another
+computer itself.
 
 ## The agent skill (`reqcove init`)
 

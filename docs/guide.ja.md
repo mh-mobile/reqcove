@@ -42,6 +42,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - ほかのコンピュータの Claude Code：
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <トークン>"`
   （ヘッダーは `~/.claude.json` に残ります）。
+- ほかのコンピュータの Codex：`codex mcp add reqcove-remote --url http://reqcove.<tailnet>.ts.net:8090/mcp --bearer-token-env-var REQCOVE_TOKEN` として、トークンをその環境変数に入れます。Codex は MCP のツールを呼ぶたびに承認を求めます。承認を聞けない `codex exec` では、このサーバーに `default_tools_approval_mode = "approve"` を設定します。
 - 呼べるのは、tailnet の自分の端末（reqcove のノードと同じユーザーで、どちらにもタグがない）で、トークンを持つものだけです。タグの付いた端末は断ります（`run` が一度ログに出します）。Grok Bot の端末を絞るためにタグを付けないでください。
 - エージェントが読んだものは、そのエージェントのコンピュータと、モデルの提供元に渡ります。Grok Bot なら xAI のクラウドです。Grok Bot はトークンを持ち続けます。止めるには、`mcp-token` を消して `run` を起動し直すか、その端末を tailnet から外します。
 - `run` を起動し直しても、エージェントはつなぎ直さずに使い続けられます（止まっている間の呼び出しは失敗します）。記録は空から始まり、前のカーソルは断ります。
@@ -49,7 +50,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - HTTP のままです。tailnet の中は WireGuard で暗号化されています。
 - コンテナでも同じフラグで動き、ポートを開ける必要はありません（ノードがコンテナの中にあるため）。トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
 
-テスト（トークン、Host、本物の tailnet で別のユーザーの端末を断ること、再起動をまたいで使い続けること）、この Mac から tailnet 越しに（トークンなし、違うトークン、ほかの `Host` や Origin を断ること）、そして Grok Bot で確かめました（status、フローの一覧と本文を読めました。`run` を起動し直したあとも、同じチャットのまま使え、記録は空から始まりました。コンテナでも試しました）。ほかのコンピュータの Claude Code では、まだ試していません。
+テスト（トークン、Host、本物の tailnet で別のユーザーの端末を断ること、再起動をまたいで使い続けること）、この Mac から tailnet 越しに（トークンなし、違うトークン、ほかの `Host` や Origin を断ること）、そして Grok Bot で確かめました（status、フローの一覧と本文を読めました。`run` を起動し直したあとも、同じチャットのまま使え、記録は空から始まりました。コンテナでも試しました）。この Mac の Claude Code（`claude -p`。ヘッダーは環境変数から）と Codex（`codex exec`）も、ほかのコンピュータと同じく tailnet 越しにノードに届き、status を読めました。ほかのコンピュータそのものからは、まだ試していません。
 
 ## エージェント用の Skill（`reqcove init`）
 

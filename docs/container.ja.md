@@ -6,7 +6,7 @@ Reqcove は、コンテナでも動きます（Docker。Podman でも同じコ�
 
 向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac が寝ないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 
-**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと。**まだ試していないこと**：`docker run -i` で Claude Code をつなぐこと、Linux のホストでの手の確認、Podman。
+**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと、`docker run -i` で Claude Code（`claude -p`）が `status` を読むこと。**まだ試していないこと**：Linux のホストでの手の確認、Podman。
 
 ## 1. イメージを作る
 
@@ -41,7 +41,7 @@ docker logs -f $NAME
 claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --volumes-from $NAME reqcove mcp
 ```
 
-エージェントのセッションごとにコンテナを 1 つ起動し、volume を通して `run` のソケットにつなぎます（確かめのスクリプトで確かめました。Claude Code ではまだです）。`--volumes-from` は、run のコンテナがなければすぐに失敗します。`--log-driver none` は、ツールの答えを Docker のログに残さないためです。
+エージェントのセッションごとにコンテナを 1 つ起動し、volume を通して `run` のソケットにつなぎます（確かめのスクリプトと、Claude Code の `claude -p` で確かめました）。`--volumes-from` は、run のコンテナがなければすぐに失敗します。`--log-driver none` は、ツールの答えを Docker のログに残さないためです。
 
 `docker exec $NAME reqcove status` と `reqcove har` は、ホストと同じように使えます。
 

@@ -22,8 +22,8 @@ ends it cleanly. By hand on OrbStack: logging in to a tailnet from a container
 (Tailnet Lock signed, the exit node approved), an iPhone through it (its own
 CA installed; GitHub's app recorded), `reqcove mcp` through `docker run -i`
 answering an MCP client, `docker exec … reqcove har`, and `--mcp-http` read by
-Grok Bot. **Not tried yet**: Claude Code through `docker run -i`, Linux hosts
-by hand, Podman.
+Grok Bot; Claude Code (`claude -p`) through `docker run -i` read `status`.
+**Not tried yet**: Linux hosts by hand, Podman.
 
 ## 1. Build the image
 
@@ -63,7 +63,7 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 ```
 
 A container per agent session, reaching `run`'s socket through the volume
-(checked with the smoke script, not with Claude Code yet). `--volumes-from`
+(checked with the smoke script and with Claude Code, `claude -p`). `--volumes-from`
 fails at once if the run container is not there; `--log-driver none` keeps the
 tools' answers out of Docker's logs.
 
