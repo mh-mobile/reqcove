@@ -489,7 +489,7 @@ requests wait in it.
   rules are refused for the same reason; use the proxy's own overrides (Burp's
   Hostname resolution overrides).
 - HTTPS through the proxy is checked against the proxy's CA only: Burp's, on
-  this computer, is fetched at start (from `http://burp/cert`); another proxy
+  this computer, is fetched at start (from its listener's `/cert`); another proxy
   that decrypts (ZAP, Charles) needs `--upstream-ca FILE` (PEM or DER);
   otherwise the public CAs are used (for a proxy that does not decrypt).
 - Reqcove connects to the proxy itself and ignores the system's proxy
@@ -506,8 +506,8 @@ requests wait in it.
 Tried: Burp Suite Community 2026.10, its lookup by the SNI's name included;
 Charles 5.0b12 decrypting, with `--upstream-ca` (without it, the record says the
 certificate was not trusted). With a proxy other than Burp on this computer,
-`run` still asks it for `http://burp/cert` at start, which fails there (Charles
-lists it) and changes nothing. Not tried: other proxies. From reading code:
+`run` still asks its listener for `/cert` at start, which fails there and
+changes nothing. Not tried: other proxies. From reading code:
 other protocols going straight to their servers.
 
 ## Options

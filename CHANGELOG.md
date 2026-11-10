@@ -32,7 +32,7 @@
 - `run --upstream-proxy http://HOST:PORT` (and `--upstream-ca FILE`): decrypted
   requests go on through Burp Suite or another HTTP proxy, which sees the same
   traffic while Reqcove keeps its records. See "An upstream proxy" in docs/guide.md.
-- Burp's CA is fetched from `http://burp/cert` at start when the proxy is on this
+- Burp's CA is fetched from the proxy's own `/cert` at start when the proxy is on this
   computer, so `--upstream-ca` is needed only for other proxies that decrypt.
 - `run --local-proxy`: an HTTP proxy on `127.0.0.1:8082` for this computer's own
   apps, such as the iOS Simulator, recorded as the device `local`. On macOS the

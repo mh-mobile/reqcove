@@ -337,12 +337,12 @@ func run(ctx context.Context, args []string) error {
 	} else if upstream != "" {
 		b, err := fetchBurpCA(upstream)
 		if err == nil {
-			upstreamCAFile, err = saveUpstreamCA(b, "http://burp/cert", *state)
+			upstreamCAFile, err = saveUpstreamCA(b, "Burp's /cert", *state)
 		}
 		if err == nil {
-			log.Printf("using Burp's CA from http://burp/cert (--upstream-ca to choose one)")
+			log.Printf("using Burp's CA from %s/cert (--upstream-ca to choose one)", *upstreamProxy)
 		} else {
-			log.Printf("no Burp CA from http://burp/cert (%v): the public CAs are trusted through the proxy", err)
+			log.Printf("no Burp CA at %s/cert (%v): the public CAs are trusted through the proxy", *upstreamProxy, err)
 		}
 	}
 
@@ -534,9 +534,9 @@ func run(ctx context.Context, args []string) error {
 			if sims, err := trustInSimulators(caPEM); err != nil {
 				log.Printf("WARN: the CA into the iOS Simulator: %v", err)
 			} else if len(sims) > 0 {
-				log.Printf("CA added to the booted iOS Simulators: %s (one booted later: xcrun simctl keychain booted add-root-cert %s)", strings.Join(sims, ", "), caPEM)
+				log.Printf("CA added to the booted iOS Simulators: %s (one booted later: xcrun simctl keychain booted add-root-cert %s)", strings.Join(sims, ", "), shellWord(caPEM))
 			} else {
-				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", caPEM)
+				log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", shellWord(caPEM))
 			}
 		} else {
 			log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s (docs/guide.md, The iOS Simulator, has the commands); recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
@@ -802,29 +802,31 @@ func writeUpstreamCA(path, state string) (string, error) {
 	return saveUpstreamCA(b, path, state)
 }
 
-// fetchBurpCA gets Burp's CA the way its docs say, http://burp/cert through
-// the proxy, when the proxy is on this computer: over a network, plain HTTP
-// could hand back someone else's CA. Other proxies answer with an error.
+// fetchBurpCA gets Burp's CA from the proxy's own /cert, when the proxy is on
+// this computer: over a network, plain HTTP could hand back someone else's CA.
+// Other proxies answer with an error.
 func fetchBurpCA(upstream string) ([]byte, error) {
 	host, _, _ := net.SplitHostPort(upstream)
 	if ip, err := netip.ParseAddr(host); (err != nil || !ip.IsLoopback()) && host != "localhost" {
 		return nil, errors.New("not on this computer")
 	}
-	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: upstream})}}
-	resp, err := c.Get("http://burp/cert")
+	// Straight from the listener (Burp answers its own page there too), not
+	// http://burp/cert through it: a proxy that is not Burp would look "burp"
+	// up and fetch it from wherever the network's DNS says.
+	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	resp, err := c.Get("http://" + upstream + "/cert")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http://burp/cert: %s", resp.Status)
+		return nil, fmt.Errorf("http://%s/cert: %s", upstream, resp.Status)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
 		return nil, err
 	}
-	// Burp's own CA only: a proxy that is not Burp may fetch "http://burp/cert"
-	// from wherever the name leads, and that must not become the CA trusted.
+	// Burp's own CA only: another proxy's answer must not become the CA trusted.
 	if c, err := x509.ParseCertificate(b); err != nil || c.Subject.CommonName != "PortSwigger CA" {
 		return nil, errors.New("not Burp's CA (PortSwigger CA)")
 	}

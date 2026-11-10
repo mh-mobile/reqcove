@@ -58,10 +58,16 @@ func (g selfHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reqcove: ask by the node's name or address", http.StatusMisdirectedRequest)
 		return
 	}
-	if d, _, ok := viewerAt(p, r.RemoteAddr); ok {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, fmt.Sprintf("%s (%s)", d.Name, ip)))
+	// Checked on every request too: a kept-alive connection outlives a device
+	// that stopped being one of the user's own (tagged, say).
+	d, own, ok := viewerAt(p, r.RemoteAddr)
+	if !ok || !own {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "reqcove: only your own devices on the tailnet", http.StatusForbidden)
+		return
 	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	r = r.WithContext(context.WithValue(r.Context(), callerKey{}, fmt.Sprintf("%s (%s)", d.Name, ip)))
 	g.next.ServeHTTP(w, r)
 }
 

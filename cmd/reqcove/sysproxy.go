@@ -312,7 +312,7 @@ func macTrusts(pem string) bool {
 
 // macTrustCommand trusts the CA for TLS only, for this user (macOS asks for the password).
 func macTrustCommand(pem string) string {
-	return "security add-trusted-cert -r trustRoot -p ssl -k " + loginKeychain + " " + pem
+	return "security add-trusted-cert -r trustRoot -p ssl -k " + loginKeychain + " " + shellWord(pem)
 }
 
 // macUntrustCommand removes the CA, by its fingerprint, and the trust in it.

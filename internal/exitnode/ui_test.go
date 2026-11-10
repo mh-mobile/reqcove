@@ -403,7 +403,8 @@ func TestWebRelayDropsToken(t *testing.T) {
 
 // TestSelfHost: MCP answers only when asked by the node's own name or address.
 func TestSelfHost(t *testing.T) {
-	p := &policy{self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove.tail-scale.ts.net", "reqcove"}}
+	p := &policy{self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove.tail-scale.ts.net", "reqcove"},
+		own: map[netip.Addr]Device{netip.MustParseAddr("192.0.2.1"): {"nMAC", "macbook"}}} // httptest's RemoteAddr
 	h := selfHost{func() *policy { return p }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") })}
 	for host, want := range map[string]int{
 		"reqcove.tail-scale.ts.net:8090": 200, "REQCOVE.tail-scale.ts.net.:8090": 200, "100.64.0.9:8090": 200, "reqcove": 200,
@@ -451,6 +452,21 @@ func TestRefusedTold(t *testing.T) {
 		}
 		c.Close()
 		ln.Close()
+	}
+}
+
+// TestSelfHostOwnOnly: a request from a device that is no longer one of the
+// user's own (a kept-alive connection, the device tagged since) is refused.
+func TestSelfHostOwnOnly(t *testing.T) {
+	p := &policy{self: []netip.Addr{netip.MustParseAddr("100.64.0.9")},
+		devices: map[netip.Addr]Device{netip.MustParseAddr("192.0.2.1"): {"nPHONE", "phone"}}} // a --device, not own
+	h := selfHost{func() *policy { return p }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") })}
+	r := httptest.NewRequest("POST", "/mcp", nil)
+	r.Host = "100.64.0.9:8090"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("a device not the user's own: %d", w.Code)
 	}
 }
 

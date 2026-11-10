@@ -200,9 +200,11 @@ straight to their servers (from reading code; a review saw it). What changes:
   Reqcove's tools hold back, and the ability to send requests.
 - Checking the real server's certificate is the proxy's job: with the proxy's CA
   (`--upstream-ca`, or Burp's fetched at start), Reqcove trusts only that CA, so it
-  checks the proxy, not the server. Burp's is fetched over plain HTTP from
-  `http://burp/cert` through the proxy, only when the proxy is on this computer,
-  and only a CA named "PortSwigger CA" is taken (a test). Burp, by
+  checks the proxy, not the server. Burp's is fetched over plain HTTP from the
+  proxy's own listener (`http://127.0.0.1:PORT/cert`, no name looked up, so no
+  other server can answer), only when the proxy is on this computer, and only a
+  CA named "PortSwigger CA" is taken (a test; Burp answered there, checked with
+  curl). Burp, by
   default, did not check (tried, a review).
 - Where the proxy connects is the proxy's choice. Reqcove hands it the address the
   exit node allowed, but Burp connects by the name in the SNI, looked up again on

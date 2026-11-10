@@ -105,8 +105,8 @@ func TestWriteUpstreamCA(t *testing.T) {
 	}
 }
 
-// Burp's CA is fetched from http://burp/cert through the proxy, when the proxy
-// is on this computer; another proxy's error, or a remote proxy, gives none.
+// Burp's CA is fetched from the proxy's own /cert (no name looked up), when the
+// proxy is on this computer; another proxy's error, or a remote proxy, gives none.
 func TestFetchBurpCA(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "PortSwigger CA"},
@@ -114,7 +114,7 @@ func TestFetchBurpCA(t *testing.T) {
 	burpCA, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	served := burpCA
 	burp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Host == "burp" && r.URL.Path == "/cert" {
+		if r.URL.Host == "" && r.URL.Path == "/cert" { // asked directly, not as a proxy
 			w.Write(served) // DER, as Burp serves it
 			return
 		}
@@ -125,17 +125,17 @@ func TestFetchBurpCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saveUpstreamCA(b, "http://burp/cert", t.TempDir()); err != nil {
+	if _, err := saveUpstreamCA(b, "Burp's /cert", t.TempDir()); err != nil {
 		t.Errorf("fetched CA: %v", err)
 	}
-	// A proxy that is not Burp, fetching some other CA for "http://burp/cert": refused.
+	// A proxy that is not Burp, answering some other CA at /cert: refused.
 	ca := httptest.NewTLSServer(nil)
 	defer ca.Close()
 	served = ca.Certificate().Raw
 	if _, err := fetchBurpCA(burp.Listener.Addr().String()); err == nil || !strings.Contains(err.Error(), "not Burp's CA") {
-		t.Errorf("another CA at http://burp/cert: %v", err)
+		t.Errorf("another CA at /cert: %v", err)
 	}
-	other := httptest.NewServer(http.NotFoundHandler()) // a proxy without http://burp/cert
+	other := httptest.NewServer(http.NotFoundHandler()) // a proxy without /cert
 	defer other.Close()
 	if _, err := fetchBurpCA(other.Listener.Addr().String()); err == nil {
 		t.Error("a proxy answering 404 gave a CA")

@@ -386,3 +386,12 @@ func TestNetworksetupOwnGroup(t *testing.T) {
 		t.Error("networksetup shares the terminal's process group")
 	}
 }
+
+// TestMacTrustCommandQuotes: a state directory with a space gives a command
+// that still runs as printed.
+func TestMacTrustCommandQuotes(t *testing.T) {
+	got := macTrustCommand("/tmp/reqcove two/mitmproxy/mitmproxy-ca-cert.pem")
+	if !strings.HasSuffix(got, " '/tmp/reqcove two/mitmproxy/mitmproxy-ca-cert.pem'") {
+		t.Errorf("not quoted: %s", got)
+	}
+}
