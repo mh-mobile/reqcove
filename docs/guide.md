@@ -502,9 +502,12 @@ requests wait in it.
   certificate after the address in a way mitmproxy does not accept). With
   `--web`, a plain HTTP request replayed from mitmweb goes to the proxy itself.
 
-Tried: Burp Suite Community 2026.10, its lookup by the SNI's name included. Not
-tried: other proxies, Charles among them. From reading code: other protocols
-going straight to their servers.
+Tried: Burp Suite Community 2026.10, its lookup by the SNI's name included;
+Charles 5.0b12 decrypting, with `--upstream-ca` (without it, the record says the
+certificate was not trusted). With a proxy other than Burp on this computer,
+`run` still asks it for `http://burp/cert` at start, which fails there (Charles
+lists it) and changes nothing. Not tried: other proxies. From reading code:
+other protocols going straight to their servers.
 
 ## Options
 
