@@ -367,8 +367,10 @@ not (Duolingo, Gmail, 1Password, LINE, Slack, banking apps).
   domain's hosts as `*.domain`, the hosts passed already kept). A host fails once
   or twice for other reasons, so one failure is not enough. An app that names
   no host (it dials an address) is passed by that address.
-- `--pass-hosts` carries those hosts undecrypted, so the app works (checked
-  with a test client that pins; on the iPhone not tried yet). For them only the
+- `--pass-hosts` carries those hosts undecrypted, so the app works: on the
+  iPhone, TikTok's videos and X's timeline did, with `--pass-hosts
+  '*.tiktokv.com,*.tiktokcdn.com,api.x.com,api.twitter.com,api-stream.twitter.com'`
+  (PayPay not tried), and a test client that pins does. For them only the
   connection is recorded: the host the client named, the server, start and
   end, bytes each way (`list_passthrough`); no URL, headers or bodies, and a
   connection may carry many requests or none.
