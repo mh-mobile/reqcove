@@ -167,3 +167,38 @@ func TestStrayConfigYmlRemoved(t *testing.T) {
 		t.Error("config.yml is still in the confdir")
 	}
 }
+
+// TestWebMadeResponse (REQCOVE_E2E=1): with --web, a response mitmproxy made
+// itself (map_local, a failed rule's 502) leaves nothing kept for mitmweb:
+// mitmweb holds it whole, and a copy kept would never be freed. Driven
+// through mitmproxy's own test helpers, as no request shows the leak.
+func TestWebMadeResponse(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	addon := filepath.Join(t.TempDir(), "addon.py")
+	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	py := `import sys, importlib.util
+from mitmproxy.test import taddons, tflow
+spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+a = m.Reqcove()
+with taddons.context(a) as tctx:
+    tctx.configure(a, reqcove_web_keep=1 << 20)
+    f = tflow.tflow(resp=True)
+    f.metadata["reqcove_local"] = True
+    a.request(f)
+    a.response(f)
+    print(len(a.kept))
+`
+	out, err := exec.Command("uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "0" {
+		t.Errorf("bodies kept for mitmweb after a made response: %s, want 0", got)
+	}
+}

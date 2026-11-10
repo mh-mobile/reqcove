@@ -275,7 +275,7 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(allow.PassHosts) > 0 && (*rules != "" || upstream != "") {
-		log.Print("WARN: --pass-hosts with --rules or --upstream-proxy: the hosts passed through skip both, and reach their own servers directly (a host --rules sends to staging reaches production)")
+		log.Print("WARN: --pass-hosts with --rules or --upstream-proxy: the hosts passed through skip both and reach their own servers directly (a host --rules sends to staging reaches production); only their requests mitmproxy decrypts anyway (plain HTTP, or on an allowed host's connection) still go through --upstream-proxy")
 	}
 	if upstream != "" && allow.All {
 		// Burp looks HTTPS names up again on this computer; a site can answer that

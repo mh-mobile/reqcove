@@ -176,6 +176,10 @@ map_remote:
 
 	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
 		c.Upstream, c.UpstreamCA, c.Rules = up.ln.Addr().String(), caFile, rules
+		var err error
+		if c.AllowHosts, err = c.AllowHosts.WithPass([]string{"pass.example"}); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +230,31 @@ map_remote:
 	}
 	if want := "GET http://" + p + "/oos Host:elsewhere.example "; !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, want) }) {
 		t.Errorf("the out-of-scope request did not go through the upstream: %v", up.all())
+	}
+	// A --pass-hosts host's requests that mitmproxy decrypts all the same (plain
+	// HTTP, or riding an allowed host's TLS connection): through the upstream too.
+	if code, _ := get("http://"+p+"/passplain", "pass.example"); code != 200 {
+		t.Errorf("a pass host's plain HTTP through the upstream: %d", code)
+	}
+	if want := "GET http://" + p + "/passplain Host:pass.example "; !slices.ContainsFunc(up.all(), func(s string) bool { return strings.HasPrefix(s, want) }) {
+		t.Errorf("a pass host's plain HTTP did not go through the upstream: %v", up.all())
+	}
+	connects := func() int { return len(slices.DeleteFunc(up.all(), func(s string) bool { return s != "CONNECT "+o })) }
+	beforeConnects := connects()
+	// A new client: on hc's open connection mitmproxy would reuse the tunnel /tls made.
+	preq, _ := http.NewRequest("GET", "https://"+o+"/passtls", nil)
+	preq.Host = "pass.example"
+	if r, err := h.client("dev").Do(preq); err != nil {
+		t.Errorf("a pass host's request on an allowed host's connection: %v", err)
+	} else {
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != 200 || string(b) != "origin pass.example /passtls" {
+			t.Errorf("a pass host's request on an allowed host's connection: %d %q", r.StatusCode, b)
+		}
+	}
+	if connects() == beforeConnects {
+		t.Errorf("a pass host's request on an allowed host's connection did not go through the upstream: %v", up.all())
 	}
 
 	// An HTTP/2 app whose request map_remote sends to a plain http:// server:
