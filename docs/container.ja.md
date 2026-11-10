@@ -45,6 +45,8 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 
 `docker exec $NAME reqcove status` は、ホストと同じように使えます（`har` も使えるはずですが、試していません）。
 
+ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかの端末のエージェント--mcp-http)。コンテナではまだ試していません）。
+
 ## コンテナで違うこと
 
 - `--local-proxy`、シミュレーター、このコンピュータで CA を信頼することは、コンテナではできません。

@@ -25,8 +25,8 @@ in the container: a flaw there reaches the container (the records, the CA's key
 in its volume), not the rest of the user's files. The image has no shell or
 package manager and runs as a user of its own, not root. In exchange, whoever
 can use the Docker daemon's socket can read the volume, the CA's key included,
-and `docker logs` keeps the login URL and the `--ui`/`--web` links with their
-tokens until the container is removed. `reqcove mcp` runs with
+and `docker logs` keeps the login URL, the `--ui`/`--web` links and the
+`--mcp-http` token until the container is removed. `reqcove mcp` runs with
 `--log-driver none`, so the tools' answers are not logged. Checked by
 `scripts/container-smoke.sh` (the state directory's owner and mode, no
 network needed), not by an attack.
@@ -289,6 +289,24 @@ Turning off the SOCKS proxy in its Capture tab stops the devices' HTTP(S)
 (that is how Reqcove hands them to mitmproxy). Another mode turned on there
 listens on 127.0.0.1 (the listen host reqcove sets) and bypasses Reqcove's
 device names and its refusals of this computer and the LAN.
+
+## MCP over HTTP (`--mcp-http`)
+
+After v0.1.0. The node serves the MCP tools on its port 8090, at `/mcp`, to your
+own devices on the tailnet only (the same user as reqcove's node, neither
+tagged: checked when a connection opens), asked by the node's name or address in
+`Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
+state directory (0600; compared in constant time). Requests from a browser page
+of another origin are refused. The token is printed in `run`'s terminal only (in
+a container, `docker logs` keeps it), never by `reqcove status` or the tools:
+agents may run those. On a personal tailnet an agent's device joined through
+Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
+other computers: the token is what tells them apart. Whatever the tools answer
+then reaches that device and its model provider (for Grok Bot, xAI's cloud),
+and the agent keeps the token until you delete `mcp-token` and restart `run`.
+The tools are the same as over `reqcove mcp`, and give the same masked records.
+Checked with tests (another user's device refused over a real tailnet; the
+token, `Host` and origin checks); not tried with Grok Bot yet.
 
 ## The local proxy (`--local-proxy`)
 

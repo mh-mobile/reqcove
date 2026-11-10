@@ -37,6 +37,46 @@ Instead of the exit node, the iPhone can also set its Wi-Fi proxy (Manual) to th
 reqcove node's tailnet address, port 8080 (`--proxy-port`). Cellular has no proxy
 setting, so this works on Wi-Fi only.
 
+## Agents on other devices (`--mcp-http`)
+
+> Not in v0.1.0: until the next release, build from source to use it.
+
+`reqcove mcp` serves the tools to an agent on the computer running `run`. For
+an agent elsewhere on your tailnet, such as Grok Bot (xAI's agent: its cloud
+computer joins your tailnet through Tailscale's OAuth apps), `run --mcp-http`
+serves the same tools over HTTP on the node:
+
+```sh
+reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
+```
+
+`run` prints the URL, `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header
+to give the agent, `Authorization: Bearer <token>`. The token is kept in
+`mcp-token` in the state directory, the same at each start; delete it and start
+again to change it.
+
+- Grok Bot: Connect apps › Tailscale, then add a private MCP server by that URL,
+  with the header.
+- Claude Code on another computer:
+  `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <token>"`
+  (it keeps the header in `~/.claude.json`).
+- Who can call it: your own devices on the tailnet (the same user as reqcove's
+  node, neither tagged), with the token. A tagged device is refused (`run` logs
+  it once), so do not tag Grok Bot's device to restrict it.
+- What the agent reads goes to that agent's computer and its model provider:
+  for Grok Bot, xAI's cloud. Grok Bot keeps the token: to cut it off, delete
+  `mcp-token` and restart `run`, or remove its device from the tailnet.
+- Across restarts of `run` the agent goes on without reconnecting (its calls
+  fail while `run` is down); the records start empty, and an earlier cursor is
+  refused.
+- Plain HTTP: the tailnet already encrypts it (WireGuard).
+- In a container: the same flag, and no port to publish (the node is in the
+  container).
+
+Checked with tests (the token, the Host, another user's device refused over a
+real tailnet, a client going on across a restart). Not tried yet: Grok Bot,
+Claude Code from another computer, a container.
+
 ## The agent skill (`reqcove init`)
 
 > Not in v0.1.0: until the next release, build from source to use it.
@@ -77,6 +117,7 @@ were not tried.
 | `--local-proxy` | an HTTP proxy on `127.0.0.1:8082` for this computer's own apps, such as the iOS Simulator (see below; after v0.1.0) |
 | `--ui` | a read-only page of the flows on the iPhone itself, on the node's port 80 (see below; after v0.1.0) |
 | `--web` | run mitmweb instead, on `http://127.0.0.1:8081` (after v0.1.0, 8091-8099 while another run has 8081; [two addresses](several-exit-nodes.md#ports); no masking, can edit and replay; it shows bodies up to 2 MB each, after v0.1.0, and keeps the newest 10,000 flows and 256 MB of bodies); after v0.1.0 also on the node's port 8081 for your own devices on the tailnet, with the link and QR code `run` prints, the same at each start (`web-token` in the state directory); after a restart, open the link again (a bookmark without the token asks for it); tried from an iPhone on the exit node |
+| `--mcp-http` | the MCP tools over HTTP on the node's port 8090, for agents on your own devices on the tailnet, with a token ([how](#agents-on-other-devices---mcp-http); after v0.1.0) |
 | `--dns` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out, after v0.1.0); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before. After v0.1.0, one without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so ([several exit nodes](several-exit-nodes.md)). Write `--state ~/x` with a space (`--state=~/x` is refused) |

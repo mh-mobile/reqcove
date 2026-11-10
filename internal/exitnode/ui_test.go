@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -219,7 +220,7 @@ func TestOnlyViewers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		l := onlyViewers{ln, func() *policy { return c.p }, c.ownOnly}
+		l := onlyViewers{Listener: ln, policy: func() *policy { return c.p }, ownOnly: c.ownOnly}
 		accepted := make(chan bool, 1)
 		go func() {
 			conn, err := l.Accept()
@@ -397,5 +398,58 @@ func TestWebRelayDropsToken(t *testing.T) {
 	}
 	if w := ask("/flows"); w.Code != 200 || w.Body.String() != "mitmweb page" {
 		t.Errorf("another request: %d %q", w.Code, w.Body.String())
+	}
+}
+
+// TestSelfHost: MCP answers only when asked by the node's own name or address.
+func TestSelfHost(t *testing.T) {
+	p := &policy{self: []netip.Addr{netip.MustParseAddr("100.64.0.9")}, names: []string{"reqcove.tail-scale.ts.net", "reqcove"}}
+	h := selfHost{func() *policy { return p }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") })}
+	for host, want := range map[string]int{
+		"reqcove.tail-scale.ts.net:8090": 200, "REQCOVE.tail-scale.ts.net.:8090": 200, "100.64.0.9:8090": 200, "reqcove": 200,
+		"evil.example:8090": 421, "": 421, "127.0.0.1:8090": 421,
+	} {
+		r := httptest.NewRequest("POST", "/mcp", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("Host %q: %d, want %d", host, w.Code, want)
+		}
+	}
+}
+
+// TestRefusedTold: a refused connection is told, once the policy is known.
+func TestRefusedTold(t *testing.T) {
+	for _, known := range []bool{true, false} {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		told := make(chan net.Addr, 1)
+		pol := func() *policy {
+			if known {
+				return &policy{}
+			}
+			return nil
+		}
+		l := onlyViewers{Listener: ln, policy: pol, ownOnly: true, refused: func(a net.Addr) { told <- a }}
+		go l.Accept()
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-told:
+			if !known {
+				t.Error("told before the policy was known")
+			}
+		case <-time.After(2 * time.Second):
+			if known {
+				t.Error("a refused connection was not told")
+			}
+		}
+		c.Close()
+		ln.Close()
 	}
 }

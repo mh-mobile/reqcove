@@ -33,6 +33,9 @@ import (
 // another port of this computer (Config.Web).
 const WebPort = 8081
 
+// MCPPort is the node's port for the MCP tools over HTTP (--mcp-http), at /mcp.
+const MCPPort = 8090
+
 type Config struct {
 	Dir         string           // tsnet state
 	Hostname    string           // tailnet node name
@@ -49,6 +52,10 @@ type Config struct {
 	// Web, if set, is mitmweb's address on this computer (127.0.0.1:PORT): the
 	// node relays its own WebPort there, for this user's own devices only.
 	Web string
+	// MCP, if set, serves the MCP tools on the node's MCPPort, at /mcp, to
+	// this user's own devices only, asked by the node's name or address. It
+	// checks the caller's token itself.
+	MCP http.Handler
 	// LocalProxy, if set (listening on 127.0.0.1), serves an HTTP proxy for
 	// this computer's own apps (the iOS Simulator), recorded as the device Local.
 	// The caller listens, so a port taken stops run before anything changes.
@@ -213,7 +220,7 @@ func Run(ctx context.Context, cfg Config) error {
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}
-		go srv.Serve(onlyViewers{ln, current.Load, false})
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load})
 		defer srv.Close()
 	}
 	if cfg.Web != "" {
@@ -227,7 +234,31 @@ func Run(ctx context.Context, cfg Config) error {
 			IdleTimeout:       2 * time.Minute,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		}
-		go srv.Serve(onlyViewers{ln, current.Load, true})
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load, ownOnly: true})
+		defer srv.Close()
+	}
+	if cfg.MCP != nil {
+		ln, err := s.Listen("tcp", fmt.Sprintf(":%d", MCPPort))
+		if err != nil {
+			return fmt.Errorf("MCP over HTTP: %w", err)
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/mcp", selfHost{current.Load, cfg.MCP})
+		srv := &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      2 * time.Minute, // each call is one request and its answer
+			IdleTimeout:       2 * time.Minute,
+			ErrorLog:          log.New(io.Discard, "", 0),
+		}
+		var once sync.Map
+		go srv.Serve(onlyViewers{Listener: ln, policy: current.Load, ownOnly: true, refused: func(a net.Addr) {
+			if ap, err := netip.ParseAddrPort(a.String()); err == nil {
+				if _, seen := once.LoadOrStore(ap.Addr(), true); !seen {
+					log.Printf("--mcp-http: refused %v: only your own devices on the tailnet may call it (the same user as reqcove's node, neither tagged)", ap.Addr())
+				}
+			}
+		}})
 		defer srv.Close()
 	}
 	<-ctx.Done()

@@ -122,7 +122,7 @@ type StatusOut struct {
 // New returns an MCP server with the read-only tools over st; status, when
 // not nil, adds the status tool.
 func New(st *capture.Store, status func() StatusOut) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, &mcp.ServerOptions{Instructions: Instructions})
 	if status != nil {
 		mcp.AddTool(s, &mcp.Tool{Name: "status", Description: "Whether reqcove is ready to carry and record the devices' traffic: its tailnet node (login, Tailnet Lock, exit node approval, devices found), mitmproxy, and the next steps for the user when something is missing. Check it first when no flows arrive."},
 			func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatusOut, error) {
@@ -134,6 +134,9 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 			q, err := filter(in, time.Now())
 			if err != nil {
 				return nil, ListOut{}, err
+			}
+			if st.OldCursor(q.Before) {
+				return nil, ListOut{}, errOldCursor
 			}
 			flows, next := st.List(q)
 			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, SimilarHosts: similar(st, q, len(flows)), Note: passNote(st, q.Host)}, nil
@@ -148,6 +151,9 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 				return nil, ListOut{}, err
 			}
 			q.Query, q.QueryBodies = in.Query, in.Bodies
+			if st.OldCursor(q.Before) {
+				return nil, ListOut{}, errOldCursor
+			}
 			flows, next := st.List(q)
 			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, SimilarHosts: similar(st, q, len(flows)), Note: passNote(st, q.Host)}, nil
 		})
@@ -195,6 +201,8 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 		})
 	return s
 }
+
+var errOldCursor = fmt.Errorf("cursor: from before reqcove run restarted, and those flows are gone: list again without it")
 
 func filter(in ListIn, now time.Time) (capture.Filter, error) {
 	q := capture.Filter{Device: in.Device, Host: hostOf(in.Host), Status: in.Status, Method: in.Method, UserAgent: strings.ToLower(in.UserAgent), Before: in.Cursor, Limit: min(max(in.Limit, 0), 500)}

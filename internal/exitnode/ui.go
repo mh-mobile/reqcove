@@ -41,6 +41,22 @@ func (g uiGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.serve(w, r, dev.ID, all)
 }
 
+// selfHost passes on requests asked by the node's own name or address: a page
+// a device visits cannot rebind its name to the node.
+type selfHost struct {
+	policy func() *policy
+	next   http.Handler
+}
+
+func (g selfHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !g.policy().isSelf(r.Host) {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "reqcove: ask by the node's name or address", http.StatusMisdirectedRequest)
+		return
+	}
+	g.next.ServeHTTP(w, r)
+}
+
 // viewerAt is who at addr may see the page: one of this user's own devices
 // (all: every device's flows), or else a --device device (its own flows).
 func viewerAt(p *policy, addr string) (d Device, all, ok bool) {
@@ -61,6 +77,7 @@ type onlyViewers struct {
 	net.Listener
 	policy  func() *policy
 	ownOnly bool
+	refused func(net.Addr) // if set, told of each connection refused once the policy is known
 }
 
 func (l onlyViewers) Accept() (net.Conn, error) {
@@ -70,8 +87,12 @@ func (l onlyViewers) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		if ra := c.RemoteAddr(); ra != nil {
-			if _, all, ok := viewerAt(l.policy(), ra.String()); ok && (all || !l.ownOnly) {
+			p := l.policy()
+			if _, all, ok := viewerAt(p, ra.String()); ok && (all || !l.ownOnly) {
 				return c, nil
+			}
+			if p != nil && l.refused != nil {
+				l.refused(ra)
 			}
 		}
 		c.Close()

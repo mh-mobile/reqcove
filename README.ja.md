@@ -98,6 +98,7 @@ v0.1.0 のあとは、`reqcove run` をエージェントをつなぎ直さず�
 | `--local-proxy` | このコンピュータ自身のアプリ（iOS シミュレーターなど）も記録する。macOS では、`run` の間、システムの Web プロキシを Reqcove に向ける |
 | `--ui` | 記録を iPhone 自身で見るページ |
 | `--web` | 代わりに mitmweb を使う（マスクなし） |
+| `--mcp-http` | ツールを HTTP でも出す。ほかの端末のエージェント（Grok Bot）用 |
 | `--state DIR` | ノードの鍵と CA を置く場所。既定は `~/.reqcove` |
 
 すべてのオプションと、それぞれの詳しい説明は[ガイド](docs/guide.ja.md#オプション)にあります。
@@ -110,6 +111,7 @@ v0.1.0 のあとは、`reqcove run` をエージェントをつなぎ直さず�
 - [HAR ファイルに書き出す](docs/guide.ja.md#har-ファイルに書き出す)（`reqcove har`）
 - [上流のプロキシ](docs/guide.ja.md#上流のプロキシburp-suite-など)（Burp Suite など）
 - [証明書ピンニング](docs/guide.ja.md#証明書ピンニング)（`--pass-hosts`）
+- [ほかの端末のエージェント](docs/guide.ja.md#ほかの端末のエージェント--mcp-http)、Grok Bot など（`--mcp-http`）
 - [エージェント用の Skill](docs/guide.ja.md#エージェント用の-skillreqcove-init)（`reqcove init`）
 - [1 台で複数の Exit Node](docs/several-exit-nodes.ja.md)、[コンテナ](docs/container.ja.md)、[別の Mac をデバイスに](docs/another-mac.ja.md)
 

@@ -326,17 +326,24 @@ func TestReadyBlock(t *testing.T) {
 	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
 	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
 	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
-	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "/s", steps)
+	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps)
 	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in:\n%s", w, got)
 		}
 	}
-	if only := readyBlock(map[string]string{"local": "local"}, "", "", "/s", nil); strings.Contains(only, "mitm.it") {
+	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil); strings.Contains(only, "mitm.it") {
 		t.Errorf("the CA's link with the local proxy alone (the Simulator gets it by itself):\n%s", only)
 	}
 	if strings.Contains(got, "--web:") {
 		t.Errorf("mitmweb without --web:\n%s", got)
+	}
+	if strings.Contains(got, "--mcp-http") {
+		t.Errorf("MCP over HTTP without --mcp-http:\n%s", got)
+	}
+	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil)
+	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm /s/mcp-token") {
+		t.Errorf("the MCP line:\n%s", withMCP)
 	}
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
 		t.Errorf("the Mac step without the local proxy: %q", steps)

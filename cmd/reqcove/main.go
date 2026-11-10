@@ -181,6 +181,7 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", defaultPython, "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
+	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token run prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
@@ -259,6 +260,12 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *web && *proxyPort == exitnode.WebPort {
 		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
+	}
+	if *mcpHTTP && *proxyPort == exitnode.MCPPort {
+		return fmt.Errorf("--mcp-http uses the node's port %d: give --proxy-port another", exitnode.MCPPort)
+	}
+	if *mcpHTTP && *noRedact {
+		log.Print("WARN: --mcp-http with --no-redact: agents on your other devices (Grok Bot in xAI's cloud) read the records unmasked")
 	}
 	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
 		return fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
@@ -352,12 +359,12 @@ func run(ctx context.Context, args []string) error {
 	}
 	log.Printf("starting mitmproxy (%s) through uvx; the first run downloads it", *mitmSpec)
 	// The page's and mitmweb's tokens, kept across starts (tokens.go).
-	var uiToken, webToken string
+	var uiToken, webToken, mcpToken string
 	for _, t := range []struct {
 		on   bool
 		name string
 		to   *string
-	}{{*uiFlag, "ui-token", &uiToken}, {*web, "web-token", &webToken}} {
+	}{{*uiFlag, "ui-token", &uiToken}, {*web, "web-token", &webToken}, {*mcpHTTP, "mcp-token", &mcpToken}} {
 		if !t.on {
 			continue
 		}
@@ -435,9 +442,14 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
-	if err := mcpserver.Serve(ctx, mcpSock, mcpserver.New(cap.Store, func() mcpserver.StatusOut {
+	tools := mcpserver.New(cap.Store, func() mcpserver.StatusOut {
 		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
-	})); err != nil {
+	})
+	var mcpHandler http.Handler
+	if *mcpHTTP {
+		mcpHandler = mcpserver.HTTP(tools, mcpToken)
+	}
+	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
 	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s)", mcpSock, mcpHint(*state, hostname))
@@ -481,7 +493,15 @@ func run(ctx context.Context, args []string) error {
 		if webAddr != "" {
 			webLink = nodeWebLink(cap.WebURL, webAddr, ip)
 		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
+		var mcpURL string
+		if mcpHandler != nil {
+			host := strings.TrimSuffix(s.Node, ".") // the MagicDNS name, as Grok Bot asks for
+			if host == "" {
+				host = ip
+			}
+			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
+		}
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, mcpURL, mcpToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
@@ -528,6 +548,7 @@ func run(ctx context.Context, args []string) error {
 			Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
 			UI:         pageFn,
 			Web:        webAddr,
+			MCP:        mcpHandler,
 			LocalProxy: localLn,
 			StatusCmd:  withState("reqcove status", *state),
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
@@ -968,7 +989,7 @@ func firstIPv4(ips []string) string {
 
 // readyBlock is what run prints once the node is up: the devices, the links
 // and the next steps, numbered, in one place.
-func readyBlock(devices map[string]string, uiLink, webLink, state string, steps []string) string {
+func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n──────── reqcove is ready ────────\n")
 	var names []string
@@ -985,6 +1006,9 @@ func readyBlock(devices map[string]string, uiLink, webLink, state string, steps 
 	}
 	if webLink != "" {
 		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
+	}
+	if mcpURL != "" {
+		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, filepath.Join(state, "mcp-token"))
 	}
 	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on: QR code below; once per device)\n")

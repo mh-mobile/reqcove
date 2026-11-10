@@ -163,7 +163,9 @@ type Store struct {
 	addonOOS      int64             // the same, seen by the addon
 	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
-	seq           int64  // last Flow.seq handed out
+	seq           int64 // last Flow.seq handed out
+	started       time.Time
+	base          int64  // the first seq is base+1: base is started in unix ms, so a cursor of an earlier run is below it
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
@@ -250,7 +252,11 @@ const (
 
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
-	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, redact: true, state: "starting"}
+	now := time.Now()
+	// ponytail: a run recording over 1000 flows a second for its whole life could
+	// hand out seqs above the next run's base, and then its cursors look current.
+	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, redact: true, state: "starting",
+		started: now, base: now.UnixMilli(), seq: now.UnixMilli()}
 }
 
 func (s *Store) Apply(line []byte) {
@@ -504,6 +510,12 @@ func (q Filter) match(f *Flow, name string) bool {
 	return true
 }
 
+// OldCursor says whether cursor came from an earlier run of reqcove, whose
+// flows are gone.
+func (s *Store) OldCursor(cursor int64) bool {
+	return cursor != 0 && cursor <= s.base // base never changes
+}
+
 // List returns the newest matching flows first, and a cursor for the next
 // (older) page, 0 when there is none.
 func (s *Store) List(q Filter) ([]Summary, int64) {
@@ -737,7 +749,7 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 	defer s.mu.Unlock()
 	f := s.flows[id]
 	if f == nil {
-		return FlowView{}, fmt.Errorf("no flow %q", id)
+		return FlowView{}, fmt.Errorf("no flow %q (evicted, or from before reqcove run restarted)", id)
 	}
 	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
 	if bodies {
@@ -819,6 +831,7 @@ func (s *Store) Stats() map[string]any {
 		"oldest_flow": oldest, "newest_flow": newest, "max_flows": s.maxFlows, "max_bytes": s.maxBytes,
 		"flows_with_truncated_bodies": truncated,
 		"state":                       s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
+		"started":              s.started.Format("2006-01-02T15:04:05.000Z07:00"),
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,

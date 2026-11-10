@@ -229,3 +229,11 @@ func TestUIPortClash(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+// MCP over HTTP and the Remote Proxy cannot share the node's port.
+func TestMCPPortClash(t *testing.T) {
+	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--mcp-http", "--proxy-port", "8090", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
+	if err == nil || !strings.Contains(err.Error(), "--mcp-http uses the node's port 8090") {
+		t.Errorf("got %v", err)
+	}
+}

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `run --mcp-http`: the MCP tools over HTTP on the node's port 8090, for agents
+  on your own devices on the tailnet (Grok Bot, through Tailscale's OAuth apps),
+  with a token `run` prints. Stateless: agents go on across restarts of `run`.
+- The MCP server gives clients short instructions (the skill's rules), for
+  agents without the skill. `capture_stats` has `started`, and a cursor from
+  before a restart of `run` is refused instead of paging the new records.
 - The README is shorter: what Reqcove does and how to start. Every option and
   the details (rules, `--ui`, the Simulator, HAR, an upstream proxy, pinning,
   the skill, more limits) moved to `docs/guide.md` (and `guide.ja.md`).

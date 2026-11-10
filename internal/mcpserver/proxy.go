@@ -28,7 +28,7 @@ func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error 
 	}
 	p := &proxy{sock: sock, notRunning: notRunning, ctx: ctx, client: mcp.NewClient(&mcp.Implementation{Name: "reqcove-mcp", Version: Version}, nil)}
 	defer p.close()
-	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, &mcp.ServerOptions{Instructions: Instructions})
 	for _, tool := range tools {
 		// This process outlives `run`s of other versions: their answers are not
 		// checked against this one's output schemas.

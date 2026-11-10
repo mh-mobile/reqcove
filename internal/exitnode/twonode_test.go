@@ -86,6 +86,7 @@ func TestTwoNodes(t *testing.T) {
 			UI: func(w http.ResponseWriter, r *http.Request, id string, all bool) {
 				fmt.Fprint(w, "page for "+id, " all=", all)
 			},
+			MCP:        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "mcp") }),
 			LocalProxy: localProxy, StatusCmd: "reqcove status --state /s",
 			OnDevices: func(m map[string]string) { matched <- m },
 		})
@@ -193,6 +194,16 @@ func TestTwoNodes(t *testing.T) {
 	}
 	if got, err := pageVia(outsider); err == nil {
 		t.Errorf("outsider got the page: %q", got)
+	}
+	// MCP on the node's MCPPort: your own devices only, so not the --device
+	// phone of another user (testcontrol's), nor the outsider.
+	for name, n := range map[string]*tsnet.Server{"phone": phone, "outsider": outsider} {
+		hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: n.Dial}}
+		if r, err := hc.Post(fmt.Sprintf("http://%v:%d/mcp", rcIP, MCPPort), "application/json", strings.NewReader("{}")); err == nil {
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			t.Errorf("%s reached MCP: %d %q", name, r.StatusCode, b)
+		}
 	}
 
 	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.

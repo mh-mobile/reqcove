@@ -123,6 +123,7 @@ In full: [the guide](docs/guide.md#mcp-tools).
 | `--local-proxy` | record this computer's own apps too, such as the iOS Simulator; on macOS it points the system's web proxies at Reqcove while `run` runs |
 | `--ui` | a page of the flows on the iPhone itself |
 | `--web` | mitmweb instead (no masking) |
+| `--mcp-http` | the tools over HTTP too, for agents on your other devices (Grok Bot) |
 | `--state DIR` | where the node key and the CA live, `~/.reqcove` by default |
 
 All of them, and what each does in full: [the guide](docs/guide.md#options).
@@ -135,6 +136,7 @@ All of them, and what each does in full: [the guide](docs/guide.md#options).
 - [A HAR file](docs/guide.md#a-har-file) (`reqcove har`)
 - [An upstream proxy](docs/guide.md#an-upstream-proxy-burp-suite-and-others) (Burp Suite and others)
 - [Certificate pinning](docs/guide.md#certificate-pinning) (`--pass-hosts`)
+- [Agents on other devices](docs/guide.md#agents-on-other-devices---mcp-http), such as Grok Bot (`--mcp-http`)
 - [The agent skill](docs/guide.md#the-agent-skill-reqcove-init) (`reqcove init`)
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 

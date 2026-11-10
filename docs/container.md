@@ -65,6 +65,11 @@ tools' answers out of Docker's logs.
 
 `docker exec $NAME reqcove status` works as on the host (`har` should too; not tried).
 
+An agent on another device of yours (Grok Bot): add `--mcp-http` to `run`.
+The node is in the container, so no port is published; the URL and the token
+are in `docker logs` ([how](guide.md#agents-on-other-devices---mcp-http); not
+tried in a container yet).
+
 ## What is different in a container
 
 - `--local-proxy`, the Simulator, and trusting the CA on this computer: not in a
