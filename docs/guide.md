@@ -186,9 +186,9 @@ It writes a HAR 1.2 file, oldest first: the newest 1000 flows by default
 - The file gets your shell's file mode, often readable by other users
   ([SECURITY](SECURITY.md#what-is-recorded)).
 
-Not tried: opening it in other tools (browsers' developer tools, Charles,
-Proxyman). From reading the spec, no validator run: HAR 1.2's required fields
-are there.
+Tried: imported into Chrome's developer tools (Network), with the requests,
+their headers (masked) and responses. Not tried: Charles, Proxyman. From
+reading the spec, no validator run: HAR 1.2's required fields are there.
 
 ### In mitmweb (`--web`)
 
@@ -226,7 +226,7 @@ Reqcove's CA. Who trusts it differs:
 | Android: Chrome | as on the iPhone | an Android 14 device |
 | Android: other apps | nothing: they trust only the system's CAs; your own app can opt in ([how](#android)) | the same, and a sample app |
 | a web app in production | what the device and the server exchange (pages, the API its front end calls), not what the server sends on | an iPhone |
-| a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | Ruby's Net::HTTP |
+| a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | a Rails app (Net::HTTP, Faraday) |
 | this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
 | another Mac | as a `--device` on the exit node ([how](#another-mac)) | not tried |
 
@@ -355,10 +355,10 @@ http_proxy=http://100.x.y.z:8080 https_proxy=http://100.x.y.z:8080 SSL_CERT_FILE
   `map_remote` sends an allowed host's requests to a development server
   ([Rules](#rules---rules)).
 
-Tried: Ruby's Net::HTTP, this Mac as the device (without the CA, Ruby refused
-the certificate and a TLS failure was recorded; with it, the call was). Not
-tried: a Rails app itself, Faraday and other clients, a server on another
-machine.
+Tried: a Rails 8 app on this Mac as the device, calling an API with Net::HTTP
+and with Faraday (without the CA, Ruby refused the certificate and a TLS
+failure was recorded; with it, both calls were). Not tried: other clients, a
+server on another machine.
 
 ### Without the exit node: the Wi-Fi proxy
 
