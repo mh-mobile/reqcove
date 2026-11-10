@@ -351,7 +351,27 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 - Pinning checked after the TLS handshake shows nowhere.
 - For your own app, use a build without pinning.
 - On iOS, apps built with Flutter (`dart:io`) and React Native trusted
-  Reqcove's CA as other apps do (tried on an iPhone). Android was not tried.
+  Reqcove's CA as other apps do (tried on an iPhone).
+- On Android, apps trust only the system's CAs, not one you install: with
+  the CA installed, Chrome was decrypted and every other app refused it (tried
+  on an Android 14 device). `reqcove status` says so for Android devices (from
+  the OS Tailscale reports). Keep `--allow-hosts` to the hosts you test: the
+  others pass undecrypted and their apps work. For your own app, let a debug
+  build trust user CAs in its `network_security_config`; a sample app was
+  decrypted for the host it named and refused the CA for another:
+
+  ```xml
+  <network-security-config>
+    <debug-overrides>
+      <trust-anchors>
+        <certificates src="user" />
+      </trust-anchors>
+    </debug-overrides>
+  </network-security-config>
+  ```
+
+  (The sample named its host in a `domain-config`; `debug-overrides`, for
+  debug builds only, was not tried.)
 
 ## More limits
 

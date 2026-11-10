@@ -177,7 +177,20 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 - `--rules` と `--upstream-proxy` は効きません。
 - TLS が終わってから確かめるピンニングは、どこにも出ません。
 - 自分のアプリなら、ピンニングを外したビルドを使ってください。
-- iOS では、Flutter（`dart:io`）や React Native で作られたアプリも、ほかのアプリと同じく Reqcove の CA を信頼しました（iPhone で試しました）。Android は試していません。
+- iOS では、Flutter（`dart:io`）や React Native で作られたアプリも、ほかのアプリと同じく Reqcove の CA を信頼しました（iPhone で試しました）。
+- Android では、アプリはシステムの CA しか信頼せず、自分で入れた CA は信頼しません。CA を入れたあと、Chrome は復号でき、ほかのアプリはすべて拒みました（Android 14 の端末で試しました）。Android の端末なら、`reqcove status` がそう案内します（Tailscale が知らせる OS から判断）。`--allow-hosts` は調べたいホストに絞ってください。それ以外のホストは復号せずに通すので、アプリは動きます。自分のアプリなら、デバッグ用のビルドで、`network_security_config` に自分で入れた CA を信頼すると書きます。サンプルのアプリで、書いたホストは復号でき、書いていないホストは CA を拒むことを確かめました。
+
+  ```xml
+  <network-security-config>
+    <debug-overrides>
+      <trust-anchors>
+        <certificates src="user" />
+      </trust-anchors>
+    </debug-overrides>
+  </network-security-config>
+  ```
+
+  （サンプルはホストを `domain-config` で指定しました。デバッグ用のビルドだけに効く `debug-overrides` の形は試していません。）
 
 
 ## そのほかの制限事項

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `reqcove status` knows Android devices (the OS Tailscale reports): their apps
+  trust only the system's CAs, so it says to check the CA in Chrome and to keep
+  `--allow-hosts` to the hosts under test, instead of asking to install a CA
+  that is installed.
 - Names with `sign` as a whole word (`sign`, `X-Sign`) are masked: an app's
   request-signing header was seen unmasked. `design` and `signup` are not.
 - In the container image, `run`'s log names the `docker run -i … reqcove mcp`
