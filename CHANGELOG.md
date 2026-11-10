@@ -51,6 +51,10 @@
   the agents' connections to it close at once.
 - Names containing `ticket` (a WebSocket's `wsTicket`, seen unmasked) or
   `dpop` are secrets too; `ticket_id` and `ticketNumber` are not.
+- A body's `"key"` holding a dotted lowercase name (OpenTelemetry's
+  `{"key": "service.name", …}`) is no longer masked: the attributes' names
+  were lost (seen by Claude Code reading an app's traces). Mixed case, no
+  dots, JWTs, and `key=` in URLs are still masked.
 - `list_flows`, `search_flows`, `summarize` (and `reqcove har --user-agent`)
   filter by text in the User-Agent, case-insensitive: one app's traffic, as
   summarize lists the User-Agents. A host filter that matches no flow answers

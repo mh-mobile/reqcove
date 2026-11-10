@@ -71,7 +71,11 @@ So "delete the directory" above means each of them.
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word
   (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id` and
-  `ticketNumber` are not secrets.
+  `ticketNumber` are not secrets, nor (after v0.1.0) a body's `"key"` whose
+  value is a dotted lowercase name, as OpenTelemetry writes attributes
+  (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
+  or has no dots; JWTs and the other shapes below are masked whatever the field;
+  `key=` in a URL stays a secret.
   Cookie values are masked (names stay), and query parameters wherever a URL
   appears (any header, such as `Referer`, `Location` or `Link`; fragments such
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error

@@ -84,6 +84,9 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		valEnd, valClosed := jsonStringEnd(s, j)
+		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd]) {
+			secret = false
+		}
 		switch {
 		case secret:
 			b.WriteString(s[last : j+1])
@@ -120,6 +123,18 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		b.WriteString(s[last:])
 	}
 	return b.String()
+}
+
+// dottedName is an attribute's name as OpenTelemetry and the like write them:
+// lowercase words with dots (service.name, http.request.method).
+var dottedName = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$`)
+
+// attributeName says a "key" field holds an attribute's name, not a key:
+// {"key": "service.name", "value": …} in an OTLP body. A key is mixed case, or
+// has no dots; and the shapes maskTokens knows (JWTs and others) are masked
+// after this, whatever the field.
+func attributeName(name, value string) bool {
+	return strings.EqualFold(name, "key") && len(value) <= 64 && dottedName.MatchString(value)
 }
 
 // maskInJSONString masks a JSON string literal whose text is JSON itself.
