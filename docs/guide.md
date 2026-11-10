@@ -350,6 +350,8 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 - They skip `--rules` and `--upstream-proxy`.
 - Pinning checked after the TLS handshake shows nowhere.
 - For your own app, use a build without pinning.
+- On iOS, apps built with Flutter (`dart:io`) and React Native trusted
+  Reqcove's CA as other apps do (tried on an iPhone). Android was not tried.
 
 ## More limits
 
