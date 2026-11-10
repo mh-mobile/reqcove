@@ -28,10 +28,8 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.1). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.2). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
-> Some of what follows is newer than v0.1.0 ([CHANGELOG](CHANGELOG.md)): until
-> the next release, build from source for it.
 
 ## What you need
 

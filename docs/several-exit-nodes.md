@@ -4,7 +4,7 @@
 
 One computer can run several Reqcove exit nodes at once, each with its own
 settings (`--allow-hosts`, `--rules`, `--ui`, …), and the iPhone picks one in
-the Tailscale app. One `reqcove run` per state directory. After v0.1.0. Not
+the Tailscale app. One `reqcove run` per state directory. Not
 tried yet with an iPhone switching between them: what is below comes from the
 tests (the names, the ports, the CA) and from how the exit node works.
 

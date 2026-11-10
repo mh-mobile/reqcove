@@ -5,11 +5,6 @@
 What comes after the README's four steps. Each section ends with what was
 tried and what was not.
 
-> This guide describes `main`. Newer than v0.1.0: `reqcove init`, `reqcove har`,
-> `--pass-hosts`, `--rules-reload`, `--upstream-proxy`, `--local-proxy`, `--ui`,
-> `--mcp-http` and more ([CHANGELOG](../CHANGELOG.md)). Until the next release,
-> build from source for these.
-
 1. [Set up](#set-up)
 2. [Read the traffic with an agent](#read-the-traffic-with-an-agent)
 3. [Look at the flows yourself](#look-at-the-flows-yourself)

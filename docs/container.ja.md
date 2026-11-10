@@ -2,7 +2,7 @@
 
 [English](container.md)
 
-Reqcove は、コンテナでも動きます（Docker。Podman でも同じコマンドで動くはずです）。uv、Python、mitmproxy、CA の秘密鍵はコンテナの中に閉じ、コンテナと volume を消せば片付きます。環境ごとにコンテナを 1 つ起動すれば、1 台のマシンで、それぞれ閉じた Exit Node をいくつも動かせます。v0.1.0 のあとに追加しました。
+Reqcove は、コンテナでも動きます（Docker。Podman でも同じコマンドで動くはずです）。uv、Python、mitmproxy、CA の秘密鍵はコンテナの中に閉じ、コンテナと volume を消せば片付きます。環境ごとにコンテナを 1 つ起動すれば、1 台のマシンで、それぞれ閉じた Exit Node をいくつも動かせます。
 
 向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac をスリープさせないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 

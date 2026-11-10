@@ -2,9 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes `main`:
-`--upstream-proxy`, `--ui`, and the 502 for a request a rule fails on are not in
-v0.1.0.
+come from reading code rather than from a test say so. It describes v0.2.
 
 ## Trust
 
@@ -20,7 +18,7 @@ v0.1.0.
 
 ## In a container
 
-After v0.1.0 (docs/container.md). mitmproxy, which opens what sites send, runs
+(docs/container.md) mitmproxy, which opens what sites send, runs
 in the container: a flaw there reaches the container (the records, the CA's key
 in its volume), not the rest of the user's files. The image has no shell or
 package manager and runs as a user of its own, not root. In exchange, whoever
@@ -40,7 +38,7 @@ directory to yourself; when you stop using Reqcove, remove the profile from the
 iPhone first, then delete the directory (`reqcove cleanup` lists the steps).
 Copying the directory to another computer copies the key.
 
-After v0.1.0, a `--state` directory without a CA gets a copy of `~/.reqcove`'s
+A `--state` directory without a CA gets a copy of `~/.reqcove`'s
 at start (several exit nodes on one computer, one profile on the iPhone):
 `mitmproxy-ca.pem` with the key, and the certificate files; not
 `mitmproxy-ca.p12`, nor mitmweb's password. `run` logs where it copied it, and
@@ -63,7 +61,7 @@ So "delete the directory" above means each of them.
   `--upstream-proxy`. Requests and TLS failures outside the list are counted,
   never recorded.
 - Connections to Apple's hosts always pass through undecrypted.
-- After v0.1.0, `--pass-hosts` hosts (allowed hosts whose apps refuse
+- `--pass-hosts` hosts (allowed hosts whose apps refuse
   Reqcove's certificate) pass through undecrypted too, and only their
   connections are recorded: the host the client named (its SNI), the server's
   address, start and end, bytes each way, the protocols offered. Nothing inside
@@ -87,14 +85,14 @@ So "delete the directory" above means each of them.
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,
   jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket
-  (after v0.1.0; a WebSocket's `wsTicket` was seen unmasked) or dpop, even run
+  (a WebSocket's `wsTicket` was seen unmasked) or dpop, even run
   together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, sign
-  (after v0.1.0; an app's request-signing header `sign` was seen unmasked), pwd,
+  (an app's request-signing header `sign` was seen unmasked), pwd,
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word
   (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id` and
-  `ticketNumber` are not secrets, nor (after v0.1.0) a body's `"key"` whose
+  `ticketNumber` are not secrets, nor a body's `"key"` whose
   value is a dotted lowercase name, as OpenTelemetry writes attributes
   (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
   or has no dots; JWTs and the other shapes below are masked whatever the field;
@@ -135,7 +133,7 @@ So "delete the directory" above means each of them.
   URLs and other text together; a site's reason text, `Content-Encoding` and
   error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
   when `reqcove run` stops; reqcove writes no flow to disk itself. `reqcove har >
-  FILE` (after v0.1.0) writes them where you send it, masked as the tools return
+  FILE` writes them where you send it, masked as the tools return
   them, with your shell's file mode (often readable by other users; the state
   directory is 0700). `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
@@ -162,7 +160,7 @@ yours, from a file, at start.)
 ## Rules (`--rules`)
 
 Rules are yours, read from a file when mitmproxy starts; no tool changes them.
-With `run --rules-reload` (after v0.1.0) the file is also read again whenever it
+With `run --rules-reload` the file is also read again whenever it
 changes, so whatever can write it (any process as your user, an agent with file
 access included) can then change where the devices' requests go while `run`
 runs; without it, the file is read only when mitmproxy starts (with `run`, or
@@ -268,7 +266,7 @@ Safari's history keeps the first URL is not checked. `run` prints the links with
 the tokens on its standard error: in the terminal's scrollback, and in a file if
 you send it there, they stay valid until the token files are deleted. mitmweb's
 cookie does not outlast its restart (it signs it with a key made at each start,
-from reading its code), so after one the link is needed again. After v0.1.0, the node also relays
+from reading its code), so after one the link is needed again. The node also relays
 its port 8081 to it for your own devices on the tailnet (the same user, untagged:
 not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).
@@ -280,7 +278,7 @@ node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
 open stays open if the device stops counting as yours. Tried from an iPhone on
 the exit node. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
-options. It shows bodies up to 2 MB each (after v0.1.0; Reqcove gives it them,
+options. It shows bodies up to 2 MB each (Reqcove gives it them,
 as mitmproxy keeps no body it streams), whole and unmasked, and keeps the newest
 10,000 flows and 256 MB of bodies. It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
@@ -296,7 +294,7 @@ device names and its refusals of this computer and the LAN.
 
 ## MCP over HTTP (`--mcp-http`)
 
-After v0.1.0. The node serves the MCP tools on its port 8090, at `/mcp`, to your
+The node serves the MCP tools on its port 8090, at `/mcp`, to your
 own devices on the tailnet only (the same user as reqcove's node, neither
 tagged: checked when a connection opens), asked by the node's name or address in
 `Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
@@ -317,7 +315,7 @@ Grok Bot.
 
 ## The local proxy (`--local-proxy`)
 
-After v0.1.0. An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
+An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
 iOS Simulator), with no password: any process on this computer, of any user, can
 use it, and what it sends to `--allow-hosts` hosts is recorded as the device
 `local`. Its apps reach the LAN, VPNs and the tailnet as they would without it,

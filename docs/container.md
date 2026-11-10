@@ -5,7 +5,7 @@
 Reqcove runs in a container too (Docker; Podman should take the same
 commands): uv, Python, mitmproxy and the CA's private key stay inside it, and
 removing the container and its volume cleans up. One container per environment
-gives several exit nodes on one machine, each closed in. After v0.1.0.
+gives several exit nodes on one machine, each closed in.
 
 Best on Linux. On macOS the container runs in a VM (Docker Desktop, OrbStack,
 colima): the Simulator and `--local-proxy` are not there, and the Mac must stay

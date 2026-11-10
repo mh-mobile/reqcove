@@ -2,7 +2,7 @@
 
 [English](several-exit-nodes.md)
 
-1 台のコンピュータで、Reqcove の Exit Node をいくつも同時に動かせます。それぞれに別の設定（`--allow-hosts`、`--rules`、`--ui` など）を持たせ、iPhone の Tailscale アプリで切り替えます。状態のフォルダ 1 つにつき、`reqcove run` を 1 つ動かします。v0.1.0 のあとに追加しました。iPhone で切り替えて使うところは、まだ試していません。以下は、テスト（名前、ポート、CA）と、Exit Node の仕組みから考えたことです。
+1 台のコンピュータで、Reqcove の Exit Node をいくつも同時に動かせます。それぞれに別の設定（`--allow-hosts`、`--rules`、`--ui` など）を持たせ、iPhone の Tailscale アプリで切り替えます。状態のフォルダ 1 つにつき、`reqcove run` を 1 つ動かします。iPhone で切り替えて使うところは、まだ試していません。以下は、テスト（名前、ポート、CA）と、Exit Node の仕組みから考えたことです。
 
 ## 1. それぞれ別の `--state` で起動する
 
