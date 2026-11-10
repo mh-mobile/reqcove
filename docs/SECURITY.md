@@ -55,12 +55,14 @@ So "delete the directory" above means each of them.
 
 ## What is recorded
 
-- Only requests to hosts in `--allow-hosts` (and not in `--pass-hosts`) are decrypted and recorded. Two checks
-  enforce it: mitmproxy passes other connections through undecrypted, and each
-  request's Host is checked again (a connection to an allowed host can carry
-  requests to others, as with HTTP/2 connection reuse). Requests and TLS failures
-  outside the list are counted, never recorded.
-- Apple's hosts always pass through undecrypted.
+- Only requests to hosts in `--allow-hosts` (and not in `--pass-hosts`) are
+  recorded. Two checks enforce it: mitmproxy passes other connections through
+  undecrypted, and each request's Host is checked again. A connection to an
+  allowed host can carry requests to others (HTTP/2 connection reuse): those are
+  decrypted with it, not recorded, but shown by `--web` and possibly sent on to
+  `--upstream-proxy`. Requests and TLS failures outside the list are counted,
+  never recorded.
+- Connections to Apple's hosts always pass through undecrypted.
 - After v0.1.0, `--pass-hosts` hosts (allowed hosts whose apps refuse
   Reqcove's certificate) pass through undecrypted too, and only their
   connections are recorded: the host the client named (its SNI), the server's

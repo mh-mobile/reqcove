@@ -415,7 +415,10 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_local` answers only requests whose body is at most 1 MiB and of known
   length; others go on to the real destination (the record says so). An HTTP/2
   GET without a length is answered too, and a body sent with it anyway is held
-  whole; only your own devices send these.
+  whole in memory. Any app or page on a `--device` device (or, with
+  `--local-proxy`, on this computer) can send one to a host a rule matches: a
+  very large body can run mitmproxy out of memory (reqcove restarts it), and the
+  devices' traffic stalls meanwhile.
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 

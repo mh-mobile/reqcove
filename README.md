@@ -104,7 +104,7 @@ updating are in [the guide](docs/guide.md#stop-restart-update).
 | | |
 |---|---|
 | `--device NAME` | a device to carry (as in `tailscale status`); repeat for more |
-| `--allow-hosts` | hosts to decrypt and record: `api.example.com`, `*.example.com`, `'*'` for all, `@FILE` |
+| `--allow-hosts` | hosts whose requests are recorded (their connections decrypted): `api.example.com`, `*.example.com`, `'*'` for all, `@FILE` |
 | `--pass-hosts` | allowed hosts to carry undecrypted, for apps that pin certificates |
 | `--rules FILE` | rewrite where allowed hosts' requests go (`map_remote`, `map_local`, …) |
 | `--state DIR` | where the node key and the CA live, `~/.reqcove` by default |
@@ -124,7 +124,8 @@ All of them: [the guide](docs/guide.md#options).
 - Only requests to the hosts in `--allow-hosts` are recorded. A request to
   another host that rides on an allowed host's connection (HTTP/2 connection
   reuse) is decrypted too, and is not recorded, but `--web` shows it and
-  `--upstream-proxy` forwards it. Apple's hosts always pass undecrypted.
+  `--upstream-proxy` may receive it. Connections to Apple's hosts always pass
+  undecrypted.
 - The secrets Reqcove recognises (tokens, keys, cookies, passwords) are masked
   as they arrive. **Other
   secrets in a body, under names that do not say so, are not found**, and
