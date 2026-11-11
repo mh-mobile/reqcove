@@ -173,7 +173,7 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	})
 	// Checked after parsing, by number: the flag package would print a value it refused, and a pattern may be a secret.
-	fs.Func("mask-values", "a pattern (RE2) whose matches are masked wherever they appear, such as 'key=[A-Za-z0-9]{16,}'; repeat it, or @FILE (one a line): a file keeps a literal secret out of ps", func(v string) error {
+	fs.Func("mask-values", "a pattern (RE2) whose matches are masked wherever they appear, such as 'key=[A-Za-z0-9]{16,}'; repeat it, or @FILE (one a line): a file keeps a literal secret out of ps (write one as \\Q…\\E, so + / . in it match themselves)", func(v string) error {
 		maskValueSpecs = append(maskValueSpecs, v)
 		return nil
 	})
@@ -257,6 +257,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *noRedact {
 		log.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
+	}
+	if *mitmSpec == capture.LockedMitmSpec && pythonBelow(*python, 3, 14) {
+		return fmt.Errorf("--python %s: the locked mitmproxy needs Python 3.14 or later; with an older one, give --mitmproxy-spec too (fetched through uvx, no lock)", *python)
 	}
 	maskNames, maskValues, err := maskPolicy(maskNameSpecs, maskValueSpecs)
 	if err != nil {

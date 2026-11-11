@@ -93,9 +93,9 @@ through a `replace` directive.
    ten minutes?"
 
 The agent reads the records through MCP tools such as `summarize`, `list_flows`,
-`search_flows` and `get_flow`, and after acting on the phone (with RoamRun,
-say), `wait_for_flows` waits for what it sent
-([all of them](docs/guide.md#mcp-tools)).
+`search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)). After
+it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
+requests that action sent.
 `reqcove cleanup` lists how to undo everything; stopping, restarting and
 updating are in [the guide](docs/guide.md#stop-restart-update).
 

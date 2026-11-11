@@ -60,9 +60,9 @@ type callerKey struct{}
 
 // Calls over HTTP, per device (its address): a runaway agent on one of your
 // devices must not keep run busy for the others. A wait_for_flows is one call.
-const (
-	callRate  = 10 // a second, on average
-	callBurst = 30
+var ( // vars for tests only: a slow CI machine must still hit the limit
+	callRate  rate.Limit = 10 // a second, on average
+	callBurst            = 30
 )
 
 type callLimit struct {
@@ -94,7 +94,7 @@ func (l *callLimits) allow(remote, caller string) bool {
 	}
 	if time.Since(c.logged) > time.Minute {
 		c.logged = time.Now()
-		log.Printf("--mcp-http: %s calls more than %d times a second: refused for now", caller, callRate)
+		log.Printf("--mcp-http: %s calls more than %v times a second: refused for now", caller, callRate)
 	}
 	return false
 }

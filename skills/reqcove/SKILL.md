@@ -84,13 +84,16 @@ again once they have started it. Do not start it yourself.
 6. What an action sends (a tap through RoamRun, or the user using the app):
    before acting, take `checkpoint` from `list_flows` (`limit: 1`); act; then
    `wait_for_flows` with `after: checkpoint` and the host or device. It
-   returns the flows answered since, oldest first; call it again with its
-   `after` for more. `timed_out` is not "nothing was sent": the host may not
+   returns the flows answered since, oldest first, as soon as one is answered
+   (a browser's prefetch can come first): call it again with its `after`
+   until `timed_out`. `evicted: true`: flows were dropped unread; list again.
+   Take `checkpoint` from `list_flows` or `capture_stats`. `timed_out` is not "nothing was sent": the host may not
    be in `allow_hosts`, the request may still be on its way, or it went over
    an open WebSocket (its messages are not recorded).
-7. Why one request worked and another failed: `diff_flows` with both ids.
-   A field under `masked` reads the same on both sides but holds masked
-   values: do not say they are equal.
+7. Why one request worked and another failed: `diff_flows` with both ids
+   (`a`, `b`). A field under `masked` reads the same on both sides but holds
+   masked values: do not say they are equal. A body's `heads_same` (cut: only
+   the kept heads match) or `not_compared` is not "same".
 
 ## 3. When flows are missing
 

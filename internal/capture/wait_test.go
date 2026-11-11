@@ -140,3 +140,42 @@ func TestWaitEvicted(t *testing.T) {
 		t.Error("a gap reported after the eviction was passed")
 	}
 }
+
+// TestWaitEvictedOpen: a flow still open when evicted, answered later, is
+// reported as a possible gap (its answer would have come after the cursor).
+func TestWaitEvictedOpen(t *testing.T) {
+	s := NewStore(2, 1<<20)
+	ev(s, "request", "a", "")
+	cp := s.Checkpoint()
+	for _, id := range []string{"b", "c"} {
+		ev(s, "request", id, "")
+	}
+	ev(s, "response", "a", `,"status":200`) // a was evicted: an orphan update now
+	if r := waitNow(s, Filter{}, cp); !r.Evicted {
+		t.Errorf("an open flow evicted after the cursor: evicted %v", r.Evicted)
+	}
+}
+
+// TestWaitWokenByEviction: a waiter hears of an open flow evicted at once,
+// not at its timeout.
+func TestWaitWokenByEviction(t *testing.T) {
+	s := NewStore(1, 1<<20)
+	ev(s, "request", "a", "")
+	cp := s.Checkpoint()
+	got := make(chan WaitResult, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		got <- s.Wait(ctx, Filter{}, cp)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	ev(s, "request", "b", "") // evicts a, still open
+	select {
+	case r := <-got:
+		if !r.Evicted {
+			t.Errorf("woken without the gap: %+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("not woken by the eviction")
+	}
+}

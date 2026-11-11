@@ -27,7 +27,7 @@ jobs:
         run: test -z "$(gofmt -l cmd internal skills)"
       - run: go vet ./...
       - run: go test -race ./...
-      # Every test gated on REQCOVE_E2E, with real mitmproxy through uvx. The
+      # Every test gated on REQCOVE_E2E, with real mitmproxy from its lock. The
       # memory trial (REQCOVE_TRIAL2) and the soak (REQCOVE_SOAK) stay local:
       # their budgets depend on the machine.
       - name: end to end with mitmproxy

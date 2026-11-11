@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -94,13 +95,14 @@ func (d *differ) masked(v string) bool {
 
 // value compares two texts: equal and masked goes under Masked, never as
 // equal; one side empty is left out of that side.
-func (d *differ) value(field, a, b string) {
+func (d *differ) value(field, a, b string) (differs, masked bool) {
 	field = cut(field) // JSON keys are the site's: one can be a page long
 	if a == b {
 		if d.masked(a) {
 			d.out.Masked = append(d.out.Masked, field)
+			return false, true
 		}
-		return
+		return false, false
 	}
 	x := Diff{Field: field}
 	if a != "" {
@@ -110,6 +112,7 @@ func (d *differ) value(field, a, b string) {
 		x.B = cut(b)
 	}
 	d.add(x)
+	return true, false
 }
 
 func cut(v string) string { return cutTo(v, maxDiffText) }
@@ -170,7 +173,7 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 	// JSON on both sides, whole: compared by path.
 	if !cutHead {
 		var ja, jb any
-		if json.Unmarshal(a.Head, &ja) == nil && json.Unmarshal(b.Head, &jb) == nil {
+		if decodeJSON(a.Head, &ja) == nil && decodeJSON(b.Head, &jb) == nil {
 			pa, pb := map[string]string{}, map[string]string{}
 			flatten("$", ja, pa)
 			flatten("$", jb, pb)
@@ -184,15 +187,17 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 				}
 			}
 			sort.Strings(paths)
-			n := len(d.out.Differences)
-			masked := len(d.out.Masked)
+			// This body's own outcome, whatever the headers before it used of
+			// the differences listed.
+			var differs, masked bool
 			for _, p := range paths {
-				d.value(prefix+p, pa[p], pb[p])
+				dd, mm := d.value(prefix+p, pa[p], pb[p])
+				differs, masked = differs || dd, masked || mm
 			}
 			switch {
-			case len(d.out.Differences) > n || d.out.Truncated:
+			case differs:
 				r.Result = "differs"
-			case len(d.out.Masked) > masked:
+			case masked:
 				r.Result = "masked"
 			default:
 				r.Result = "same"
@@ -217,6 +222,20 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 }
 
 var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// decodeJSON is json.Unmarshal keeping numbers as written: as float64, IDs
+// past 2^53 that differ would read the same.
+func decodeJSON(b []byte, v *any) error {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	if d.More() {
+		return errors.New("more than one JSON value")
+	}
+	return nil
+}
 
 // flatten puts each leaf of v under its path ($.a.b[0]) as compact JSON.
 func flatten(path string, v any, out map[string]string) {

@@ -91,6 +91,9 @@ func TestMaskGraphQL(t *testing.T) {
 		{`{"query":"mutation { login(password: \"p4ssw0`, "p4ssw0", "login("},
 		{"mutation { setKey(apiKey: \"\"\"k3yvalue\"\"\") { ok } }", "k3yvalue", "setKey("},
 		{`{"query":"{ user(id: \"123\") { name } }"}`, "", `id: \"123\"`},
+		// The query's own escaped quote inside the JSON string (\\\"), and a block string written in JSON.
+		{`{"query":"mutation{login(password: \"ab\\\"cdSECRET\")}"}`, "cdSECRET", "login("},
+		{`{"query":"mutation{setKey(apiKey: \"\"\"k3ySECRET\"\"\")}"}`, "k3ySECRET", "setKey("},
 	} {
 		got := string(maskBody([]byte(c.body), "application/json", true))
 		if c.gone != "" && strings.Contains(got, c.gone) || !strings.Contains(got, c.kept) {
@@ -100,6 +103,10 @@ func TestMaskGraphQL(t *testing.T) {
 	s := NewStore(10, 1<<20)
 	if u := s.mask("https://a.example/graphql?query=mutation%7Blogin(password%3A%22p4ssw0rd%22)%7D&op=Login"); strings.Contains(u, "p4ssw0rd") || !strings.Contains(u, "op=Login") {
 		t.Errorf("GET: %s", u)
+	}
+	// GraphQL's GET variables: JSON in a parameter.
+	if u := s.mask("https://a.example/graphql?query=q&variables=%7B%22password%22%3A%22hunter2%22%2C%22n%22%3A1%7D&op=Login"); strings.Contains(u, "hunter2") || !strings.Contains(u, "op=Login") {
+		t.Errorf("GET variables: %s", u)
 	}
 }
 
@@ -135,5 +142,35 @@ func TestCORSCredentialsKept(t *testing.T) {
 	h := s.maskHeaders([][2]string{{"Access-Control-Allow-Credentials", "true"}, {"X-Credential", "c"}})
 	if h[0][1] != "true" || h[1][1] != "[redacted]" {
 		t.Errorf("%v", h)
+	}
+}
+
+// TestPolicyOverExceptions: the user's names and patterns win over the
+// built-in exceptions: OTLP's dotted "key", WWW-Authenticate kept as a
+// challenge, a cookie's attributes.
+func TestPolicyOverExceptions(t *testing.T) {
+	setPolicy(t, []string{"key", "WWW-Authenticate"}, []string{`S3CRETPATH[0-9]+`})
+	s := NewStore(10, 1<<20)
+	if b := string(maskBody([]byte(`{"key":"service.name","value":{"x":1}}`), "application/json", false)); strings.Contains(b, "service.name") {
+		t.Errorf("--mask-names key and an OTLP key: %s", b)
+	}
+	h := s.maskHeaders([][2]string{{"WWW-Authenticate", `Bearer realm="api"`}, {"Set-Cookie", "sid=x; Path=/S3CRETPATH42"}})
+	if h[0][1] != "[redacted]" || strings.Contains(h[1][1], "S3CRETPATH42") {
+		t.Errorf("headers: %v", h)
+	}
+}
+
+// TestMaskEscapedAndCommented: a shape hidden behind \u escapes, and GraphQL
+// arguments after a line break or a comment, inside JSON.
+func TestMaskEscapedAndCommented(t *testing.T) {
+	for _, c := range []struct{ body, gone string }{
+		{`{"data":"` + "\\" + "u0073k-abcdefghijklmnopqrstuvwxyz0123" + `"}`, "abcdefghijklmnopqrstuvwxyz0123"}, // \u-escaped s: no sk- in the raw text
+		{`{"query":"mutation { login(password:\n  \"p4ssw0rdNL\") { ok } }"}`, "p4ssw0rdNL"},
+		{`{"query":"mutation { login(password: # the user's\n \"p4ssw0rdCM\") { ok } }"}`, "p4ssw0rdCM"},
+		{"mutation { login(\n # note\n password: \"p4ssw0rdRAW\") { ok } }", "p4ssw0rdRAW"},
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
 	}
 }

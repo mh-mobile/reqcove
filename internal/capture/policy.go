@@ -99,6 +99,16 @@ func userName(flat string) bool {
 	return ok
 }
 
+// hasUserName: name is one of --mask-names (not counted: a check, not a mask).
+func hasUserName(name string) bool {
+	m := maskNames.Load()
+	if m == nil {
+		return false
+	}
+	_, ok := (*m)[flatName(name)]
+	return ok
+}
+
 // maskUserValues masks the matches of --mask-values.
 func maskUserValues(s string) string {
 	vs := maskValues.Load()
@@ -138,10 +148,12 @@ func policyStats() map[string]any {
 }
 
 // gqlArgRE: a GraphQL argument with a string value, as in
-// login(password: "x"), raw or inside a JSON string (\"x\"), a block string
-// ("""x""") too; a value cut by the head's end (even right after a
-// backslash) runs to it.
-var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt])*)([_A-Za-z][_0-9A-Za-z]*)(\s*:\s*)("""(?s:.*?)(?:"""|$)|\\"(?:[^"\\]|\\[^"])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
+// login(password: "x"), raw or inside a JSON string (\"x\", where the
+// query's own escaped quote is \\\" and its backslash \\\\), a block
+// string ("""x""", or \"\"\"x\"\"\" inside JSON) too; a value cut by the head's end (even right after a
+// backslash) runs to it. Between the name, the colon and the value: spaces,
+// line breaks (also written \n in JSON) and # comments.
+var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt]|#[^\n]*?(?:\\n|\n))*)([_A-Za-z][_0-9A-Za-z]*)(\s*:(?:\s|\\[nrt]|#[^\n]*?(?:\\n|\n))*)("""(?s:.*?)(?:"""|$)|\\"\\"\\"(?s:.*?)(?:\\"\\"\\"|$)|\\"(?:\\\\\\\\|\\\\\\"|\\[^"]|[^"\\])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
 // maskGraphQL masks the string values of GraphQL arguments with secret names
 // (login(password: "x")), which are not JSON fields: the query is one string.
@@ -161,6 +173,8 @@ func maskGraphQL(s string, loneCode bool) string {
 		switch {
 		case strings.HasPrefix(v, `"""`):
 			q = `"""`
+		case strings.HasPrefix(v, `\"\"\"`):
+			q = `\"\"\"`
 		case strings.HasPrefix(v, `\"`):
 			q = `\"`
 		}

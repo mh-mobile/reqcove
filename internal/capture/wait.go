@@ -40,7 +40,9 @@ type WaitResult struct {
 
 // Wait returns the flows matching q (q.Query and q.Before are ignored)
 // answered after cursor after, oldest answer first, at most q.Limit; it
-// waits for one until ctx ends, and then returns none. Each flow comes once
+// waits for one until ctx ends, and then returns none. With none to give
+// but flows evicted after the cursor, it returns at once, Evicted set and
+// After past the loss. Each flow comes once
 // over successive calls that pass back After, even when flows are answered
 // out of the order they arrived; one never answered holds nothing up. A flow
 // may still be open when returned (its body streaming, as SSE's).
@@ -66,6 +68,13 @@ func (s *Store) Wait(ctx context.Context, q Filter, after int64) WaitResult {
 				r.Flows = append(r.Flows, s.summary(f))
 			}
 			r.After = found[len(found)-1].answered
+			s.mu.Unlock()
+			return r
+		}
+		if r.Evicted {
+			// Nothing to give, but some may have been lost: say so now, and
+			// move past the loss so the next call does not say it again.
+			r.After = s.evictedMark
 			s.mu.Unlock()
 			return r
 		}

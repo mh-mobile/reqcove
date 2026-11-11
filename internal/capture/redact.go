@@ -24,7 +24,10 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if len(head) == 0 || !utf8.Valid(trimCutRune(head)) {
 		return head
 	}
-	s := maskGraphQL(maskJSON(string(head), request, 0), request)
+	s := maskJSON(string(head), request, 0)
+	if request { // GraphQL documents go in requests; scanning every response's text for them was ~20x slower on script-heavy pages
+		s = maskGraphQL(s, request)
+	}
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
@@ -85,7 +88,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		valEnd, valClosed := jsonStringEnd(s, j)
-		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) {
+		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) && !hasUserName(jsonKey(s[keyStart+1:keyEnd])) {
 			secret = false
 		}
 		switch {
@@ -96,6 +99,14 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
+		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\u`) && !strings.Contains(s[j:valEnd], `\"`):
+			// \u escapes can hide a shape (\u0073k-… is sk-…): look at the
+			// string decoded, as diff_flows and the agent would read it.
+			if m, ok := maskEscapedString(s[j : valEnd+1]); ok {
+				b.WriteString(s[last:j])
+				b.WriteString(m)
+				last = valEnd + 1
+			}
 		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\"`):
 			if m, ok := maskInJSONString(s[j:valEnd+1], loneCode); ok {
 				b.WriteString(s[last:j])
@@ -155,6 +166,24 @@ func maskInJSONString(lit string, loneCode bool) (string, bool) {
 	var out strings.Builder
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
+	enc.Encode(m)
+	return strings.TrimSuffix(out.String(), "\n"), true
+}
+
+// maskEscapedString masks the shapes and URLs in a JSON string literal read
+// decoded, and writes it again if anything was masked.
+func maskEscapedString(lit string) (string, bool) {
+	var v string
+	if json.Unmarshal([]byte(lit), &v) != nil {
+		return "", false
+	}
+	m := maskTokens(maskURLs(v))
+	if m == v {
+		return "", false
+	}
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
 	enc.Encode(m)
 	return strings.TrimSuffix(out.String(), "\n"), true
 }
@@ -324,6 +353,9 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	for i, kv := range h {
 		out[i] = kv
 		switch name := strings.ToLower(kv[0]); {
+		case userName(flatName(kv[0])): // the user's names come before every built-in case
+			out[i][1] = "[redacted]"
+			continue
 		case name == "cookie":
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
@@ -338,6 +370,7 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			// a credential by its shape, or a URL's (Referer, Location, Link, Refresh, …), under any name
 			out[i][1] = maskTokens(maskURLs(kv[1]))
 		}
+		out[i][1] = maskUserValues(out[i][1]) // every branch: a cookie's attributes too
 	}
 	return out
 }
@@ -514,7 +547,7 @@ func maskURLsAt(v string, depth int) string {
 		// The value up to ';' is this name's; each ';name=value' after it is
 		// looked at once, in one pass (recursing on the rest was quadratic).
 		pieces := strings.Split(sub[3], ";")
-		if nestedSecret(pieces[0], depth) || graphQLSecret(pieces[0]) {
+		if nestedSecret(pieces[0], depth) || graphQLSecret(pieces[0]) || jsonSecret(pieces[0]) {
 			pieces[0] = "REDACTED"
 		}
 		for i := 1; i < len(pieces); i++ {
@@ -533,6 +566,19 @@ func maskURLsAt(v string, depth int) string {
 		}
 		return sub[1] + sub[2] + "=" + strings.Join(pieces, ";")
 	})
+}
+
+// jsonSecret: a URL parameter's value is JSON with a secret field in it
+// (GraphQL's GET ?variables={"password":…}).
+func jsonSecret(v string) bool {
+	if !strings.Contains(v, "%7B") && !strings.Contains(v, "%7b") && !strings.Contains(v, "{") && !strings.Contains(v, "%5B") && !strings.Contains(v, "[") {
+		return false
+	}
+	u := unescapeCut(v)
+	if !strings.ContainsAny(u[:min(len(u), 1)], "{[") {
+		return false
+	}
+	return maskJSON(u, true, 1) != u
 }
 
 // graphQLSecret: a URL parameter's value is a GraphQL document (GET
