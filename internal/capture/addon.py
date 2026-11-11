@@ -286,12 +286,17 @@ GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\""
 
 def _first_operation(doc):
     """The name of doc's first operation (past fragments and descriptions),
-    "" for an anonymous one, None for none; one pass, as reqcove's Go does it."""
-    depth, fragment, keyword = 0, False, False
+    "" for an anonymous one, None if doc does not start like a document; one
+    pass, as reqcove's Go reads it (gqlDocOperation)."""
+    depth, fragment, keyword, started = 0, False, False, False
     for m in GQL_TOKEN.finditer(doc):
         kind, text = m.lastgroup, m.group()
         if kind in ("skip", "block", "str"):
             continue
+        if not started:  # "hello query Feed {…}" is text, not a document
+            if not (text == "{" or kind == "name" and text in ("query", "mutation", "subscription", "fragment")):
+                return None
+            started = True
         if keyword:  # just after query, mutation or subscription
             return text if kind == "name" else ""
         if kind == "punct" and text in "{([":
@@ -305,36 +310,53 @@ def _first_operation(doc):
         elif kind == "name" and depth == 0:
             keyword = text in ("query", "mutation", "subscription")
             fragment = fragment or text == "fragment"
-    return "" if keyword else None
+    return "" if started else None
+
+
+def _name(n):
+    return n if isinstance(n, str) and GQL_NAME.fullmatch(n) else None
+
+
+def _doc_name(doc):
+    """"" for an anonymous operation (it ends the search), None for no
+    document or a name GraphQL does not allow (the search goes on)."""
+    op = _first_operation(doc) if isinstance(doc, str) else None
+    return op if op == "" else _name(op)
+
+
+def _operations(r):
+    """Where a request names its operation, in the order reqcove's Go reads
+    them (gqlURLOperation, the header, gqlBodyOperation); lazily: the body is
+    decoded only when the URL and header name none."""
+    yield _name(r.query.get("operationName"))
+    yield _doc_name(r.query.get("query"))
+    yield _name(r.headers.get("x-apollo-operation-name"))
+    if r.method == "GET":
+        return
+    try:  # decoded with a bound: a compressed body may be a bomb
+        body = _Decoder(r.headers.get("content-encoding", "").strip().lower()).feed(r.raw_content or b"", MAP_LOCAL_BODY + 1)
+    except Exception:
+        body = b""
+    text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
+    try:
+        d = json.loads(text or "null")
+    except RecursionError:
+        d = None  # nested past Python's limit: no GraphQL request
+    except ValueError:
+        yield _doc_name(text)  # a document as the body (application/graphql)
+        return
+    if isinstance(d, dict):
+        yield _name(d.get("operationName"))
+        yield _doc_name(d.get("query"))
 
 
 def _operation(r):
-    """A request's GraphQL operation, as reqcove names it: operationName (the
-    URL's, Apollo's header, the JSON body's), else the document's first named
-    operation; None if it names none."""
-    name = r.query.get("operationName") or r.headers.get("x-apollo-operation-name")
-    doc = r.query.get("query")
-    if not name and r.method != "GET":
-        try:  # decoded with a bound: a compressed body may be a bomb
-            body = _Decoder(r.headers.get("content-encoding", "").strip().lower()).feed(r.raw_content or b"", MAP_LOCAL_BODY + 1)
-        except Exception:
-            body = b""
-        text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
-        try:
-            d = json.loads(text or "null")
-        except RecursionError:
-            d = None  # nested past Python's limit: no GraphQL request
-        except ValueError:
-            d = text  # a document as the body (application/graphql)
-        if isinstance(d, dict):
-            name = d.get("operationName") if isinstance(d.get("operationName"), str) else None
-            doc = d.get("query") if isinstance(d.get("query"), str) else None
-        elif isinstance(d, str):
-            doc = d
-    if name:
-        return name if GQL_NAME.fullmatch(name) else None
-    op = _first_operation(doc or "")
-    return op if op and GQL_NAME.fullmatch(op) else None
+    """A request's GraphQL operation, as reqcove names it: the first place
+    that names one; None for none, an anonymous one or a batch."""
+    for op in _operations(r):
+        if op is not None:
+            return op or None
+    return None
 
 
 class Mock:

@@ -37,6 +37,8 @@ func TestOperationAndEndpoints(t *testing.T) {
 		{"POST", "https://api.example.com/graphql", `{"query":"fragment F on U { a } query Feed { ...F }"}`, "Feed"},           // past a fragment
 		{"POST", "https://api.example.com/graphql", `{"query":"\"\"\"Described\"\"\" mutation Described { a }"}`, "Described"}, // past a description
 		{"POST", "https://api.example.com/graphql", `{"query":"fragment F on U { a } { ...F }"}`, gqlAnonymous},
+		{"POST", "https://api.example.com/graphql?operationName=Like", `{"query":"query Feed { feed }"}`, "Like"}, // the URL's name first, as mocks read it (the last review)
+		{"POST", "https://api.example.com/graphql?operationName=Feed", `{"query":"{ feed }"}`, "Feed"},
 	} {
 		id := flow(c.method, c.url, c.body)
 		if v, _ := s.Get(id, false); v.Operation != c.op {

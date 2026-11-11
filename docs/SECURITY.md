@@ -154,7 +154,10 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). In GraphQL the same
+  (protobuf, multipart, XML elements and attributes). A value found by its
+  shape (a JWT, a key with a known prefix, `Bearer …`) is not found inside
+  percent-encoded text: JSON encoded in a form field or a URL parameter,
+  `Bearer+…` (checked). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);

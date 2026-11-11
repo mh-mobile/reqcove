@@ -397,7 +397,7 @@ func (s *Store) Apply(line []byte) {
 			f.Notes = append(f.Notes, "response headers: "+e.Note)
 		}
 	case "body":
-		if e.op != "" {
+		if e.op != "" && f.Operation == "" { // the URL's or the header's name comes first, as for mocks
 			f.Operation = e.op
 		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}

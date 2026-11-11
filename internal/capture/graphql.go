@@ -329,7 +329,6 @@ func gqlName(s string) string {
 	return s
 }
 
-// gqlDocOperation names the first operation of document doc.
 // gqlDocOperation names the first operation of document doc, past fragments
 // and descriptions.
 func gqlDocOperation(doc string) string {
