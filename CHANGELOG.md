@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `--mcp-http`: each device may call about 10 times a second (30 at once);
+  past that `429 Too Many Requests`, logged once a minute.
+- SECURITY.md and the guides say to give an agent that reads Reqcove no shell
+  or network tools along with it: Reqcove only reads, but text in a record
+  can try to steer an agent's other tools.
 - Built with Go 1.27.4: 1.27.3's net/http has GO-2026-6859, which govulncheck
   found reachable (through the `--ui` page's proxy).
 - Prompt injection, from a review: the server's instructions (all an agent
