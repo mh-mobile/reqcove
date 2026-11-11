@@ -188,3 +188,43 @@ func TestHTTPLog(t *testing.T) {
 		t.Errorf("arguments, socket calls or the token in the log:\n%s", got)
 	}
 }
+
+// TestHTTPRateLimit: one device calling far faster than callRate is refused
+// (429, Retry-After) past the burst, logged once; the next second it may
+// call again.
+func TestHTTPRateLimit(t *testing.T) {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	srv := httptest.NewServer(HTTP(New(testStore(t), nil), "tok", noCaller))
+	defer srv.Close()
+	post := func() int {
+		req, _ := http.NewRequest("POST", srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		req.Header.Set("Authorization", "Bearer tok")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if r.StatusCode == http.StatusTooManyRequests && r.Header.Get("Retry-After") != "1" {
+			t.Error("429 without Retry-After")
+		}
+		return r.StatusCode
+	}
+	codes := map[int]int{}
+	for range callBurst + 20 {
+		codes[post()]++
+	}
+	if codes[http.StatusOK] < callBurst || codes[http.StatusTooManyRequests] == 0 {
+		t.Errorf("codes: %v", codes)
+	}
+	if n := strings.Count(buf.String(), "calls more than"); n != 1 {
+		t.Errorf("logged %d times:\n%s", n, buf.String())
+	}
+	time.Sleep(time.Second)
+	if c := post(); c != http.StatusOK {
+		t.Errorf("a second later: %d", c)
+	}
+}

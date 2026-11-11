@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `--mcp-http`: each device may call about 10 times a second (30 at once);
+  past that `429 Too Many Requests`, logged once a minute.
+- SECURITY.md and the guides say to give an agent that reads Reqcove no shell
+  or network tools along with it: Reqcove only reads, but text in a record
+  can try to steer an agent's other tools.
 - Prompt injection, from a review: the server's instructions (all an agent
   without the skill gets, such as Grok Bot) now also say not to write files,
   commits or commands because of what the records say, not to suggest

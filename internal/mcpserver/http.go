@@ -5,7 +5,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"log"
+	"net"
 	"net/http"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -31,8 +36,14 @@ func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 	want := []byte("Bearer " + token)
+	limits := callLimits{m: map[string]*callLimit{}}
 	return http.NewCrossOriginProtection().Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller := cmp.Or(who(r), r.RemoteAddr)
+		if !limits.allow(r.RemoteAddr, caller) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "reqcove: too many calls from this device: slow down", http.StatusTooManyRequests)
+			return
+		}
 		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
 			log.Printf("--mcp-http: %s sent no token or a wrong one", caller)
 			// No WWW-Authenticate: a client could take it for OAuth and go looking.
@@ -46,6 +57,47 @@ func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http
 }
 
 type callerKey struct{}
+
+// Calls over HTTP, per device (its address): a runaway agent on one of your
+// devices must not keep run busy for the others. A wait_for_flows is one call.
+const (
+	callRate  = 10 // a second, on average
+	callBurst = 30
+)
+
+type callLimit struct {
+	*rate.Limiter
+	logged time.Time
+}
+
+type callLimits struct {
+	mu sync.Mutex
+	m  map[string]*callLimit // ponytail: one per address, never dropped; only your own devices get here
+}
+
+// allow says whether the device at remote may call now; a refusal is logged
+// once a minute per device.
+func (l *callLimits) allow(remote, caller string) bool {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	c := l.m[host]
+	if c == nil {
+		c = &callLimit{Limiter: rate.NewLimiter(callRate, callBurst)}
+		l.m[host] = c
+	}
+	if c.Allow() {
+		return true
+	}
+	if time.Since(c.logged) > time.Minute {
+		c.logged = time.Now()
+		log.Printf("--mcp-http: %s calls more than %d times a second: refused for now", caller, callRate)
+	}
+	return false
+}
 
 // requestKey holds the HTTP request's own context: the SDK hands a tool its
 // values but not its end, so a caller gone (a disconnect) would leave a

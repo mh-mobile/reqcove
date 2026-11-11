@@ -70,7 +70,10 @@ of its settings allows all of Reqcove's (from Claude Code's documentation, not
 tried here). Codex asks before each call
 ([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
 reads without asking, also from a `run` started with `--no-redact`; the skill
-and the server's instructions still tell it to stop and ask then.
+and the server's instructions still tell it to stop and ask then. Allow
+Reqcove's tools, not shell commands or network tools along with them: text a
+site wrote into a record can try to steer an agent into using those
+([SECURITY](SECURITY.md#prompt-injection)).
 
 ### Teach the agent: the skill (`reqcove init`)
 
@@ -137,6 +140,8 @@ What to know:
 - `run` logs each call's device and tool, not its arguments (`--mcp-http:
   grokbot-user-1 (100.104.0.1) called "list_flows"`), and requests with no token
   or a wrong one. An agent that only says it is checking leaves no line.
+- Each device may call about 10 times a second; past that it gets `429` for a
+  moment (`run` logs it once a minute).
 - Plain HTTP, inside the tailnet's encryption (WireGuard). In a container: the
   same flag, no port to publish, the token in `docker logs`
   ([container](container.md#3-the-agent)).
