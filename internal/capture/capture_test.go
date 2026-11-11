@@ -1,12 +1,14 @@
 package capture
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -737,4 +739,38 @@ func pyCompress(t *testing.T, enc, makeData string) []byte {
 		t.Fatalf("making %s fixture: %v", enc, err)
 	}
 	return out
+}
+
+// TestReadLine: a line past the bound is read to its end and dropped, and
+// the next one is read as usual.
+func TestReadLine(t *testing.T) {
+	r := bufio.NewReaderSize(strings.NewReader(strings.Repeat("x", 300)+"\nok\nlast"), 16)
+	if _, err := readLine(r, 100); !errors.Is(err, errLongLine) {
+		t.Fatalf("long line: %v", err)
+	}
+	if l, err := readLine(r, 100); string(l) != "ok\n" || err != nil {
+		t.Errorf("next: %q %v", l, err)
+	}
+	if l, err := readLine(r, 100); string(l) != "last" || err != io.EOF {
+		t.Errorf("last: %q %v", l, err)
+	}
+}
+
+// TestPyCommand: the default mitmproxy runs from the lock with the uv beside
+// uvx; another spec through uvx, unlocked.
+func TestPyCommand(t *testing.T) {
+	bin, args := PyCommand(Config{Uvx: "/opt/bin/uvx", Python: "3.14", MitmSpec: LockedMitmSpec, Dir: "/s"}, "mitmweb")
+	if bin != "/opt/bin/uv" || strings.Join(args, " ") != "run --locked --no-project --python 3.14 --script /s/mitm.py mitmweb" {
+		t.Errorf("locked: %s %q", bin, args)
+	}
+	if bin, _ := PyCommand(Config{Uvx: "uvx", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "uv" {
+		t.Errorf("uvx on PATH: %s", bin)
+	}
+	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
+		t.Errorf("a --uvx not named uvx: %s", bin)
+	}
+	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3"}, "mitmdump")
+	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 mitmdump") {
+		t.Errorf("other spec: %s %q", bin, args)
+	}
 }

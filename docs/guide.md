@@ -60,7 +60,20 @@ directory. Remove the CA's profile from the iPhone first
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
 this computer the [MCP tools](#mcp-tools). They only read, and secrets are
 masked as they arrive
-([what masking does not find](SECURITY.md#what-is-recorded)).
+([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
+`codex mcp add reqcove -- reqcove mcp` (`run` prints both).
+
+Allowing the tools: every tool is marked read-only (`readOnlyHint`), which a
+client may use to ask less (not checked with any client). Claude Code asks
+before a tool it has not been allowed; `"mcp__reqcove"` in `permissions.allow`
+of its settings allows all of Reqcove's (from Claude Code's documentation, not
+tried here). Codex asks before each call
+([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
+reads without asking, also from a `run` started with `--no-redact`; the skill
+and the server's instructions still tell it to stop and ask then. Allow
+Reqcove's tools, not shell commands or network tools along with them: text a
+site wrote into a record can try to steer an agent into using those
+([SECURITY](SECURITY.md#prompt-injection)).
 
 ### Teach the agent: the skill (`reqcove init`)
 
@@ -127,6 +140,8 @@ What to know:
 - `run` logs each call's device and tool, not its arguments (`--mcp-http:
   grokbot-user-1 (100.104.0.1) called "list_flows"`), and requests with no token
   or a wrong one. An agent that only says it is checking leaves no line.
+- Each device may call about 10 times a second; past that it gets `429` for a
+  moment (`run` logs it once a minute).
 - Plain HTTP, inside the tailnet's encryption (WireGuard). In a container: the
   same flag, no port to publish, the token in `docker logs`
   ([container](container.md#3-the-agent)).
@@ -247,12 +262,16 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 
 - For those hosts only the connections are recorded (host, server, times,
   bytes: `list_passthrough`), no URLs or contents.
-- They skip `--rules` and `--upstream-proxy`.
+- Their connections skip `--rules` and `--upstream-proxy`. Requests to them
+  that mitmproxy decrypts all the same (plain HTTP, or riding an allowed
+  host's connection) are not recorded and skip `--rules`, but go through
+  `--upstream-proxy`.
 - Pinning checked after the TLS handshake shows nowhere.
 - For your own app, use a build without pinning. Android apps refuse the CA
   for another reason ([Android](#android)).
 
-Tried: on an iPhone.
+Tried: on an iPhone. That a pass host's decrypted requests go through
+`--upstream-proxy`: a test; that they skip `--rules`: from reading code.
 
 ### Android
 
@@ -530,12 +549,14 @@ other protocols going straight to their servers.
 | `--mcp-http` | [the MCP tools over HTTP](#agents-on-other-devices---mcp-http), on the node's port 8090 |
 | `--dns SERVERS` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
+| `--mask-names a,b` | mask whatever has exactly this name too (any spelling: `clientRef` is also `client_ref` and `Client-Ref`, not `X-Client-Ref`): headers, parameters, JSON fields, GraphQL arguments; `@FILE` too |
+| `--mask-values RE` | mask what this pattern (RE2) matches, wherever it is; repeat it, or `@FILE` (one a line: keeps a literal secret out of `ps`; write one as `\Q…\E`) |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--uvx PATH` | the uvx to run |
-| `--python VERSION` | the Python uvx fetches, 3.14 by default |
-| `--mitmproxy-spec SPEC` | the mitmproxy uvx fetches, `mitmproxy==12.3.1` by default |
+| `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
+| `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
+| `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
 
 The other commands (all but `init` and `version` take `--state DIR` too):
 
@@ -548,6 +569,10 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
 | `reqcove version` | the version |
 
+Tried on an iPhone: `--mask-names`; `wait_for_flows` after acting through
+RoamRun. By tests only: `--mask-values`, `diff_flows`, `max_body`, the
+`--mcp-http` rate limit.
+
 From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 `--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`,
 `status --json`.
@@ -558,7 +583,9 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 |---|---|
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
-| `get_flow` | one flow; bodies only with `bodies` |
+| `wait_for_flows` | what an action on the device sent: take `checkpoint` from `list_flows` (or `capture_stats`) before acting, then call with `after: checkpoint`. Returns the flows answered since (a response or an error), oldest answer first, waiting up to `timeout` seconds (default 20, at most 30) for the first. Pass its `after` to the next call: each flow comes once. The same filters |
+| `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given |
+| `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |

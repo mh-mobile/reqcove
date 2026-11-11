@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.2.
+come from reading code rather than from a test say so. It describes v0.3.
 
 ## Trust
 
@@ -75,9 +75,13 @@ So "delete the directory" above means each of them.
   destination) are suggested, never mitm.it, and the command is quoted for a
   shell (a test). `@FILE` lists are read as hosts, never run: a line that is
   not a host stops `run`, named by its line number only, so a wrong file (a
-  .env, say) is not printed back (a test). A pass host's plain HTTP, and its
-  requests riding another host's decrypted connection, go to its server, not to
-  `--upstream-proxy`, and are counted as out of scope, not recorded. A pass
+  .env, say) is not printed back (a test). A pass host's TLS connections go to
+  its server directly, past `--rules` and `--upstream-proxy`. Its plain HTTP,
+  and its requests riding another host's decrypted connection, are decrypted all
+  the same: counted as out of scope, not recorded, and sent on through
+  `--upstream-proxy` when one is set (a test), checked as all HTTPS through it
+  is: against `--upstream-ca` only, or the public CAs without one. They skip
+  `--rules` (from reading code). A pass
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
@@ -91,8 +95,9 @@ So "delete the directory" above means each of them.
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word
-  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id` and
-  `ticketNumber` are not secrets, nor a body's `"key"` whose
+  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id`,
+  `ticketNumber` and CORS's `Access-Control-Allow-Credentials` (only ever
+  `true`; seen masked in use) are not secrets, nor a body's `"key"` whose
   value is a dotted lowercase name, as OpenTelemetry writes attributes
   (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
   or has no dots; JWTs and the other shapes below are masked whatever the field;
@@ -116,19 +121,53 @@ So "delete the directory" above means each of them.
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
   Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
   error), with only such shapes masked.
+  String arguments with such names in a GraphQL document are masked too
+  (`login(password: "…")`), in a JSON string (the usual `{"query": …}`), a raw
+  body or a GET `?query=` (the parameter's value whole), block strings included.
+  A URL inside a parameter is looked into also when encoded two or three times.
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
-  a value cut before its closing quote is masked too.
+  a value cut before its closing quote is masked too (a fuzz test, over these
+  shapes and cut anywhere: it found the twice-encoded URL and a GraphQL value
+  cut after a backslash, both fixed).
+- Your own rules, fixed at start: `--mask-names` adds names treated as secret
+  wherever names count, the whole name only (any spelling: `clientRef` covers
+  `client_ref` and `Client-Ref`, not `X-Client-Ref`), before the built-in
+  exceptions (an OpenTelemetry `key`, `WWW-Authenticate` kept as a challenge,
+  a cookie's attributes: a test). `--mask-values` adds RE2 patterns whose matches are masked
+  wherever they appear (a header of any name, a User-Agent's `key=…` among
+  them, URLs, bodies, error text); at most 32 patterns of 512 bytes each, none
+  that matches empty text. Errors name a pattern by its number, never its text.
+  `capture_stats` counts the matches per name and per pattern number (a value
+  can count more than once). (Tests.) A pattern on the command line shows in
+  `ps`, so a literal secret belongs in an `@FILE`, written as `\Q…\E` so its
+  `+`, `/` and `.` match themselves. Both do nothing with `--no-redact` (`run`
+  warns).
 - **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`), in arrays, in GraphQL arguments written into the query
-  text (`login(password: "…")`), or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). Personal data, such as e-mail addresses
+  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
+  in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
+  (protobuf, multipart, XML elements and attributes). GraphQL arguments written
+  into the query are found by pattern, not parsed: the layouts three rounds of
+  review found are covered (tests and a fuzz test), but another valid layout
+  may pass. Tools that parse GraphQL (OpenTelemetry, Apollo) drop every value
+  written into the query instead; a later version may do so. Values sent as
+  GraphQL variables are JSON fields, masked by name. Found by the last review and
+  not masked (most leaked in 0.2 too): a field with a secret name whose value
+  is a list or an object (`{"password": ["…"]}`); in GraphQL, a variable's
+  default (`$password: String = "…"`), a list or a number as an argument, a
+  comment holding a quote, a quote written as `\u0022`, and a query
+  echoed in a response with no `"query"`, `mutation` or `operationName` in it; a
+  URL whose value goes on after `\/` or Gson's `\u0027`; a body cut inside a
+  `\u` escape; JSON or a URL in a form's first field. Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
   with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
   `--no-redact` returns them.
-- Bodies are returned only when a tool is asked for them (`bodies`).
+- Bodies are returned only when a tool is asked for them (`bodies` in
+  `get_flow` and `search_flows`), and by `diff_flows`, which compares them: the
+  values and keys that differ, cut to 300 bytes, and bodies that are not text
+  not at all while masking.
 - Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
   URLs and other text together; a site's reason text, `Content-Encoding` and
   error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
@@ -150,10 +189,36 @@ login (from reading code).
 
 ## Prompt injection
 
+Reqcove's tools only read, but an agent that reads them may also hold other
+tools: a shell, file writes, the network, other MCP servers. Text a site
+wrote into a record can try to steer it into using those (send a cookie
+somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
+own settings can. Give an agent that reads Reqcove only what the task needs:
+in Claude Code, allow Reqcove's tools without allowing shell commands or
+network tools along with them, and keep its permission prompts for the rest;
+in Codex, keep its sandbox (by default without network, from its
+documentation, not tried) and approvals. An agent that only
+reads Reqcove and answers you is the safest shape.
+
 Response bodies, and also response headers, status reasons, redirect targets
 and error messages, are written by remote sites and may contain text meant to
-steer the agent. Tools return bodies only on request, and say all of it is
-untrusted.
+steer the agent; an app chooses its User-Agent, its TLS names and the JSON
+keys it sends, and a tailnet peer its device name. Tools return bodies only on
+request (and `diff_flows` what differs), and every tool's description says
+what it returns was written by sites, apps or the tailnet: data. The server's
+instructions, sent to every client (also those without the skill, such as Grok
+Bot), say so too, and that the agent must not write a file (a `--rules` file
+above all), a commit or a command because of what the records say, nor suggest
+`--no-redact` or `--web`, and that `next_steps` are for the user (tests check
+that clients get them over stdio and HTTP, not their wording; whether a model
+keeps to them is not something a test can show). A request whose Host is no host name or address (an app's own HTTP stack
+can put any text there) is carried but not recorded (a test); hosts from TLS
+are host names by mitmproxy's own check (from reading its code). A flow's host
+is the request's Host, which the app chooses: on a connection to an allowed
+host it can name another allowed one, and the record shows that one (the
+request still goes where the connection went). User-Agents in lists and summaries
+are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
+`diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
 yours, from a file, at start.)
 
@@ -165,6 +230,11 @@ changes, so whatever can write it (any process as your user, an agent with file
 access included) can then change where the devices' requests go while `run`
 runs; without it, the file is read only when mitmproxy starts (with `run`, or
 when reqcove restarts it after it exits).
+`modify_headers` takes header names that are HTTP tokens and values without
+a line break or NUL (they would start a header of their own on the wire); a
+value file read again for a later flow and given one since is dropped from
+that flow's headers. `resolve` names are host names only, so nothing in them
+reaches the log as control characters (tests).
 `map_remote` and `resolve` make mitmproxy connect, from this computer, where the
 rule says, this computer and the LAN included: the exit node's refusal of those
 addresses is about the devices' own connections, and a rule opens its target to
@@ -298,7 +368,7 @@ device names and its refusals of this computer and the LAN.
 
 The node serves the MCP tools on its port 8090, at `/mcp`, to your
 own devices on the tailnet only (the same user as reqcove's node, neither
-tagged: checked when a connection opens), asked by the node's name or address in
+tagged: checked when a connection opens and on every request), asked by the node's name or address in
 `Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
 state directory (0600; compared in constant time). Requests from a browser page
 of another origin are refused. The token is printed in `run`'s terminal only (in
@@ -311,6 +381,10 @@ and the agent keeps the token until you delete `mcp-token` and restart `run`.
 The tools are the same as over `reqcove mcp`, and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
+Each device may call about 10 times a second (30 at once); past that it gets
+`429 Too Many Requests` for the moment, logged once a minute (a test): a
+runaway agent on one device does not keep `run` busy for the others. A call
+ends when its caller disconnects (a test).
 Checked with tests (another user's device refused over a real tailnet; the
 token, `Host` and origin checks), from this Mac over the tailnet, and with
 Grok Bot.
@@ -350,12 +424,19 @@ Simulator.
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
 start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device. One gap,
-from reading code: when mitmdump dies, reqcove starts it again on the same port
-(visible in `ps`), and until it is listening (up to about 30 seconds) another
-user's process on this computer could take the port. Reqcove would then send it
-the SOCKS password and the devices' TCP traffic: plain HTTP readable, HTTPS not.
-On a computer shared with users you do not trust, keep that in mind.
+another local process can neither use the proxy nor pose as a device. When
+mitmdump dies, reqcove starts it again on the same port (visible in `ps`), and
+meanwhile another user's process on this computer could take the port. The
+devices' connections then wait (15 seconds at most, then fail) until the new
+mitmdump's addon says hello, which mitmproxy (12.3.1) does only once it
+listens: one that cannot bind the port exits first, and is started again.
+Tests: while another process holds the port, the restarted mitmdump never
+becomes ready, and comes back once the port is free; while it is not ready, no
+connection is sent to the port. One gap remains, from reading code: between
+mitmdump's death and reqcove noticing it (milliseconds), a connection can
+still be sent to the free port; whoever took it in that moment would get the
+SOCKS password and that connection: plain HTTP readable, HTTPS not. On a
+computer shared with users you do not trust, keep that in mind.
 
 The state directory is checked itself, not the directories above it. Keep it
 (and `--state`) under directories only you can write: someone who can rename
@@ -363,10 +444,20 @@ entries in a parent can swap the state directory for their own.
 
 ## mitmproxy's own code
 
-mitmproxy runs through `uvx` at a fixed version, with its dependencies resolved
-only from releases before a fixed date (`--exclude-newer`), so a dependency
-released later, a compromised one included, is not picked up. They are not
-pinned by hash.
+mitmproxy and its dependencies (44 packages) come from a lock file built into
+reqcove (`internal/capture/mitm.py.lock`): `run` writes it and a small
+launcher into the state directory and starts mitmproxy with
+`uv run --locked --script`, which installs exactly the files the lock names
+and checks each one's hash (tried: a lock with one package's hashes changed was
+refused, with an empty cache and with a full one). Plain `uvx`, which checks no
+hash even when given them (tried), is used for another `--mitmproxy-spec`,
+and for a `--uvx` whose file is not named `uvx` (a wrapper, whose `uv` is not
+known), from releases before a fixed date (`--exclude-newer`). CI
+checks that the lock matches the launcher and audits it for known
+vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
+mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
+overrides it to 6.6, which fixes them (Reqcove's `--web` test passes with it;
+mitmproxy's own tests were not run).
 
 ## The exit node's DNS
 

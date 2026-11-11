@@ -12,7 +12,7 @@ ARG VERSION=dev
 
 FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS build
 ARG TARGETOS TARGETARCH VERSION
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -31,8 +31,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && install -d -o 65532 -g 65532 -m 0700 /home/nonroot/.reqcove
 ENV HOME=/home/nonroot UV_CACHE_DIR=/opt/uv/cache UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_PYTHON_PREFERENCE=only-managed
 USER 65532:65532
-# reqcove's own: --python 3.14, uvExcludeNewer, --mitmproxy-spec.
-RUN uvx --python 3.14 --exclude-newer 2026-11-08T00:00:00Z --from mitmproxy==12.3.1 mitmdump --version \
+# As run starts mitmproxy: its launcher and lock in the state directory, then
+# uv run --locked (hashes checked). uv keys the environment by the script's
+# path, so this is the path run writes them to; run writes them again.
+COPY --chown=65532:65532 internal/capture/mitm.py internal/capture/mitm.py.lock /home/nonroot/.reqcove/
+RUN uv run --locked --no-project --python 3.14 --script /home/nonroot/.reqcove/mitm.py mitmdump --version \
+ && rm /home/nonroot/.reqcove/mitm.py /home/nonroot/.reqcove/mitm.py.lock \
  && test ! -e /home/nonroot/.mitmproxy
 # uv's entry points start with #!/bin/sh and a line of shell that runs the
 # env's python (a trampoline), and distroless has no shell: point them at that

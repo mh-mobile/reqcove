@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -165,5 +166,88 @@ func TestStrayConfigYmlRemoved(t *testing.T) {
 	}
 	if exists(path) {
 		t.Error("config.yml is still in the confdir")
+	}
+}
+
+// TestWebMadeResponse (REQCOVE_E2E=1): with --web, a response mitmproxy made
+// itself (map_local, a failed rule's 502) leaves nothing kept for mitmweb:
+// mitmweb holds it whole, and a copy kept would never be freed. Driven
+// through mitmproxy's own test helpers, as no request shows the leak.
+func TestWebMadeResponse(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	addon := filepath.Join(t.TempDir(), "addon.py")
+	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	py := `import sys, importlib.util
+from mitmproxy.test import taddons, tflow
+spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+a = m.Reqcove()
+with taddons.context(a) as tctx:
+    tctx.configure(a, reqcove_web_keep=1 << 20)
+    f = tflow.tflow(resp=True)
+    f.metadata["reqcove_local"] = True
+    a.request(f)
+    a.response(f)
+    print(len(a.kept))
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// Output, not CombinedOutput: uv and Python may write to stderr (installs, warnings).
+	out, err := exec.CommandContext(ctx, "uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("%v\n%s", err, ee.Stderr)
+		}
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "0" {
+		t.Errorf("bodies kept for mitmweb after a made response: %s, want 0", got)
+	}
+}
+
+// TestModifyHeadersFileChanged (REQCOVE_E2E=1): a modify_headers @file is
+// read again for each flow; one given a line break after it was checked
+// must not put it into the headers (it would start a header of its own).
+func TestModifyHeadersFileChanged(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	dir := t.TempDir()
+	addon := filepath.Join(dir, "addon.py")
+	os.WriteFile(addon, addonPy, 0o600)
+	val := filepath.Join(dir, "value")
+	os.WriteFile(val, []byte("fine"), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(`modify_headers: ["|~q|X-A|@value"]`+"\n"), 0o600)
+	py := `import sys, importlib.util
+from mitmproxy.test import taddons, tflow
+spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+with taddons.context():
+    rules = m.load_rules(sys.argv[2])
+    open(sys.argv[3], "w").write("ok\r\nX-Injected: yes")
+    f = tflow.tflow()
+    notes = m.Reqcove._modify_headers(f, f.request.headers, "request", rules)
+    print(any(b"\r" in v or b"\n" in v for _, v in f.request.headers.fields), "X-Injected" in f.request.headers, notes)
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon, rules, val).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("%v\n%s", err, ee.Stderr)
+		}
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); !strings.HasPrefix(got, "False False") || !strings.Contains(got, "line break dropped") {
+		t.Errorf("after the file changed: %s", got)
 	}
 }

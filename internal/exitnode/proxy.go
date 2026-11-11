@@ -301,11 +301,25 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 	}
 }
 
+// socksHold is how long a SOCKS dial waits for mitmproxy to be ready (a
+// restart takes a few seconds); a var for tests.
+var socksHold = 15 * time.Second
+
 // dialVia dials dst directly, or through mitmproxy's SOCKS5 listener with the
-// device's StableID as the user name.
-func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, dst netip.AddrPort) (net.Conn, error) {
+// device's StableID as the user name, once ready says mitmproxy is up: while
+// it is down another local process could hold its port, and would get the
+// password and the device's traffic.
+func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
 	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
 	if v == socks {
+		if ready != nil {
+			hold, cancel := context.WithTimeout(ctx, socksHold)
+			err := ready(hold)
+			cancel()
+			if err != nil {
+				return nil, err
+			}
+		}
 		var err error
 		if d, err = proxy.SOCKS5("tcp", socksAddr, &proxy.Auth{User: device, Password: socksSecret}, d); err != nil {
 			return nil, err

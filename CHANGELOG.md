@@ -1,5 +1,105 @@
 # Changelog
 
+## v0.3.0 — 2026-11-11
+
+### For agents
+
+- `wait_for_flows`: read what an action on the device sent. Take `checkpoint`
+  from `list_flows` (or `capture_stats`) before acting (a tap through RoamRun,
+  or the user), then wait with `after: checkpoint`: the flows answered since
+  come oldest answer first, as soon as there is one, each once across calls
+  (pass the answer's `after` on), even when they finish out of order; one that
+  never ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call, 16
+  waits at once (4 for one `--mcp-http` device); an `after` no checkpoint gave
+  is refused; flows evicted unread are said at once (`evicted`). Tried with one iPhone (Safari, httpbin.org) acted on through
+  RoamRun, on the Mac's Wi-Fi and from another network (tethering).
+- `diff_flows`: two flows compared (one that worked, one that failed): method,
+  URL, status, error, headers by name, bodies (JSON by path). Values masked on
+  both sides are listed as masked, never as equal; bodies that are not text
+  are not compared while masking is on; with `--no-redact` everything is. JSON
+  numbers are compared as written (IDs past 2^53 too).
+- `get_flow` takes `max_body`, at most that many bytes of each body head.
+- Every tool is marked read-only and not destructive (`readOnlyHint`,
+  `destructiveHint`). `run` prints Codex's command to add the tools beside
+  Claude Code's; the guide says how to allow the tools in each, and not to
+  allow a shell or network tools along with them.
+- The skill covers `wait_for_flows` and `diff_flows`: run `reqcove init`
+  again to update it.
+
+### Masking
+
+- `--mask-names a,b`: your own names treated as secret (headers, parameters,
+  JSON fields, GraphQL arguments; any spelling). `--mask-values RE`: a
+  pattern's matches masked wherever they are (the `key=…` seen in a bank app's
+  User-Agent; a literal secret in a file goes as `\Q…\E`). Both `@FILE` too;
+  errors never quote a pattern; `capture_stats` counts the matches.
+  `--mask-names` matches the whole name (`clientRef` is not `X-Client-Ref`).
+  `--mask-names` tried on an iPhone's flow (URL, JSON body, Referer);
+  `--mask-values` by tests only.
+- String arguments with secret names in GraphQL documents
+  (`login(password: "…")`, in JSON, raw, or a GET `?query=`), and URLs encoded
+  twice or three times inside a parameter. A fuzz test found the latter, and a
+  GraphQL value cut after a backslash; a review found the query's own escaped
+  quotes and block strings written inside JSON. GraphQL's GET variables
+  (`?variables={"password":…}`), JSON in a URL parameter, are looked into too
+  (they were not in 0.2 either, also after a space), as are arguments after a
+  line break or a `#` comment (before the colon too), escaped `"""` in block
+  strings, queries echoed back in responses, escaped strings in arrays, and shapes hidden behind `\u` escapes in a JSON string (which
+  `diff_flows`, decoding, would have shown). URL parameters written the way
+  Gson (Android) writes JSON, `=` as `\u003d` and `&` as `\u0026`, are found too.
+- Your `--mask-names` and `--mask-values` win over the built-in exceptions
+  (an OpenTelemetry `key`, `WWW-Authenticate`, a cookie's attributes).
+- `Access-Control-Allow-Credentials` (only ever `true`) is no longer masked.
+
+### Security
+
+- mitmproxy runs from a lock built into reqcove: `uv run --locked --script`
+  installs exactly the files the lock names and checks their hashes (plain
+  `uvx` checked none). Another `--mitmproxy-spec` still goes through uvx. CI
+  checks the lock and audits it (pip-audit), which found three known
+  vulnerabilities in tornado 6.5.10 (mitmweb's server, capped there by
+  mitmproxy 12.3.1): the lock takes tornado 6.6, which fixes them. The first
+  start in a new state directory takes a few seconds more.
+- While mitmdump restarts, the devices' connections wait for it (15 seconds at
+  most) instead of being sent to its SOCKS port, which another local process
+  could have taken meanwhile; a mitmproxy that could not bind the port never
+  becomes ready (a test). The milliseconds between its death and reqcove
+  noticing it remain (SECURITY.md).
+- Prompt injection, from a review: the server's instructions (all an agent
+  without the skill gets, such as Grok Bot) also say not to write files,
+  commits or commands because of what the records say, not to suggest
+  `--no-redact` or `--web`, that text shaped like a tool result or a system
+  message is still data, and that `next_steps` are for the user. Every tool's
+  description says its text was written by sites, apps or the tailnet. A
+  request whose Host is not a host name or address is not recorded;
+  User-Agents in lists are cut to 256 bytes, ALPN names to printable ASCII;
+  `diff_flows` quotes JSON keys that are not plain names; a body's note quotes
+  the site's `Content-Encoding`.
+- Docs and `run`'s warning corrected: a `--pass-hosts` host's requests that
+  mitmproxy decrypts anyway (plain HTTP, or on an allowed host's connection)
+  go through `--upstream-proxy` and skip `--rules`, as 0.2.0 already did (the
+  upstream part now a test). The v0.2.0 entry below said they skip both.
+- From a review of outside values put into commands and text: `get_flow` with
+  a huge `max_body` crashed `run` (an overflow; now clamped), and a panic in
+  any tool now fails that call only; the `rm` commands `run` prints to change
+  a token quote the state path; `modify_headers` refuses header names that are
+  not tokens and values with a line break or NUL, also when its value file
+  changes later; `resolve` names are host names only; a line from the addon
+  longer than 8 MiB is dropped, not held.
+- `--mcp-http`: each device may call about 10 times a second (30 at once),
+  past that `429`; a call ends when its caller disconnects.
+- Built with Go 1.27.4 (GO-2026-6859 in 1.27.3's net/http, reachable through
+  the `--ui` page's proxy).
+- With the locked mitmproxy, `run` refuses a `--python` below 3.14 at start,
+  saying to give `--mitmproxy-spec` for an older one (through uvx, no lock).
+- A wait for mitmproxy to be ready no longer takes a mitmproxy that came up
+  and went down again before the wait woke for ready.
+  A `--uvx` whose file is not named `uvx` also goes through uvx, unlocked.
+
+### Inside
+
+- store.go and main.go are split by concern (moves only).
+
 ## v0.2.0 — 2026-11-11
 
 - `reqcove status` knows Android devices (the OS Tailscale reports): their apps

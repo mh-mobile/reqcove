@@ -45,6 +45,9 @@ type Config struct {
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
 	SocksSecret string           // its password
 	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
+	// SocksReady, if set, returns once mitmproxy is ready to take SOCKS dials
+	// (capture.WaitReady); until then they wait, at most socksHold.
+	SocksReady func(context.Context) error
 	// UI, if set, serves Reqcove's own page on the node's port 80 to the
 	// --device devices and to this user's own devices, with the asking device's
 	// StableID; all says it is one of this user's own, which see every device's flows.
@@ -130,7 +133,7 @@ func Run(ctx context.Context, cfg Config) error {
 				policy:  current.Load,
 				resolve: localResolve, // this computer's apps: its own lookups (VPNs, split DNS, search domains), as without the proxy
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
-					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
+					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, dst)
 				},
 			},
 			ReadHeaderTimeout: 30 * time.Second,
@@ -151,7 +154,7 @@ func Run(ctx context.Context, cfg Config) error {
 			return nil, true // RST
 		}
 		return func(c net.Conn) {
-			relay(c, src, dst, v, p.devices[src.Addr().Unmap()].ID, cfg.SocksAddr, cfg.SocksSecret, cfg.Verbose)
+			relay(c, src, dst, v, p.devices[src.Addr().Unmap()].ID, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, cfg.Verbose)
 		}, true
 	})
 	if err := s.Start(); err != nil {
@@ -198,7 +201,7 @@ func Run(ctx context.Context, cfg Config) error {
 				policy:  current.Load,
 				resolve: resolver(cfg.DNS),
 				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
-					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, dst)
+					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, dst)
 				},
 			},
 			ReadHeaderTimeout: 30 * time.Second,
@@ -419,9 +422,9 @@ func FirstStep(s Status) string {
 	return ""
 }
 
-func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr, socksSecret string, verbose bool) {
+func relay(c net.Conn, src, dst netip.AddrPort, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, verbose bool) {
 	defer c.Close()
-	out, err := dialVia(context.Background(), v, device, socksAddr, socksSecret, dst)
+	out, err := dialVia(context.Background(), v, device, socksAddr, socksSecret, ready, dst)
 	if err != nil {
 		logEvent("tcp %v -> %v %v: %v", src, dst, v, err)
 		return

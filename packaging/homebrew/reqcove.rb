@@ -9,7 +9,7 @@ class Reqcove < Formula
   license "MIT"
 
   depends_on "go" => :build
-  depends_on "uv" # reqcove runs mitmproxy with uvx
+  depends_on "uv" # reqcove runs mitmproxy with uv, from its lock
 
   def install
     system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=v#{version}"), "./cmd/reqcove"

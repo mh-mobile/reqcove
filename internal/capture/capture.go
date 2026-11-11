@@ -23,12 +23,40 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 //go:embed addon.py
 var addonPy []byte
+
+// mitm.py and its lock run mitmproxy from exactly the files the lock names,
+// hashes checked (uv run --locked; uvx checks none).
+//
+//go:embed mitm.py
+var mitmPy []byte
+
+//go:embed mitm.py.lock
+var mitmLock []byte
+
+// scriptFiles are what Start writes into the state directory for mitmproxy.
+var scriptFiles = []string{"addon.py", "mitm.py", "mitm.py.lock"}
+
+// LockedMitmSpec is the mitmproxy that mitm.py.lock pins. With another
+// --mitmproxy-spec, mitmproxy comes through uvx, its files unchecked.
+const LockedMitmSpec = "mitmproxy==12.3.1"
+
+// PyCommand is how to run tool (mitmdump, mitmweb, or python) for cfg: from
+// the lock with the uv beside uvx, or with uvx --from for another spec, or for
+// a --uvx not named uvx (a wrapper, whose uv is not known).
+func PyCommand(cfg Config, tool string) (string, []string) {
+	if cfg.MitmSpec == LockedMitmSpec && filepath.Base(cfg.Uvx) == "uvx" {
+		uv := filepath.Join(filepath.Dir(cfg.Uvx), "uv") // "uv" itself when uvx is on PATH
+		return uv, []string{"run", "--locked", "--no-project", "--python", cfg.Python, "--script", filepath.Join(cfg.Dir, "mitm.py"), tool}
+	}
+	return cfg.Uvx, []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+}
 
 // Apple's services fail on HTTPS interception
 // (https://support.apple.com/en-us/101555), so these pass through undecrypted.
@@ -96,10 +124,13 @@ type Capture struct {
 	CA          CA     // the CA iPhones must trust
 
 	cfg    Config
+	bin    string // uv, or uvx
 	args   []string
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
+	upMu   sync.Mutex
+	up     chan struct{} // closed while a mitmdump that said hello runs; replaced when it exits
 	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
 	restarted bool
 	err       error
@@ -148,12 +179,16 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		ln.Close()
 		os.Remove(sock)
 		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
-		os.Remove(filepath.Join(cfg.Dir, "addon.py"))
+		for _, f := range scriptFiles {
+			os.Remove(filepath.Join(cfg.Dir, f))
+		}
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
-	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
-		return fail(err)
+	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+		if err := os.WriteFile(filepath.Join(cfg.Dir, f), b, 0o600); err != nil {
+			return fail(err)
+		}
 	}
 	port, err := freePort()
 	if err != nil {
@@ -198,7 +233,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	}
 	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
-		cfg: cfg, ln: ln, done: make(chan struct{})}
+		cfg: cfg, ln: ln, done: make(chan struct{}), up: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
@@ -206,17 +241,18 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if cfg.WebPort != 0 {
 		tool = "mitmweb"
 	}
-	c.args = []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool,
+	c.bin, c.args = PyCommand(cfg, tool)
+	c.args = append(c.args,
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
-		"--set", "confdir=" + cfg.Confdir,
+		"--set", "confdir="+cfg.Confdir,
 		"--set", "proxyauth=any",
 		// Bodies stream through the addon's callables; store_streamed_bodies
 		// would buffer them in mitmproxy anyway. -q equivalent: errors only.
 		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
 		"--set", fmt.Sprintf("reqcove_body_head=%d", cfg.BodyHead),
-		"-s", addon, "--set", "reqcove_socket=" + sock,
-		"--set", "reqcove_secret_file=" + secretFile,
-		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
+		"-s", addon, "--set", "reqcove_socket="+sock,
+		"--set", "reqcove_secret_file="+secretFile,
+		"--set", "reqcove_allow_hosts="+string(allowJSON))
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
 		if cfg.RulesReload {
@@ -259,7 +295,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 // spawn starts one mitmdump and waits for its addon's hello.
 func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
-	p := &proc{cmd: exec.Command(c.cfg.Uvx, c.args...), done: make(chan struct{})}
+	p := &proc{cmd: exec.Command(c.bin, c.args...), done: make(chan struct{})}
 	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
 	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1") // mitmproxy.log as it happens, not when Python's buffer fills
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -296,6 +332,7 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	}
 	p.ready = time.Now()
 	c.Store.setState("ready", "")
+	c.setUp(true)
 	return p, nil
 }
 
@@ -314,10 +351,13 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 	for {
 		select {
 		case <-ctx.Done():
+			c.setUp(false)
 			p.stop()
 			return
 		case <-p.done:
 		}
+		// First: from now its port is free for anyone to take.
+		c.setUp(false)
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would hold the port
 		err := fmt.Errorf("mitmdump exited: %v", p.err)
 		c.Store.mitmdumpExited(err.Error())
@@ -347,6 +387,60 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 	}
 }
 
+// WaitReady returns once mitmdump is ready, so that nothing is sent to its
+// SOCKS port while it is down: there, another local user's process could have
+// taken the port. Ready means its addon said hello, which mitmproxy (12.3.1)
+// does only after its listeners are up: one that cannot bind exits first
+// (errorcheck). Between its death and supervise noticing it (milliseconds),
+// a dial can still go to the free port.
+func (c *Capture) WaitReady(ctx context.Context) error {
+	c.upMu.Lock()
+	up := c.up
+	c.upMu.Unlock()
+	return c.waitFrom(ctx, up)
+}
+
+// waitFrom is WaitReady from the gate seen as up. Woken, it checks the gate
+// is still that one: a mitmdump that went down again meanwhile replaced it.
+func (c *Capture) waitFrom(ctx context.Context, up chan struct{}) error {
+	for {
+		select {
+		case <-c.done:
+			return errors.New("mitmdump is not running")
+		default:
+		}
+		select {
+		case <-up:
+			c.upMu.Lock()
+			now := c.up
+			c.upMu.Unlock()
+			if now == up {
+				return nil
+			}
+			up = now // down again since: wait for the next one
+		case <-c.done:
+			return errors.New("mitmdump is not running")
+		case <-ctx.Done():
+			return fmt.Errorf("mitmdump is not ready: %w", ctx.Err())
+		}
+	}
+}
+
+func (c *Capture) setUp(up bool) {
+	c.upMu.Lock()
+	defer c.upMu.Unlock()
+	select {
+	case <-c.up:
+		if !up {
+			c.up = make(chan struct{})
+		}
+	default:
+		if up {
+			close(c.up)
+		}
+	}
+}
+
 // Done is closed when mitmdump is stopped or has failed too often; Err then says why (nil after Stop).
 func (c *Capture) Done() <-chan struct{} { return c.done }
 func (c *Capture) Err() error            { return c.err }
@@ -359,7 +453,9 @@ func (c *Capture) Stop() {
 	os.Remove(c.ln.Addr().String())
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
-	os.Remove(filepath.Join(c.cfg.Dir, "addon.py"))
+	for _, f := range scriptFiles {
+		os.Remove(filepath.Join(c.cfg.Dir, f))
+	}
 	if c.WebURL != "" {
 		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
 	}
@@ -375,15 +471,43 @@ func (c *Capture) accept() {
 			defer conn.Close()
 			r := bufio.NewReaderSize(conn, 1<<16)
 			for {
-				line, err := r.ReadBytes('\n') // no line limit: body heads are inline
-				if len(line) > 0 {
+				line, err := readLine(r, maxIngestLine)
+				switch {
+				case errors.Is(err, errLongLine):
+					c.Store.badLine() // never held whole: the addon's bounds keep real lines far below
+				case len(line) > 0:
 					c.Store.Apply(line)
 				}
-				if err != nil {
+				if err != nil && !errors.Is(err, errLongLine) {
 					return
 				}
 			}
 		}()
+	}
+}
+
+// maxIngestLine bounds one line from the addon: a body head (64 KiB, in
+// base64) and headers (256 KiB, JSON-escaped) fit many times over.
+const maxIngestLine = 8 << 20
+
+var errLongLine = errors.New("ingest line too long")
+
+// readLine reads up to a newline, at most max bytes: a longer line is read
+// to its end and dropped (errLongLine), not held.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = r.ReadSlice('\n')
+			}
+			return nil, errLongLine // counted even when the stream ends there; the next read says EOF
+		}
+		line = append(line, part...)
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return line, err
+		}
 	}
 }
 
@@ -461,7 +585,8 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
+	bin, args := PyCommand(cfg, "python")
+	cmd := exec.CommandContext(ctx, bin, append(args, "-c", py, cfg.Confdir, cfg.CAName)...)
 	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
 	return cmd.Run()
 }

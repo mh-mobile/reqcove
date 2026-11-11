@@ -40,7 +40,9 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+
+ツールの許可：どのツールにも読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。Claude Code は、許可していないツールを使う前に確認します。設定の `permissions.allow` に `"mcp__reqcove"` を入れると、Reqcove のツールをまとめて許可できます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）
 
@@ -80,6 +82,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - エージェントが読んだものは、そのエージェントのコンピュータと、モデルの提供元に渡ります（Grok Bot なら xAI のクラウド）。エージェントを止めるには、状態ディレクトリの `mcp-token` を削除して `run` を再起動するか（削除しない限り、トークンは起動のたびに同じです）、そのデバイスを tailnet から外します。
 - `run` を再起動しても、再接続は要りません（止まっている間の呼び出しは失敗します）。記録は空から始まり、再起動前のカーソルは拒否します。
 - `run` は、呼び出しごとにデバイスとツール名をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called "list_flows"`。引数は出しません）。トークンがない、または違うリクエストもログに出します。「確認します」と言うだけで呼んでいないエージェントは、ログに行が出ません。
+- 1 台のデバイスから呼べるのは、1 秒におよそ 10 回までです。超えると、しばらく `429` が返ります（`run` は 1 分に 1 回ログに出します）。
 - 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
 
 確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。ほかのコンピュータ（tailnet にいる macOS の VM）からも、ノードの名前と IP の両方で呼べることを確認。
@@ -161,11 +164,11 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 ```
 
 - そのホストは、接続だけを記録します（ホスト、接続先サーバー、時刻、バイト数：`list_passthrough`）。URL や中身は記録しません。
-- `--rules` と `--upstream-proxy` の対象外になります。
+- その接続は `--rules` と `--upstream-proxy` の対象外です。ただし mitmproxy がそれでも復号するリクエスト（平文の HTTP や、許可したホストの接続に相乗りしたもの）は、記録されず `--rules` も効きませんが、`--upstream-proxy` は通ります。
 - TLS ハンドシェイクのあとで行うピンニングは、どこにも表示されません。
 - 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒否するのは、別の理由です（[Android](#android-を記録する)）。
 
-確認状況：iPhone で確認。
+確認状況：iPhone で確認。pass host の復号されたリクエストが `--upstream-proxy` を通ることはテストで、`--rules` が効かないことはコードを読んで確認。
 
 ### Android を記録する
 
@@ -326,12 +329,14 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--mcp-http` | [MCP ツールを HTTP でも提供](#ほかのデバイスのエージェントから使う--mcp-http)。ノードの 8090 番ポート |
 | `--dns SERVERS` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省略可）。`system` で `/etc/resolv.conf` の最初の nameserver |
 | `--no-redact` | シークレットをマスクせずに記録 |
+| `--mask-names a,b` | 名前がこれと一致するものもマスクする（表記の違いは問わない：`clientRef` は `client_ref`、`Client-Ref` にも一致。`X-Client-Ref` のように名前の一部の場合は一致しない）。ヘッダー、パラメータ、JSON のフィールド、GraphQL の引数が対象。`@FILE` も可 |
+| `--mask-values RE` | このパターン（RE2）に一致した部分を、どこにあってもマスクする。繰り返し指定するか `@FILE`（1 行に 1 つ）。シークレットそのものを書くなら、`ps` に出ないようファイルで、`\Q…\E` で囲んで |
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
-| `--uvx PATH` | 使用する uvx |
-| `--python VERSION` | uvx が取得する Python。デフォルトは 3.14 |
-| `--mitmproxy-spec SPEC` | uvx が取得する mitmproxy。デフォルトは `mitmproxy==12.3.1` |
+| `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、デフォルトの mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認）。ファイル名が `uvx` でないパスは uvx として実行する（ロックもハッシュの確認もなし） |
+| `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
+| `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |
 
 ほかのコマンド（`init` と `version` 以外は、`--state DIR` も指定可能）：
 
@@ -344,6 +349,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 
+iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`。テストのみ：`--mask-values`、`diff_flows`、`max_body`、`--mcp-http` の回数制限。
+
 コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
 
 ## MCP ツール
@@ -352,7 +359,9 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 |---|---|
 | `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
-| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ |
+| `wait_for_flows` | デバイスでの操作が送った通信を読む。操作の前に `list_flows`（または `capture_stats`）の `checkpoint` を控え、操作のあと `after: checkpoint` で呼ぶ。それ以降に返事（レスポンスかエラー）が来たフローを、返事の早い順に返す。まだなければ、最初の 1 件を最長 `timeout` 秒（デフォルト 20、最大 30）待つ。結果の `after` を次の呼び出しに渡せば、同じフローは二度返らない。絞り込みは同じ |
+| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ（`max_body` を指定すると、それぞれそのバイト数まで） |
+| `diff_flows` | 2 つのフローを比べる（成功したものと失敗したものなど）。メソッド、URL、ステータスコード、エラー、ヘッダー（名前ごと）、ボディ（JSON はパスごと）。マスク中は、両方でマスクされた値を「同じ」とは言わず `masked` に並べ（元の値は違うかもしれない）、テキストでないボディは比べない。`--no-redact` のときは全部比べる |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |

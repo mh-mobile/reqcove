@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.2). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.3). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
 
 ## What you need
@@ -93,7 +93,9 @@ through a `replace` directive.
    ten minutes?"
 
 The agent reads the records through MCP tools such as `summarize`, `list_flows`,
-`search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)).
+`search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)). After
+it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
+requests that action sent.
 `reqcove cleanup` lists how to undo everything; stopping, restarting and
 updating are in [the guide](docs/guide.md#stop-restart-update).
 
@@ -126,8 +128,9 @@ All of them: [the guide](docs/guide.md#options).
   undecrypted.
 - The secrets Reqcove recognises (tokens, keys, cookies, passwords) are masked
   as they arrive. **Other
-  secrets in a body, under names that do not say so, are not found**, and
-  personal data such as e-mail addresses is not masked.
+  secrets in a body, under names that do not say so, are not found** (add
+  yours with `--mask-names` or `--mask-values`), and personal data such as
+  e-mail addresses is not masked.
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.

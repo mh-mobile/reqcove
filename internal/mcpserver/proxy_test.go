@@ -114,8 +114,11 @@ func TestProxyAcrossRestarts(t *testing.T) {
 		if tool.OutputSchema != nil {
 			t.Errorf("%s has an output schema: a run of another version could fail it", tool.Name)
 		}
+		if a := tool.Annotations; a == nil || !a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+			t.Errorf("%s: annotations %+v, want read-only, not destructive", tool.Name, a)
+		}
 	}
-	if len(names) != 9 || !strings.Contains(strings.Join(names, ","), "status") { // the tools, without run
+	if len(names) != 11 || !strings.Contains(strings.Join(names, ","), "status") { // the tools, without run
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {
