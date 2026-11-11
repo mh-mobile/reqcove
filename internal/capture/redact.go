@@ -24,13 +24,10 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if len(head) == 0 || !utf8.Valid(trimCutRune(head)) {
 		return head
 	}
-	s := maskJSON(string(head), request, 0)
-	// GraphQL documents go in requests, and come back in responses that echo
-	// them (errors, debug): a response is looked at only when it looks like one
-	// (scanning every script-heavy page made masking ~20x slower).
-	if request || strings.Contains(s, `"query"`) || strings.Contains(s, "mutation") || strings.Contains(s, "operationName") {
-		s = maskGraphQL(s, request)
-	}
+	// A GraphQL document as the body (application/graphql, or shaped like
+	// one); those in JSON strings are found by maskJSON.
+	s, _ := maskGraphQLDoc(string(head), request)
+	s = maskJSON(s, request, 0)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
@@ -65,6 +62,14 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		if !closed {
 			// A string cut by the head's end, not a field's value: an array
 			// element, or a key.
+			if depth <= 1 {
+				if m, ok := gqlString(s[keyStart:], false, loneCode); ok {
+					b.WriteString(s[last:keyStart])
+					b.WriteString(m)
+					last = len(s)
+					break
+				}
+			}
 			if cutSecret(s[keyStart:], loneCode, depth) {
 				b.WriteString(s[last : keyStart+1])
 				b.WriteString("[redacted]")
@@ -76,7 +81,12 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		if j >= len(s) || s[j] != ':' {
 			// A value that is no field's: an array element, or the whole body.
 			// Escaped, it is looked at decoded too, as a field's value is.
-			if lit := s[keyStart : keyEnd+1]; depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && strings.Contains(lit, `\"`) {
+			lit := s[keyStart : keyEnd+1]
+			if m, ok := gqlString(lit, true, loneCode); depth <= 1 && ok {
+				b.WriteString(s[last:keyStart])
+				b.WriteString(m)
+				last = keyEnd + 1
+			} else if depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && strings.Contains(lit, `\"`) {
 				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
 					b.WriteString(s[last:keyStart])
 					b.WriteString(m)
@@ -122,6 +132,18 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		valEnd, valClosed := jsonStringEnd(s, j)
 		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) && !hasUserName(jsonKey(s[keyStart+1:keyEnd])) {
 			secret = false
+		}
+		if !secret && depth <= 1 {
+			if m, ok := gqlString(s[j:valEnd+1], valClosed, loneCode); ok {
+				b.WriteString(s[last:j])
+				b.WriteString(m)
+				last = valEnd + 1
+				if !valClosed {
+					break
+				}
+				i = valEnd + 1
+				continue
+			}
 		}
 		switch {
 		case secret:
@@ -191,11 +213,16 @@ func maskDecodedString(lit string, loneCode bool, depth int) (string, bool) {
 	if m == v {
 		return "", false
 	}
+	return jsonString(m), true
+}
+
+// jsonString writes v as a JSON string literal.
+func jsonString(v string) string {
 	var out strings.Builder
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
-	enc.Encode(m)
-	return strings.TrimSuffix(out.String(), "\n"), true
+	enc.Encode(v)
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 // jsonStringEnd returns the index of the quote closing the string that opens
@@ -319,9 +346,12 @@ func maskForm(s string, request bool) string {
 			if m := maskJSON(v, request, 1); m != v {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}
-		} else if i == 0 && (nestedSecret(val, 0) || graphQLSecret(val)) {
-			// maskURLs looks into the fields after an &, not the first
-			parts[i] = name + "=[redacted]"
+		} else if i == 0 { // maskURLs looks into the fields after an &, not the first
+			if m, ok := gqlParam(val); ok {
+				parts[i] = name + "=" + m
+			} else if nestedSecret(val, 0) {
+				parts[i] = name + "=[redacted]"
+			}
 		}
 	}
 	return strings.Join(parts, "&")
@@ -620,10 +650,13 @@ func maskURLsAt(v string, depth int) string {
 			}
 			return sub[1] + sub[2] + "=REDACTED"
 		}
+		if m, ok := gqlParam(sub[3]); ok { // GET ?query=…: the whole value, ';' included
+			return sub[1] + sub[2] + "=" + m
+		}
 		// The value up to ';' is this name's; each ';name=value' after it is
 		// looked at once, in one pass (recursing on the rest was quadratic).
 		pieces := strings.Split(sub[3], ";")
-		if nestedSecret(pieces[0], depth) || graphQLSecret(pieces[0]) || jsonSecret(pieces[0]) {
+		if nestedSecret(pieces[0], depth) || jsonSecret(pieces[0]) {
 			pieces[0] = "REDACTED"
 		}
 		for i := 1; i < len(pieces); i++ {
@@ -655,16 +688,6 @@ func jsonSecret(v string) bool {
 		return false
 	}
 	return maskJSON(u, true, 2) != u // depth 2: its strings are not decoded again, or nesting would be unbounded (each level a full rescan)
-}
-
-// graphQLSecret: a URL parameter's value is a GraphQL document (GET
-// ?query=…) with a secret argument in it.
-func graphQLSecret(v string) bool {
-	if !strings.Contains(v, "%28") && !strings.Contains(v, "(") {
-		return false
-	}
-	u := unescapeCut(v)
-	return maskGraphQL(u, true) != u
 }
 
 // unescapeCut is url.QueryUnescape for text that may be cut inside a %XX
