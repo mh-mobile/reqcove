@@ -167,6 +167,16 @@ func run(ctx context.Context, args []string) error {
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081 (8091-8099 while another run has it), and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
+	var maskNameSpecs, maskValueSpecs []string
+	fs.Func("mask-names", "names to mask as secret too, as the built-in ones are (headers, URL and form parameters, JSON fields, GraphQL arguments), comma-separated, or @FILE (one a line)", func(v string) error {
+		maskNameSpecs = append(maskNameSpecs, v)
+		return nil
+	})
+	// Checked after parsing, by number: the flag package would print a value it refused, and a pattern may be a secret.
+	fs.Func("mask-values", "a pattern (RE2) whose matches are masked wherever they appear, such as 'key=[A-Za-z0-9]{16,}'; repeat it, or @FILE (one a line): a file keeps a literal secret out of ps", func(v string) error {
+		maskValueSpecs = append(maskValueSpecs, v)
+		return nil
+	})
 	state := fs.String("state", defaultState(), "state directory")
 	fs.String("hostname", "reqcove", "tailnet node name, kept in the state for the next runs (with a new --state named reqcove-NAME, that name)")
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
@@ -247,6 +257,15 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *noRedact {
 		log.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
+	}
+	maskNames, maskValues, err := maskPolicy(maskNameSpecs, maskValueSpecs)
+	if err != nil {
+		return err
+	}
+	if *noRedact && len(maskNames)+len(maskValues) > 0 {
+		log.Print("WARN: --mask-names and --mask-values do nothing with --no-redact")
+	} else if err := capture.SetMaskPolicy(maskNames, maskValues); err != nil {
+		return err
 	}
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")

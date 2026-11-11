@@ -328,6 +328,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--mcp-http` | [MCP ツールを HTTP でも提供](#ほかのデバイスのエージェントから使う--mcp-http)。ノードの 8090 番ポート |
 | `--dns SERVERS` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省略可）。`system` で `/etc/resolv.conf` の最初の nameserver |
 | `--no-redact` | シークレットをマスクせずに記録 |
+| `--mask-names a,b` | この名前もシークレットとしてマスクする（組み込みの名前と同じく、ヘッダー、パラメータ、JSON のフィールド、GraphQL の引数）。`@FILE` も可 |
+| `--mask-values RE` | このパターン（RE2）に一致した部分を、どこにあってもマスクする。繰り返し指定するか `@FILE`（1 行に 1 つ。`ps` に値を出さないため） |
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |

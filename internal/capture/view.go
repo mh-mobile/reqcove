@@ -188,7 +188,7 @@ func (s *Store) Stats() map[string]any {
 			truncated++
 		}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted, "checkpoint": s.seq,
 		"oldest_flow": oldest, "newest_flow": newest, "max_flows": s.maxFlows, "max_bytes": s.maxBytes,
 		"flows_with_truncated_bodies": truncated,
@@ -204,6 +204,12 @@ func (s *Store) Stats() map[string]any {
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
 	}
+	if s.redact {
+		for k, v := range policyStats() {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // bodyText returns a head as text, or as base64 when it is not text. Each
