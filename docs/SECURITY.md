@@ -79,7 +79,9 @@ So "delete the directory" above means each of them.
   its server directly, past `--rules` and `--upstream-proxy`. Its plain HTTP,
   and its requests riding another host's decrypted connection, are decrypted all
   the same: counted as out of scope, not recorded, and sent on through
-  `--upstream-proxy` when one is set, the only CA trusted then (a test). A pass
+  `--upstream-proxy` when one is set (a test), checked as all HTTPS through it
+  is: against `--upstream-ca` only, or the public CAs without one. They skip
+  `--rules` (from reading code). A pass
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
 - The secrets Reqcove recognises are masked as they arrive, so no tool can

@@ -247,7 +247,10 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 
 - For those hosts only the connections are recorded (host, server, times,
   bytes: `list_passthrough`), no URLs or contents.
-- They skip `--rules` and `--upstream-proxy`.
+- Their connections skip `--rules` and `--upstream-proxy`. Requests to them
+  that mitmproxy decrypts all the same (plain HTTP, or riding an allowed
+  host's connection) are not recorded and skip `--rules`, but go through
+  `--upstream-proxy`.
 - Pinning checked after the TLS handshake shows nowhere.
 - For your own app, use a build without pinning. Android apps refuse the CA
   for another reason ([Android](#android)).
