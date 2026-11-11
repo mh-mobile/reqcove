@@ -392,6 +392,7 @@ func gqlBodyOperation(head []byte) string {
 	switch {
 	case t[0] == '[' && json.Unmarshal(t, &many) == nil:
 		for _, m := range many {
+			one.OperationName, one.Query = "", "" // a field an element lacks would keep the last one's: its query lexed again, quadratic
 			if json.Unmarshal(m, &one) == nil && (one.OperationName != "" || gqlDocOperation(one.Query) != "") {
 				return gqlBatched
 			}
