@@ -34,6 +34,9 @@ func TestOperationAndEndpoints(t *testing.T) {
 		{"GET", "https://api.example.com/graphql?operationName=ByName&query=%7B+a+%7D", "", "ByName"},
 		{"POST", "https://api.example.com/graphql", `{"operationName":"not a name <b>","query":"query Q { a }"}`, "Q"}, // a name GraphQL does not allow is not shown
 		{"POST", "https://shop.example.com/search", `{"query":"shoes"}`, ""},
+		{"POST", "https://api.example.com/graphql", `{"query":"fragment F on U { a } query Feed { ...F }"}`, "Feed"},           // past a fragment
+		{"POST", "https://api.example.com/graphql", `{"query":"\"\"\"Described\"\"\" mutation Described { a }"}`, "Described"}, // past a description
+		{"POST", "https://api.example.com/graphql", `{"query":"fragment F on U { a } { ...F }"}`, gqlAnonymous},
 	} {
 		id := flow(c.method, c.url, c.body)
 		if v, _ := s.Get(id, false); v.Operation != c.op {

@@ -6,12 +6,16 @@
 
 - Response mocks: a `mock:` rule in the `--rules` file answers a request
   (method, URL exact or by prefix, GraphQL operation) with a status, headers
-  and a body (inline or a file, at most 1 MiB), before the other rules; nothing
-  reaches the server. Its row says `mocked: true`, `rewrites` gives
+  and a body (inline or a file, at most 1 MiB), before the other rules; the
+  request is not sent to the server (for HTTPS, mitmproxy may have connected
+  to it already, to read its certificate). One it would have to hold but
+  cannot (a length over 1 MiB, a POST of unknown length) goes on, its
+  `rewrites` saying `mock: skipped, …`. Its row says `mocked: true`, `rewrites` gives
   `mock[i]: status` (never the rule's text), a HAR notes it, `summarize`
   counts them. `Cache-Control: no-store` unless the rule sets one. Hosts in
   `--allow-hosts` only. `capture_stats.rules_loaded` says when the file was
-  last taken. Tried with the E2E tests; not on an iPhone yet.
+  last taken. Tried with the E2E tests, and on an iPhone (Safari; one GraphQL
+  operation of the GitHub app).
 - `summarize` counts by endpoint (`by_endpoint`): method, host and path
   without the query, with segments of digits only or a UUID as `{id}`, then
   a GraphQL operation (`POST api.example.com/graphql Login`).
@@ -51,7 +55,7 @@
 - A string cut by the head's end is read with its escapes undone (`\u`
   escapes, a cut one dropped), as a whole one is.
 - The fuzz test checks every 5 characters of the secret, as written and
-  decoded, at every cut, in 15 shapes (it checked the whole secret at one cut).
+  decoded, at every cut, in 21 shapes (it checked the whole secret at one cut).
 
 ## v0.3.0 — 2026-11-11
 

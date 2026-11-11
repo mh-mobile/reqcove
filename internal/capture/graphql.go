@@ -111,8 +111,13 @@ func gqlLex(s string, limit int) ([]gqlTok, bool) {
 // gqlStart: the tokens start a document. An operation (query, mutation or
 // subscription, then a name or not, then its variables, directives or
 // selections), a fragment, or { then a field with arguments, selections, an
-// alias, another field or a spread. "{count} items" is not one.
-func gqlStart(s string, toks []gqlTok) bool {
+// alias, another field or a spread, or { name } alone or before another
+// definition. "{count} items" and "{name}'s" are not one. ended: s has no
+// more tokens than toks.
+func gqlStart(s string, toks []gqlTok, ended bool) bool {
+	if len(toks) > 0 && (toks[0].kind == 's' || toks[0].kind == 'b') {
+		toks = toks[1:] // a description: """Login""" mutation Login { … }
+	}
 	is := func(k int, kind byte, text string) bool {
 		return k < len(toks) && toks[k].kind == kind && (text == "" || s[toks[k].start:toks[k].end] == text)
 	}
@@ -123,7 +128,14 @@ func gqlStart(s string, toks []gqlTok) bool {
 	case is(0, 'n', "fragment"):
 		return is(1, 'n', "") && is(2, 'n', "on")
 	case is(0, '{', ""):
-		return is(1, '.', "") || is(1, 'n', "") && (opens(2) || is(2, 'n', "") || is(2, ':', "") && is(3, 'n', ""))
+		if is(1, '.', "") {
+			return true
+		}
+		if !is(1, 'n', "") {
+			return false
+		}
+		return opens(2) || is(2, 'n', "") || is(2, '.', "") || is(2, ':', "") && is(3, 'n', "") ||
+			is(2, '}', "") && (ended && len(toks) == 3 || is(3, 'n', "fragment") || is(3, 'n', "query") || is(3, 'n', "mutation") || is(3, 'n', "subscription"))
 	}
 	return false
 }
@@ -132,28 +144,32 @@ func gqlStart(s string, toks []gqlTok) bool {
 // names (an argument's or input field's after :, a variable's default after
 // =); all of it if it cannot be lexed.
 func maskGraphQLDoc(s string, loneCode bool) (masked string, isDoc bool) {
-	if head, _ := gqlLex(s, 4); !gqlStart(s, head) {
+	head, hok := gqlLex(s, 5)
+	if !gqlStart(s, head, hok && len(head) < 5) {
 		return s, false
 	}
 	toks, ok := gqlLex(s, gqlMaxTokens)
 	if !ok {
+		if len(head) >= 4 && head[0].kind == '{' && head[2].kind == ':' && head[3].kind == 'n' && strings.HasPrefix(strings.TrimLeft(s[head[3].end:], " \t\r\n"), ",") {
+			return s, false // {success:true,msg:'done'}: a script's object that GraphQL cannot read, not a broken document
+		}
 		return "[redacted]", true
 	}
 	var b strings.Builder
 	last := 0
-	def := "" // the name a default (= value) belongs to: $password: String = "…"
+	defSecret := false // the name a default (= value) belongs to is secret: $password: String = "…"
 	for k := 0; k < len(toks); k++ {
 		v := -1
 		switch t := toks[k]; {
 		case t.kind == 'n' && k+1 < len(toks) && toks[k+1].kind == ':':
-			def = s[t.start:t.end]
+			defSecret = secretKind(s[t.start:t.end], loneCode) // once a name: "=" after "=" must not ask again
 			if k > 0 && toks[k-1].kind == '$' {
 				continue // a variable: its type comes next, not a value
 			}
-			if secretKind(def, loneCode) {
+			if defSecret {
 				v = k + 2
 			}
-		case t.kind == '=' && def != "" && secretKind(def, loneCode):
+		case t.kind == '=' && defSecret:
 			v = k + 1
 		}
 		if v < 0 || v >= len(toks) {
@@ -202,11 +218,14 @@ func gqlValueEnd(toks []gqlTok, v int) (end int, toEnd, ok bool) {
 }
 
 // gqlPrefix: raw text (a JSON string's, after its quote) may start a
-// document: after spaces, commas and escaped line breaks, a keyword, { or #.
+// document: after spaces, commas, byte order marks and escaped line breaks, a
+// keyword, { or #, or an escape (\u006d is m: decoded to be sure).
 func gqlPrefix(raw string) bool {
 	for len(raw) > 0 {
 		if c := raw[0]; c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' {
 			raw = raw[1:]
+		} else if strings.HasPrefix(raw, "\xef\xbb\xbf") {
+			raw = raw[3:]
 		} else if len(raw) > 1 && c == '\\' && strings.IndexByte("nrt", raw[1]) >= 0 {
 			raw = raw[2:]
 		} else {
@@ -216,7 +235,7 @@ func gqlPrefix(raw string) bool {
 	if raw == "" {
 		return false
 	}
-	if raw[0] == '{' || raw[0] == '#' {
+	if raw[0] == '{' || raw[0] == '#' || strings.HasPrefix(raw, `\u`) || strings.HasPrefix(raw, `\"`) { // \" may open a description
 		return true
 	}
 	for _, w := range []string{"query", "mutation", "subscription", "fragment"} {
@@ -230,7 +249,10 @@ func gqlPrefix(raw string) bool {
 // gqlString masks a document held in a JSON string literal (lit, from its
 // opening quote, closed or cut by the head's end), read decoded and written
 // again; false if it holds none, or nothing was masked.
-func gqlString(lit string, closed, loneCode bool) (string, bool) {
+//
+// urls: the URLs and shapes in it are looked at too (not at depth 2, where
+// nesting must stop).
+func gqlString(lit string, closed, loneCode, urls bool) (string, bool) {
 	if !gqlPrefix(lit[1:]) {
 		return "", false
 	}
@@ -240,13 +262,20 @@ func gqlString(lit string, closed, loneCode bool) (string, bool) {
 	}
 	var v string
 	if json.Unmarshal([]byte(raw), &v) != nil {
-		return "", false
+		// Not JSON as written (raw line breaks or tabs in it): read leniently.
+		lenient := strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(raw)
+		if json.Unmarshal([]byte(lenient), &v) != nil {
+			return "", false
+		}
 	}
 	m, isDoc := maskGraphQLDoc(v, loneCode)
 	if !isDoc {
 		return "", false
 	}
-	if m = maskTokens(maskURLs(m)); m == v {
+	if urls {
+		m = maskTokens(maskURLs(m))
+	}
+	if m == v {
 		return "", false
 	}
 	out := jsonString(m)
@@ -258,14 +287,17 @@ func gqlString(lit string, closed, loneCode bool) (string, bool) {
 
 // gqlParam masks a document in a URL parameter's value (GET ?query=…, a form
 // field), decoded and escaped again.
-func gqlParam(v string) (string, bool) {
+func gqlParam(v string, depth int) (string, bool) {
 	if !strings.Contains(v, ":") && !containsFold(v, "%3a") {
 		return "", false // no argument, nothing to mask
 	}
 	u := unescapeCut(v)
 	m, isDoc := maskGraphQLDoc(u, true)
 	if !isDoc || m == u {
-		return "", false
+		return "", false // nestedSecret then looks at it whole
+	}
+	if depth < 2 { // and the URLs and shapes in it (login(next: "https://…?token=…")), as nestedSecret would
+		m = maskTokens(maskURLsAt(maskUserinfo(m), depth+1))
 	}
 	return url.QueryEscape(m), true
 }
@@ -296,13 +328,31 @@ func gqlName(s string) string {
 }
 
 // gqlDocOperation names the first operation of document doc.
+// gqlDocOperation names the first operation of document doc, past fragments
+// and descriptions.
 func gqlDocOperation(doc string) string {
-	toks, _ := gqlLex(doc, 4)
-	if !gqlStart(doc, toks) {
+	if head, ok := gqlLex(doc, 5); !gqlStart(doc, head, ok && len(head) < 5) {
 		return ""
 	}
-	if toks[0].kind == 'n' && len(toks) > 1 && toks[1].kind == 'n' && doc[toks[0].start:toks[0].end] != "fragment" {
-		return gqlName(doc[toks[1].start:toks[1].end])
+	toks, _ := gqlLex(doc, gqlMaxTokens)
+	depth, fragment := 0, false // fragment: past "fragment", before its selections
+	for k, t := range toks {
+		switch {
+		case t.kind == '{' && depth == 0 && !fragment:
+			return gqlAnonymous // a selection set alone: { … }
+		case t.kind == '{' || t.kind == '(' || t.kind == '[':
+			fragment = fragment && !(t.kind == '{' && depth == 0)
+			depth++
+		case t.kind == '}' || t.kind == ')' || t.kind == ']':
+			depth--
+		case depth == 0 && t.kind == 'n' && strings.Contains(" query mutation subscription ", " "+doc[t.start:t.end]+" "):
+			if k+1 < len(toks) && toks[k+1].kind == 'n' {
+				return gqlName(doc[toks[k+1].start:toks[k+1].end])
+			}
+			return gqlAnonymous
+		case depth == 0 && t.kind == 'n' && doc[t.start:t.end] == "fragment":
+			fragment = true
+		}
 	}
 	return gqlAnonymous
 }

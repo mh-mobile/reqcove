@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -340,6 +342,9 @@ func TestRulesRefused(t *testing.T) {
 		"mock unknown key":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, delay: 3}]\n", "mock[0]: a mock is a mapping"},
 		"mock no url":                 {"mock: [{match: {method: GET}}]\n", "mock[0]: match needs url"},
 		"mock both bodies":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body: a, body_file: b}]\n", "mock[0]: body or body_file"},
+		"mock url with a query":       {"mock: [{match: {url: \"http://127.0.0.1/x?s3cret=1\"}}]\n", "mock[0]: url takes no query"},
+		"mock star after the host":    {"mock: [{match: {url: \"http://127.0.0.1*\"}}]\n", "mock[0]: url takes no query"},
+		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")
@@ -592,6 +597,57 @@ modify_headers:
 	if _, body := do("POST", "http://"+o+"/graphql", `{"operationName":"Feed","query":"query Feed { feed { id } }"}`); body != `{"feed":[]}` {
 		t.Errorf("Feed mock: %q", body)
 	}
+	// Spellings GraphQL allows: a comma or a comment before the name; a document as the body.
+	for _, doc := range []string{`{"query":"query,Feed { feed }"}`, `{"query":"query#c\nFeed { feed }"}`, "query Feed { feed }"} {
+		if _, body := do("POST", "http://"+o+"/graphql", doc); body != `{"feed":[]}` {
+			t.Errorf("Feed mock for %s: %q", doc, body)
+		}
+	}
+	for _, doc := range []string{`{"query":"fragment F on Q { a } query Feed { ...F }"}`, `{"query":"\"\"\"About\"\"\" query Feed { feed }"}`} {
+		if _, body := do("POST", "http://"+o+"/graphql", doc); body != `{"feed":[]}` {
+			t.Errorf("Feed mock for %s: %q", doc, body)
+		}
+	}
+	// A gzipped body is read (bounded); a bomb is not read past 1 MiB, and goes on.
+	gz := func(b []byte) *bytes.Buffer {
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		w.Write(b)
+		w.Close()
+		return &buf
+	}
+	for _, c := range []struct {
+		body []byte
+		want string
+	}{
+		{[]byte(`{"query":"query Feed { feed }"}`), `{"feed":[]}`},
+		{append([]byte(`{"query":"query Feed { feed }","pad":"`), make([]byte, 64<<20)...), "origin /graphql"},
+	} {
+		req, _ := http.NewRequest("POST", "http://"+o+"/graphql", gz(c.body))
+		req.Header.Set("Content-Encoding", "gzip")
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(b) != c.want {
+			t.Errorf("gzip, %d bytes: %q", len(c.body), b)
+		}
+	}
+	// Nesting past Python's limit, and comments after comments: no operation, not a 502, at once.
+	for _, doc := range []string{strings.Repeat("[", 200000), `{"query":"` + strings.Repeat("#", 60) + `"}`} {
+		if _, body := do("POST", "http://"+o+"/graphql", doc); body != "origin /graphql" {
+			t.Errorf("%.20s…: %q", doc, body)
+		}
+	}
+	// A body of unknown length is not held: the mock is skipped, and says so.
+	req, _ := http.NewRequest("POST", "http://"+o+"/graphql", struct{ io.Reader }{strings.NewReader(`{"query":"query Feed { feed }"}`)})
+	if resp, err := hc.Do(req); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
 	if _, body := do("POST", "http://"+o+"/graphql", `{"query":"mutation Like { like }"}`); body != "origin /graphql" {
 		t.Errorf("another operation went on: %q", body)
 	}
@@ -616,8 +672,13 @@ modify_headers:
 	if strings.Contains(fmt.Sprint(lv.Rewrites), "s3cret") || strings.Contains(fmt.Sprint(lv.Rewrites), "expired") {
 		t.Errorf("the rule's text in rewrites: %v", lv.Rewrites)
 	}
-	for op, mocked := range map[string]bool{"Feed": true, "Like": false} {
-		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 5}); len(rows) != 1 || rows[0].Mocked != mocked {
+	if rows, _ := h.c.Store.List(Filter{Operation: "Feed", Limit: 20}); len(rows) == 0 || rows[0].Mocked {
+		t.Errorf("the chunked Feed: %+v", rows)
+	} else if v, _ := h.c.Store.Get(rows[0].ID, false); !slices.Contains(v.Rewrites, "mock: skipped, request body over 1 MiB or of unknown length") {
+		t.Errorf("the chunked Feed's rewrites: %v", v.Rewrites)
+	}
+	for op, n := range map[string]int{"Like": 1} {
+		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 20}); len(rows) != n {
 			t.Errorf("%s rows: %+v", op, rows)
 		}
 	}

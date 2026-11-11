@@ -89,7 +89,7 @@ type Flow struct {
 	MappedURL   string      `json:"mapped_url,omitempty"`
 	Rewrites    []string    `json:"rewrites,omitempty"`
 	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
-	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the server never saw it
+	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
 	HTTPVersion string      `json:"http_version"`
@@ -306,7 +306,7 @@ func (s *Store) Apply(line []byte) {
 	case "hello":
 		s.hello = e
 		s.hellos++
-		if e.Rules != nil && s.rulesLoaded.IsZero() { // a restarted mitmproxy takes the file again, unchanged or not
+		if e.Rules != nil { // at start, and when a restarted mitmproxy takes the file again
 			s.rulesLoaded = time.Now()
 		}
 		return
@@ -426,7 +426,9 @@ func (s *Store) maskEvent(e *event) {
 	switch e.Ev {
 	case "request":
 		e.URL, e.Path, e.MappedURL, e.Headers = s.mask(e.URL), s.mask(e.Path), s.mask(e.MappedURL), s.maskHeaders(e.Headers)
-		e.op = gqlURLOperation(e.URL)
+		if e.op = gqlURLOperation(e.URL); e.op == "" {
+			e.op = gqlName(header(e.Headers, "x-apollo-operation-name")) // Apollo's, as mocks read it
+		}
 	case "response":
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
 	case "error", "tls_failed":

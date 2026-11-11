@@ -131,7 +131,8 @@ So "delete the directory" above means each of them.
   string at the top level or in JSON inside a string (under any key, in
   requests and in responses that echo it), the body, or a URL parameter (GET
   `?query=`, masked and escaped again). One that starts like a document and
-  cannot be read is masked whole. (Tests and the fuzz test.)
+  cannot be read is masked whole, unless it starts like a script's object
+  (`{a: b, …}`, a comma after the first value), which is left as it is. (Tests and the fuzz test.)
   A URL inside a parameter is looked into also when encoded two or three times.
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
   a value cut before its closing quote is masked too (a fuzz test, over these
@@ -264,8 +265,9 @@ as the site's own answer (a script in it runs in that origin, a redirect is
 followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
 header values are checked as `modify_headers`'s are. The records say a flow was
 mocked, with the rule's number and status, never its text. A request a mock may
-answer is held whole, at most 1 MiB, until its body is in (the operation is in
-it). No MCP tool writes a rule: a mock comes from the file the user wrote, and
+answer is held whole until its body is in (the operation is in it): at most
+1 MiB when it says its length; a GET without one can carry more over HTTP/2,
+kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
 
 ## An upstream proxy (`--upstream-proxy`)
