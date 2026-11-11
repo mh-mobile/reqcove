@@ -73,6 +73,7 @@ type Body struct {
 
 type Flow struct {
 	seq         int64       // arrival order; the list cursor
+	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
 	ID          string      `json:"id"`
 	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
 	Device      string      `json:"device,omitempty"`
@@ -155,7 +156,9 @@ type Store struct {
 	addonOOS      int64             // the same, seen by the addon
 	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
-	seq           int64 // last Flow.seq handed out
+	seq           int64         // last Flow.seq (or Flow.answered) handed out
+	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
+	wake          chan struct{} // closed when a flow is answered, for Wait; nil until a waiter asks
 	started       time.Time
 	base          int64  // the first seq is base+1: base is started in unix ms, so a cursor of an earlier run is below it
 	state         string // starting, ready, restarting, failed
@@ -189,6 +192,7 @@ func (s *Store) mitmdumpExited(why string) {
 			before := f.bytes()
 			f.State, f.Error = "error", why
 			s.heldBytes += f.bytes() - before
+			s.answerLocked(f)
 		}
 	}
 	// mitmdump took them down with it; their bytes went with it. A pass_open of
@@ -245,8 +249,9 @@ const (
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
 	now := time.Now()
-	// ponytail: a run recording over 1000 flows a second for its whole life could
-	// hand out seqs above the next run's base, and then its cursors look current.
+	// ponytail: a run recording over 500 flows a second for its whole life (two
+	// seqs a flow: its arrival and its answer) could hand out seqs above the next
+	// run's base, and then its cursors look current.
 	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, redact: true, state: "starting",
 		started: now, base: now.UnixMilli(), seq: now.UnixMilli()}
 }
@@ -347,6 +352,7 @@ func (s *Store) Apply(line []byte) {
 		}
 		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites
 	case "response":
+		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, s.mask(e.Reason), s.maskHeaders(e.Headers) // a reason is free text from the site
 		f.Rewrites = append(f.Rewrites, e.Rewrites...)
 		if e.Note != "" {
@@ -369,8 +375,10 @@ func (s *Store) Apply(line []byte) {
 		}
 	case "done":
 		f.End, f.State = e.TSEnd, "done"
+		s.answerLocked(f) // a response event dropped by the addon: done answers it too
 	case "error":
 		f.Error, f.State = s.maskError(e.Msg), "error"
+		s.answerLocked(f)
 	case "ws":
 		f.WSMessages++
 		f.WSBytes += e.Size
@@ -383,7 +391,9 @@ func (s *Store) evictLocked() {
 	for len(s.order) > 0 && (len(s.order) > s.maxFlows || s.heldBytes > s.maxBytes) {
 		id := s.order[0]
 		s.order = s.order[1:]
-		s.heldBytes -= s.flows[id].bytes()
+		f := s.flows[id]
+		s.evictedMark = max(s.evictedMark, f.seq, f.answered)
+		s.heldBytes -= f.bytes()
 		delete(s.flows, id)
 		s.evicted++
 	}

@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -61,9 +62,30 @@ type SummarizeIn struct {
 	FilterIn
 	Top int `json:"top,omitempty" jsonschema:"keys kept per breakdown, most frequent first (default 10, at most 100)"`
 }
+
+// WaitIn is wait_for_flows's input.
+type WaitIn struct {
+	After int64 `json:"after,omitempty" jsonschema:"checkpoint taken before acting (from list_flows or capture_stats), or after from the previous wait_for_flows: only flows answered after it. Without it, only flows answered from now on, so a quick request sent before this call is missed"`
+	FilterIn
+	Limit   int `json:"limit,omitempty" jsonschema:"at most this many flows (default 50, at most 500); the rest come with the next call"`
+	Timeout int `json:"timeout,omitempty" jsonschema:"seconds to wait for one (default 20, at most 30)"`
+}
+
+// WaitOut is wait_for_flows's answer.
+type WaitOut struct {
+	Flows []capture.Summary `json:"flows"` // [] when none came in time, not null
+	// After goes into the next call: the last flow's answer, or the after
+	// given when none came.
+	After    int64  `json:"after"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Evicted  bool   `json:"evicted,omitempty"` // flows answered after `after` were evicted unread: some may have matched
+	Note     string `json:"note,omitempty"`
+}
+
 type ListOut struct {
 	Flows        []capture.Summary `json:"flows"`                   // [] when none, not null
 	NextCursor   int64             `json:"next_cursor,omitempty"`   // more, older flows match: pass it as cursor
+	Checkpoint   int64             `json:"checkpoint"`              // for wait_for_flows' after: flows answered from now on come after it
 	SimilarHosts []string          `json:"similar_hosts,omitempty"` // with a host no flow has: recorded hosts that look alike
 	Note         string            `json:"note,omitempty"`          // the host is passed through: see list_passthrough
 }
@@ -138,8 +160,37 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 			if st.OldCursor(q.Before) {
 				return nil, ListOut{}, errOldCursor
 			}
+			cp := st.Checkpoint()
 			flows, next := st.List(q)
-			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, SimilarHosts: similar(st, q, len(flows)), Note: passNote(st, q.Host)}, nil
+			return nil, ListOut{Flows: orEmpty(flows), NextCursor: next, Checkpoint: cp, SimilarHosts: similar(st, q, len(flows)), Note: passNote(st, q.Host)}, nil
+		})
+	var waiters atomic.Int32
+	mcp.AddTool(s, &mcp.Tool{Name: "wait_for_flows", Description: "Wait for flows to be answered (a response, or an error), after you act on the device: take checkpoint from list_flows (or capture_stats) first, act (a tap, through RoamRun or by the user), then call this with after: checkpoint. Returns the matching flows answered since, oldest answer first, as soon as there is one, or none when timeout passes (a normal answer: the request may not have been sent, may be on a host not in --allow-hosts, or may go over a WebSocket, whose messages are not recorded). Pass after from the answer to the next call: each flow comes once. A flow may still be open (its body streaming). Same filters as list_flows."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in WaitIn) (*mcp.CallToolResult, WaitOut, error) {
+			q, err := filter(ListIn{FilterIn: in.FilterIn, PageIn: PageIn{Limit: in.Limit}}, time.Now())
+			if err != nil {
+				return nil, WaitOut{}, err
+			}
+			if st.OldCursor(in.After) {
+				return nil, WaitOut{}, errOldCursor
+			}
+			if waiters.Add(1) > maxWaiters {
+				waiters.Add(-1)
+				return nil, WaitOut{}, fmt.Errorf("%d waits already running: wait for one to end", maxWaiters)
+			}
+			defer waiters.Add(-1)
+			after := in.After
+			if after == 0 {
+				after = st.Checkpoint()
+			}
+			wait := time.Duration(min(max(in.Timeout, 0), 30)) * time.Second
+			if wait == 0 {
+				wait = 20 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(ctx, wait)
+			defer cancel()
+			r := st.Wait(ctx, q, after)
+			return nil, WaitOut{Flows: orEmpty(r.Flows), After: r.After, TimedOut: len(r.Flows) == 0, Evicted: r.Evicted, Note: passNote(st, q.Host)}, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "search_flows", Description: "Find flows whose URL or headers contain some text (and bodies, with bodies), newest first, with where it matched. Same filters and paging as list_flows."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in SearchIn) (*mcp.CallToolResult, ListOut, error) {
@@ -201,6 +252,9 @@ func New(st *capture.Store, status func() StatusOut) *mcp.Server {
 		})
 	return s
 }
+
+// maxWaiters is how many wait_for_flows may wait at once, per server.
+const maxWaiters = 16
 
 var errOldCursor = fmt.Errorf("cursor: from before reqcove run restarted, and those flows are gone: list again without it")
 

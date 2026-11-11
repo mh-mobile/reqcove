@@ -352,6 +352,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 |---|---|
 | `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
+| `wait_for_flows` | 端末を操作したあと、返事（レスポンスかエラー）が来たフローを、返事の来た順に返す。`after` には、操作の前に `list_flows`（または `capture_stats`）で受け取った `checkpoint` を渡す。1 件来るまで `timeout` 秒（初期値 20、最大 30）待つ。答えの `after` を次の呼び出しに渡せば、同じフローは二度来ない。絞り込みは同じ |
 | `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |

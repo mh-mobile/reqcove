@@ -115,7 +115,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s has an output schema: a run of another version could fail it", tool.Name)
 		}
 	}
-	if len(names) != 9 || !strings.Contains(strings.Join(names, ","), "status") { // the tools, without run
+	if len(names) != 10 || !strings.Contains(strings.Join(names, ","), "status") { // the tools, without run
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {
