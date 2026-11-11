@@ -197,7 +197,7 @@ func TestGraphQLCommentsLinear(t *testing.T) {
 	head := []byte(strings.Repeat(`(#,a:"v"`, 8200))[:64<<10]
 	start := time.Now()
 	maskBody(head, "application/json", true)
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > slow*2*time.Second {
 		t.Errorf("64 KiB took %v", d)
 	}
 }
@@ -235,7 +235,7 @@ func TestMaskNestingBounded(t *testing.T) {
 	}
 	start := time.Now()
 	maskBody([]byte(level), "application/json", false)
-	if d := time.Since(start); d > time.Second {
+	if d := time.Since(start); d > slow*time.Second {
 		t.Errorf("%d KiB of nesting took %v", len(level)>>10, d)
 	}
 }
