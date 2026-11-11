@@ -280,7 +280,10 @@ class Resolve:
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*)"  # spaces, commas, byte order marks, comments
-GQL_OP = re.compile(GQL_IGNORED + r"*(?:query|mutation|subscription)" + GQL_IGNORED + r"+([_A-Za-z][_0-9A-Za-z]{0,99})")
+GQL_DESC = r'(?:"""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")'  # a description before an operation
+# The first operation: at the start or after a definition's closing brace (a
+# fragment may come first), after a description or not.
+GQL_OP = re.compile(r"(?:^|})" + GQL_IGNORED + "*(?:" + GQL_DESC + GQL_IGNORED + "*)?(?:query|mutation|subscription)" + GQL_IGNORED + r"+([_A-Za-z][_0-9A-Za-z]{0,99})")
 
 
 def _operation(r):
@@ -290,7 +293,11 @@ def _operation(r):
     name = r.query.get("operationName") or r.headers.get("x-apollo-operation-name")
     doc = r.query.get("query")
     if not name and r.method != "GET":
-        text = (r.get_content(strict=False) or b"").decode("utf-8", "replace")
+        try:  # decoded with a bound: a compressed body may be a bomb
+            body = _Decoder(r.headers.get("content-encoding", "").strip().lower()).feed(r.raw_content or b"", MAP_LOCAL_BODY + 1)
+        except Exception:
+            body = b""
+        text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
         try:
             d = json.loads(text or "null")
         except ValueError:
@@ -302,7 +309,7 @@ def _operation(r):
             doc = d
     if name:
         return name if GQL_NAME.fullmatch(name) else None
-    m = GQL_OP.match(doc or "")
+    m = GQL_OP.search(doc or "")
     return m.group(1) if m else None
 
 
@@ -730,7 +737,8 @@ class Reqcove:
         rules = self.rules
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
-            if rules["mock"].candidates(flow) and self._small_body(r):
+            mocks = rules["mock"].candidates(flow)
+            if mocks and self._small_body(r):
                 # A mock may answer it: decided in request(), once the body (and a
                 # GraphQL operation in it) is in. Not streamed, so buffered: at most
                 # MAP_LOCAL_BODY. The event goes then, with what the rules did.
@@ -738,6 +746,8 @@ class Reqcove:
                 return
             try:
                 ev["rewrites"] = self._rewrite_request(flow, rules)
+                if mocks:  # a mock would need the body whole: say why none answered
+                    ev["rewrites"].append("mock: skipped, request body over 1 MiB or of unknown length")
             except Exception as e:
                 # A rule that fails (map_remote making a bad URL) must not let the
                 # request go on unrewritten, around the rule or the upstream proxy.

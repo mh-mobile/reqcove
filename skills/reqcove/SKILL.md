@@ -135,7 +135,7 @@ Only for hosts in `--allow-hosts`. `map_remote`, `map_local` and
 `resolve` are Reqcove's:
 
 ```yaml
-mock:                                                     # answered here; nothing reaches the server
+mock:                                                     # answered here; the request is not sent to the server
   - match: {method: POST, url: "https://api.example.com/v1/login"}   # url: exact without the query, or ending in *
     status: 401
     headers: {Content-Type: application/json}
@@ -153,7 +153,7 @@ Relative paths count from the file. Without `--rules-reload` the user restarts
 `reqcove run` for a change. `get_flow` shows whether a rule applied: `url` is
 what the app sent, `mapped_url` where it went, `rewrites` the rules applied
 (`mock[0]: 401`). A row with `mocked: true` was answered by a mock: the
-server never saw it. `capture_stats.rules_loaded` says when the file was
+request was not sent to the server. `capture_stats.rules_loaded` says when the file was
 last taken (with `--rules-reload`, about a second or two after a save).
 
 ## 6. Commands

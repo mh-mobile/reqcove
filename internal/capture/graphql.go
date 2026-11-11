@@ -115,6 +115,9 @@ func gqlLex(s string, limit int) ([]gqlTok, bool) {
 // definition. "{count} items" and "{name}'s" are not one. ended: s has no
 // more tokens than toks.
 func gqlStart(s string, toks []gqlTok, ended bool) bool {
+	if len(toks) > 0 && (toks[0].kind == 's' || toks[0].kind == 'b') {
+		toks = toks[1:] // a description: """Login""" mutation Login { … }
+	}
 	is := func(k int, kind byte, text string) bool {
 		return k < len(toks) && toks[k].kind == kind && (text == "" || s[toks[k].start:toks[k].end] == text)
 	}
@@ -141,7 +144,7 @@ func gqlStart(s string, toks []gqlTok, ended bool) bool {
 // names (an argument's or input field's after :, a variable's default after
 // =); all of it if it cannot be lexed.
 func maskGraphQLDoc(s string, loneCode bool) (masked string, isDoc bool) {
-	if head, ok := gqlLex(s, 4); !gqlStart(s, head, ok && len(head) < 4) {
+	if head, ok := gqlLex(s, 5); !gqlStart(s, head, ok && len(head) < 5) {
 		return s, false
 	}
 	toks, ok := gqlLex(s, gqlMaxTokens)
@@ -228,7 +231,7 @@ func gqlPrefix(raw string) bool {
 	if raw == "" {
 		return false
 	}
-	if raw[0] == '{' || raw[0] == '#' || strings.HasPrefix(raw, `\u`) {
+	if raw[0] == '{' || raw[0] == '#' || strings.HasPrefix(raw, `\u`) || strings.HasPrefix(raw, `\"`) { // \" may open a description
 		return true
 	}
 	for _, w := range []string{"query", "mutation", "subscription", "fragment"} {
@@ -252,7 +255,11 @@ func gqlString(lit string, closed, loneCode bool) (string, bool) {
 	}
 	var v string
 	if json.Unmarshal([]byte(raw), &v) != nil {
-		return "", false
+		// Not JSON as written (raw line breaks or tabs in it): read leniently.
+		lenient := strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(raw)
+		if json.Unmarshal([]byte(lenient), &v) != nil {
+			return "", false
+		}
 	}
 	m, isDoc := maskGraphQLDoc(v, loneCode)
 	if !isDoc {
@@ -308,13 +315,31 @@ func gqlName(s string) string {
 }
 
 // gqlDocOperation names the first operation of document doc.
+// gqlDocOperation names the first operation of document doc, past fragments
+// and descriptions.
 func gqlDocOperation(doc string) string {
-	toks, ok := gqlLex(doc, 4)
-	if !gqlStart(doc, toks, ok && len(toks) < 4) {
+	if head, ok := gqlLex(doc, 5); !gqlStart(doc, head, ok && len(head) < 5) {
 		return ""
 	}
-	if toks[0].kind == 'n' && len(toks) > 1 && toks[1].kind == 'n' && doc[toks[0].start:toks[0].end] != "fragment" {
-		return gqlName(doc[toks[1].start:toks[1].end])
+	toks, _ := gqlLex(doc, gqlMaxTokens)
+	depth, fragment := 0, false // fragment: past "fragment", before its selections
+	for k, t := range toks {
+		switch {
+		case t.kind == '{' && depth == 0 && !fragment:
+			return gqlAnonymous // a selection set alone: { … }
+		case t.kind == '{' || t.kind == '(' || t.kind == '[':
+			fragment = fragment && !(t.kind == '{' && depth == 0)
+			depth++
+		case t.kind == '}' || t.kind == ')' || t.kind == ']':
+			depth--
+		case depth == 0 && t.kind == 'n' && strings.Contains(" query mutation subscription ", " "+doc[t.start:t.end]+" "):
+			if k+1 < len(toks) && toks[k+1].kind == 'n' {
+				return gqlName(doc[toks[k+1].start:toks[k+1].end])
+			}
+			return gqlAnonymous
+		case depth == 0 && t.kind == 'n' && doc[t.start:t.end] == "fragment":
+			fragment = true
+		}
 	}
 	return gqlAnonymous
 }

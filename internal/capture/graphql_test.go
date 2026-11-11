@@ -77,6 +77,18 @@ func TestGraphQLWhereFound(t *testing.T) {
 	if got := string(maskBody([]byte("query=%7Blogin%28password%3A%22S13%22%29%7Bok%7D%7D"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S13") || !strings.Contains(got, "login") {
 		t.Errorf("a shorthand document in a form's first field: %s", got)
 	}
+	// The second review (Opus): a description first, raw line breaks in a JSON
+	// string, a form field not percent-encoded.
+	for _, c := range []struct{ body, ct, gone string }{
+		{`"""Login""" mutation Login { login(password: "S14") { ok } }`, "application/graphql", "S14"},
+		{`{"query":"\"\"\"Login\"\"\" mutation Login { login(password: \"S17\") { ok } }"}`, "application/json", "S17"},
+		{"{\"query\":\"mutation {\n login(password: \\\"S15\\\") { ok } }\"}", "application/json", "S15"},
+		{`a=1&query=mutation { login(password: "S16") { ok } }`, "application/x-www-form-urlencoded", "S16"},
+	} {
+		if got := string(maskBody([]byte(c.body), c.ct, true)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
+	}
 }
 
 // TestGraphQLCost: a 64 KiB document of arguments, and one of nested lists,

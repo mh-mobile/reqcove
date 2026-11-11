@@ -444,8 +444,9 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
-`mock` answers a request here, with what you write, and nothing of it reaches
-the server: to see how the app takes an expired session or an empty list.
+`mock` answers a request here, with what you write, and the request is not sent
+to the server (for HTTPS, mitmproxy may have connected to it already, to read
+its certificate): to see how the app takes an expired session or an empty list.
 
 ```yaml
 mock:                           # Reqcove's own; the first that matches answers, before the other rules
@@ -467,7 +468,7 @@ mock:                           # Reqcove's own; the first that matches answers,
   is added unless you set one. Response `modify_headers` rules still apply.
 - A request a mock may answer (its method and URL match) is held whole until
   its body is in: one whose length is over 1 MiB, or a POST of unknown length,
-  goes on unanswered. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
+  goes on unanswered, its `rewrites` saying `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
   without a length is held too, and over HTTP/2 a body sent with it is kept
   whole in memory.
 - The record says so: `mocked: true` on its row, `rewrites` with the rule's

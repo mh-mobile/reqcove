@@ -79,3 +79,17 @@ func TestBodyRacingItsRequest(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesLoadedOnRestart: a restarted mitmproxy takes the rules file again
+// (its hello says so), and rules_loaded moves with it.
+func TestRulesLoadedOnRestart(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	hello := []byte(`{"v":2,"ev":"hello","rules":{"mock":1}}`)
+	s.Apply(hello)
+	first := s.Stats()["rules_loaded"]
+	time.Sleep(5 * time.Millisecond)
+	s.Apply(hello)
+	if then := s.Stats()["rules_loaded"]; first == nil || then == first {
+		t.Errorf("rules_loaded %v, then %v", first, then)
+	}
+}

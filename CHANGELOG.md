@@ -6,8 +6,11 @@
 
 - Response mocks: a `mock:` rule in the `--rules` file answers a request
   (method, URL exact or by prefix, GraphQL operation) with a status, headers
-  and a body (inline or a file, at most 1 MiB), before the other rules; nothing
-  reaches the server. Its row says `mocked: true`, `rewrites` gives
+  and a body (inline or a file, at most 1 MiB), before the other rules; the
+  request is not sent to the server (for HTTPS, mitmproxy may have connected
+  to it already, to read its certificate). One it would have to hold but
+  cannot (a length over 1 MiB, a POST of unknown length) goes on, its
+  `rewrites` saying `mock: skipped, …`. Its row says `mocked: true`, `rewrites` gives
   `mock[i]: status` (never the rule's text), a HAR notes it, `summarize`
   counts them. `Cache-Control: no-store` unless the rule sets one. Hosts in
   `--allow-hosts` only. `capture_stats.rules_loaded` says when the file was

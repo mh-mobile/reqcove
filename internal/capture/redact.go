@@ -342,7 +342,7 @@ func maskForm(s string, request bool) string {
 		}
 		if secretName(formName(name)) {
 			parts[i] = name + "=[redacted]"
-		} else if m, ok := gqlParam(val); i == 0 && ok { // before JSON: {login(…)} starts with { too
+		} else if m, ok := gqlParam(val); ok { // before JSON: {login(…)} starts with { too; a field not encoded as it should be too
 			parts[i] = name + "=" + m
 		} else if v := unescapeCut(val); strings.ContainsAny(v[:min(len(v), 1)], "{[") {
 			if m := maskJSON(v, request, 1); m != v {
