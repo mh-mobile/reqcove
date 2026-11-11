@@ -13,6 +13,12 @@
   headers by name, bodies (JSON by path). Values masked on both sides are
   listed as masked, never as equal; bodies that are not text are not
   compared while masking is on.
+- Every MCP tool is marked read-only and not destructive (`readOnlyHint`,
+  `destructiveHint`), as RoamRun's own looks are.
+- `get_flow` takes `max_body`: at most that many bytes of each body head, for
+  an agent that reads many flows in a row.
+- `run` prints Codex's command to add the tools (`codex mcp add …`) beside
+  Claude Code's; the guide says how to allow the tools in each.
 - `--mcp-http`: a tool call ends when its caller disconnects (it went on to
   its end before).
 - While mitmdump restarts, the devices' connections wait for it (15 seconds at

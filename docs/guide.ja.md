@@ -40,7 +40,9 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+
+ツールの許可：どのツールにも読み取り専用の印（`readOnlyHint`）を付けています。クライアントによっては確認を減らすのに使います（どのクライアントでも確かめていません）。Claude Code は、許可していないツールを使う前に確認します。設定の `permissions.allow` に `"mcp__reqcove"` を入れると、Reqcove のツールをまとめて許可できます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）
 
@@ -353,7 +355,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
 | `wait_for_flows` | 端末を操作したあと、返事（レスポンスかエラー）が来たフローを、返事の来た順に返す。`after` には、操作の前に `list_flows`（または `capture_stats`）で受け取った `checkpoint` を渡す。1 件来るまで `timeout` 秒（初期値 20、最大 30）待つ。答えの `after` を次の呼び出しに渡せば、同じフローは二度来ない。絞り込みは同じ |
-| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ |
+| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ（`max_body` を指定すると、それぞれそのバイト数まで） |
 | `diff_flows` | 2 つのフローを比べる（成功したものと失敗したものなど）。メソッド、URL、ステータスコード、エラー、ヘッダー（名前ごと）、ボディ（JSON はパスごと）。マスク中は、両方でマスクされた値を「同じ」とは言わず `masked` に並べる（元の値は違うかもしれない）。テキストでないボディは比べない。`--no-redact` のときは全部比べる |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |

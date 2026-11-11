@@ -64,6 +64,12 @@ func TestTools(t *testing.T) {
 	if v.RespBodyText != "hello" || v.ReqHeaders[0][1] != "[redacted]" || v.DeviceName != "iphone-test" {
 		t.Fatalf("get_flow = %+v", v)
 	}
+	if v := call[capture.FlowView](t, session, "get_flow", map[string]any{"id": "a", "bodies": true, "max_body": 2}); v.RespBodyText != "he" || len(v.Notes) != 1 || !strings.Contains(v.Notes[0], "max_body") {
+		t.Errorf("get_flow max_body 2: %q %v", v.RespBodyText, v.Notes)
+	}
+	if v := call[capture.FlowView](t, session, "get_flow", map[string]any{"id": "a", "bodies": true}); v.RespBodyText != "hello" || len(v.Notes) != 0 {
+		t.Errorf("get_flow after a max_body: %q %v (the record changed)", v.RespBodyText, v.Notes)
+	}
 	if s := call[StatsOut](t, session, "capture_stats", nil); s.Stats["flows"] != float64(1) {
 		t.Fatalf("capture_stats = %v", s.Stats)
 	}
