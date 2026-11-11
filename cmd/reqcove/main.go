@@ -8,18 +8,14 @@ package main
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -30,15 +26,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 	"github.com/mh-mobile/reqcove/internal/webui"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/skip2/go-qrcode"
-	"golang.org/x/term"
 )
 
 // version is set at release builds: -ldflags "-X main.version=v0.1.0".
@@ -640,58 +633,6 @@ func usageOf(fs *flag.FlagSet) {
 	}
 }
 
-// openState makes the state directory (0700) and locks it. It refuses a
-// directory that holds other files and was never reqcove's (no lock file), so
-// that neither its chmod nor `cleanup --delete-state` reaches someone else's files.
-func openState(dir string) (func(), error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
-		switch e.Name() {
-		case ".DS_Store": // Finder leaves it in folders it opened
-			return true
-		case "mitmproxy", caCopies:
-			// ~/.reqcove before its first run: a CA copied from another computer
-			// (docs/guide.md, Use one CA on two computers), and the list of copies another node made of it.
-			return isDefaultState(dir) && capture.HasCA(filepath.Join(dir, "mitmproxy"))
-		}
-		return false
-	})
-	if len(ents) > 0 && !isState(dir) {
-		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, err
-	}
-	// The marker is what makes a directory reqcove's (for this check and for
-	// cleanup), not a file with a name as common as "lock".
-	if err := os.WriteFile(filepath.Join(dir, stateMarker), []byte("reqcove state directory\n"), 0o600); err != nil {
-		return nil, err
-	}
-	return lockState(dir)
-}
-
-const stateMarker = ".reqcove-state"
-
-// lockState makes sure only one reqcove uses the state directory: two tsnet
-// processes with the same node key would fight.
-func lockState(dir string) (func(), error) {
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("another reqcove is using %s", dir)
-	}
-	return func() { f.Close() }, nil
-}
-
 func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
@@ -709,156 +650,6 @@ func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 // notRunningMsg is what the agent's tools answer while run is not running.
 func notRunningMsg(state string) string {
 	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal and leaves it running (if it is restarting, wait a few seconds). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
-}
-
-// printQR draws url as a QR code, with what it is for, when w is a terminal:
-// typing http://mitm.it by hand is easy to get wrong (Safari tries https).
-func printQR(w *os.File, url, what string) { printQRs(w, qrItem{url, what}) }
-
-type qrItem struct{ url, caption string }
-
-// printQRs prints QR codes for the terminal, side by side when it is wide
-// enough. Low error correction keeps them small: they are scanned off a screen.
-func printQRs(w *os.File, items ...qrItem) {
-	if fi, err := w.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return // a log file or pipe: the URLs in the lines above are enough
-	}
-	cols, _, err := term.GetSize(int(w.Fd()))
-	if err != nil {
-		cols = 80
-	}
-	fmt.Fprint(w, sideBySide(items, cols))
-}
-
-func sideBySide(items []qrItem, cols int) string {
-	var blocks [][]string
-	width := 0
-	for _, it := range items {
-		q, err := qrcode.New(it.url, qrcode.Low)
-		if err != nil {
-			continue
-		}
-		lines := strings.Split(strings.TrimRight(q.ToSmallString(false), "\n"), "\n")
-		blocks = append(blocks, append([]string{it.caption + ":"}, lines...))
-		width = max(width, utf8.RuneCountInString(lines[0]))
-	}
-	const gap = "   "
-	perRow := max(1, (cols+len(gap))/(width+len(gap))) // as many as fit, the rest on the next rows
-	var b strings.Builder
-	for start := 0; start < len(blocks); start += perRow {
-		row := blocks[start:min(start+perRow, len(blocks))]
-		lines := 0
-		for _, bl := range row {
-			lines = max(lines, len(bl))
-		}
-		for r := 0; r < lines; r++ {
-			var cells []string
-			for _, bl := range row {
-				cell := ""
-				if r < len(bl) {
-					cell = bl[r]
-				}
-				if n := utf8.RuneCountInString(cell); n > width {
-					cell = string([]rune(cell)[:width]) // a caption wider than its code
-				} else {
-					cell += strings.Repeat(" ", width-n)
-				}
-				cells = append(cells, cell)
-			}
-			b.WriteString(strings.TrimRight(strings.Join(cells, gap), " ") + "\n")
-		}
-	}
-	return b.String()
-}
-
-// parseUpstream checks --upstream-proxy (http://HOST:PORT, answering now) and
-// returns HOST:PORT for mitmproxy.
-func parseUpstream(raw, ca string) (string, error) {
-	if raw == "" {
-		if ca != "" {
-			return "", errors.New("--upstream-ca needs --upstream-proxy")
-		}
-		return "", nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
-		return "", fmt.Errorf("--upstream-proxy %q: want http://HOST:PORT", raw)
-	}
-	c, err := net.DialTimeout("tcp", u.Host, 3*time.Second)
-	if err != nil {
-		return "", fmt.Errorf("--upstream-proxy %s does not answer (start it first): %w", u.Host, err)
-	}
-	c.Close()
-	return u.Host, nil
-}
-
-// writeUpstreamCA reads the upstream's CA certificate, PEM or DER, and writes
-// it as PEM into the state directory for mitmproxy (which cannot read DER).
-func writeUpstreamCA(path, state string) (string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("--upstream-ca: %w", err)
-	}
-	return saveUpstreamCA(b, path, state)
-}
-
-// fetchBurpCA gets Burp's CA from the proxy's own /cert, when the proxy is on
-// this computer: over a network, plain HTTP could hand back someone else's CA.
-// Other proxies answer with an error.
-func fetchBurpCA(upstream string) ([]byte, error) {
-	host, _, _ := net.SplitHostPort(upstream)
-	if ip, err := netip.ParseAddr(host); (err != nil || !ip.IsLoopback()) && host != "localhost" {
-		return nil, errors.New("not on this computer")
-	}
-	// Straight from the listener (Burp answers its own page there too), not
-	// http://burp/cert through it: a proxy that is not Burp would look "burp"
-	// up and fetch it from wherever the network's DNS says.
-	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	resp, err := c.Get("http://" + upstream + "/cert")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http://%s/cert: %s", upstream, resp.Status)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if err != nil {
-		return nil, err
-	}
-	// Burp's own CA only: another proxy's answer must not become the CA trusted.
-	if c, err := x509.ParseCertificate(b); err != nil || c.Subject.CommonName != "PortSwigger CA" {
-		return nil, errors.New("not Burp's CA (PortSwigger CA)")
-	}
-	return b, nil
-}
-
-// saveUpstreamCA checks a CA certificate (PEM or DER) from src and writes it as
-// PEM into the state directory for mitmproxy.
-func saveUpstreamCA(b []byte, path, state string) (string, error) {
-	// PEM: the first certificate (a file may hold a key first); else DER.
-	for rest := b; ; {
-		var p *pem.Block
-		if p, rest = pem.Decode(rest); p == nil {
-			break
-		}
-		if p.Type == "CERTIFICATE" {
-			b = p.Bytes
-			break
-		}
-	}
-	cert, err := x509.ParseCertificate(b)
-	if err != nil {
-		return "", fmt.Errorf("--upstream-ca %s: not a certificate (PEM or DER): %w", path, err)
-	}
-	if !cert.IsCA {
-		return "", fmt.Errorf("--upstream-ca %s: %q is not a CA certificate", path, cert.Subject.CommonName)
-	}
-	out := filepath.Join(state, "upstream-ca.pem")
-	if err := os.WriteFile(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
-		return "", err
-	}
-	return out, nil
 }
 
 // tailscaleStatus is `tailscale status --json` from the Tailscale CLI, if any
@@ -913,143 +704,4 @@ func iosDevices() []string {
 	slices.Sort(online)
 	slices.Sort(offline)
 	return append(online, offline...)
-}
-
-// hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
-// a port, saying so: only hosts are matched, not schemes, paths or ports.
-// hostList is a --allow-hosts or --pass-hosts value: as given, or with @FILE
-// the hosts in the file, one a line (or comma-separated), # starting a
-// comment. @~/ is the home directory: the shell expands no ~ after @.
-func hostList(v string) (string, error) {
-	path, ok := strings.CutPrefix(v, "@")
-	if !ok {
-		return v, nil
-	}
-	if rest, ok := strings.CutPrefix(path, "~/"); ok {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		path = filepath.Join(home, rest)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", err // the flag package names the flag and the value
-	}
-	var hosts []string
-	for i, line := range strings.Split(string(b), "\n") {
-		line, _, _ = strings.Cut(line, "#")
-		if line = strings.TrimSpace(line); line == "" {
-			continue
-		}
-		// Checked here, by line number only: a wrong file (.env, say) must not
-		// have its lines, secrets maybe, printed back.
-		for _, h := range strings.Split(line, ",") {
-			if _, err := capture.ParseAllowHosts([]string{hostOf(strings.TrimSpace(h))}); err != nil {
-				return "", fmt.Errorf("%s line %d is not a host list (one host a line, as the flag writes them)", path, i+1)
-			}
-		}
-		hosts = append(hosts, line)
-	}
-	if len(hosts) == 0 {
-		return "", fmt.Errorf("%s has no hosts", path)
-	}
-	return strings.Join(hosts, ","), nil
-}
-
-// hostOf is the host in a value given for one: a URL's, or host:port's.
-func hostOf(h string) string {
-	if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
-		return u.Hostname()
-	}
-	if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
-		return hh
-	}
-	return h
-}
-
-func hostsOnly(flagName string, specs []string) []string {
-	var out []string
-	for _, spec := range specs {
-		var hosts []string
-		for _, h := range strings.Split(spec, ",") {
-			h = strings.TrimSpace(h)
-			host, shown := hostOf(h), h
-			if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
-				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
-			}
-			if host != h {
-				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
-			}
-			hosts = append(hosts, host)
-		}
-		out = append(out, strings.Join(hosts, ","))
-	}
-	return out
-}
-
-func firstIPv4(ips []string) string {
-	for _, s := range ips {
-		if ip, err := netip.ParseAddr(s); err == nil && ip.Is4() {
-			return s
-		}
-	}
-	return ""
-}
-
-// readyBlock is what run prints once the node is up: the devices, the links
-// and the next steps, numbered, in one place.
-func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n──────── reqcove is ready ────────\n")
-	var names []string
-	for _, n := range devices {
-		if n == exitnode.Local.Name {
-			n += fmt.Sprintf(" (this computer's apps, through 127.0.0.1:%d)", localProxyPort)
-		}
-		names = append(names, n)
-	}
-	slices.Sort(names)
-	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
-	if uiLink != "" {
-		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only; QR code below; the same at each start, rm %s to change it)\n", uiLink, filepath.Join(state, "ui-token"))
-	}
-	if webLink != "" {
-		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
-	}
-	if mcpURL != "" {
-		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, filepath.Join(state, "mcp-token"))
-	}
-	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
-		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on: QR code below; once per device)\n")
-	}
-	if len(steps) > 0 {
-		fmt.Fprintf(&b, "\nnext:\n")
-		for i, st := range steps {
-			fmt.Fprintf(&b, "  %d. %s\n", i+1, strings.ReplaceAll(st, "\n", "\n     ")) // a command on a line of its own
-		}
-	} else {
-		fmt.Fprintf(&b, "\nnothing left to set up (`%s` says the same later)\n", withState("reqcove status", state))
-	}
-	fmt.Fprintf(&b, "──────────────────────────────────\n")
-	return b.String()
-}
-
-// readyGate says when the node is ready to report: Running at two polls in a
-// row that agree on the first step left (as the log's steps wait), since just
-// after start an approved node looks unapproved for a moment.
-type readyGate struct {
-	seen  bool
-	first string
-}
-
-func (g *readyGate) ready(s exitnode.Status) bool {
-	if s.Backend != "Running" {
-		g.seen = false
-		return false
-	}
-	first := exitnode.FirstStep(s)
-	agreed := g.seen && first == g.first
-	g.seen, g.first = true, first
-	return agreed
 }

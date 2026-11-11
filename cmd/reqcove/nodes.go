@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"unicode"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -171,4 +172,56 @@ func shellWord(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// openState makes the state directory (0700) and locks it. It refuses a
+// directory that holds other files and was never reqcove's (no lock file), so
+// that neither its chmod nor `cleanup --delete-state` reaches someone else's files.
+func openState(dir string) (func(), error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
+		switch e.Name() {
+		case ".DS_Store": // Finder leaves it in folders it opened
+			return true
+		case "mitmproxy", caCopies:
+			// ~/.reqcove before its first run: a CA copied from another computer
+			// (docs/guide.md, Use one CA on two computers), and the list of copies another node made of it.
+			return isDefaultState(dir) && capture.HasCA(filepath.Join(dir, "mitmproxy"))
+		}
+		return false
+	})
+	if len(ents) > 0 && !isState(dir) {
+		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
+	// The marker is what makes a directory reqcove's (for this check and for
+	// cleanup), not a file with a name as common as "lock".
+	if err := os.WriteFile(filepath.Join(dir, stateMarker), []byte("reqcove state directory\n"), 0o600); err != nil {
+		return nil, err
+	}
+	return lockState(dir)
+}
+
+const stateMarker = ".reqcove-state"
+
+// lockState makes sure only one reqcove uses the state directory: two tsnet
+// processes with the same node key would fight.
+func lockState(dir string) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another reqcove is using %s", dir)
+	}
+	return func() { f.Close() }, nil
 }
