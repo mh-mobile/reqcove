@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：初期段階です**（v0.2）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
+> **開発状況：初期段階です**（v0.3）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
 
 ## 必要なもの
 
@@ -71,7 +71,7 @@ go build -o reqcove ./cmd/reqcove
 
    あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
-エージェントは、`summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。`reqcove cleanup` は、すべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
+エージェントは、`summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます。iPhone を操作したあと（RoamRun などで）、その操作で出た通信を `wait_for_flows` で待って受け取ることもできます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。`reqcove cleanup` は、すべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
 
 ### オプション
 

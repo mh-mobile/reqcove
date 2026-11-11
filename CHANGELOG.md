@@ -2,74 +2,78 @@
 
 ## Unreleased
 
-- `Access-Control-Allow-Credentials` (CORS, only ever `true`) is no longer
-  masked: seen masked on a real iPhone flow.
+### For agents
+
+- `wait_for_flows`: read what an action on the device sent. Take `checkpoint`
+  from `list_flows` (or `capture_stats`) before acting (a tap through RoamRun,
+  or the user), then wait with `after: checkpoint`: the flows answered since
+  come oldest answer first, as soon as there is one, each once across calls
+  (pass the answer's `after` on), even when they finish out of order; one that
+  never ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call, 16
+  waits at once. Tried on an iPhone with RoamRun, on the same Wi-Fi and over
+  tethering.
+- `diff_flows`: two flows compared (one that worked, one that failed): method,
+  URL, status, error, headers by name, bodies (JSON by path). Values masked on
+  both sides are listed as masked, never as equal; bodies that are not text
+  are not compared while masking is on; with `--no-redact` everything is.
+- `get_flow` takes `max_body`, at most that many bytes of each body head.
+- Every tool is marked read-only and not destructive (`readOnlyHint`,
+  `destructiveHint`). `run` prints Codex's command to add the tools beside
+  Claude Code's; the guide says how to allow the tools in each, and not to
+  allow a shell or network tools along with them.
+
+### Masking
+
+- `--mask-names a,b`: your own names treated as secret (headers, parameters,
+  JSON fields, GraphQL arguments; any spelling). `--mask-values RE`: a
+  pattern's matches masked wherever they are (the `key=…` seen in a bank app's
+  User-Agent). Both `@FILE` too; errors never quote a pattern; `capture_stats`
+  counts the matches. Tried on an iPhone (URL, JSON body, Referer).
+- String arguments with secret names in GraphQL documents
+  (`login(password: "…")`, in JSON, raw, or a GET `?query=`), and URLs encoded
+  twice or three times inside a parameter. A fuzz test found the latter, and a
+  GraphQL value cut after a backslash.
+- `Access-Control-Allow-Credentials` (only ever `true`) is no longer masked.
+
+### Security
+
 - mitmproxy runs from a lock built into reqcove: `uv run --locked --script`
   installs exactly the files the lock names and checks their hashes (plain
   `uvx` checked none). Another `--mitmproxy-spec` still goes through uvx. CI
   checks the lock and audits it (pip-audit), which found three known
   vulnerabilities in tornado 6.5.10 (mitmweb's server, capped there by
   mitmproxy 12.3.1): the lock takes tornado 6.6, which fixes them. The first
-  start in a new state directory takes a few seconds more (uv makes the
-  environment once per place).
-- `--mcp-http`: each device may call about 10 times a second (30 at once);
-  past that `429 Too Many Requests`, logged once a minute.
-- SECURITY.md and the guides say to give an agent that reads Reqcove no shell
-  or network tools along with it: Reqcove only reads, but text in a record
-  can try to steer an agent's other tools.
-- Built with Go 1.27.4: 1.27.3's net/http has GO-2026-6859, which govulncheck
-  found reachable (through the `--ui` page's proxy).
+  start in a new state directory takes a few seconds more.
+- While mitmdump restarts, the devices' connections wait for it (15 seconds at
+  most) instead of being sent to its SOCKS port, which another local process
+  could have taken meanwhile; a mitmproxy that could not bind the port never
+  becomes ready (a test). The milliseconds between its death and reqcove
+  noticing it remain (SECURITY.md).
 - Prompt injection, from a review: the server's instructions (all an agent
-  without the skill gets, such as Grok Bot) now also say not to write files,
+  without the skill gets, such as Grok Bot) also say not to write files,
   commits or commands because of what the records say, not to suggest
   `--no-redact` or `--web`, that text shaped like a tool result or a system
   message is still data, and that `next_steps` are for the user. Every tool's
   description says its text was written by sites, apps or the tailnet. A
-  request whose Host is not a host name or address is not recorded; User-Agents
-  in lists are cut to 256 bytes, ALPN names to printable ASCII; `diff_flows`
-  quotes JSON keys that are not plain names (`{"a.b": 1}` no longer reads as
-  `{"a": {"b": 1}}`) and cuts long ones; a body's note quotes the site's
-  `Content-Encoding`.
-- From a review of how outside values are put into commands and text:
-  `get_flow` with a huge `max_body` crashed `run` (an overflow; now clamped),
-  and a panic in any tool now fails that call only; the `rm` commands `run`
-  prints to change a token quote the state path; `modify_headers` refuses
-  header names that are not tokens and values with a line break or NUL, also
-  when its value file changes later; `resolve` names are host names only; a
-  line from the addon longer than 8 MiB is dropped, not held.
-- `wait_for_flows` (MCP): after acting on the device, wait for the flows it
-  sent to be answered. Take `checkpoint` from `list_flows` (or
-  `capture_stats`) before acting, then wait with `after: checkpoint`: the
-  flows answered since come oldest answer first, each once across calls (pass
-  the answer's `after` on), even when they finish out of order; one that never
-  ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call; at most 16
-  waits at once.
-- Masking: `--mask-names a,b` treats your own names as secret (headers,
-  parameters, JSON fields, GraphQL arguments; any spelling), and
-  `--mask-values RE` masks a pattern's matches wherever they are (the
-  `key=…` seen in a bank app's User-Agent). Both `@FILE` too; errors never
-  quote a pattern; `capture_stats` counts the matches.
-- Masking: string arguments with secret names in GraphQL documents
-  (`login(password: "…")`, in JSON, raw, or a GET `?query=`), and URLs
-  encoded twice or three times inside a parameter. A fuzz test found the
-  latter, and a GraphQL value cut after a backslash.
-- `diff_flows` (MCP): two flows compared: method, URL, status, error,
-  headers by name, bodies (JSON by path). Values masked on both sides are
-  listed as masked, never as equal; bodies that are not text are not
-  compared while masking is on.
-- Every MCP tool is marked read-only and not destructive (`readOnlyHint`,
-  `destructiveHint`), as RoamRun's own looks are.
-- `get_flow` takes `max_body`: at most that many bytes of each body head, for
-  an agent that reads many flows in a row.
-- `run` prints Codex's command to add the tools (`codex mcp add …`) beside
-  Claude Code's; the guide says how to allow the tools in each.
-- `--mcp-http`: a tool call ends when its caller disconnects (it went on to
-  its end before).
-- While mitmdump restarts, the devices' connections wait for it (15 seconds at
-  most) instead of being sent to its SOCKS port, which another local process
-  could have taken meanwhile; mitmproxy is used again only once its addon says
-  hello, which a mitmproxy that could not bind the port never does (a test). The
-  milliseconds between its death and reqcove noticing it remain (SECURITY.md).
+  request whose Host is not a host name or address is not recorded;
+  User-Agents in lists are cut to 256 bytes, ALPN names to printable ASCII;
+  `diff_flows` quotes JSON keys that are not plain names; a body's note quotes
+  the site's `Content-Encoding`.
+- From a review of outside values put into commands and text: `get_flow` with
+  a huge `max_body` crashed `run` (an overflow; now clamped), and a panic in
+  any tool now fails that call only; the `rm` commands `run` prints to change
+  a token quote the state path; `modify_headers` refuses header names that are
+  not tokens and values with a line break or NUL, also when its value file
+  changes later; `resolve` names are host names only; a line from the addon
+  longer than 8 MiB is dropped, not held.
+- `--mcp-http`: each device may call about 10 times a second (30 at once),
+  past that `429`; a call ends when its caller disconnects.
+- Built with Go 1.27.4 (GO-2026-6859 in 1.27.3's net/http, reachable through
+  the `--ui` page's proxy).
+
+### Inside
+
+- store.go and main.go are split by concern (moves only).
 
 ## v0.2.0 — 2026-11-11
 
