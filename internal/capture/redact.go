@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -290,4 +291,269 @@ func maskShapes(s string) string {
 		}
 	}
 	return s
+}
+
+func (s *Store) mask(v string) string {
+	if !s.redact {
+		return v
+	}
+	return maskTokens(maskURLs(v))
+}
+
+// maskError is mask for error messages, which can also quote raw bytes from
+// the wire (mitmproxy: "Invalid header line: b'Set-Cookie sid=…'").
+func (s *Store) maskError(v string) string {
+	if !s.redact {
+		return v
+	}
+	return quotedBytesRE.ReplaceAllString(maskTokens(maskURLs(v)), "${1}b'[redacted]'")
+}
+
+// Python's repr of bytes, b'…' or b"…", not the b' of a word such as "job's".
+// One cut before its closing quote (the addon cuts messages at 1 KiB) runs to the end.
+var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*(?:'|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
+
+func (s *Store) maskHeaders(h [][2]string) [][2]string {
+	if !s.redact {
+		return h
+	}
+	out := make([][2]string, len(h))
+	for i, kv := range h {
+		out[i] = kv
+		switch name := strings.ToLower(kv[0]); {
+		case name == "cookie":
+			out[i][1] = maskCookies(kv[1], "; ", false)
+		case name == "set-cookie":
+			out[i][1] = maskCookies(kv[1], ";", true)
+		case strings.HasSuffix(name, "-authenticate"):
+			// WWW-Authenticate, Proxy-Authenticate: a challenge (scheme, realm, error),
+			// not a credential, and what says why a 401 came; a token it quotes still goes
+			out[i][1] = maskShapes(maskURLs(kv[1]))
+		case secretName(kv[0]): // the name as sent: X-ClientKey splits into client and key
+			out[i][1] = "[redacted]"
+		default:
+			// a credential by its shape, or a URL's (Referer, Location, Link, Refresh, …), under any name
+			out[i][1] = maskTokens(maskURLs(kv[1]))
+		}
+	}
+	return out
+}
+
+// secretName reports whether a header or parameter name says it carries a
+// secret (secretKind with a lone "code" counted: in URLs and forms it is an
+// OAuth authorization code). Masking a harmless value by mistake costs
+// little; missing a key does not.
+func secretName(name string) bool { return secretKind(name, true) }
+
+// secretKind decides by two kinds of words. Strong ones are secret wherever
+// they appear, even run together (accesstoken, x-authtoken, sessiontoken,
+// passcode). Short ones only as a whole word, so author, keyword and monkey
+// are not; code and key next to an everyday word (country_code, error_code,
+// sort_key) are everyday values; a lone code counts only if loneCode.
+func secretKind(name string, loneCode bool) bool {
+	lower := strings.ToLower(name)
+	flat := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, lower)
+	if notSecretNames[flat] {
+		return false
+	}
+	for _, part := range strongSecretParts {
+		if strings.Contains(flat, part) {
+			return true
+		}
+	}
+	words := nameWords(name)
+	everyday := false
+	for _, w := range words {
+		everyday = everyday || everydayWords[w]
+	}
+	for _, w := range words {
+		if !shortSecretWords[w] {
+			continue
+		}
+		switch {
+		case (w == "code" || w == "key") && everyday:
+		case w == "code" && len(words) == 1 && !loneCode:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+var strongSecretParts = []string{
+	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
+	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
+	"authentication", "csrf", "xsrf",
+	"ticket", // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
+	"dpop",   // a DPoP proof, a JWT already, also when not shaped like one
+}
+
+var shortSecretWords = map[string]bool{
+	"auth": true, "key": true, "sid": true, "sig": true, "sign": true, "pwd": true, "otp": true, "totp": true,
+	"pin": true, "code": true, "pass": true, "pw": true,
+}
+
+// everydayWords next to code or key make them ordinary values.
+var everydayWords = map[string]bool{
+	"error": true, "status": true, "reason": true, "response": true, "http": true, "result": true,
+	"country": true, "currency": true, "lang": true, "language": true, "locale": true, "region": true,
+	"zip": true, "postal": true, "area": true, "state": true, "iso": true, "sort": true, "order": true,
+	"primary": true, "foreign": true,
+}
+
+// notSecretNames look secret but carry what debugging needs (letters and digits only).
+var notSecretNames = map[string]bool{
+	"tokentype": true, "authenticationtype": true, "authenticationmethod": true,
+	"ticketid": true, "ticketnumber": true, // a support ticket's
+}
+
+// nameWords splits a name at non-alphanumerics and case changes, in lower
+// case: "X-Amz-Signature" -> x amz signature, "accessToken" -> access token,
+// "APIToken" -> api token.
+func nameWords(name string) []string {
+	rs := []rune(name)
+	var words []string
+	start := -1
+	flush := func(end int) {
+		if start >= 0 && end > start {
+			words = append(words, strings.ToLower(string(rs[start:end])))
+		}
+		start = -1
+	}
+	for i, r := range rs {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush(i)
+			continue
+		}
+		if start >= 0 && unicode.IsUpper(r) {
+			prev := rs[i-1]
+			nextLower := i+1 < len(rs) && unicode.IsLower(rs[i+1])
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextLower) {
+				flush(i)
+			}
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	flush(len(rs))
+	return words
+}
+
+// maskCookies keeps each cookie's name, so it shows which cookies went, and
+// masks its value. In Set-Cookie (oneCookie), only the first pair is a
+// cookie; the attributes after it (Path, HttpOnly, ...) stay.
+func maskCookies(v, sep string, oneCookie bool) string {
+	parts := strings.Split(v, sep)
+	for i, p := range parts {
+		if oneCookie && i > 0 {
+			break
+		}
+		if name, _, ok := strings.Cut(p, "="); ok {
+			parts[i] = name + "=[redacted]"
+		} else if i == 0 {
+			parts[i] = "[redacted]" // a value without a name
+		}
+	}
+	return strings.Join(parts, sep)
+}
+
+// A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the
+// fragment, sometimes after a route: #/callback?access_token=). Names stop at
+// / and ?. A value runs to & or #: a secret's is masked whole, ';' included
+// (some servers keep it in the value); another's is split at ';', so
+// "?view=1;token=" is seen too.
+// In bodies, a value also stops at a quote, < or > and a backslash (HTML
+// attributes, JSON strings), and JSON may write & as \u0026.
+var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>\\]*)`)
+
+// A URL's password (https://user:pass@host), also with JSON's escaped slashes
+// (https:\/\/user:pass@host, as PHP writes it).
+var userinfoRE = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*:\\?/\\?/[^/?#@\s:"'<>\\]*:)[^/?#@\s"'<>]+@`)
+
+func maskUserinfo(v string) string {
+	if strings.Contains(v, ":/") || strings.Contains(v, `:\/`) {
+		return userinfoRE.ReplaceAllString(v, "${1}REDACTED@")
+	}
+	return v
+}
+
+func maskURLs(v string) string {
+	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") {
+		return v // no parameter, no password: skip the regexps (most of a 64 KiB JSON head)
+	}
+	return maskURLsAt(maskUserinfo(v), 0)
+}
+
+// maskURLsAt is maskURLs for a URL found depth levels inside another's value.
+func maskURLsAt(v string, depth int) string {
+	return queryRE.ReplaceAllStringFunc(v, func(m string) string {
+		sub := queryRE.FindStringSubmatch(m)
+		name, err := url.QueryUnescape(sub[2])
+		if err != nil {
+			name = sub[2]
+		}
+		if secretName(name) {
+			if sub[3] == "[redacted]" {
+				return m // masked already (a form field)
+			}
+			return sub[1] + sub[2] + "=REDACTED"
+		}
+		// The value up to ';' is this name's; each ';name=value' after it is
+		// looked at once, in one pass (recursing on the rest was quadratic).
+		pieces := strings.Split(sub[3], ";")
+		if nestedSecret(pieces[0], depth) {
+			pieces[0] = "REDACTED"
+		}
+		for i := 1; i < len(pieces); i++ {
+			n, v, ok := strings.Cut(pieces[i], "=")
+			if !ok {
+				continue
+			}
+			if secretName(unescapeCut(n)) {
+				pieces[i] = n + "=REDACTED"
+				pieces = pieces[:i+1] // a secret's value is masked whole, ';' included
+				break
+			}
+			if nestedSecret(v, depth) {
+				pieces[i] = n + "=REDACTED"
+			}
+		}
+		return sub[1] + sub[2] + "=" + strings.Join(pieces, ";")
+	})
+}
+
+// unescapeCut is url.QueryUnescape for text that may be cut inside a %XX
+// escape (a head ends anywhere): the cut escape is dropped.
+func unescapeCut(v string) string {
+	for cut := 0; cut <= 2 && cut <= len(v); cut++ {
+		if u, err := url.QueryUnescape(v[:len(v)-cut]); err == nil {
+			return u
+		}
+	}
+	return v
+}
+
+// nestedSecret: does a value hold a URL or parameters (?redirect=https://x/cb?token=…,
+// also percent-encoded, a URL's password included) with a secret in them? Two
+// levels are looked into, and a deeper one that could hold parameters counts
+// as secret; each level scans its own part of the text once, so the cost stays
+// linear in the text whatever its length.
+func nestedSecret(v string, depth int) bool {
+	if !strings.ContainsAny(v, "?=%@") {
+		return false
+	}
+	inner := unescapeCut(v)
+	if !strings.ContainsAny(inner, "?=@") {
+		return false
+	}
+	if depth >= 2 {
+		return true
+	}
+	return maskTokens(maskURLsAt(maskUserinfo(inner), depth+1)) != inner
 }
