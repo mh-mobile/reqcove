@@ -42,7 +42,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 `claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
-ツールの許可：どのツールにも読み取り専用の印（`readOnlyHint`）を付けています。クライアントによっては確認を減らすのに使います（どのクライアントでも確かめていません）。Claude Code は、許可していないツールを使う前に確認します。設定の `permissions.allow` に `"mcp__reqcove"` を入れると、Reqcove のツールをまとめて許可できます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。
+ツールの許可：どのツールにも読み取り専用の印（`readOnlyHint`）を付けています。クライアントによっては確認を減らすのに使います（どのクライアントでも確かめていません）。Claude Code は、許可していないツールを使う前に確認します。設定の `permissions.allow` に `"mcp__reqcove"` を入れると、Reqcove のツールをまとめて許可できます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。記録の中にサイトが書いた文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）
 
@@ -82,6 +82,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - エージェントが読んだものは、そのエージェントのコンピュータと、モデルの提供元に渡ります（Grok Bot なら xAI のクラウド）。エージェントを止めるには、状態ディレクトリの `mcp-token` を削除して `run` を再起動するか（削除しない限り、トークンは起動のたびに同じです）、そのデバイスを tailnet から外します。
 - `run` を再起動しても、再接続は要りません（止まっている間の呼び出しは失敗します）。記録は空から始まり、再起動前のカーソルは拒否します。
 - `run` は、呼び出しごとにデバイスとツール名をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called "list_flows"`。引数は出しません）。トークンがない、または違うリクエストもログに出します。「確認します」と言うだけで呼んでいないエージェントは、ログに行が出ません。
+- 1 台のデバイスから呼べるのは、1 秒におよそ 10 回までです。超えると、しばらく `429` が返ります（`run` は 1 分に 1 回ログに出します）。
 - 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
 
 確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。ほかのコンピュータ（tailnet にいる macOS の VM）からも、ノードの名前と IP の両方で呼べることを確認。

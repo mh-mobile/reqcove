@@ -173,6 +173,16 @@ login (from reading code).
 
 ## Prompt injection
 
+Reqcove's tools only read, but an agent that reads them may also hold other
+tools: a shell, file writes, the network, other MCP servers. Text a site
+wrote into a record can try to steer it into using those (send a cookie
+somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
+own settings can. Give an agent that reads Reqcove only what the task needs:
+in Claude Code, allow Reqcove's tools without allowing shell commands or
+network tools along with them, and keep its permission prompts for the rest;
+in Codex, keep its sandbox (by default without network) and approvals. An agent that only
+reads Reqcove and answers you is the safest shape.
+
 Response bodies, and also response headers, status reasons, redirect targets
 and error messages, are written by remote sites and may contain text meant to
 steer the agent; an app chooses its User-Agent, its TLS names and the JSON
@@ -354,6 +364,10 @@ and the agent keeps the token until you delete `mcp-token` and restart `run`.
 The tools are the same as over `reqcove mcp`, and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
+Each device may call about 10 times a second (30 at once); past that it gets
+`429 Too Many Requests` for the moment, logged once a minute (a test): a
+runaway agent on one device does not keep `run` busy for the others. A call
+ends when its caller disconnects (a test).
 Checked with tests (another user's device refused over a real tailnet; the
 token, `Host` and origin checks), from this Mac over the tailnet, and with
 Grok Bot.
