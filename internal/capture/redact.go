@@ -62,8 +62,8 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		if !closed {
 			// A string cut by the head's end, not a field's value: an array
 			// element, or a key.
-			if depth <= 1 {
-				if m, ok := gqlString(s[keyStart:], false, loneCode); ok {
+			if depth <= 2 {
+				if m, ok := gqlString(s[keyStart:], false, loneCode, depth <= 1); ok {
 					b.WriteString(s[last:keyStart])
 					b.WriteString(m)
 					last = len(s)
@@ -82,7 +82,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			// A value that is no field's: an array element, or the whole body.
 			// Escaped, it is looked at decoded too, as a field's value is.
 			lit := s[keyStart : keyEnd+1]
-			if m, ok := gqlString(lit, true, loneCode); depth <= 1 && ok {
+			if m, ok := gqlString(lit, true, loneCode, depth <= 1); depth <= 2 && ok {
 				b.WriteString(s[last:keyStart])
 				b.WriteString(m)
 				last = keyEnd + 1
@@ -133,8 +133,8 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) && !hasUserName(jsonKey(s[keyStart+1:keyEnd])) {
 			secret = false
 		}
-		if !secret && depth <= 1 {
-			if m, ok := gqlString(s[j:valEnd+1], valClosed, loneCode); ok {
+		if !secret && depth <= 2 { // depth 2: JSON in a URL parameter (?operations={"query":…})
+			if m, ok := gqlString(s[j:valEnd+1], valClosed, loneCode, depth <= 1); ok {
 				b.WriteString(s[last:j])
 				b.WriteString(m)
 				last = valEnd + 1
@@ -342,7 +342,7 @@ func maskForm(s string, request bool) string {
 		}
 		if secretName(formName(name)) {
 			parts[i] = name + "=[redacted]"
-		} else if m, ok := gqlParam(val); ok { // before JSON: {login(…)} starts with { too; a field not encoded as it should be too
+		} else if m, ok := gqlParam(val, 0); ok { // before JSON: {login(…)} starts with { too; a field not encoded as it should be too
 			parts[i] = name + "=" + m
 		} else if v := unescapeCut(val); strings.ContainsAny(v[:min(len(v), 1)], "{[") {
 			if m := maskJSON(v, request, 1); m != v {
@@ -648,7 +648,7 @@ func maskURLsAt(v string, depth int) string {
 			}
 			return sub[1] + sub[2] + "=REDACTED"
 		}
-		if m, ok := gqlParam(sub[3]); ok { // GET ?query=…: the whole value, ';' included
+		if m, ok := gqlParam(sub[3], depth); ok { // GET ?query=…: the whole value, ';' included
 			return sub[1] + sub[2] + "=" + m
 		}
 		// The value up to ';' is this name's; each ';name=value' after it is
@@ -659,6 +659,9 @@ func maskURLsAt(v string, depth int) string {
 		}
 		for i := 1; i < len(pieces); i++ {
 			n, v, ok := strings.Cut(pieces[i], "=")
+			if k := strings.Index(strings.ToLower(pieces[i]), `\u003d`); k >= 0 && (!ok || k < len(n)) { // Gson's =
+				n, v, ok = pieces[i][:k], pieces[i][k+6:], true
+			}
 			if !ok {
 				continue
 			}

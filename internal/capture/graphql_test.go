@@ -34,7 +34,8 @@ func TestGraphQLByName(t *testing.T) {
 		}
 	}
 	// Text that only starts with a brace or a keyword is not a document.
-	for _, s := range []string{"{count} items", "{name}'s photos: 3", "{name}'s", "{count} files: 3", "query", "mutations are slow", `{"a":1}`} {
+	for _, s := range []string{"{count} items", "{name}'s photos: 3", "{name}'s", "{count} files: 3", "query", "mutations are slow", `{"a":1}`,
+		"{user} {action} your post's photo", `{success:true,msg:'done',id:"abc"}`} {
 		if got, isDoc := maskGraphQLDoc(s, true); isDoc || got != s {
 			t.Errorf("%q -> %q (document %v)", s, got, isDoc)
 		}
@@ -77,6 +78,20 @@ func TestGraphQLWhereFound(t *testing.T) {
 	if got := string(maskBody([]byte("query=%7Blogin%28password%3A%22S13%22%29%7Bok%7D%7D"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S13") || !strings.Contains(got, "login") {
 		t.Errorf("a shorthand document in a form's first field: %s", got)
 	}
+	// The third review (Fable): a URL inside a GET document, a document in JSON
+	// in a URL parameter, Gson's = after a ;.
+	for _, c := range []struct{ u, gone string }{
+		{"https://g.example/graphql?query=mutation+%7B+a%28pin%3A+1%2C+url%3A+%22https%3A%2F%2Fh.example%2Fcb%3Ftoken%3DS18%22%29+%7B+ok+%7D+%7D&op=x", "S18"},
+		{"https://g.example/graphql?operations=" + url.QueryEscape(`{"query":"mutation { login(password: \"S19\") { ok } }"}`) + "&op=x", "S19"},
+		{"https://g.example/graphql?batch=" + url.QueryEscape(`[{"query":"mutation { login(password: \"S20\") { ok } }"}]`), "S20"},
+	} {
+		if got := s.mask(c.u); strings.Contains(got, c.gone) || !strings.Contains(got, "g.example") {
+			t.Errorf("%s\n -> %s", c.u, got)
+		}
+	}
+	if got := string(maskBody([]byte(`var u='https://h.example/cb?a=b\u003dc;sig\u003dS21';`), "application/javascript", false)); strings.Contains(got, "S21") {
+		t.Errorf("Gson's = after a ;: %s", got)
+	}
 	// The second review (Opus): a description first, raw line breaks in a JSON
 	// string, a form field not percent-encoded.
 	for _, c := range []struct{ body, ct, gone string }{
@@ -98,6 +113,7 @@ func TestGraphQLCost(t *testing.T) {
 		"mutation {" + strings.Repeat(`a(password: "x", b: [1, {c: "d"}]) `, 2000),
 		`{"query":"mutation { a(tokens: ` + strings.Repeat("[", 30000) + `"}`,
 		`{"q":[` + strings.Repeat(`"{ a(b: 1) }",`, 4000) + `0]}`,
+		"{ a(" + strings.Repeat("p", 32752) + ": 1 " + strings.Repeat("=", 32752), // a long name, then "=" after "=" (the third review)
 	} {
 		head := []byte(doc)[:min(len(doc), 64<<10)]
 		start := time.Now()

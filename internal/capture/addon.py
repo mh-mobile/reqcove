@@ -279,7 +279,7 @@ class Resolve:
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
-GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*)"  # spaces, commas, byte order marks, comments
+GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*(?![^\n\r]))"  # spaces, commas, byte order marks, comments (each to its line's end: one reading only, or # after # backtracks exponentially)
 GQL_DESC = r'(?:"""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")'  # a description before an operation
 # The first operation: at the start or after a definition's closing brace (a
 # fragment may come first), after a description or not.
@@ -300,6 +300,8 @@ def _operation(r):
         text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
         try:
             d = json.loads(text or "null")
+        except RecursionError:
+            d = None  # nested past Python's limit: no GraphQL request
         except ValueError:
             d = text  # a document as the body (application/graphql)
         if isinstance(d, dict):
@@ -338,6 +340,12 @@ class Mock:
         u = urllib.parse.urlsplit(url.removesuffix("*"))
         if u.scheme not in ("http", "https") or not u.hostname or not HOST_NAME.match(u.hostname):
             raise RuleError("url must be an http or https URL with a host name (a * at the end matches any rest)")
+        if u.query or u.fragment or u.username is not None or url.endswith("*") and not u.path:
+            # Never matched (the query is not compared; a * after the host would match other hosts too).
+            raise RuleError("url takes no query, fragment or user, and a * only after a path (https://host/*)")
+        if u.port in (80, 443):
+            raise RuleError("leave out the default port")
+        url = f"{u.scheme}://{u.netloc.lower()}{u.path}" + ("*" if url.endswith("*") else "")
         status = spec.get("status", 200)
         if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
             raise RuleError("status must be a number from 100 to 599")
@@ -379,8 +387,9 @@ class Mock:
     def candidates(self, flow):
         """The rules flow's method and URL match, operation aside."""
         r = flow.request
-        whole = r.pretty_url
-        bare = whole.split("?", 1)[0]
+        port = "" if (r.scheme, r.port) in (("http", 80), ("https", 443)) else f":{r.port}"
+        bare = f"{r.scheme}://{r.pretty_host.lower().rstrip('.')}{port}{r.path.split('?', 1)[0]}"
+        whole = bare + ("?" + r.path.split("?", 1)[1] if "?" in r.path else "")
         return [i for i, (method, url, *_) in enumerate(self.replacements)
                 if (method is None or method == r.method.upper()) and (whole.startswith(url[:-1]) if url.endswith("*") else bare == url)]
 

@@ -458,8 +458,10 @@ mock:                           # Reqcove's own; the first that matches answers,
     body_file: feed.json        # relative to the rules file
 ```
 
-- `url` matches the URL the app sent without its query, exactly, or, ending in
-  `*`, any URL that starts with the rest. `method` and `operation` (a GraphQL
+- `url` matches the URL the app sent without its query, exactly (the host in
+  any case), or, ending in `*` after a path (`https://api.example.com/v1/*`),
+  any URL that starts with the rest. It takes no query, fragment, user or
+  default port (refused: it would never match). `method` and `operation` (a GraphQL
   operation: `operationName`, Apollo's `X-APOLLO-OPERATION-NAME` header, or the
   document's first named operation) are optional. The host must be in
   `--allow-hosts` and not in `--pass-hosts`.

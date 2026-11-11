@@ -55,7 +55,7 @@
 - A string cut by the head's end is read with its escapes undone (`\u`
   escapes, a cut one dropped), as a whole one is.
 - The fuzz test checks every 5 characters of the secret, as written and
-  decoded, at every cut, in 15 shapes (it checked the whole secret at one cut).
+  decoded, at every cut, in 21 shapes (it checked the whole secret at one cut).
 
 ## v0.3.0 — 2026-11-11
 

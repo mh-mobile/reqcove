@@ -342,6 +342,9 @@ func TestRulesRefused(t *testing.T) {
 		"mock unknown key":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, delay: 3}]\n", "mock[0]: a mock is a mapping"},
 		"mock no url":                 {"mock: [{match: {method: GET}}]\n", "mock[0]: match needs url"},
 		"mock both bodies":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body: a, body_file: b}]\n", "mock[0]: body or body_file"},
+		"mock url with a query":       {"mock: [{match: {url: \"http://127.0.0.1/x?s3cret=1\"}}]\n", "mock[0]: url takes no query"},
+		"mock star after the host":    {"mock: [{match: {url: \"http://127.0.0.1*\"}}]\n", "mock[0]: url takes no query"},
+		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")
@@ -630,6 +633,12 @@ modify_headers:
 		resp.Body.Close()
 		if string(b) != c.want {
 			t.Errorf("gzip, %d bytes: %q", len(c.body), b)
+		}
+	}
+	// Nesting past Python's limit, and comments after comments: no operation, not a 502, at once.
+	for _, doc := range []string{strings.Repeat("[", 200000), `{"query":"` + strings.Repeat("#", 60) + `"}`} {
+		if _, body := do("POST", "http://"+o+"/graphql", doc); body != "origin /graphql" {
+			t.Errorf("%.20s…: %q", doc, body)
 		}
 	}
 	// A body of unknown length is not held: the mock is skipped, and says so.
