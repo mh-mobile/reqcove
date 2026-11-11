@@ -1,8 +1,10 @@
 package capture
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -266,4 +268,94 @@ func gqlParam(v string) (string, bool) {
 		return "", false
 	}
 	return url.QueryEscape(m), true
+}
+
+// The operation a GraphQL request names, for rows and summarize: its
+// operationName first (JSON, or ?operationName=), else its document's first
+// operation; "(anonymous)" for one without a name, "(batched)" for an array
+// of them; "" for a request that is not GraphQL. Persisted queries carry no
+// document, so only their operationName names them. Worked out from what was
+// masked, as it arrives, outside the Store's lock.
+const (
+	gqlAnonymous = "(anonymous)"
+	gqlBatched   = "(batched)"
+)
+
+// gqlName: a name GraphQL allows, at most 100 characters; anything else
+// (text an app or a site chose) is not shown.
+func gqlName(s string) string {
+	if s == "" || len(s) > 100 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !(c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || i > 0 && c >= '0' && c <= '9') {
+			return ""
+		}
+	}
+	return s
+}
+
+// gqlDocOperation names the first operation of document doc.
+func gqlDocOperation(doc string) string {
+	toks, _ := gqlLex(doc, 4)
+	if !gqlStart(doc, toks) {
+		return ""
+	}
+	if toks[0].kind == 'n' && len(toks) > 1 && toks[1].kind == 'n' && doc[toks[0].start:toks[0].end] != "fragment" {
+		return gqlName(doc[toks[1].start:toks[1].end])
+	}
+	return gqlAnonymous
+}
+
+// gqlURLOperation: from a URL's ?operationName=, else its ?query= document.
+func gqlURLOperation(u string) string {
+	_, q, ok := strings.Cut(u, "?")
+	if !ok {
+		return ""
+	}
+	vals, _ := url.ParseQuery(q)
+	if op := gqlName(vals.Get("operationName")); op != "" {
+		return op
+	}
+	return gqlDocOperation(vals.Get("query"))
+}
+
+// gqlOperationField finds "operationName" in a head json cannot read (cut).
+var gqlOperationField = regexp.MustCompile(`"operationName"\s*:\s*"([_A-Za-z][_0-9A-Za-z]{0,99})"`)
+
+// gqlBodyOperation: from a request body (masked: names and documents stay).
+func gqlBodyOperation(head []byte) string {
+	t := bytes.TrimLeft(head, " \t\r\n")
+	if len(t) == 0 {
+		return ""
+	}
+	if t[0] != '{' && t[0] != '[' {
+		return gqlDocOperation(string(t)) // application/graphql
+	}
+	var one struct {
+		OperationName string `json:"operationName"`
+		Query         string `json:"query"`
+	}
+	var many []json.RawMessage
+	switch {
+	case t[0] == '[' && json.Unmarshal(t, &many) == nil:
+		for _, m := range many {
+			if json.Unmarshal(m, &one) == nil && (one.OperationName != "" || gqlDocOperation(one.Query) != "") {
+				return gqlBatched
+			}
+		}
+		return ""
+	case t[0] == '{' && json.Unmarshal(t, &one) == nil:
+		if op := gqlName(one.OperationName); op != "" {
+			return op
+		}
+		return gqlDocOperation(one.Query)
+	}
+	if m := gqlOperationField.FindSubmatch(t); m != nil { // cut by the head's end
+		if t[0] == '[' {
+			return gqlBatched
+		}
+		return string(m[1])
+	}
+	return ""
 }

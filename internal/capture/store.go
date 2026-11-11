@@ -54,9 +54,10 @@ type event struct {
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
-	DroppedBodies int64 `json:"dropped_bodies"`
-	DroppedEvents int64 `json:"dropped_events"`
-	OutOfScope    int64 `json:"out_of_scope"`
+	DroppedBodies int64  `json:"dropped_bodies"`
+	DroppedEvents int64  `json:"dropped_events"`
+	OutOfScope    int64  `json:"out_of_scope"`
+	op            string // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
 }
 
 const wireVersion = 2
@@ -86,6 +87,7 @@ type Flow struct {
 	URL         string      `json:"url"` // as the app sent it, before --rules
 	MappedURL   string      `json:"mapped_url,omitempty"`
 	Rewrites    []string    `json:"rewrites,omitempty"`
+	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
 	HTTPVersion string      `json:"http_version"`
@@ -280,6 +282,9 @@ func (s *Store) Apply(line []byte) {
 		s.maskEvent(&e)
 		if e.Ev == "body" {
 			head, headOK = s.maskHead(&e)
+			if e.Dir == "request" && headOK {
+				e.op = gqlBodyOperation(head) // a POST's body names it, a GET's URL
+			}
 		}
 	}
 	s.mu.Lock()
@@ -374,7 +379,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites = e.MappedURL, e.Rewrites
+		f.MappedURL, f.Rewrites, f.Operation = e.MappedURL, e.Rewrites, e.op
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
@@ -383,6 +388,9 @@ func (s *Store) Apply(line []byte) {
 			f.Notes = append(f.Notes, "response headers: "+e.Note)
 		}
 	case "body":
+		if e.op != "" {
+			f.Operation = e.op
+		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
 		if e.Dir == "request" {
 			f.ReqBody = b
@@ -409,6 +417,7 @@ func (s *Store) maskEvent(e *event) {
 	switch e.Ev {
 	case "request":
 		e.URL, e.Path, e.MappedURL, e.Headers = s.mask(e.URL), s.mask(e.Path), s.mask(e.MappedURL), s.maskHeaders(e.Headers)
+		e.op = gqlURLOperation(e.URL)
 	case "response":
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
 	case "error", "tls_failed":
