@@ -124,6 +124,7 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 // be checked for secrets, so it is not handed out while masking is on.
 const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
 
+// bodyOut: the caller holds s.mu (s.redact).
 func (s *Store) bodyOut(b Body, headers [][2]string) (string, string) {
 	if s.redact && !checkable(b, headers) {
 		return "", omittedBody

@@ -293,6 +293,8 @@ func maskShapes(s string) string {
 	return s
 }
 
+// mask and the Store's other mask methods: the caller holds s.mu (s.redact,
+// set by SetScope).
 func (s *Store) mask(v string) string {
 	if !s.redact {
 		return v

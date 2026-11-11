@@ -156,6 +156,7 @@ func (s *Store) List(q Filter) ([]Summary, int64) {
 	return out, 0
 }
 
+// summary: the caller holds s.mu (s.names).
 func (s *Store) summary(f *Flow) Summary {
 	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL,
 		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error,
