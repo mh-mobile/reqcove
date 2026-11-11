@@ -152,8 +152,10 @@ func policyStats() map[string]any {
 // query's own escaped quote is \\\" and its backslash \\\\), a block
 // string ("""x""", or \"\"\"x\"\"\" inside JSON) too; a value cut by the head's end (even right after a
 // backslash) runs to it. Between the name, the colon and the value: spaces,
-// line breaks (also written \n in JSON) and # comments.
-var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt]|#[^\n]*?(?:\\n|\n))*)([_A-Za-z][_0-9A-Za-z]*)(\s*:(?:\s|\\[nrt]|#[^\n]*?(?:\\n|\n))*)("""(?s:.*?)(?:"""|$)|\\"\\"\\"(?s:.*?)(?:\\"\\"\\"|$)|\\"(?:\\\\\\\\|\\\\\\"|\\[^"]|[^"\\])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
+// line breaks (also written \n in JSON) and # comments (to a line break or a
+// quote: a comment run to the end of a long body would make each match
+// rescan it, quadratic).
+var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt]|#[^\n"]*?(?:\\n|\n))*)([_A-Za-z][_0-9A-Za-z]*)((?:\s|\\[nrt])*:(?:\s|\\[nrt]|#[^\n"]*?(?:\\n|\n))*)("""(?s:.*?)(?:"""|$)|\\"\\"\\"(?s:.*?)(?:\\"\\"\\"|$)|\\"(?:\\\\\\\\|\\\\\\"|\\[^"]|[^"\\])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
 // maskGraphQL masks the string values of GraphQL arguments with secret names
 // (login(password: "x")), which are not JSON fields: the query is one string.

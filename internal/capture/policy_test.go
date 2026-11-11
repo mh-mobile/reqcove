@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setPolicy(t *testing.T, names, values []string) {
@@ -172,5 +173,30 @@ func TestMaskEscapedAndCommented(t *testing.T) {
 		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
 			t.Errorf("%s\n -> %s", c.body, got)
 		}
+	}
+}
+
+// TestMaskGson: Gson (Android) writes = and & as \u003d and \u0026; a token
+// parameter so written is masked too, in an array as in a string.
+func TestMaskGson(t *testing.T) {
+	esc := func(s string) string { return strings.NewReplacer("=", "\\"+"u003d", "&", "\\"+"u0026").Replace(s) }
+	for _, body := range []string{
+		`{"urls":["` + esc("https://x.example/cb?a=1&access_token=S3CRETGSON") + `"]}`,
+		`{"m":"see ` + "\\" + `"here` + "\\" + `": ` + esc("https://x.example/cb?access_token=S3CRETGSON") + `"}`,
+	} {
+		if got := string(maskBody([]byte(body), "application/json", false)); strings.Contains(got, "S3CRETGSON") {
+			t.Errorf("%s\n -> %s", body, got)
+		}
+	}
+}
+
+// TestGraphQLCommentsLinear: a long body of comments with no line break
+// (or a quote) does not make each match rescan it.
+func TestGraphQLCommentsLinear(t *testing.T) {
+	head := []byte(strings.Repeat(`(#,a:"v"`, 8200))[:64<<10]
+	start := time.Now()
+	maskBody(head, "application/json", true)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("64 KiB took %v", d)
 	}
 }

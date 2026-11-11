@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,5 +178,42 @@ func TestWaitWokenByEviction(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("not woken by the eviction")
+	}
+}
+
+// TestWaitEvictedByBody: an open flow evicted by a body's bytes (a body
+// event hands out no seq) is reported, and the gap only once.
+func TestWaitEvictedByBody(t *testing.T) {
+	s := NewStore(10, 250)
+	ev(s, "request", "a", "")
+	s.Apply([]byte(`{"v":2,"ev":"body","id":"a","dir":"request","head":"` + strings.Repeat("QUFB", 25) + `","size":75,"final":false,"decoded":true}`))
+	ev(s, "request", "b", "")
+	ev(s, "response", "b", `,"status":200`)
+	cp := s.Checkpoint()
+	s.Apply([]byte(`{"v":2,"ev":"body","id":"b","dir":"response","head":"` + strings.Repeat("QUFB", 60) + `","size":180,"final":true,"decoded":true}`))
+	r := waitNow(s, Filter{}, cp)
+	if !r.Evicted {
+		t.Fatalf("an open flow evicted by a body: %+v", r)
+	}
+	if r2 := waitNow(s, Filter{}, r.After); r2.Evicted {
+		t.Error("the same gap reported twice")
+	}
+}
+
+// TestWaitFlowsAndGapOnce: flows given with a gap after them move the
+// cursor past the gap, so the next call does not report it again.
+func TestWaitFlowsAndGapOnce(t *testing.T) {
+	s := NewStore(2, 1<<20)
+	ev(s, "request", "a", "") // stays open
+	cp := s.Checkpoint()
+	ev(s, "request", "b", "")
+	ev(s, "response", "b", `,"status":200`)
+	ev(s, "request", "c", "") // evicts a, still open: its mark is past b's answer
+	r := waitNow(s, Filter{}, cp)
+	if !r.Evicted || fmt.Sprint(ids(r)) != "[b]" {
+		t.Fatalf("first: %+v", r)
+	}
+	if r2 := waitNow(s, Filter{}, r.After); r2.Evicted {
+		t.Error("the same gap reported again")
 	}
 }

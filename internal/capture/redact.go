@@ -509,8 +509,9 @@ func maskCookies(v, sep string, oneCookie bool) string {
 // (some servers keep it in the value); another's is split at ';', so
 // "?view=1;token=" is seen too.
 // In bodies, a value also stops at a quote, < or > and a backslash (HTML
-// attributes, JSON strings), and JSON may write & as \u0026.
-var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>\\]*)`)
+// attributes, JSON strings), and JSON may write & as \u0026 and = as
+// \u003d (Gson, on Android, does).
+var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)(?:=|\\u003[dD])([^&#\s"<>\\]*)`)
 
 // A URL's password (https://user:pass@host), also with JSON's escaped slashes
 // (https:\/\/user:pass@host, as PHP writes it).
@@ -524,7 +525,7 @@ func maskUserinfo(v string) string {
 }
 
 func maskURLs(v string) string {
-	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") {
+	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") && !containsFold(v, `\u003d`) {
 		return v // no parameter, no password: skip the regexps (most of a 64 KiB JSON head)
 	}
 	return maskURLsAt(maskUserinfo(v), 0)
