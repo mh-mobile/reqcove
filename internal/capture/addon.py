@@ -29,6 +29,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.parse
 import zlib
 from pathlib import Path
 
@@ -197,7 +198,7 @@ class _Head:
         })
 
 
-RULE_KINDS = ("map_remote", "map_local", "modify_headers", "resolve")  # resolve is reqcove's own
+RULE_KINDS = ("mock", "map_remote", "map_local", "modify_headers", "resolve")  # mock and resolve are reqcove's own
 RULE_SETTINGS = ("keep_host_header",)  # reqcove's own: map_remote keeps the app's Host
 MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
 
@@ -276,6 +277,119 @@ class Resolve:
         self.replacements[name] = (str(addr), port)
 
 
+MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
+GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
+GQL_OP = re.compile(r"\s*(?:#[^\n]*\n\s*)*(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]{0,99})")
+
+
+def _operation(r):
+    """A request's GraphQL operation, as reqcove names it: operationName (the
+    URL's, Apollo's header, the JSON body's), else the document's first named
+    operation; None if it names none."""
+    name = r.query.get("operationName") or r.headers.get("x-apollo-operation-name")
+    doc = r.query.get("query")
+    if not name and r.method != "GET":
+        try:
+            d = json.loads(r.get_content(strict=False) or b"null")
+        except ValueError:
+            d = None
+        if isinstance(d, dict):
+            name = d.get("operationName") if isinstance(d.get("operationName"), str) else None
+            doc = d.get("query") if isinstance(d.get("query"), str) else None
+    if name:
+        return name if GQL_NAME.fullmatch(name) else None
+    m = GQL_OP.match(doc or "")
+    return m.group(1) if m else None
+
+
+class Mock:
+    """mock: answers made here, reqcove's own. A request whose method, URL and
+    GraphQL operation match the first such rule gets its status, headers and
+    body; nothing of it reaches the origin (no request is sent: a connection
+    mitmproxy opened early may exist). Errors quote nothing of the rule."""
+
+    KEYS = {"match", "status", "headers", "body", "body_file"}
+
+    def __init__(self):
+        self.replacements = []  # (method or None, url, operation or None, status, headers, body)
+
+    def add(self, spec, base):
+        if not isinstance(spec, dict) or set(map(str, spec)) - self.KEYS:
+            raise RuleError("a mock is a mapping of match, status, headers, and body or body_file")
+        m = spec.get("match")
+        if not isinstance(m, dict) or set(map(str, m)) - {"method", "url", "operation"} or not isinstance(m.get("url"), str):
+            raise RuleError("match needs url, and may have method and operation")
+        method, op, url = m.get("method"), m.get("operation"), m["url"]
+        if method is not None and not (isinstance(method, str) and re.fullmatch(r"[A-Za-z]{1,20}", method)):
+            raise RuleError("method must be a word such as POST")
+        if op is not None and not (isinstance(op, str) and GQL_NAME.fullmatch(op)):
+            raise RuleError("operation must be a GraphQL name")
+        u = urllib.parse.urlsplit(url.removesuffix("*"))
+        if u.scheme not in ("http", "https") or not u.hostname or not HOST_NAME.match(u.hostname):
+            raise RuleError("url must be an http or https URL with a host name (a * at the end matches any rest)")
+        status = spec.get("status", 200)
+        if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+            raise RuleError("status must be a number from 100 to 599")
+        headers = spec.get("headers") or {}
+        if not isinstance(headers, dict) or not all(isinstance(k, str) and isinstance(v, (str, int)) and not isinstance(v, bool) for k, v in headers.items()):
+            raise RuleError("headers must map names to text values")
+        hs = [(k.encode(), str(v).encode()) for k, v in headers.items()]
+        for k, v in hs:
+            if not HEADER_NAME.match(k):
+                raise RuleError("a header name must be a plain token (letters, digits, - and the like)")
+            if BAD_IN_VALUE.search(v):
+                raise RuleError("a header value cannot hold a line break or NUL")
+        if not any(k.lower() == b"cache-control" for k, _ in hs):
+            hs.append((b"Cache-Control", b"no-store"))  # an app must not keep a made answer
+        if "body" in spec and "body_file" in spec:
+            raise RuleError("body or body_file, not both")
+        if "body_file" in spec:
+            if not isinstance(spec["body_file"], str):
+                raise RuleError("body_file must be a path")
+            try:
+                path = (base / Path(spec["body_file"]).expanduser()).resolve(strict=True)
+                too_big = path.stat().st_size > MOCK_BODY
+                body = b"" if too_big else path.read_bytes()
+            except OSError:
+                raise RuleError("body_file cannot be read") from None
+        else:
+            body = spec.get("body", "")
+            if not isinstance(body, str):
+                raise RuleError("body must be text (or use body_file)")
+            body = body.encode()
+            too_big = len(body) > MOCK_BODY
+        if too_big:
+            raise RuleError("the body is over 1 MiB")
+        self.replacements.append((method.upper() if method else None, url, op, status, hs, body))
+
+    def hosts(self):
+        return [urllib.parse.urlsplit(url.removesuffix("*")).hostname for _, url, *_ in self.replacements]
+
+    def candidates(self, flow):
+        """The rules flow's method and URL match, operation aside."""
+        r = flow.request
+        whole = r.pretty_url
+        bare = whole.split("?", 1)[0]
+        return [i for i, (method, url, *_) in enumerate(self.replacements)
+                if (method is None or method == r.method.upper()) and (whole.startswith(url[:-1]) if url.endswith("*") else bare == url)]
+
+    def answer(self, flow):
+        """The first rule matching flow, made into its response: (index, status), or None."""
+        op = None
+        for i in self.candidates(flow):
+            want = self.replacements[i][2]
+            if want is not None:
+                op = op or _operation(flow.request) or ""
+                if op != want:
+                    continue
+            _, _, _, status, hs, body = self.replacements[i]
+            if flow.request.method == "HEAD" or status in (204, 304) or status < 200:
+                body = b""
+            flow.response = http.Response.make(status, body, hs)
+            return i, status
+        return None
+
+
 # --web: mitmweb's flows are bounded as Reqcove's records are.
 WEB_MAX_FLOWS = 10000
 WEB_MAX_BYTES = 256 << 20
@@ -300,7 +414,7 @@ def load_rules(path):
     and values can carry tokens); only resolve's names and addresses are said."""
     data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError("the file must map map_remote, map_local, modify_headers and resolve to lists")
+        raise ValueError("the file must map mock, map_remote, map_local, modify_headers and resolve to lists")
     extra = sorted(str(k) if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", str(k)) else "(a key that is not a name)" for k in data if k not in RULE_KINDS + RULE_SETTINGS)
     if extra:  # a key that is not a name is not quoted: it may be a misplaced rule
         raise ValueError(f"only {', '.join(RULE_KINDS + RULE_SETTINGS)} are allowed, not {', '.join(extra)}")
@@ -333,6 +447,18 @@ def load_rules(path):
                 # to the log, and after a reload to the status tool and the page.
                 raise ValueError(f"{kind}[{i}]: {type(e).__name__}") from None
     addons["resolve"] = resolve
+    mock = Mock()
+    specs = data.get("mock") or []
+    if not isinstance(specs, list):
+        raise ValueError("mock must be a list of mappings")
+    for i, spec in enumerate(specs):
+        try:
+            mock.add(spec, Path(path).parent)
+        except RuleError as e:
+            raise ValueError(f"mock[{i}]: {e}") from None
+        except Exception as e:
+            raise ValueError(f"mock[{i}]: {type(e).__name__}") from None
+    addons["mock"] = mock
     return addons
 
 
@@ -417,6 +543,11 @@ class Reqcove:
                     raise ValueError(f"resolve[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
                 if not self._in_scope(name):  # would never apply: a typo
                     raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
+            for i, name in enumerate(rules["mock"].hosts()):
+                if self._passed(name):
+                    raise ValueError(f"mock[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
+                if not self._in_scope(name):
+                    raise ValueError(f"mock[{i}]: {name} is not in --allow-hosts")
             return rules, ""
         except Exception as e:
             why = str(e) if isinstance(e, ValueError) else type(e).__name__
@@ -595,6 +726,12 @@ class Reqcove:
         rules = self.rules
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
+            if rules["mock"].candidates(flow) and self._small_body(r):
+                # A mock may answer it: decided in request(), once the body (and a
+                # GraphQL operation in it) is in. Not streamed, so buffered: at most
+                # MAP_LOCAL_BODY. The event goes then, with what the rules did.
+                flow.metadata["reqcove_pending"] = ev
+                return
             try:
                 ev["rewrites"] = self._rewrite_request(flow, rules)
             except Exception as e:
@@ -614,10 +751,15 @@ class Reqcove:
         self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
 
-    def _rewrite_request(self, flow, rules):
+    def _rewrite_request(self, flow, rules, mocks=False):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
-        map_remote and map_local run in request(), after the body, too late."""
+        map_remote and map_local run in request(), after the body, too late.
+        With mocks (from request(), the body in), a mock comes first."""
         done = self._modify_headers(flow, flow.request.headers, "request", rules)
+        if mocks and (hit := rules["mock"].answer(flow)):
+            flow.metadata["reqcove_mocked"] = True
+            done.append(f"mock[{hit[0]}]: {hit[1]}")  # its index and status, never its text
+            return done
         if self._small_body(flow.request):
             rules["map_local"].request(flow)
         elif any(s.matches(flow) for s in rules["map_local"].replacements):
@@ -672,7 +814,22 @@ class Reqcove:
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
 
     def request(self, flow):
-        if flow.metadata.get("reqcove_local"):
+        ev = flow.metadata.pop("reqcove_pending", None)
+        if ev is not None:
+            try:
+                ev["rewrites"] = self._rewrite_request(flow, self.flow_rules[flow.id], mocks=True)
+            except Exception as e:
+                flow.response = http.Response.make(502, f"reqcove: a --rules rule failed on this request ({type(e).__name__})".encode())
+                ev["rewrites"] = [f"rules failed: {type(e).__name__}"]
+            if "reqcove_mapped" in flow.metadata:
+                ev["mapped_url"] = flow.metadata["reqcove_mapped"]
+            ev["mocked"] = bool(flow.metadata.get("reqcove_mocked"))
+            self.put_event(ev)
+            if flow.response:
+                flow.metadata["reqcove_local"] = True  # made here: copied whole in response()
+            self._via_upstream(flow)  # none for a made response
+            self._copy_whole(flow, "request", flow.request)  # buffered, not streamed
+        elif flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "request", flow.request)
         self._give_web(flow, "request", flow.request)
 
@@ -745,6 +902,8 @@ class Reqcove:
         self._web_done(flow)
         if flow.metadata.get("reqcove_skip"):
             return
+        if ev := flow.metadata.pop("reqcove_pending", None):
+            self.put_event(ev)  # it failed before its body was in: recorded as it came
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg[:SHORT]})
 
     def websocket_message(self, flow):

@@ -259,6 +259,14 @@ a 502 rather than sent on as it was (a test), and a `map_remote` whose replaceme
 cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
+A `mock` answers in the site's name: the app, and a web view's page, take it
+as the site's own answer (a script in it runs in that origin, a redirect is
+followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
+header values are checked as `modify_headers`'s are. The records say a flow was
+mocked, with the rule's number and status, never its text. A request a mock may
+answer is held whole, at most 1 MiB, until its body is in (the operation is in
+it). No MCP tool writes a rule: a mock comes from the file the user wrote, and
+over `--mcp-http` an agent has no way to the file at all.
 
 ## An upstream proxy (`--upstream-proxy`)
 

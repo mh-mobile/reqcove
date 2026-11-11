@@ -43,6 +43,7 @@ type event struct {
 	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
+	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
 	// hello
 	Mitmproxy    string         `json:"mitmproxy"`
 	Python       string         `json:"python"`
@@ -88,6 +89,7 @@ type Flow struct {
 	MappedURL   string      `json:"mapped_url,omitempty"`
 	Rewrites    []string    `json:"rewrites,omitempty"`
 	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
+	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the server never saw it
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
 	HTTPVersion string      `json:"http_version"`
@@ -167,6 +169,7 @@ type Store struct {
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
+	rulesLoaded   time.Time // when the --rules file was last taken (at start, or a reload)
 }
 
 func (s *Store) setState(state, detail string) {
@@ -303,11 +306,17 @@ func (s *Store) Apply(line []byte) {
 	case "hello":
 		s.hello = e
 		s.hellos++
+		if e.Rules != nil && s.rulesLoaded.IsZero() { // a restarted mitmproxy takes the file again, unchanged or not
+			s.rulesLoaded = time.Now()
+		}
 		return
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
 		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
+		if e.RulesError == "" {
+			s.rulesLoaded = time.Now()
+		}
 		if s.rulesLog != nil {
 			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
 		}
@@ -379,7 +388,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation = e.MappedURL, e.Rewrites, e.op
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked = e.MappedURL, e.Rewrites, e.op, e.Mocked
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers

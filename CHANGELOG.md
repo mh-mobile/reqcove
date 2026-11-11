@@ -4,6 +4,14 @@
 
 ### For agents
 
+- Response mocks: a `mock:` rule in the `--rules` file answers a request
+  (method, URL exact or by prefix, GraphQL operation) with a status, headers
+  and a body (inline or a file, at most 1 MiB), before the other rules; nothing
+  reaches the server. Its row says `mocked: true`, `rewrites` gives
+  `mock[i]: status` (never the rule's text), a HAR notes it, `summarize`
+  counts them. `Cache-Control: no-store` unless the rule sets one. Hosts in
+  `--allow-hosts` only. `capture_stats.rules_loaded` says when the file was
+  last taken. Tried with the E2E tests; not on an iPhone yet.
 - `summarize` counts by endpoint (`by_endpoint`): method, host and path
   without the query, with segments of digits only or a UUID as `{id}`, then
   a GraphQL operation (`POST api.example.com/graphql Login`).
