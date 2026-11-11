@@ -333,9 +333,9 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
-| `--uvx PATH` | 使用する uvx |
-| `--python VERSION` | uvx が取得する Python。デフォルトは 3.14 |
-| `--mitmproxy-spec SPEC` | uvx が取得する mitmproxy。デフォルトは `mitmproxy==12.3.1` |
+| `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、既定の mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認） |
+| `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
+| `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |
 
 ほかのコマンド（`init` と `version` 以外は、`--state DIR` も指定可能）：
 

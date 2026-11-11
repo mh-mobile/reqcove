@@ -755,3 +755,22 @@ func TestReadLine(t *testing.T) {
 		t.Errorf("last: %q %v", l, err)
 	}
 }
+
+// TestPyCommand: the default mitmproxy runs from the lock with the uv beside
+// uvx; another spec through uvx, unlocked.
+func TestPyCommand(t *testing.T) {
+	bin, args := PyCommand(Config{Uvx: "/opt/bin/uvx", Python: "3.14", MitmSpec: LockedMitmSpec, Dir: "/s"}, "mitmweb")
+	if bin != "/opt/bin/uv" || strings.Join(args, " ") != "run --locked --no-project --python 3.14 --script /s/mitm.py mitmweb" {
+		t.Errorf("locked: %s %q", bin, args)
+	}
+	if bin, _ := PyCommand(Config{Uvx: "uvx", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "uv" {
+		t.Errorf("uvx on PATH: %s", bin)
+	}
+	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
+		t.Errorf("a --uvx not named uvx: %s", bin)
+	}
+	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3"}, "mitmdump")
+	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 mitmdump") {
+		t.Errorf("other spec: %s %q", bin, args)
+	}
+}

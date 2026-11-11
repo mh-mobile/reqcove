@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- mitmproxy runs from a lock built into reqcove: `uv run --locked --script`
+  installs exactly the files the lock names and checks their hashes (plain
+  `uvx` checked none). Another `--mitmproxy-spec` still goes through uvx. CI
+  checks the lock and audits it (pip-audit), which found three known
+  vulnerabilities in tornado 6.5.10 (mitmweb's server, capped there by
+  mitmproxy 12.3.1): the lock takes tornado 6.6, which fixes them. The first
+  start in a new state directory takes a few seconds more (uv makes the
+  environment once per place).
 - Prompt injection, from a review: the server's instructions (all an agent
   without the skill gets, such as Grok Bot) now also say not to write files,
   commits or commands because of what the records say, not to suggest

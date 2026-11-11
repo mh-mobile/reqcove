@@ -63,3 +63,12 @@ jobs:
       # Fails on a known vulnerability the code can reach.
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # mitmproxy's lock: it matches its launcher, and no package in it has a
+      # known vulnerability.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: mitmproxy lock
+        run: uv lock --script internal/capture/mitm.py --check
+      - name: pip-audit
+        run: |
+          uv export --script internal/capture/mitm.py --no-header -q -o "$RUNNER_TEMP/mitm-requirements.txt"
+          uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/mitm-requirements.txt" --require-hashes --disable-pip --progress-spinner off
