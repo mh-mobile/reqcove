@@ -89,6 +89,7 @@ func TestNoSecretInAnyTool(t *testing.T) {
 	dump("capture_stats", nil)
 	for i := range urls {
 		dump("get_flow", map[string]any{"id": string(rune('a' + i))})
+		dump("diff_flows", map[string]any{"a": string(rune('a' + i)), "b": string(rune('a' + (i+1)%len(urls)))})
 	}
 	out := all.String()
 	for line := range strings.Lines(out) {

@@ -354,6 +354,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
 | `wait_for_flows` | 端末を操作したあと、返事（レスポンスかエラー）が来たフローを、返事の来た順に返す。`after` には、操作の前に `list_flows`（または `capture_stats`）で受け取った `checkpoint` を渡す。1 件来るまで `timeout` 秒（初期値 20、最大 30）待つ。答えの `after` を次の呼び出しに渡せば、同じフローは二度来ない。絞り込みは同じ |
 | `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ |
+| `diff_flows` | 2 つのフローを比べる（成功したものと失敗したものなど）。メソッド、URL、ステータスコード、エラー、ヘッダー（名前ごと）、ボディ（JSON はパスごと）。マスク中は、両方でマスクされた値を「同じ」とは言わず `masked` に並べる（元の値は違うかもしれない）。テキストでないボディは比べない。`--no-redact` のときは全部比べる |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
