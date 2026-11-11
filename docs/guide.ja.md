@@ -161,7 +161,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 ```
 
 - そのホストは、接続だけを記録します（ホスト、接続先サーバー、時刻、バイト数：`list_passthrough`）。URL や中身は記録しません。
-- `--rules` と `--upstream-proxy` の対象外になります。
+- その接続は `--rules` と `--upstream-proxy` の対象外です。ただし mitmproxy がそれでも復号するリクエスト（平文の HTTP や、許可したホストの接続に相乗りしたもの）は、記録されず `--rules` も効きませんが、`--upstream-proxy` は通ります。
 - TLS ハンドシェイクのあとで行うピンニングは、どこにも表示されません。
 - 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒否するのは、別の理由です（[Android](#android-を記録する)）。
 

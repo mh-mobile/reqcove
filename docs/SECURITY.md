@@ -75,9 +75,13 @@ So "delete the directory" above means each of them.
   destination) are suggested, never mitm.it, and the command is quoted for a
   shell (a test). `@FILE` lists are read as hosts, never run: a line that is
   not a host stops `run`, named by its line number only, so a wrong file (a
-  .env, say) is not printed back (a test). A pass host's plain HTTP, and its
-  requests riding another host's decrypted connection, go to its server, not to
-  `--upstream-proxy`, and are counted as out of scope, not recorded. A pass
+  .env, say) is not printed back (a test). A pass host's TLS connections go to
+  its server directly, past `--rules` and `--upstream-proxy`. Its plain HTTP,
+  and its requests riding another host's decrypted connection, are decrypted all
+  the same: counted as out of scope, not recorded, and sent on through
+  `--upstream-proxy` when one is set (a test), checked as all HTTPS through it
+  is: against `--upstream-ca` only, or the public CAs without one. They skip
+  `--rules` (from reading code). A pass
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
