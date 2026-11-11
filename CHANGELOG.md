@@ -4,6 +4,16 @@
 
 ### Masking
 
+- GraphQL documents are read by a lexer instead of a pattern. An argument, an
+  input object's field or a variable's default whose name is secret has its
+  whole value masked: a string, a number, a list or an object
+  (`pin: "[redacted]"`), as a JSON field's is; enums, booleans, `$variables`
+  and aliases stay. Documents are found where a JSON string at depth 0 or 1
+  (any key, requests and responses), the body or a URL parameter starts like
+  one; a GET `?query=` is masked and escaped again rather than replaced. One
+  that cannot be read is masked whole. Before, variable defaults, lists,
+  numbers, quotes written `\u0022` and responses without a trigger word passed.
+  A second fuzz test writes documents from a small grammar.
 - A field with a secret name whose value is a list or an object is masked
   whole (`{"password": "[redacted]"}`; cut by the head's end, to the end).
 - A URL in a form's first field is looked into, as the other fields are.

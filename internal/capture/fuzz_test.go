@@ -12,7 +12,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 15
+const fuzzShapes = 21
 
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
@@ -56,6 +56,19 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"note":"`+filler+`",`, `"url":"https:\/\/x.example\/cb?token=Kx\/`+secret+`"}`, "application/json")
 	case 13: // after a quote as Gson writes it
 		return pre(`{"note":"`+filler+`",`, `"url":"https://x.example/cb?token=Kx\u0027`+secret+`"}`, "application/json")
+	case 15: // GraphQL: a variable's default
+		return pre(`{"query":"query Q(`+filler, `$password: String = \"`+secret+`\") { a }"}`, "application/json")
+	case 16: // a list as an argument
+		return pre(`{"query":"mutation { `+filler, ` set(tokens: [\"x\", \"`+secret+`\"]) { ok } }"}`, "application/json")
+	case 17: // an input object's field
+		return pre("mutation { login(input: {user: \""+filler, "\", password: \""+secret+"\"}) { ok } }", "application/graphql")
+	case 18: // a comment holding a quote
+		return pre("mutation { login(# it's \"x "+filler, "\n password: \""+secret+"\") { ok } }", "application/graphql")
+	case 19: // quotes written as an escape
+		q := "\\" + "u0022"
+		return pre(`{"query":"mutation { `+filler, ` login(password: `+q+secret+q+`) { ok } }"}`, "application/json")
+	case 20: // a response echoing a query under any key, with no trigger word
+		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
@@ -120,7 +133,7 @@ func FuzzMaskBody(f *testing.F) {
 			if cut > 0 && cut < len(head) {
 				head = head[:cut]
 			}
-			got := string(maskBody(head, ct, true))
+			got := string(maskBody(head, ct, shape%fuzzShapes != 20))
 			if l := leak(got, fuzzSecret); l != "" {
 				t.Errorf("shape %d, cut %d: %q survived:\n%s", shape%fuzzShapes, cut, l, got[max(0, len(got)-200):])
 			}
