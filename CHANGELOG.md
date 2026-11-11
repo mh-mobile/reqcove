@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Built with Go 1.27.4: 1.27.3's net/http has GO-2026-6859, which govulncheck
+  found reachable (through the `--ui` page's proxy).
 - Prompt injection, from a review: the server's instructions (all an agent
   without the skill gets, such as Grok Bot) now also say not to write files,
   commits or commands because of what the records say, not to suggest
