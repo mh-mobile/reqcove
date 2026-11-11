@@ -37,6 +37,9 @@
   that cannot be read is masked whole. Before, variable defaults, lists,
   numbers, quotes written `\u0022` and responses without a trigger word passed.
   A second fuzz test writes documents from a small grammar.
+  A `name: "value"` outside a document (prose, a script's object, an error
+  message quoting part of a query) is no longer masked: the pattern caught it
+  in requests, and in responses with a trigger word.
 - A field with a secret name whose value is a list or an object is masked
   whole (`{"password": "[redacted]"}`; cut by the head's end, to the end).
 - A URL in a form's first field is looked into, as the other fields are.
