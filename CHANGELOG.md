@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Inside
+
+- Masking happens before the Store's lock is taken: an event's URLs,
+  headers and error text, and a body's head (the lock is held only to read
+  its content type). Tools no longer wait while a body is masked: with 64 KiB
+  JSON bodies arriving back to back, a `list_flows` and a `get_flow` waited
+  12 ms at the median (17 ms at the 99th percentile) before, 6 µs (95 µs)
+  after (`BenchmarkToolsWhileIngesting`, this Mac). A body whose flow was not
+  there when it was masked is dropped as an orphan, as before.
+
 ### Masking
 
 - GraphQL documents are read by a lexer instead of a pattern. An argument, an

@@ -427,10 +427,10 @@ func maskShapes(s string) string {
 	return s
 }
 
-// mask and the Store's other mask methods: the caller holds s.mu (s.redact,
-// set by SetScope).
+// mask and the Store's other mask methods need no lock: s.redact is atomic,
+// set by SetScope before events arrive.
 func (s *Store) mask(v string) string {
-	if !s.redact {
+	if !s.redact.Load() {
 		return v
 	}
 	return maskTokens(maskURLs(v))
@@ -439,7 +439,7 @@ func (s *Store) mask(v string) string {
 // maskError is mask for error messages, which can also quote raw bytes from
 // the wire (mitmproxy: "Invalid header line: b'Set-Cookie sid=…'").
 func (s *Store) maskError(v string) string {
-	if !s.redact {
+	if !s.redact.Load() {
 		return v
 	}
 	return quotedBytesRE.ReplaceAllString(maskTokens(maskURLs(v)), "${1}b'[redacted]'")
@@ -450,7 +450,7 @@ func (s *Store) maskError(v string) string {
 var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*(?:'|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
 func (s *Store) maskHeaders(h [][2]string) [][2]string {
-	if !s.redact {
+	if !s.redact.Load() {
 		return h
 	}
 	out := make([][2]string, len(h))
