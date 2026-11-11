@@ -107,7 +107,7 @@ resolve:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(h.stats()["rules"]); got != "map[keep_host_header:1 map_local:1 map_remote:3 modify_headers:3 resolve:2]" {
+	if got := fmt.Sprint(h.stats()["rules"]); got != "map[keep_host_header:1 map_local:1 map_remote:3 mock:0 modify_headers:3 resolve:2]" {
 		t.Errorf("rules loaded: %s", got)
 	}
 	hc := h.client("dev")
@@ -315,7 +315,7 @@ func TestRulesRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	for name, c := range map[string]struct{ yaml, want string }{
-		"other option":                {"scripts: [evil.py]\n", "only map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
+		"other option":                {"scripts: [evil.py]\n", "only mock, map_remote, map_local, modify_headers, resolve, keep_host_header are allowed, not scripts"},
 		"misplaced rule as a key":     {"'|~q|Authorization|Bearer sekrit': 1\n", "not (a key that is not a name)"},
 		"missing file":                {"modify_headers: [\"|~q|Authorization|@/nonexistent/s3cret\"]\n", "modify_headers[0]: FileNotFoundError"},
 		"bad regex":                   {"map_remote: [\"|(|x\"]\n", "map_remote[0]: ValueError"},
@@ -333,6 +333,13 @@ func TestRulesRefused(t *testing.T) {
 		"header value line break":     {"modify_headers: [\"|~q|X-A|ok\\\\r\\\\nX-Injected: yes\"]\n", "modify_headers[0]: a header value cannot hold a line break"},
 		"header name not a token":     {"modify_headers: [\"|~q|X A|v\"]\n", "modify_headers[0]: the header name must be a plain token"},
 		"resolve name control chars":  {"resolve: [\"safe\\n\\x1b[31mforged=203.0.113.10\"]\n", "resolve[0]: write name=IPv4"},
+		"mock bad status":             {"mock: [{match: {url: \"http://127.0.0.1/x\"}, status: 700}]\n", "mock[0]: status must be a number from 100 to 599"},
+		"mock header line break":      {"mock: [{match: {url: \"http://127.0.0.1/x\"}, headers: {X-A: \"ok\\r\\nX-Injected: s3cret\"}}]\n", "mock[0]: a header value cannot hold a line break"},
+		"mock missing file":           {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body_file: /nonexistent/s3cret}]\n", "mock[0]: body_file cannot be read"},
+		"mock out of scope":           {"mock: [{match: {url: \"https://nope.example/x\"}}]\n", "mock[0]: nope.example is not in --allow-hosts"},
+		"mock unknown key":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, delay: 3}]\n", "mock[0]: a mock is a mapping"},
+		"mock no url":                 {"mock: [{match: {method: GET}}]\n", "mock[0]: match needs url"},
+		"mock both bodies":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body: a, body_file: b}]\n", "mock[0]: body or body_file"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")
@@ -509,5 +516,109 @@ func TestRulesReloadSettles(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	if n := count(); n != 1 {
 		t.Errorf("taken %d times once it stayed, want 1", n)
+	}
+}
+
+// TestMocks: a mock answers before the origin (which never sees the request),
+// with its status, headers and body, inline or from a file; matched by method,
+// URL (exact without the query, or a prefix) and GraphQL operation (from the
+// body); HEAD gets no body; response modify_headers still apply; the record
+// says mocked, with the rule's index and status only; requests no mock
+// matches go on, their bodies recorded.
+func TestMocks(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var mu sync.Mutex
+	reached := map[string]string{}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reached[r.URL.Path] = string(b)
+		mu.Unlock()
+		fmt.Fprintf(w, "origin %s", r.URL.Path)
+	}))
+	defer origin.Close()
+	o := origin.Listener.Addr().String()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "feed.json"), []byte(`{"feed":[]}`), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`mock:
+  - match: {method: POST, url: "http://%[1]s/v1/login"}
+    status: 401
+    headers: {Content-Type: application/json, X-Mock-Note: s3cret-in-rule}
+    body: '{"error":"expired"}'
+  - match: {url: "http://%[1]s/graphql", operation: Feed}
+    body_file: feed.json
+  - match: {url: "http://%[1]s/pre/*"}
+    status: 204
+  - match: {method: HEAD, url: "http://%[1]s/head"}
+    body: never sent
+modify_headers:
+  - "|~s|X-Resp|added"
+`, o)), 0o600)
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Rules = rules })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:4") {
+		t.Errorf("rules loaded: %s", got)
+	}
+	hc := h.client("dev")
+	do := func(method, url, body string) (*http.Response, string) {
+		t.Helper()
+		var rd io.Reader
+		if body != "" {
+			rd = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, url, rd)
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, url, err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, string(b)
+	}
+	resp, body := do("POST", "http://"+o+"/v1/login?x=1", "user=a")
+	if resp.StatusCode != 401 || body != `{"error":"expired"}` || resp.Header.Get("X-Resp") != "added" || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("login mock: %d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	if resp, body := do("GET", "http://"+o+"/v1/login", ""); resp.StatusCode != 200 || body != "origin /v1/login" {
+		t.Errorf("GET is not the mock's method: %d %q", resp.StatusCode, body)
+	}
+	if _, body := do("POST", "http://"+o+"/graphql", `{"operationName":"Feed","query":"query Feed { feed { id } }"}`); body != `{"feed":[]}` {
+		t.Errorf("Feed mock: %q", body)
+	}
+	if _, body := do("POST", "http://"+o+"/graphql", `{"query":"mutation Like { like }"}`); body != "origin /graphql" {
+		t.Errorf("another operation went on: %q", body)
+	}
+	if resp, _ := do("GET", "http://"+o+"/pre/a/b?c=1", ""); resp.StatusCode != 204 {
+		t.Errorf("prefix mock: %d", resp.StatusCode)
+	}
+	if resp, body := do("HEAD", "http://"+o+"/head", ""); resp.StatusCode != 200 || body != "" {
+		t.Errorf("HEAD mock: %d %q", resp.StatusCode, body)
+	}
+	mu.Lock()
+	login, sawLogin := reached["/v1/login"]
+	_, sawPre := reached["/pre/a/b"]
+	gql := reached["/graphql"]
+	mu.Unlock()
+	if !sawLogin || login != "" || sawPre || gql != `{"query":"mutation Like { like }"}` { // the GET's, never the POST's
+		t.Errorf("the origin got: %v", reached)
+	}
+	lv := h.doneFlow("/v1/login?x=1", true)
+	if !lv.Mocked || lv.Status != 401 || lv.ReqBodyText != "user=a" || lv.RespBodyText != `{"error":"expired"}` || !slices.Contains(lv.Rewrites, "mock[0]: 401") {
+		t.Errorf("login record: mocked=%v status=%d req=%q resp=%q rewrites=%v", lv.Mocked, lv.Status, lv.ReqBodyText, lv.RespBodyText, lv.Rewrites)
+	}
+	if strings.Contains(fmt.Sprint(lv.Rewrites), "s3cret") || strings.Contains(fmt.Sprint(lv.Rewrites), "expired") {
+		t.Errorf("the rule's text in rewrites: %v", lv.Rewrites)
+	}
+	for op, mocked := range map[string]bool{"Feed": true, "Like": false} {
+		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 5}); len(rows) != 1 || rows[0].Mocked != mocked {
+			t.Errorf("%s rows: %+v", op, rows)
+		}
 	}
 }

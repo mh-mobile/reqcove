@@ -444,6 +444,38 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
+`mock` answers a request here, with what you write, and nothing of it reaches
+the server: to see how the app takes an expired session or an empty list.
+
+```yaml
+mock:                           # Reqcove's own; the first that matches answers, before the other rules
+  - match: {method: POST, url: "https://api.example.com/v1/login"}
+    status: 401
+    headers: {Content-Type: application/json}
+    body: '{"error":"expired"}'
+  - match: {url: "https://api.example.com/graphql", operation: Feed}
+    body_file: feed.json        # relative to the rules file
+```
+
+- `url` matches the URL the app sent without its query, exactly, or, ending in
+  `*`, any URL that starts with the rest. `method` and `operation` (a GraphQL
+  operation: `operationName`, Apollo's `X-APOLLO-OPERATION-NAME` header, or the
+  document's first named operation) are optional. The host must be in
+  `--allow-hosts` and not in `--pass-hosts`.
+- `status` is 100 to 599 (200 if left out); a body is at most 1 MiB, inline or
+  in a file, and none goes with `HEAD`, 204 or 304. `Cache-Control: no-store`
+  is added unless you set one. Response `modify_headers` rules still apply.
+- A request a mock may answer (its method and URL match) is held whole, at most
+  1 MiB, until its body is in; a larger one, or one of unknown length, goes on.
+- The record says so: `mocked: true` on its row, `rewrites` with the rule's
+  number and status (`mock[0]: 401`), a note in a HAR. `capture_stats` has
+  `rules_loaded`, when the file was last taken.
+
+Tried with the E2E tests (real mitmproxy): a 401 with headers for a POST, a
+GraphQL operation from the body, a prefix, HEAD, the server never reached, and
+rules refused (a bad status, a line break in a header, a missing file, a host
+outside `--allow-hosts`). Not tried on an iPhone yet.
+
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:
 

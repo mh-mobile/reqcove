@@ -204,6 +204,9 @@ func (s *Store) Stats() map[string]any {
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
 	}
+	if !s.rulesLoaded.IsZero() {
+		out["rules_loaded"] = s.rulesLoaded.Format("2006-01-02T15:04:05.000Z07:00") // an agent that saved the file sees whether it was taken
+	}
 	if s.redact.Load() {
 		for k, v := range policyStats() {
 			out[k] = v
