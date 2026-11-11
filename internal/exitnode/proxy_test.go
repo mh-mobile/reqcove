@@ -312,3 +312,58 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 		t.Errorf("dead upstream error: %v", err)
 	}
 }
+
+// TestDialWaitsForReady: a SOCKS dial goes to the port only once ready says
+// mitmproxy is up; while it is not, nothing reaches whoever holds the port
+// (another local process, after mitmproxy died), and the dial fails after
+// socksHold. Direct dials do not wait.
+func TestDialWaitsForReady(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	accepted := make(chan struct{}, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- struct{}{}
+			c.Close()
+		}
+	}()
+	defer func(d time.Duration) { socksHold = d }(socksHold)
+	socksHold = 200 * time.Millisecond
+	dst := netip.MustParseAddrPort("192.0.2.1:443")
+	notReady := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+
+	start := time.Now()
+	if _, err := dialVia(context.Background(), socks, "dev", ln.Addr().String(), "pw", notReady, dst); err == nil {
+		t.Fatal("dialed while mitmproxy was not ready")
+	}
+	if d := time.Since(start); d < socksHold || d > 5*time.Second {
+		t.Errorf("held %v, want about %v", d, socksHold)
+	}
+	select {
+	case <-accepted:
+		t.Fatal("the SOCKS port got a connection while mitmproxy was not ready")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Ready: the dial reaches the port (the fake closes it, so SOCKS fails after).
+	dialVia(context.Background(), socks, "dev", ln.Addr().String(), "pw", func(context.Context) error { return nil }, dst)
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a ready dial never reached the SOCKS port")
+	}
+
+	// Direct: not held.
+	start = time.Now()
+	dialVia(context.Background(), direct, "dev", "", "", notReady, netip.MustParseAddrPort(ln.Addr().String()))
+	if d := time.Since(start); d >= socksHold {
+		t.Errorf("a direct dial was held %v", d)
+	}
+}

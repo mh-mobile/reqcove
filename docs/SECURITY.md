@@ -354,12 +354,19 @@ Simulator.
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
 start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device. One gap,
-from reading code: when mitmdump dies, reqcove starts it again on the same port
-(visible in `ps`), and until it is listening (up to about 30 seconds) another
-user's process on this computer could take the port. Reqcove would then send it
-the SOCKS password and the devices' TCP traffic: plain HTTP readable, HTTPS not.
-On a computer shared with users you do not trust, keep that in mind.
+another local process can neither use the proxy nor pose as a device. When
+mitmdump dies, reqcove starts it again on the same port (visible in `ps`), and
+meanwhile another user's process on this computer could take the port. The
+devices' connections then wait (15 seconds at most, then fail) until the new
+mitmdump's addon says hello, which mitmproxy (12.3.1) does only once it
+listens: one that cannot bind the port exits first, and is started again.
+Tests: while another process holds the port, the restarted mitmdump never
+becomes ready, and comes back once the port is free; while it is not ready, no
+connection is sent to the port. One gap remains, from reading code: between
+mitmdump's death and reqcove noticing it (milliseconds), a connection can
+still be sent to the free port; whoever took it in that moment would get the
+SOCKS password and that connection: plain HTTP readable, HTTPS not. On a
+computer shared with users you do not trust, keep that in mind.
 
 The state directory is checked itself, not the directories above it. Keep it
 (and `--state`) under directories only you can write: someone who can rename

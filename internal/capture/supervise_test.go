@@ -2,6 +2,10 @@ package capture
 
 import (
 	"context"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +125,40 @@ func TestGivesUpOnMitmdump(t *testing.T) {
 	c.Stop() // still fine after giving up
 }
 
+// TestWaitReady: WaitReady returns while a mitmdump that said hello runs,
+// holds (until its context ends) once it exited, and fails at once after
+// supervise gave up.
+func TestWaitReady(t *testing.T) {
+	c, kill := startFake(t, 2) // the first run works, every restart dies
+	defer c.Stop()
+	wait := func(d time.Duration) error {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		return c.WaitReady(ctx)
+	}
+	if err := wait(time.Second); err != nil {
+		t.Fatalf("ready mitmdump: %v", err)
+	}
+	kill(1)
+	for deadline := time.Now().Add(10 * time.Second); c.Store.Stats()["state"] == "ready"; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("still ready after its mitmdump died")
+		}
+	}
+	select {
+	case <-c.Done():
+	default:
+		if err := wait(50 * time.Millisecond); err == nil {
+			t.Error("WaitReady returned while mitmdump was down")
+		}
+	}
+	<-c.Done()
+	start := time.Now()
+	if err := wait(5 * time.Second); err == nil || time.Since(start) > time.Second {
+		t.Errorf("after giving up: %v in %v, want an error at once", err, time.Since(start))
+	}
+}
+
 // A rules file broken while running must not bring mitmdump back without its rules.
 func TestRestartRefusesBrokenRules(t *testing.T) {
 	t.Setenv("FAKE_RULES_ERROR", "map_remote[0]: ValueError")
@@ -174,4 +212,60 @@ func TestStartStopsStaleMitmdump(t *testing.T) {
 	if !alive(other) {
 		t.Error("stopped a process that is not this directory's mitmdump")
 	}
+}
+
+// TestPortTakenWhileDown (REQCOVE_E2E=1): another process takes the SOCKS
+// port while mitmdump is down. The restarted mitmproxy cannot bind, exits
+// before its addon says hello (errorcheck), and so is never ready: WaitReady
+// holds, and dials never go to the port's new owner. Once the port is free
+// again, mitmdump comes back and records.
+func TestPortTakenWhileDown(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.RestartDelay = 300 * time.Millisecond })
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(h.c.cfg.Dir, "mitmdump.pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if pid == 0 {
+		t.Fatal("no mitmdump.pid")
+	}
+	syscall.Kill(-pid, syscall.SIGKILL)
+	var squatter net.Listener
+	for deadline := time.Now().Add(10 * time.Second); squatter == nil; time.Sleep(time.Millisecond) {
+		if squatter, err = net.Listen("tcp", h.c.SocksAddr); err != nil && time.Now().After(deadline) {
+			t.Fatalf("taking the port: %v", err)
+		}
+	}
+	// Hold it across a few attempts (300 ms, 600 ms and 1.2 s apart, about a
+	// second each), short of supervise giving up (5).
+	for until := time.Now().Add(4 * time.Second); time.Now().Before(until); time.Sleep(10 * time.Millisecond) {
+		if s := h.c.Store.Stats()["state"]; s == "ready" || s == "failed" {
+			t.Fatalf("%s while another process holds its port", s)
+		}
+		wctx, wcancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		err := h.c.WaitReady(wctx)
+		wcancel()
+		if err == nil {
+			t.Fatal("WaitReady returned while another process holds its port")
+		}
+	}
+	squatter.Close()
+	wctx, wcancel := context.WithTimeout(ctx, time.Minute)
+	defer wcancel()
+	if err := h.c.WaitReady(wctx); err != nil {
+		t.Fatalf("after the port was freed: %v (%v)", err, h.c.Store.Stats())
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer srv.Close()
+	r, err := h.client("dev").Get(srv.URL + "/back")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	h.doneFlow("/back", false)
 }

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -100,6 +101,8 @@ type Capture struct {
 	ln     net.Listener
 	cancel context.CancelFunc
 	done   chan struct{}
+	upMu   sync.Mutex
+	up     chan struct{} // closed while a mitmdump that said hello runs; replaced when it exits
 	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
 	restarted bool
 	err       error
@@ -198,7 +201,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	}
 	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
-		cfg: cfg, ln: ln, done: make(chan struct{})}
+		cfg: cfg, ln: ln, done: make(chan struct{}), up: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
@@ -296,6 +299,7 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	}
 	p.ready = time.Now()
 	c.Store.setState("ready", "")
+	c.setUp(true)
 	return p, nil
 }
 
@@ -314,10 +318,13 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 	for {
 		select {
 		case <-ctx.Done():
+			c.setUp(false)
 			p.stop()
 			return
 		case <-p.done:
 		}
+		// First: from now its port is free for anyone to take.
+		c.setUp(false)
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would hold the port
 		err := fmt.Errorf("mitmdump exited: %v", p.err)
 		c.Store.mitmdumpExited(err.Error())
@@ -344,6 +351,46 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 			}
 		}
 		c.cfg.Logf("mitmdump is back")
+	}
+}
+
+// WaitReady returns once mitmdump is ready, so that nothing is sent to its
+// SOCKS port while it is down: there, another local user's process could have
+// taken the port. Ready means its addon said hello, which mitmproxy (12.3.1)
+// does only after its listeners are up: one that cannot bind exits first
+// (errorcheck). Between its death and supervise noticing it (milliseconds),
+// a dial can still go to the free port.
+func (c *Capture) WaitReady(ctx context.Context) error {
+	c.upMu.Lock()
+	up := c.up
+	c.upMu.Unlock()
+	select {
+	case <-c.done:
+		return errors.New("mitmdump is not running")
+	default:
+	}
+	select {
+	case <-up:
+		return nil
+	case <-c.done:
+		return errors.New("mitmdump is not running")
+	case <-ctx.Done():
+		return fmt.Errorf("mitmdump is not ready: %w", ctx.Err())
+	}
+}
+
+func (c *Capture) setUp(up bool) {
+	c.upMu.Lock()
+	defer c.upMu.Unlock()
+	select {
+	case <-c.up:
+		if !up {
+			c.up = make(chan struct{})
+		}
+	default:
+		if up {
+			close(c.up)
+		}
 	}
 }
 
