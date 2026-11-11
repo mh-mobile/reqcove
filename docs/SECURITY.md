@@ -150,7 +150,14 @@ So "delete the directory" above means each of them.
   review found are covered (tests and a fuzz test), but another valid layout
   may pass. Tools that parse GraphQL (OpenTelemetry, Apollo) drop every value
   written into the query instead; a later version may do so. Values sent as
-  GraphQL variables are JSON fields, masked by name. Personal data, such as e-mail addresses
+  GraphQL variables are JSON fields, masked by name. Found by the last review and
+  not masked (most leaked in 0.2 too): a field with a secret name whose value
+  is a list or an object (`{"password": ["…"]}`); in GraphQL, a variable's
+  default (`$password: String = "…"`), a list or a number as an argument, a
+  comment holding a quote, a quote written as `\u0022`, and a query
+  echoed in a response with no `"query"`, `mutation` or `operationName` in it; a
+  URL whose value goes on after `\/` or Gson's `\u0027`; a body cut inside a
+  `\u` escape; JSON or a URL in a form's first field. Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
