@@ -298,6 +298,8 @@ func gqlParam(v string, depth int) (string, bool) {
 	}
 	if depth < 2 { // and the URLs and shapes in it (login(next: "https://…?token=…")), as nestedSecret would
 		m = maskTokens(maskURLsAt(maskUserinfo(m), depth+1))
+	} else if strings.ContainsAny(m, "?=@") {
+		return "REDACTED", true // deeper than is looked into, and it could hold parameters: as nestedSecret does
 	}
 	return url.QueryEscape(m), true
 }

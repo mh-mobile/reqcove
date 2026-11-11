@@ -89,6 +89,19 @@ func TestGraphQLWhereFound(t *testing.T) {
 			t.Errorf("%s\n -> %s", c.u, got)
 		}
 	}
+	// Three documents, each in a URL in the one before: the innermost is too
+	// deep to look into, so the value goes whole (the final review).
+	doc := `mutation { a(password: "x", next: "https://h.example/cb?token=S22") { ok } }`
+	for range 2 {
+		doc = `mutation { a(password: "x", u: "https://h.example/?q=` + url.QueryEscape(doc) + `") { ok } }`
+	}
+	got := s.mask("https://g.example/graphql?query=" + url.QueryEscape(doc))
+	for range 4 {
+		got, _ = url.QueryUnescape(got)
+	}
+	if strings.Contains(got, "S22") {
+		t.Errorf("three documents deep: %s", got)
+	}
 	if got := string(maskBody([]byte(`var u='https://h.example/cb?a=b\u003dc;sig\u003dS21';`), "application/javascript", false)); strings.Contains(got, "S21") {
 		t.Errorf("Gson's = after a ;: %s", got)
 	}

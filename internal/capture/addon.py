@@ -279,11 +279,33 @@ class Resolve:
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
-GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*(?![^\n\r]))"  # spaces, commas, byte order marks, comments (each to its line's end: one reading only, or # after # backtracks exponentially)
-GQL_DESC = r'(?:"""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")'  # a description before an operation
-# The first operation: at the start or after a definition's closing brace (a
-# fragment may come first), after a description or not.
-GQL_OP = re.compile(r"(?:^|})" + GQL_IGNORED + "*(?:" + GQL_DESC + GQL_IGNORED + "*)?(?:query|mutation|subscription)" + GQL_IGNORED + r"+([_A-Za-z][_0-9A-Za-z]{0,99})")
+# GraphQL tokens, for the first operation: read once, front to back (a pattern
+# searched from every "}" read the rest again from each: quadratic).
+GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
+
+
+def _first_operation(doc):
+    """The name of doc's first operation (past fragments and descriptions),
+    "" for an anonymous one, None for none; one pass, as reqcove's Go does it."""
+    depth, fragment, keyword = 0, False, False
+    for m in GQL_TOKEN.finditer(doc):
+        kind, text = m.lastgroup, m.group()
+        if kind in ("skip", "block", "str"):
+            continue
+        if keyword:  # just after query, mutation or subscription
+            return text if kind == "name" else ""
+        if kind == "punct" and text in "{([":
+            if text == "{" and depth == 0:
+                if not fragment:
+                    return ""  # { … } alone: an anonymous query
+                fragment = False
+            depth += 1
+        elif kind == "punct" and text in "})]":
+            depth -= 1
+        elif kind == "name" and depth == 0:
+            keyword = text in ("query", "mutation", "subscription")
+            fragment = fragment or text == "fragment"
+    return "" if keyword else None
 
 
 def _operation(r):
@@ -311,8 +333,8 @@ def _operation(r):
             doc = d
     if name:
         return name if GQL_NAME.fullmatch(name) else None
-    m = GQL_OP.search(doc or "")
-    return m.group(1) if m else None
+    op = _first_operation(doc or "")
+    return op if op and GQL_NAME.fullmatch(op) else None
 
 
 class Mock:
@@ -345,7 +367,7 @@ class Mock:
             raise RuleError("url takes no query, fragment or user, and a * only after a path (https://host/*)")
         if u.port in (80, 443):
             raise RuleError("leave out the default port")
-        url = f"{u.scheme}://{u.netloc.lower()}{u.path}" + ("*" if url.endswith("*") else "")
+        url = f"{u.scheme}://{u.netloc.lower()}{u.path or '/'}" + ("*" if url.endswith("*") else "")  # a request's path is / at least
         status = spec.get("status", 200)
         if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
             raise RuleError("status must be a number from 100 to 599")
@@ -367,8 +389,11 @@ class Mock:
                 raise RuleError("body_file must be a path")
             try:
                 path = (base / Path(spec["body_file"]).expanduser()).resolve(strict=True)
-                too_big = path.stat().st_size > MOCK_BODY
-                body = b"" if too_big else path.read_bytes()
+                if not path.is_file():  # a FIFO or a device: no size to trust, and a read may never end
+                    raise RuleError("body_file must be a plain file")
+                with path.open("rb") as f:
+                    body = f.read(MOCK_BODY + 1)
+                too_big = len(body) > MOCK_BODY
             except OSError:
                 raise RuleError("body_file cannot be read") from None
         else:
@@ -395,11 +420,12 @@ class Mock:
 
     def answer(self, flow):
         """The first rule matching flow, made into its response: (index, status), or None."""
-        op = None
+        op = False  # not read yet: read once, whatever it gives
         for i in self.candidates(flow):
             want = self.replacements[i][2]
             if want is not None:
-                op = op or _operation(flow.request) or ""
+                if op is False:
+                    op = _operation(flow.request)
                 if op != want:
                     continue
             _, _, _, status, hs, body = self.replacements[i]
