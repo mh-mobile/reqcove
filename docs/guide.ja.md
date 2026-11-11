@@ -357,12 +357,12 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 
 | ツール | |
 |---|---|
-| `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
+| `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）、GraphQL の operation（`operation: "Login"`。`operationName`、なければ文書の最初の operation。一覧の行にも出る）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
 | `wait_for_flows` | デバイスでの操作が送った通信を読む。操作の前に `list_flows`（または `capture_stats`）の `checkpoint` を控え、操作のあと `after: checkpoint` で呼ぶ。それ以降に返事（レスポンスかエラー）が来たフローを、返事の早い順に返す。まだなければ、最初の 1 件を最長 `timeout` 秒（デフォルト 20、最大 30）待つ。結果の `after` を次の呼び出しに渡せば、同じフローは二度返らない。絞り込みは同じ |
 | `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ（`max_body` を指定すると、それぞれそのバイト数まで） |
 | `diff_flows` | 2 つのフローを比べる（成功したものと失敗したものなど）。メソッド、URL、ステータスコード、エラー、ヘッダー（名前ごと）、ボディ（JSON はパスごと）。マスク中は、両方でマスクされた値を「同じ」とは言わず `masked` に並べ（元の値は違うかもしれない）、テキストでないボディは比べない。`--no-redact` のときは全部比べる |
-| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type ごとの件数。絞り込みと `similar_hosts` は同じ |
+| `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type、エンドポイントごとの件数。エンドポイント（`by_endpoint`）は、メソッド、ホスト、クエリを除いたパス（ID は `{id}`）、GraphQL なら operation（`GET api.example.com/v1/users/{id}`、`POST api.example.com/graphql Login`）。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイスと、それぞれの件数、最終アクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
 | `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |

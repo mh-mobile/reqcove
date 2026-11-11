@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### For agents
+
+- `summarize` counts by endpoint (`by_endpoint`): method, host and path
+  without the query, with segments of digits only or a UUID as `{id}`, then
+  a GraphQL operation (`POST api.example.com/graphql Login`).
+- Rows (`list_flows`, `search_flows`, `wait_for_flows`) and `get_flow` carry
+  a GraphQL request's `operation`: its `operationName` (JSON or
+  `?operationName=`), else its document's first operation, `(anonymous)` or
+  `(batched)`; a name GraphQL does not allow is not shown. A filter
+  `operation` selects them. Worked out from the masked request as it arrives.
+
 ### Inside
 
 - Masking happens before the Store's lock is taken: an event's URLs,
