@@ -344,6 +344,7 @@ func TestRulesRefused(t *testing.T) {
 		"mock both bodies":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body: a, body_file: b}]\n", "mock[0]: body or body_file"},
 		"mock url with a query":       {"mock: [{match: {url: \"http://127.0.0.1/x?s3cret=1\"}}]\n", "mock[0]: url takes no query"},
 		"mock star after the host":    {"mock: [{match: {url: \"http://127.0.0.1*\"}}]\n", "mock[0]: url takes no query"},
+		"mock body_file a device":     {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body_file: /dev/zero}]\n", "mock[0]: body_file must be a plain file"},
 		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -561,6 +562,8 @@ func TestMocks(t *testing.T) {
     status: 204
   - match: {method: HEAD, url: "http://%[1]s/head"}
     body: never sent
+  - match: {url: "http://%[1]s"}
+    status: 418
 modify_headers:
   - "|~s|X-Resp|added"
 `, o)), 0o600)
@@ -568,7 +571,7 @@ modify_headers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:4") {
+	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:5") {
 		t.Errorf("rules loaded: %s", got)
 	}
 	hc := h.client("dev")
@@ -634,6 +637,14 @@ modify_headers:
 		if string(b) != c.want {
 			t.Errorf("gzip, %d bytes: %q", len(c.body), b)
 		}
+	}
+	if resp, _ := do("GET", "http://"+o+"/", ""); resp.StatusCode != 418 {
+		t.Errorf("a mock url without a path: %d", resp.StatusCode)
+	}
+	// Read once: "}#" after "}#" was quadratic (48 KiB stalled every connection for 37 s).
+	start := time.Now()
+	if _, body := do("POST", "http://"+o+"/graphql", strings.Repeat("}#", 256<<10)); body != "origin /graphql" || time.Since(start) > 5*time.Second {
+		t.Errorf("512 KiB of }#: %q after %v", body, time.Since(start))
 	}
 	// Nesting past Python's limit, and comments after comments: no operation, not a 502, at once.
 	for _, doc := range []string{strings.Repeat("[", 200000), `{"query":"` + strings.Repeat("#", 60) + `"}`} {

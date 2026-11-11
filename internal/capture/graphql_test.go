@@ -78,6 +78,26 @@ func TestGraphQLWhereFound(t *testing.T) {
 	if got := string(maskBody([]byte("query=%7Blogin%28password%3A%22S13%22%29%7Bok%7D%7D"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S13") || !strings.Contains(got, "login") {
 		t.Errorf("a shorthand document in a form's first field: %s", got)
 	}
+	// The last review (Fable): a form's first field that starts with { or [
+	// is looked into for URLs too.
+	for _, f := range []string{
+		url.QueryEscape(`{"next":"https://x.example/cb?token=S23"}`),
+		url.QueryEscape(`[x] https://x.example/cb?token=S23`),
+		url.QueryEscape(`{a(u:"https://x.example/cb?token=S23")}`),
+	} {
+		if got := string(maskBody([]byte("data="+f+"&a=1"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S23") {
+			t.Errorf("a form's first field: %s", got)
+		}
+	}
+	// The last review (Opus): a batch whose later elements lack a query must not
+	// lex the first one's again (it was quadratic: seconds per body).
+	op := "query " + strings.Repeat("A", 101) + " {" + strings.Repeat(" a", 16000) + "}"
+	batch := `[{"query":"` + op + `"}` + strings.Repeat(",{}", (64<<10-len(op))/3) + "]"
+	start := time.Now()
+	gqlBodyOperation([]byte(batch))
+	if d := time.Since(start); d > time.Second/2 {
+		t.Errorf("a batch of empty elements took %v", d)
+	}
 	// The third review (Fable): a URL inside a GET document, a document in JSON
 	// in a URL parameter, Gson's = after a ;.
 	for _, c := range []struct{ u, gone string }{
@@ -88,6 +108,19 @@ func TestGraphQLWhereFound(t *testing.T) {
 		if got := s.mask(c.u); strings.Contains(got, c.gone) || !strings.Contains(got, "g.example") {
 			t.Errorf("%s\n -> %s", c.u, got)
 		}
+	}
+	// Three documents, each in a URL in the one before: the innermost is too
+	// deep to look into, so the value goes whole (the final review).
+	doc := `mutation { a(password: "x", next: "https://h.example/cb?token=S22") { ok } }`
+	for range 2 {
+		doc = `mutation { a(password: "x", u: "https://h.example/?q=` + url.QueryEscape(doc) + `") { ok } }`
+	}
+	got := s.mask("https://g.example/graphql?query=" + url.QueryEscape(doc))
+	for range 4 {
+		got, _ = url.QueryUnescape(got)
+	}
+	if strings.Contains(got, "S22") {
+		t.Errorf("three documents deep: %s", got)
 	}
 	if got := string(maskBody([]byte(`var u='https://h.example/cb?a=b\u003dc;sig\u003dS21';`), "application/javascript", false)); strings.Contains(got, "S21") {
 		t.Errorf("Gson's = after a ;: %s", got)
