@@ -9,6 +9,10 @@
   the answer's `after` on), even when they finish out of order; one that never
   ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call; at most 16
   waits at once.
+- `diff_flows` (MCP): two flows compared: method, URL, status, error,
+  headers by name, bodies (JSON by path). Values masked on both sides are
+  listed as masked, never as equal; bodies that are not text are not
+  compared while masking is on.
 - `--mcp-http`: a tool call ends when its caller disconnects (it went on to
   its end before).
 - While mitmdump restarts, the devices' connections wait for it (15 seconds at
