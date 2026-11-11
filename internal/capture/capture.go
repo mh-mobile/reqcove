@@ -397,18 +397,32 @@ func (c *Capture) WaitReady(ctx context.Context) error {
 	c.upMu.Lock()
 	up := c.up
 	c.upMu.Unlock()
-	select {
-	case <-c.done:
-		return errors.New("mitmdump is not running")
-	default:
-	}
-	select {
-	case <-up:
-		return nil
-	case <-c.done:
-		return errors.New("mitmdump is not running")
-	case <-ctx.Done():
-		return fmt.Errorf("mitmdump is not ready: %w", ctx.Err())
+	return c.waitFrom(ctx, up)
+}
+
+// waitFrom is WaitReady from the gate seen as up. Woken, it checks the gate
+// is still that one: a mitmdump that went down again meanwhile replaced it.
+func (c *Capture) waitFrom(ctx context.Context, up chan struct{}) error {
+	for {
+		select {
+		case <-c.done:
+			return errors.New("mitmdump is not running")
+		default:
+		}
+		select {
+		case <-up:
+			c.upMu.Lock()
+			now := c.up
+			c.upMu.Unlock()
+			if now == up {
+				return nil
+			}
+			up = now // down again since: wait for the next one
+		case <-c.done:
+			return errors.New("mitmdump is not running")
+		case <-ctx.Done():
+			return fmt.Errorf("mitmdump is not ready: %w", ctx.Err())
+		}
 	}
 }
 

@@ -306,3 +306,21 @@ func TestHostNotAHost(t *testing.T) {
 		t.Errorf("out_of_scope %v, want the odd Host counted", h.stats()["out_of_scope"])
 	}
 }
+
+// TestWaitReadyDownAgain: a waiter holding the gate of a mitmdump that came
+// up and went down again before it woke does not take that as ready.
+func TestWaitReadyDownAgain(t *testing.T) {
+	c := &Capture{done: make(chan struct{}), up: make(chan struct{})}
+	seen := c.up // as a waiter took it
+	c.setUp(true)
+	c.setUp(false) // down again before the waiter ran
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := c.waitFrom(ctx, seen); err == nil {
+		t.Fatal("ready from a gate that was replaced")
+	}
+	c.setUp(true)
+	if err := c.waitFrom(context.Background(), seen); err != nil {
+		t.Errorf("up again: %v", err)
+	}
+}

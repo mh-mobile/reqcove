@@ -88,7 +88,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		valEnd, valClosed := jsonStringEnd(s, j)
-		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) {
+		if secret && valClosed && attributeName(jsonKey(s[keyStart+1:keyEnd]), s[j+1:valEnd], s[valEnd+1:]) && !hasUserName(jsonKey(s[keyStart+1:keyEnd])) {
 			secret = false
 		}
 		switch {
@@ -99,6 +99,14 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
+		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\u`) && !strings.Contains(s[j:valEnd], `\"`):
+			// \u escapes can hide a shape (\u0073k-… is sk-…): look at the
+			// string decoded, as diff_flows and the agent would read it.
+			if m, ok := maskEscapedString(s[j : valEnd+1]); ok {
+				b.WriteString(s[last:j])
+				b.WriteString(m)
+				last = valEnd + 1
+			}
 		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\"`):
 			if m, ok := maskInJSONString(s[j:valEnd+1], loneCode); ok {
 				b.WriteString(s[last:j])
@@ -158,6 +166,24 @@ func maskInJSONString(lit string, loneCode bool) (string, bool) {
 	var out strings.Builder
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
+	enc.Encode(m)
+	return strings.TrimSuffix(out.String(), "\n"), true
+}
+
+// maskEscapedString masks the shapes and URLs in a JSON string literal read
+// decoded, and writes it again if anything was masked.
+func maskEscapedString(lit string) (string, bool) {
+	var v string
+	if json.Unmarshal([]byte(lit), &v) != nil {
+		return "", false
+	}
+	m := maskTokens(maskURLs(v))
+	if m == v {
+		return "", false
+	}
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
 	enc.Encode(m)
 	return strings.TrimSuffix(out.String(), "\n"), true
 }
@@ -327,6 +353,9 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	for i, kv := range h {
 		out[i] = kv
 		switch name := strings.ToLower(kv[0]); {
+		case userName(flatName(kv[0])): // the user's names come before every built-in case
+			out[i][1] = "[redacted]"
+			continue
 		case name == "cookie":
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
@@ -341,6 +370,7 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			// a credential by its shape, or a URL's (Referer, Location, Link, Refresh, …), under any name
 			out[i][1] = maskTokens(maskURLs(kv[1]))
 		}
+		out[i][1] = maskUserValues(out[i][1]) // every branch: a cookie's attributes too
 	}
 	return out
 }

@@ -144,3 +144,33 @@ func TestCORSCredentialsKept(t *testing.T) {
 		t.Errorf("%v", h)
 	}
 }
+
+// TestPolicyOverExceptions: the user's names and patterns win over the
+// built-in exceptions: OTLP's dotted "key", WWW-Authenticate kept as a
+// challenge, a cookie's attributes.
+func TestPolicyOverExceptions(t *testing.T) {
+	setPolicy(t, []string{"key", "WWW-Authenticate"}, []string{`S3CRETPATH[0-9]+`})
+	s := NewStore(10, 1<<20)
+	if b := string(maskBody([]byte(`{"key":"service.name","value":{"x":1}}`), "application/json", false)); strings.Contains(b, "service.name") {
+		t.Errorf("--mask-names key and an OTLP key: %s", b)
+	}
+	h := s.maskHeaders([][2]string{{"WWW-Authenticate", `Bearer realm="api"`}, {"Set-Cookie", "sid=x; Path=/S3CRETPATH42"}})
+	if h[0][1] != "[redacted]" || strings.Contains(h[1][1], "S3CRETPATH42") {
+		t.Errorf("headers: %v", h)
+	}
+}
+
+// TestMaskEscapedAndCommented: a shape hidden behind \u escapes, and GraphQL
+// arguments after a line break or a comment, inside JSON.
+func TestMaskEscapedAndCommented(t *testing.T) {
+	for _, c := range []struct{ body, gone string }{
+		{`{"data":"` + "\\" + "u0073k-abcdefghijklmnopqrstuvwxyz0123" + `"}`, "abcdefghijklmnopqrstuvwxyz0123"}, // \u-escaped s: no sk- in the raw text
+		{`{"query":"mutation { login(password:\n  \"p4ssw0rdNL\") { ok } }"}`, "p4ssw0rdNL"},
+		{`{"query":"mutation { login(password: # the user's\n \"p4ssw0rdCM\") { ok } }"}`, "p4ssw0rdCM"},
+		{"mutation { login(\n # note\n password: \"p4ssw0rdRAW\") { ok } }", "p4ssw0rdRAW"},
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
+	}
+}

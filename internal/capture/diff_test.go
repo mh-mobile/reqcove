@@ -153,3 +153,23 @@ func TestDiffBigNumbers(t *testing.T) {
 		t.Errorf("%+v %s", d.ResponseBody, fields(d))
 	}
 }
+
+// TestDiffBodyAfterManyHeaders: identical bodies are "same" even when the
+// headers before them used up the differences listed.
+func TestDiffBodyAfterManyHeaders(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	for _, id := range []string{"a", "b"} {
+		var hs []string
+		for i := range maxDiffs + 5 {
+			hs = append(hs, fmt.Sprintf(`["X-H%d",%q]`, i, id))
+		}
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"device":"d","host":"h.example","url":"https://h.example/","headers":[%s]}`, id, strings.Join(hs, ","))))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":200,"headers":[["Content-Type","application/json"]]}`, id)))
+		body := `{"same":1}`
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"response","head":%q,"size":%d,"final":true,"decoded":true}`, id, base64.StdEncoding.EncodeToString([]byte(body)), len(body))))
+	}
+	d, _ := s.DiffFlows("a", "b")
+	if !d.Truncated || d.ResponseBody.Result != "same" {
+		t.Errorf("truncated %v, body %+v", d.Truncated, d.ResponseBody)
+	}
+}

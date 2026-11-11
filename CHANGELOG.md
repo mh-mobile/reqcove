@@ -11,7 +11,7 @@
   (pass the answer's `after` on), even when they finish out of order; one that
   never ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call, 16
   waits at once (4 for one `--mcp-http` device); an `after` no checkpoint gave
-  is refused. Tried with one iPhone (Safari, httpbin.org) acted on through
+  is refused; flows evicted unread are said at once (`evicted`). Tried with one iPhone (Safari, httpbin.org) acted on through
   RoamRun, on the Mac's Wi-Fi and from another network (tethering).
 - `diff_flows`: two flows compared (one that worked, one that failed): method,
   URL, status, error, headers by name, bodies (JSON by path). Values masked on
@@ -42,7 +42,11 @@
   GraphQL value cut after a backslash; a review found the query's own escaped
   quotes and block strings written inside JSON. GraphQL's GET variables
   (`?variables={"password":…}`), JSON in a URL parameter, are looked into too
-  (they were not in 0.2 either).
+  (they were not in 0.2 either), as are arguments after a line break or a `#`
+  comment, and shapes hidden behind `\u` escapes in a JSON string (which
+  `diff_flows`, decoding, would have shown).
+- Your `--mask-names` and `--mask-values` win over the built-in exceptions
+  (an OpenTelemetry `key`, `WWW-Authenticate`, a cookie's attributes).
 - `Access-Control-Allow-Credentials` (only ever `true`) is no longer masked.
 
 ### Security
@@ -86,6 +90,8 @@
   the `--ui` page's proxy).
 - With the locked mitmproxy, `run` refuses a `--python` below 3.14 at start,
   saying to give `--mitmproxy-spec` for an older one (through uvx, no lock).
+- A wait for mitmproxy to be ready no longer takes a mitmproxy that came up
+  and went down again before the wait woke for ready.
   A `--uvx` whose file is not named `uvx` also goes through uvx, unlocked.
 
 ### Inside

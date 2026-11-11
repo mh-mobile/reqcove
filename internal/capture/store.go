@@ -402,6 +402,10 @@ func (s *Store) evictLocked() {
 		mark := f.answered
 		if mark == 0 { // still open: its answer, had it come, would be after any cursor taken so far
 			mark = s.seq
+			if s.wake != nil { // and a waiter for it should hear of the gap now, not at its timeout
+				close(s.wake)
+				s.wake = nil
+			}
 		}
 		s.evictedMark = max(s.evictedMark, f.seq, mark)
 		s.heldBytes -= f.bytes()

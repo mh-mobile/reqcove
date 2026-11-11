@@ -95,13 +95,14 @@ func (d *differ) masked(v string) bool {
 
 // value compares two texts: equal and masked goes under Masked, never as
 // equal; one side empty is left out of that side.
-func (d *differ) value(field, a, b string) {
+func (d *differ) value(field, a, b string) (differs, masked bool) {
 	field = cut(field) // JSON keys are the site's: one can be a page long
 	if a == b {
 		if d.masked(a) {
 			d.out.Masked = append(d.out.Masked, field)
+			return false, true
 		}
-		return
+		return false, false
 	}
 	x := Diff{Field: field}
 	if a != "" {
@@ -111,6 +112,7 @@ func (d *differ) value(field, a, b string) {
 		x.B = cut(b)
 	}
 	d.add(x)
+	return true, false
 }
 
 func cut(v string) string { return cutTo(v, maxDiffText) }
@@ -185,15 +187,17 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 				}
 			}
 			sort.Strings(paths)
-			n := len(d.out.Differences)
-			masked := len(d.out.Masked)
+			// This body's own outcome, whatever the headers before it used of
+			// the differences listed.
+			var differs, masked bool
 			for _, p := range paths {
-				d.value(prefix+p, pa[p], pb[p])
+				dd, mm := d.value(prefix+p, pa[p], pb[p])
+				differs, masked = differs || dd, masked || mm
 			}
 			switch {
-			case len(d.out.Differences) > n || d.out.Truncated:
+			case differs:
 				r.Result = "differs"
-			case len(d.out.Masked) > masked:
+			case masked:
 				r.Result = "masked"
 			default:
 				r.Result = "same"

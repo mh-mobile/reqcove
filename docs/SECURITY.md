@@ -132,7 +132,8 @@ So "delete the directory" above means each of them.
 - Your own rules, fixed at start: `--mask-names` adds names treated as secret
   wherever names count, the whole name only (any spelling: `clientRef` covers
   `client_ref` and `Client-Ref`, not `X-Client-Ref`), before the built-in
-  exceptions. `--mask-values` adds RE2 patterns whose matches are masked
+  exceptions (an OpenTelemetry `key`, `WWW-Authenticate` kept as a challenge,
+  a cookie's attributes: a test). `--mask-values` adds RE2 patterns whose matches are masked
   wherever they appear (a header of any name, a User-Agent's `key=…` among
   them, URLs, bodies, error text); at most 32 patterns of 512 bytes each, none
   that matches empty text. Errors name a pattern by its number, never its text.
