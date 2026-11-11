@@ -422,15 +422,46 @@ func (c *Capture) accept() {
 			defer conn.Close()
 			r := bufio.NewReaderSize(conn, 1<<16)
 			for {
-				line, err := r.ReadBytes('\n') // no line limit: body heads are inline
-				if len(line) > 0 {
+				line, err := readLine(r, maxIngestLine)
+				switch {
+				case errors.Is(err, errLongLine):
+					c.Store.badLine() // never held whole: the addon's bounds keep real lines far below
+				case len(line) > 0:
 					c.Store.Apply(line)
 				}
-				if err != nil {
+				if err != nil && !errors.Is(err, errLongLine) {
 					return
 				}
 			}
 		}()
+	}
+}
+
+// maxIngestLine bounds one line from the addon: a body head (64 KiB, in
+// base64) and headers (256 KiB, JSON-escaped) fit many times over.
+const maxIngestLine = 8 << 20
+
+var errLongLine = errors.New("ingest line too long")
+
+// readLine reads up to a newline, at most max bytes: a longer line is read
+// to its end and dropped (errLongLine), not held.
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = r.ReadSlice('\n')
+			}
+			if err != nil {
+				return nil, err
+			}
+			return nil, errLongLine
+		}
+		line = append(line, part...)
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return line, err
+		}
 	}
 }
 

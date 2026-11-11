@@ -203,6 +203,11 @@ changes, so whatever can write it (any process as your user, an agent with file
 access included) can then change where the devices' requests go while `run`
 runs; without it, the file is read only when mitmproxy starts (with `run`, or
 when reqcove restarts it after it exits).
+`modify_headers` takes header names that are HTTP tokens and values without
+a line break or NUL (they would start a header of their own on the wire); a
+value file read again for a later flow and given one since is dropped from
+that flow's headers. `resolve` names are host names only, so nothing in them
+reaches the log as control characters (tests).
 `map_remote` and `resolve` make mitmproxy connect, from this computer, where the
 rule says, this computer and the LAN included: the exit node's refusal of those
 addresses is about the devices' own connections, and a rule opens its target to

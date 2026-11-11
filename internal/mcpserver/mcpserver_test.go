@@ -295,3 +295,21 @@ func TestPassthroughTool(t *testing.T) {
 		}
 	}
 }
+
+// TestCutHeadHuge: a max_body far past any head (a caller's) neither
+// overflows nor cuts.
+func TestCutHeadHuge(t *testing.T) {
+	for _, enc := range []string{"", "base64"} {
+		if got, cut := cutHead("QUJDRA==", enc, 7000000000000000000); got != "QUJDRA==" || cut {
+			t.Errorf("%q: %q %v", enc, got, cut)
+		}
+	}
+}
+
+// TestRecoverCalls: a handler's panic is that call's error, not run's end.
+func TestRecoverCalls(t *testing.T) {
+	h := recoverCalls(func(context.Context, string, mcp.Request) (mcp.Result, error) { panic("boom") })
+	if res, err := h(context.Background(), "tools/call", nil); res != nil || err == nil {
+		t.Errorf("%v %v", res, err)
+	}
+}

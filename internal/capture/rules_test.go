@@ -330,6 +330,9 @@ func TestRulesRefused(t *testing.T) {
 		"resolve shared ip, one port": {"resolve: [\"127.0.0.1=192.0.2.1:8443\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
 		"resolve shared target":       {"resolve: [\"127.0.0.1=192.0.2.1\", \"a.example=192.0.2.1\"]\n", "resolve[1]: a.example: 192.0.2.1 is 127.0.0.1's target too"},
 		"resolve quad100":             {"resolve: [\"127.0.0.1=100.100.100.100\"]\n", "resolve[0]: 127.0.0.1: 100.100.100.100 cannot be a target"},
+		"header value line break":     {"modify_headers: [\"|~q|X-A|ok\\\\r\\\\nX-Injected: yes\"]\n", "modify_headers[0]: a header value cannot hold a line break"},
+		"header name not a token":     {"modify_headers: [\"|~q|X A|v\"]\n", "modify_headers[0]: the header name must be a plain token"},
+		"resolve name control chars":  {"resolve: [\"safe\\n\\x1b[31mforged=203.0.113.10\"]\n", "resolve[0]: write name=IPv4"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")

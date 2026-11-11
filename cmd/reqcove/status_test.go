@@ -327,7 +327,7 @@ func TestReadyBlock(t *testing.T) {
 	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
 	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
 	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps)
-	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
+	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm -- /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in:\n%s", w, got)
 		}
@@ -342,7 +342,7 @@ func TestReadyBlock(t *testing.T) {
 		t.Errorf("MCP over HTTP without --mcp-http:\n%s", got)
 	}
 	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil)
-	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm /s/mcp-token") {
+	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm -- /s/mcp-token") {
 		t.Errorf("the MCP line:\n%s", withMCP)
 	}
 	if steps := nextSteps(n, ready, allow, capture.CA{}, devs[1:]); strings.Contains(strings.Join(steps, "\n"), "this Mac") {
@@ -576,5 +576,14 @@ func TestPassSuggestionKeepsRecorded(t *testing.T) {
 	got := strings.Join(hosts, ",")
 	if got != "auth.example.com,pay.example.com,*.cdn.example" {
 		t.Errorf("suggested %s", got)
+	}
+}
+
+// TestReadyRmQuoted: the rm a ready block suggests quotes the state path: a
+// path with shell syntax in it is a path, not a command, when pasted.
+func TestReadyRmQuoted(t *testing.T) {
+	got := readyBlock(map[string]string{"local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/tmp/r-$(id) x", nil)
+	if !strings.Contains(got, "rm -- '/tmp/r-$(id) x/ui-token'") {
+		t.Errorf("rm not quoted:\n%s", got)
 	}
 }
