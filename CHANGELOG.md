@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Masking
+
+- A field with a secret name whose value is a list or an object is masked
+  whole (`{"password": "[redacted]"}`; cut by the head's end, to the end).
+- A URL in a form's first field is looked into, as the other fields are.
+- A URL parameter's value goes on after `\/` and Gson's `\u0027` and
+  `\u003d` (before, what followed was left).
+- A string cut by the head's end is read with its escapes undone (`\u`
+  escapes, a cut one dropped), as a whole one is.
+- The fuzz test checks every 5 characters of the secret, as written and
+  decoded, at every cut, in 15 shapes (it checked the whole secret at one cut).
+
 ## v0.3.0 — 2026-11-11
 
 ### For agents

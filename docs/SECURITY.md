@@ -143,7 +143,7 @@ So "delete the directory" above means each of them.
   `+`, `/` and `.` match themselves. Both do nothing with `--no-redact` (`run`
   warns).
 - **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
+  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
   (protobuf, multipart, XML elements and attributes). GraphQL arguments written
   into the query are found by pattern, not parsed: the layouts three rounds of
@@ -151,13 +151,12 @@ So "delete the directory" above means each of them.
   may pass. Tools that parse GraphQL (OpenTelemetry, Apollo) drop every value
   written into the query instead; a later version may do so. Values sent as
   GraphQL variables are JSON fields, masked by name. Found by the last review and
-  not masked (most leaked in 0.2 too): a field with a secret name whose value
-  is a list or an object (`{"password": ["…"]}`); in GraphQL, a variable's
+  not masked (most leaked in 0.2 too), in GraphQL: a variable's
   default (`$password: String = "…"`), a list or a number as an argument, a
   comment holding a quote, a quote written as `\u0022`, and a query
-  echoed in a response with no `"query"`, `mutation` or `operationName` in it; a
-  URL whose value goes on after `\/` or Gson's `\u0027`; a body cut inside a
-  `\u` escape; JSON or a URL in a form's first field. Personal data, such as e-mail addresses
+  echoed in a response with no `"query"`, `mutation` or `operationName` in it.
+  A field with a secret name whose value is a list or an object is masked
+  whole (`{"password": "[redacted]"}`). Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,

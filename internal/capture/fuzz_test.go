@@ -2,60 +2,132 @@ package capture
 
 import (
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
 
+// fuzzSecret: every 5 characters of it hold a capital, and fillers have none,
+// so any 5 of them in the output came from the secret.
+const fuzzSecret = "S3crQt7VxLu9Kz"
+
+const fuzzShapes = 15
+
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
-// change what the shape is) before it.
-func secretIn(shape uint8, filler, secret string) (body, contentType string) {
+// change what the shape is) around it. at is where the part holding the
+// secret starts: every cut from there on is tried.
+func secretIn(shape uint8, filler, secret string) (body, contentType string, at int) {
 	filler = strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == ' ' || r == ',' {
 			return r
 		}
 		return -1
 	}, filler)
-	switch shape % 8 {
+	pre := func(head, tail, ct string) (string, string, int) { return head + tail, ct, len(head) }
+	switch shape % fuzzShapes {
 	case 0:
-		return `{"note":"` + filler + `","password":"` + secret + `"}`, "application/json"
+		return pre(`{"note":"`+filler, `","password":"`+secret+`"}`, "application/json")
 	case 1:
-		return `{"data":"{\"a\":\"` + filler + `\",\"access_token\":\"` + secret + `\"}"}`, "application/json"
+		return pre(`{"data":"{\"a\":\"`+filler, `\",\"access_token\":\"`+secret+`\"}"}`, "application/json")
 	case 2:
-		return "a=" + url.QueryEscape(filler) + "&client_secret=" + secret, "application/x-www-form-urlencoded"
+		return pre("a="+url.QueryEscape(filler), "&client_secret="+secret, "application/x-www-form-urlencoded")
 	case 3:
-		return `{"url":"https://x.example/cb?` + "q=" + url.QueryEscape(filler) + `&token=` + secret + `"}`, "application/json"
+		return pre(`{"url":"https://x.example/cb?`+"q="+url.QueryEscape(filler), `&token=`+secret+`"}`, "application/json")
 	case 4:
 		inner := "https://x.example/cb?code=" + secret
-		return `{"next":"https://y.example/?r=` + url.QueryEscape(url.QueryEscape(inner)) + `"}`, "application/json"
+		return pre(`{"note":"`+filler+`",`, `"next":"https://y.example/?r=`+url.QueryEscape(url.QueryEscape(inner))+`"}`, "application/json")
 	case 5:
-		return `{"query":"mutation { ` + filler + ` login(password: \"` + secret + `\") { ok } }"}`, "application/json"
+		return pre(`{"query":"mutation { `+filler, ` login(password: \"`+secret+`\") { ok } }"}`, "application/json")
 	case 6:
-		return "mutation { login(" + filler + " secret: \"" + secret + "\") { ok } }", "application/graphql"
-	default:
-		return `{"items":[1,2],"session":` + `"` + secret + `"}`, "application/json"
+		return pre("mutation { login("+filler, " secret: \""+secret+"\") { ok } }", "application/graphql")
+	case 7:
+		return pre(`{"items":[1,2],"note":"`+filler+`",`, `"session":"`+secret+`"}`, "application/json")
+	case 8: // a list under a secret name
+		return pre(`{"note":"`+filler+`",`, `"password":["x","`+secret+`"]}`, "application/json")
+	case 9: // an object under one
+		return pre(`{"note":"`+filler+`",`, `"credentials":{"user":"a","value":"`+secret+`"}}`, "application/json")
+	case 10: // a URL in a form's first field
+		return "next=" + url.QueryEscape("https://x.example/cb?token="+secret) + "&a=" + url.QueryEscape(filler), "application/x-www-form-urlencoded", 0
+	case 11: // JSON in a form's first field
+		return "data=" + url.QueryEscape(`{"password":"`+secret+`"}`) + "&a=" + url.QueryEscape(filler), "application/x-www-form-urlencoded", 0
+	case 12: // a URL's value going on after an escaped slash
+		return pre(`{"note":"`+filler+`",`, `"url":"https:\/\/x.example\/cb?token=Kx\/`+secret+`"}`, "application/json")
+	case 13: // after a quote as Gson writes it
+		return pre(`{"note":"`+filler+`",`, `"url":"https://x.example/cb?token=Kx\u0027`+secret+`"}`, "application/json")
+	default: // a secret name hidden by an escape, in a URL in a string
+		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
 }
 
-// FuzzMaskBody: a secret in a known shape never survives masking, whatever
-// comes before it and wherever the head is cut (a cut inside the value masks
-// to the end). Seeds run with go test; go test -fuzz=FuzzMaskBody explores.
+// leak returns 5 characters of secret found in got, read as written and
+// decoded (JSON's escapes, then percent-escapes, twice), or "".
+func leak(got, secret string) string {
+	forms := []string{got}
+	d := jsonUnescapeAll(got)
+	forms = append(forms, d)
+	for range 2 {
+		d = percentUnescapeAll(d)
+		forms = append(forms, d)
+	}
+	for _, f := range forms {
+		for i := 0; i+5 <= len(secret); i++ {
+			if strings.Contains(f, secret[i:i+5]) {
+				return secret[i : i+5]
+			}
+		}
+	}
+	return ""
+}
+
+var jsonEscapeRE = regexp.MustCompile(`\\(u[0-9a-fA-F]{4}|.)`)
+
+func jsonUnescapeAll(s string) string {
+	return jsonEscapeRE.ReplaceAllStringFunc(s, func(m string) string {
+		if m[1] == 'u' {
+			n, _ := strconv.ParseUint(m[2:], 16, 32)
+			return string(rune(n))
+		}
+		return m[1:]
+	})
+}
+
+var percentRE = regexp.MustCompile(`%[0-9a-fA-F]{2}`)
+
+func percentUnescapeAll(s string) string {
+	return percentRE.ReplaceAllStringFunc(strings.ReplaceAll(s, "+", " "), func(m string) string {
+		n, _ := strconv.ParseUint(m[1:], 16, 8)
+		return string(rune(n))
+	})
+}
+
+// FuzzMaskBody: no 5 characters of a secret in a known shape survive masking,
+// read as written or decoded, whatever comes around it and wherever the head
+// is cut (a cut inside the value masks to the end): every cut over the part
+// holding it, and the fuzzed one. Seeds run with go test; go test
+// -fuzz=FuzzMaskBody explores.
 func FuzzMaskBody(f *testing.F) {
-	for shape := range uint8(8) {
+	for shape := range uint8(fuzzShapes) {
 		f.Add(shape, "", 0)
 		f.Add(shape, "some words, 42", 7)
 		f.Add(shape, strings.Repeat("x", 65530), 65536) // the 64 KiB boundary
 	}
-	const secret = "S3cr3tV4lue9xQ"
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
-		body, ct := secretIn(shape, filler, secret)
-		head := []byte(body)
-		if cut > 0 && cut < len(head) {
-			head = head[:cut]
+		body, ct, at := secretIn(shape, filler, fuzzSecret)
+		check := func(cut int) {
+			head := []byte(body)
+			if cut > 0 && cut < len(head) {
+				head = head[:cut]
+			}
+			got := string(maskBody(head, ct, true))
+			if l := leak(got, fuzzSecret); l != "" {
+				t.Errorf("shape %d, cut %d: %q survived:\n%s", shape%fuzzShapes, cut, l, got[max(0, len(got)-200):])
+			}
 		}
-		got := string(maskBody(head, ct, true))
-		if strings.Contains(got, secret) {
-			t.Errorf("shape %d: the secret survived:\n%s", shape%8, got[max(0, strings.Index(got, secret)-80):])
+		check(cut)
+		for c := at; c <= min(len(body), at+300); c++ {
+			check(c)
 		}
 	})
 }

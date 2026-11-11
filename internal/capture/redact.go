@@ -63,6 +63,13 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		keyStart := i + q
 		keyEnd, closed := jsonStringEnd(s, keyStart)
 		if !closed {
+			// A string cut by the head's end, not a field's value: an array
+			// element, or a key.
+			if cutSecret(s[keyStart:], loneCode, depth) {
+				b.WriteString(s[last : keyStart+1])
+				b.WriteString("[redacted]")
+				last = len(s)
+			}
 			break
 		}
 		j := skipSpace(s, keyEnd+1)
@@ -80,6 +87,19 @@ func maskJSON(s string, loneCode bool, depth int) string {
 			continue
 		}
 		j = skipSpace(s, j+1)
+		if j < len(s) && (s[j] == '{' || s[j] == '[') && secretKind(jsonKey(s[keyStart+1:keyEnd]), loneCode) {
+			// {"password": ["…"]}, {"credentials": {"value": "…"}}: the whole
+			// value, to the end of the head if it is cut.
+			end, closed := containerEnd(s, j)
+			b.WriteString(s[last:j])
+			if closed {
+				b.WriteString(`"[redacted]"`)
+			} else {
+				b.WriteString(`"[redacted]`)
+			}
+			last, i = end+1, end+1
+			continue
+		}
 		if j >= len(s) || (s[j] != '"' && s[j] != '-' && (s[j] < '0' || s[j] > '9')) {
 			i = j // an object, array, true, false or null: its own keys come next
 			continue
@@ -120,15 +140,10 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteString(m)
 				last = valEnd + 1
 			}
-		case !valClosed && depth == 0 && strings.Contains(s[j:], `\"`):
-			// Cut before its closing quote, so not decodable: undo the common
-			// escapes and, if a secret shows, mask the rest of the head.
-			inner := strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(s[j+1:])
-			if maskJSON(inner, loneCode, 1) != inner {
-				b.WriteString(s[last : j+1])
-				b.WriteString("[redacted]")
-				last = len(s)
-			}
+		case !valClosed && cutSecret(s[j:], loneCode, depth):
+			b.WriteString(s[last : j+1])
+			b.WriteString("[redacted]")
+			last = len(s)
 		}
 		if !valClosed {
 			break
@@ -197,6 +212,67 @@ func jsonStringEnd(s string, open int) (int, bool) {
 	return len(s) - 1, false
 }
 
+// containerEnd returns the index of the bracket closing the object or array
+// that opens at s[open], skipping strings, or len(s)-1 and false if it runs
+// to the end.
+func containerEnd(s string, open int) (int, bool) {
+	depth := 0
+	for k := open; k < len(s); k++ {
+		switch s[k] {
+		case '"':
+			end, closed := jsonStringEnd(s, k)
+			if !closed {
+				return len(s) - 1, false
+			}
+			k = end
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth--; depth == 0 {
+				return k, true
+			}
+		}
+	}
+	return len(s) - 1, false
+}
+
+// cutSecret: a string literal cut by the head's end (lit runs from its
+// opening quote to the end) holds a secret once its escapes are undone, as a
+// closed one is read decoded: JSON in it (at depth 0), and shapes and URLs
+// escapes can hide. Only escaped ones are looked at, as closed ones.
+func cutSecret(lit string, loneCode bool, depth int) bool {
+	if !(depth == 0 && strings.Contains(lit, `\"`) || depth <= 1 && strings.Contains(lit, `\u`)) {
+		return false
+	}
+	var v string
+	if json.Unmarshal([]byte(trimCutEscape(lit)+`"`), &v) != nil {
+		// Not JSON (a page's script, raw newlines): undo the common escapes.
+		v = strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(lit[1:])
+	}
+	m := v
+	if depth == 0 {
+		m = maskJSON(m, loneCode, 1)
+	}
+	return maskTokens(maskURLs(m)) != v
+}
+
+// trimCutEscape drops an escape the head's end cut (a lone \, or \u with
+// fewer than four digits) from a cut string literal.
+func trimCutEscape(lit string) string {
+	k := strings.LastIndexByte(lit, '\\')
+	if k < 0 {
+		return lit
+	}
+	n := 0 // the backslashes in the run ending at k: \\ is a whole escape
+	for k-n >= 0 && lit[k-n] == '\\' {
+		n++
+	}
+	if rest := lit[k+1:]; n%2 == 1 && (rest == "" || rest[0] == 'u' && len(rest) < 5) {
+		return lit[:k]
+	}
+	return lit
+}
+
 func skipSpace(s string, i int) int {
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
 		i++
@@ -243,6 +319,9 @@ func maskForm(s string, request bool) string {
 			if m := maskJSON(v, request, 1); m != v {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}
+		} else if i == 0 && (nestedSecret(val, 0) || graphQLSecret(val)) {
+			// maskURLs looks into the fields after an &, not the first
+			parts[i] = name + "=[redacted]"
 		}
 	}
 	return strings.Join(parts, "&")
@@ -505,8 +584,9 @@ func maskCookies(v, sep string, oneCookie bool) string {
 // "?view=1;token=" is seen too.
 // In bodies, a value also stops at a quote, < or > and a backslash (HTML
 // attributes, JSON strings), and JSON may write & as \u0026 and = as
-// \u003d (Gson, on Android, does).
-var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)(?:=|\\u003[dD])([^&#\s"<>\\]*)`)
+// \u003d (Gson, on Android, does). A value goes on after \/ and the
+// \u0027 and \u003d Gson writes for ' and =.
+var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)(?:=|\\u003[dD])((?:[^&#\s"<>\\]|\\/|\\u00(?:27|3[dD]))*)`)
 
 // A URL's password (https://user:pass@host), also with JSON's escaped slashes
 // (https:\/\/user:pass@host, as PHP writes it).
