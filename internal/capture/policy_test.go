@@ -2,6 +2,7 @@ package capture
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -221,5 +222,35 @@ func TestMaskSecondReview(t *testing.T) {
 	s := NewStore(10, 1<<20)
 	if u := s.mask("https://a.example/graphql?variables=+%7B%22password%22%3A%22getSECRET%22%7D&op=x"); strings.Contains(u, "getSECRET") {
 		t.Errorf("GET variables after a space: %s", u)
+	}
+}
+
+// TestMaskNestingBounded: JSON in a URL parameter in JSON, level after
+// level, with = hidden as an escape, costs linear time, not a rescan a level.
+func TestMaskNestingBounded(t *testing.T) {
+	bs := "\\"
+	level := `"x"`
+	for len(level) < 240<<10 {
+		level = `{"k":"` + bs + "u0026q" + bs + "u003d" + url.QueryEscape(level) + `"}`
+	}
+	start := time.Now()
+	maskBody([]byte(level), "application/json", false)
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("%d KiB of nesting took %v", len(level)>>10, d)
+	}
+}
+
+// TestMaskEscapedArrays: escaped strings that are no field's value (array
+// elements, a body that is one string) are looked at decoded too.
+func TestMaskEscapedArrays(t *testing.T) {
+	bs := "\\"
+	for _, c := range []struct{ body, gone string }{
+		{`{"a":["` + bs + `u0073k-abcdefghijklmnopqrstuvwxyz0789"]}`, "abcdefghijklmnopqrstuvwxyz0789"},
+		{`{"a":["{` + bs + `"password` + bs + `":` + bs + `"arrSECRET` + bs + `"}"]}`, "arrSECRET"},
+		{`"` + bs + `u0073k-abcdefghijklmnopqrstuvwxyz0790"`, "abcdefghijklmnopqrstuvwxyz0790"},
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
 	}
 }

@@ -67,7 +67,16 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		}
 		j := skipSpace(s, keyEnd+1)
 		if j >= len(s) || s[j] != ':' {
-			i = keyEnd + 1 // a value or array element, not a key
+			// A value that is no field's: an array element, or the whole body.
+			// Escaped, it is looked at decoded too, as a field's value is.
+			if lit := s[keyStart : keyEnd+1]; depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && strings.Contains(lit, `\"`) {
+				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
+					b.WriteString(s[last:keyStart])
+					b.WriteString(m)
+					last = keyEnd + 1
+				}
+			}
+			i = keyEnd + 1
 			continue
 		}
 		j = skipSpace(s, j+1)
@@ -565,7 +574,7 @@ func jsonSecret(v string) bool {
 	if !strings.ContainsAny(u[:min(len(u), 1)], "{[") {
 		return false
 	}
-	return maskJSON(u, true, 1) != u
+	return maskJSON(u, true, 2) != u // depth 2: its strings are not decoded again, or nesting would be unbounded (each level a full rescan)
 }
 
 // graphQLSecret: a URL parameter's value is a GraphQL document (GET
