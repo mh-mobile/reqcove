@@ -124,9 +124,9 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 // be checked for secrets, so it is not handed out while masking is on.
 const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
 
-// bodyOut: the caller holds s.mu (s.redact).
+// bodyOut: the caller holds s.mu.
 func (s *Store) bodyOut(b Body, headers [][2]string) (string, string) {
-	if s.redact && !checkable(b, headers) {
+	if s.redact.Load() && !checkable(b, headers) {
 		return "", omittedBody
 	}
 	return bodyText(b.Head, b.Truncated)
@@ -196,7 +196,7 @@ func (s *Store) Stats() map[string]any {
 		"started":              s.started.Format("2006-01-02T15:04:05.000Z07:00"),
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
-		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact,
+		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact.Load(),
 		"tls_failures":   len(s.tlsFailures),
 		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),
 		"pass_hosts": orNone(s.allow.PassHosts), "refused_hosts": s.refusedLocked(),
@@ -204,7 +204,7 @@ func (s *Store) Stats() map[string]any {
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream,
 	}
-	if s.redact {
+	if s.redact.Load() {
 		for k, v := range policyStats() {
 			out[k] = v
 		}

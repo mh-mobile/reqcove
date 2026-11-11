@@ -128,10 +128,12 @@ func (s *Store) OldCursor(cursor int64) bool {
 
 // List returns the newest matching flows first, and a cursor for the next
 // (older) page, 0 when there is none.
+// ponytail: the search (bodies included) holds s.mu, so a search over many
+// large heads holds up ingest meanwhile; copy the flows out first if it shows.
 func (s *Store) List(q Filter) ([]Summary, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	q.textOnly = s.redact
+	q.textOnly = s.redact.Load()
 	var out []Summary
 	var last int64
 	for i := len(s.order) - 1; i >= 0; i-- {
