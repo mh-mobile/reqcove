@@ -127,3 +127,13 @@ func BenchmarkMaskBodyPolicy(b *testing.B) {
 		})
 	}
 }
+
+// TestCORSCredentialsKept: the CORS header that names credentials holds
+// only "true": it is not masked.
+func TestCORSCredentialsKept(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	h := s.maskHeaders([][2]string{{"Access-Control-Allow-Credentials", "true"}, {"X-Credential", "c"}})
+	if h[0][1] != "true" || h[1][1] != "[redacted]" {
+		t.Errorf("%v", h)
+	}
+}

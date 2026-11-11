@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `Access-Control-Allow-Credentials` (CORS, only ever `true`) is no longer
+  masked: seen masked on a real iPhone flow.
 - mitmproxy runs from a lock built into reqcove: `uv run --locked --script`
   installs exactly the files the lock names and checks their hashes (plain
   `uvx` checked none). Another `--mitmproxy-spec` still goes through uvx. CI

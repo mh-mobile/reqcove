@@ -95,8 +95,9 @@ So "delete the directory" above means each of them.
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not). `code` and `key` next to an everyday word
-  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id` and
-  `ticketNumber` are not secrets, nor a body's `"key"` whose
+  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id`,
+  `ticketNumber` and CORS's `Access-Control-Allow-Credentials` (only ever
+  `true`; seen masked in use) are not secrets, nor a body's `"key"` whose
   value is a dotted lowercase name, as OpenTelemetry writes attributes
   (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
   or has no dots; JWTs and the other shapes below are masked whatever the field;

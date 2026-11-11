@@ -416,6 +416,7 @@ var everydayWords = map[string]bool{
 var notSecretNames = map[string]bool{
 	"tokentype": true, "authenticationtype": true, "authenticationmethod": true,
 	"ticketid": true, "ticketnumber": true, // a support ticket's
+	"accesscontrolallowcredentials": true, // CORS: true or absent, never a credential (seen masked in use)
 }
 
 // nameWords splits a name at non-alphanumerics and case changes, in lower
