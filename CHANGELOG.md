@@ -11,7 +11,8 @@
   `mock[i]: status` (never the rule's text), a HAR notes it, `summarize`
   counts them. `Cache-Control: no-store` unless the rule sets one. Hosts in
   `--allow-hosts` only. `capture_stats.rules_loaded` says when the file was
-  last taken. Tried with the E2E tests; not on an iPhone yet.
+  last taken. Tried with the E2E tests, and on an iPhone (Safari; one GraphQL
+  operation of the GitHub app).
 - `summarize` counts by endpoint (`by_endpoint`): method, host and path
   without the query, with segments of digits only or a UUID as `{id}`, then
   a GraphQL operation (`POST api.example.com/graphql Login`).

@@ -465,8 +465,11 @@ mock:                           # Reqcove's own; the first that matches answers,
 - `status` is 100 to 599 (200 if left out); a body is at most 1 MiB, inline or
   in a file, and none goes with `HEAD`, 204 or 304. `Cache-Control: no-store`
   is added unless you set one. Response `modify_headers` rules still apply.
-- A request a mock may answer (its method and URL match) is held whole, at most
-  1 MiB, until its body is in; a larger one, or one of unknown length, goes on.
+- A request a mock may answer (its method and URL match) is held whole until
+  its body is in: one whose length is over 1 MiB, or a POST of unknown length,
+  goes on unanswered. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
+  without a length is held too, and over HTTP/2 a body sent with it is kept
+  whole in memory.
 - The record says so: `mocked: true` on its row, `rewrites` with the rule's
   number and status (`mock[0]: 401`), a note in a HAR. `capture_stats` has
   `rules_loaded`, when the file was last taken.
@@ -474,7 +477,9 @@ mock:                           # Reqcove's own; the first that matches answers,
 Tried with the E2E tests (real mitmproxy): a 401 with headers for a POST, a
 GraphQL operation from the body, a prefix, HEAD, the server never reached, and
 rules refused (a bad status, a line break in a header, a missing file, a host
-outside `--allow-hosts`). Not tried on an iPhone yet.
+outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
+GraphQL operation of the GitHub app mocked while its others, on the same
+connection, reached GitHub.
 
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:

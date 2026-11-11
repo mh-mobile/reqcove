@@ -592,6 +592,12 @@ modify_headers:
 	if _, body := do("POST", "http://"+o+"/graphql", `{"operationName":"Feed","query":"query Feed { feed { id } }"}`); body != `{"feed":[]}` {
 		t.Errorf("Feed mock: %q", body)
 	}
+	// Spellings GraphQL allows: a comma or a comment before the name; a document as the body.
+	for _, doc := range []string{`{"query":"query,Feed { feed }"}`, `{"query":"query#c\nFeed { feed }"}`, "query Feed { feed }"} {
+		if _, body := do("POST", "http://"+o+"/graphql", doc); body != `{"feed":[]}` {
+			t.Errorf("Feed mock for %s: %q", doc, body)
+		}
+	}
 	if _, body := do("POST", "http://"+o+"/graphql", `{"query":"mutation Like { like }"}`); body != "origin /graphql" {
 		t.Errorf("another operation went on: %q", body)
 	}
@@ -616,8 +622,8 @@ modify_headers:
 	if strings.Contains(fmt.Sprint(lv.Rewrites), "s3cret") || strings.Contains(fmt.Sprint(lv.Rewrites), "expired") {
 		t.Errorf("the rule's text in rewrites: %v", lv.Rewrites)
 	}
-	for op, mocked := range map[string]bool{"Feed": true, "Like": false} {
-		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 5}); len(rows) != 1 || rows[0].Mocked != mocked {
+	for op, n := range map[string]int{"Feed": 4, "Like": 1} {
+		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 10}); len(rows) != n || rows[0].Mocked != (op == "Feed") {
 			t.Errorf("%s rows: %+v", op, rows)
 		}
 	}

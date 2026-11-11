@@ -279,7 +279,8 @@ class Resolve:
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
-GQL_OP = re.compile(r"\s*(?:#[^\n]*\n\s*)*(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]{0,99})")
+GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*)"  # spaces, commas, byte order marks, comments
+GQL_OP = re.compile(GQL_IGNORED + r"*(?:query|mutation|subscription)" + GQL_IGNORED + r"+([_A-Za-z][_0-9A-Za-z]{0,99})")
 
 
 def _operation(r):
@@ -289,13 +290,16 @@ def _operation(r):
     name = r.query.get("operationName") or r.headers.get("x-apollo-operation-name")
     doc = r.query.get("query")
     if not name and r.method != "GET":
+        text = (r.get_content(strict=False) or b"").decode("utf-8", "replace")
         try:
-            d = json.loads(r.get_content(strict=False) or b"null")
+            d = json.loads(text or "null")
         except ValueError:
-            d = None
+            d = text  # a document as the body (application/graphql)
         if isinstance(d, dict):
             name = d.get("operationName") if isinstance(d.get("operationName"), str) else None
             doc = d.get("query") if isinstance(d.get("query"), str) else None
+        elif isinstance(d, str):
+            doc = d
     if name:
         return name if GQL_NAME.fullmatch(name) else None
     m = GQL_OP.match(doc or "")

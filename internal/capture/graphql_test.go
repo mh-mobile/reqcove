@@ -34,7 +34,7 @@ func TestGraphQLByName(t *testing.T) {
 		}
 	}
 	// Text that only starts with a brace or a keyword is not a document.
-	for _, s := range []string{"{count} items", "{name}'s photos: 3", "query", "mutations are slow", `{"a":1}`} {
+	for _, s := range []string{"{count} items", "{name}'s photos: 3", "{name}'s", "{count} files: 3", "query", "mutations are slow", `{"a":1}`} {
 		if got, isDoc := maskGraphQLDoc(s, true); isDoc || got != s {
 			t.Errorf("%q -> %q (document %v)", s, got, isDoc)
 		}
@@ -54,6 +54,12 @@ func TestGraphQLWhereFound(t *testing.T) {
 		{`{"payload":"{\"query\":\"mutation{login(password:\\\"S3\\\")}\"}"}`, "S3", "login(password:", true},
 		{"query Q($password: String = \"S4\") { a }", "S4", "query Q(", true},
 		{`{"msg":"see { login(password: \"S5\") }"}`, "", "S5", true}, // prose before it: not found
+		// The second review: a spread after a field, an escaped first letter, a byte order mark.
+		{"{__typename ...F} fragment F on Query {login(password:\"S8\"){ok}}", "S8", "fragment F", true},
+		{"{ a } fragment F on Query {login(password:\"S9\"){ok}}", "S9", "fragment F", true},
+		{`{"query":"\u006dutation{login(password:\"S10\"){ok}}"}`, "S10", "login(password:", true},
+		{`{"query":"\ufeffmutation{login(password:\"S11\"){ok}}"}`, "S11", "login(password:", true},
+		{"{\"query\":\"\xef\xbb\xbfmutation{login(password:\\\"S12\\\"){ok}}\"}", "S12", "login(password:", true},
 	} {
 		got := string(maskBody([]byte(c.body), "application/json", c.request))
 		if c.gone != "" && strings.Contains(got, c.gone) || !strings.Contains(got, c.kept) {
@@ -67,6 +73,9 @@ func TestGraphQLWhereFound(t *testing.T) {
 	}
 	if got := string(maskBody([]byte("query=mutation+%7Blogin%28password%3A%22S7%22%29%7D&a=1"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S7") || !strings.Contains(got, "login") {
 		t.Errorf("a form's first field: %s", got)
+	}
+	if got := string(maskBody([]byte("query=%7Blogin%28password%3A%22S13%22%29%7Bok%7D%7D"), "application/x-www-form-urlencoded", true)); strings.Contains(got, "S13") || !strings.Contains(got, "login") {
+		t.Errorf("a shorthand document in a form's first field: %s", got)
 	}
 }
 

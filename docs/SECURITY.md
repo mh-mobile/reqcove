@@ -264,8 +264,9 @@ as the site's own answer (a script in it runs in that origin, a redirect is
 followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
 header values are checked as `modify_headers`'s are. The records say a flow was
 mocked, with the rule's number and status, never its text. A request a mock may
-answer is held whole, at most 1 MiB, until its body is in (the operation is in
-it). No MCP tool writes a rule: a mock comes from the file the user wrote, and
+answer is held whole until its body is in (the operation is in it): at most
+1 MiB when it says its length; a GET without one can carry more over HTTP/2,
+kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
 
 ## An upstream proxy (`--upstream-proxy`)

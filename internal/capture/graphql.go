@@ -111,8 +111,10 @@ func gqlLex(s string, limit int) ([]gqlTok, bool) {
 // gqlStart: the tokens start a document. An operation (query, mutation or
 // subscription, then a name or not, then its variables, directives or
 // selections), a fragment, or { then a field with arguments, selections, an
-// alias, another field or a spread. "{count} items" is not one.
-func gqlStart(s string, toks []gqlTok) bool {
+// alias, another field or a spread, or { name } alone or before another
+// definition. "{count} items" and "{name}'s" are not one. ended: s has no
+// more tokens than toks.
+func gqlStart(s string, toks []gqlTok, ended bool) bool {
 	is := func(k int, kind byte, text string) bool {
 		return k < len(toks) && toks[k].kind == kind && (text == "" || s[toks[k].start:toks[k].end] == text)
 	}
@@ -123,7 +125,14 @@ func gqlStart(s string, toks []gqlTok) bool {
 	case is(0, 'n', "fragment"):
 		return is(1, 'n', "") && is(2, 'n', "on")
 	case is(0, '{', ""):
-		return is(1, '.', "") || is(1, 'n', "") && (opens(2) || is(2, 'n', "") || is(2, ':', "") && is(3, 'n', ""))
+		if is(1, '.', "") {
+			return true
+		}
+		if !is(1, 'n', "") {
+			return false
+		}
+		return opens(2) || is(2, 'n', "") || is(2, '.', "") || is(2, ':', "") && is(3, 'n', "") ||
+			is(2, '}', "") && (ended && len(toks) == 3 || is(3, '{', "") || is(3, 'n', "fragment") || is(3, 'n', "query") || is(3, 'n', "mutation") || is(3, 'n', "subscription"))
 	}
 	return false
 }
@@ -132,7 +141,7 @@ func gqlStart(s string, toks []gqlTok) bool {
 // names (an argument's or input field's after :, a variable's default after
 // =); all of it if it cannot be lexed.
 func maskGraphQLDoc(s string, loneCode bool) (masked string, isDoc bool) {
-	if head, _ := gqlLex(s, 4); !gqlStart(s, head) {
+	if head, ok := gqlLex(s, 4); !gqlStart(s, head, ok && len(head) < 4) {
 		return s, false
 	}
 	toks, ok := gqlLex(s, gqlMaxTokens)
@@ -202,11 +211,14 @@ func gqlValueEnd(toks []gqlTok, v int) (end int, toEnd, ok bool) {
 }
 
 // gqlPrefix: raw text (a JSON string's, after its quote) may start a
-// document: after spaces, commas and escaped line breaks, a keyword, { or #.
+// document: after spaces, commas, byte order marks and escaped line breaks, a
+// keyword, { or #, or an escape (\u006d is m: decoded to be sure).
 func gqlPrefix(raw string) bool {
 	for len(raw) > 0 {
 		if c := raw[0]; c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' {
 			raw = raw[1:]
+		} else if strings.HasPrefix(raw, "\xef\xbb\xbf") {
+			raw = raw[3:]
 		} else if len(raw) > 1 && c == '\\' && strings.IndexByte("nrt", raw[1]) >= 0 {
 			raw = raw[2:]
 		} else {
@@ -216,7 +228,7 @@ func gqlPrefix(raw string) bool {
 	if raw == "" {
 		return false
 	}
-	if raw[0] == '{' || raw[0] == '#' {
+	if raw[0] == '{' || raw[0] == '#' || strings.HasPrefix(raw, `\u`) {
 		return true
 	}
 	for _, w := range []string{"query", "mutation", "subscription", "fragment"} {
@@ -297,8 +309,8 @@ func gqlName(s string) string {
 
 // gqlDocOperation names the first operation of document doc.
 func gqlDocOperation(doc string) string {
-	toks, _ := gqlLex(doc, 4)
-	if !gqlStart(doc, toks) {
+	toks, ok := gqlLex(doc, 4)
+	if !gqlStart(doc, toks, ok && len(toks) < 4) {
 		return ""
 	}
 	if toks[0].kind == 'n' && len(toks) > 1 && toks[1].kind == 'n' && doc[toks[0].start:toks[0].end] != "fragment" {

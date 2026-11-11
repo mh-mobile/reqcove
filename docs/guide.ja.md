@@ -283,10 +283,10 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 - `url` は、アプリが送った URL のクエリを除いた部分と完全に一致したときに当たります。`*` で終わる `url` は、それより前の部分で始まる URL すべてに当たります。`method` と `operation`（GraphQL の operation。`operationName`、Apollo の `X-APOLLO-OPERATION-NAME` ヘッダー、または文書の最初の名前付き operation）は省略できます。ホストは `--allow-hosts` に入っていて、`--pass-hosts` に入っていない必要があります。
 - `status` は 100〜599 で、省略すると 200 です。ボディは書くかファイルで指定し、1 MiB までです。`HEAD`、204、304 にはボディを付けません。`Cache-Control` を書かなければ `no-store` を付けます。応答に対する `modify_headers` のルールは、モックにも効きます。
-- モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します（1 MiB まで）。それより大きいものや、長さが分からないものは、本来の宛先へ送ります。
+- モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送ります。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持し、HTTP/2 で一緒に送られてきたボディは、すべてメモリに保持します。
 - 記録にその旨が残ります。一覧の行に `mocked: true`、`rewrites` にルールの番号とステータス（`mock[0]: 401`）、HAR には注記が入ります。`capture_stats` の `rules_loaded` は、ファイルを最後に読み込んだ時刻です。
 
-確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone ではまだ試していません。
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone では、Safari（httpbin.org）への 401 と、GitHub アプリの GraphQL の operation 1 つをモックできることを確認しました（同じ接続のほかの operation は GitHub に届きました）。
 
 `resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
 

@@ -342,16 +342,14 @@ func maskForm(s string, request bool) string {
 		}
 		if secretName(formName(name)) {
 			parts[i] = name + "=[redacted]"
+		} else if m, ok := gqlParam(val); i == 0 && ok { // before JSON: {login(…)} starts with { too
+			parts[i] = name + "=" + m
 		} else if v := unescapeCut(val); strings.ContainsAny(v[:min(len(v), 1)], "{[") {
 			if m := maskJSON(v, request, 1); m != v {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}
-		} else if i == 0 { // maskURLs looks into the fields after an &, not the first
-			if m, ok := gqlParam(val); ok {
-				parts[i] = name + "=" + m
-			} else if nestedSecret(val, 0) {
-				parts[i] = name + "=[redacted]"
-			}
+		} else if i == 0 && nestedSecret(val, 0) { // maskURLs looks into the fields after an &, not the first
+			parts[i] = name + "=[redacted]"
 		}
 	}
 	return strings.Join(parts, "&")
