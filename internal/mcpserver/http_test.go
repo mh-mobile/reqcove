@@ -13,6 +13,7 @@ import (
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/time/rate"
 )
 
 type withHeader struct {
@@ -196,6 +197,10 @@ func TestHTTPRateLimit(t *testing.T) {
 	var buf strings.Builder
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	// A small limit, so the burst runs out however slow the machine: at 2 a
+	// second, 5 at once, 15 calls need over 5 seconds to all pass.
+	defer func(r rate.Limit, b int) { callRate, callBurst = r, b }(callRate, callBurst)
+	callRate, callBurst = 2, 5
 	srv := httptest.NewServer(HTTP(New(testStore(t), nil), "tok", noCaller))
 	defer srv.Close()
 	post := func() int {
@@ -214,7 +219,7 @@ func TestHTTPRateLimit(t *testing.T) {
 		return r.StatusCode
 	}
 	codes := map[int]int{}
-	for range callBurst + 20 {
+	for range callBurst + 10 {
 		codes[post()]++
 	}
 	if codes[http.StatusOK] < callBurst || codes[http.StatusTooManyRequests] == 0 {
