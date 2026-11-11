@@ -121,9 +121,9 @@ func (q Filter) match(f *Flow, name string) bool {
 }
 
 // OldCursor says whether cursor came from an earlier run of reqcove, whose
-// flows are gone.
+// flows are gone. base itself is this run's: an empty store's Checkpoint.
 func (s *Store) OldCursor(cursor int64) bool {
-	return cursor != 0 && cursor <= s.base // base never changes
+	return cursor != 0 && cursor < s.base // base never changes
 }
 
 // List returns the newest matching flows first, and a cursor for the next

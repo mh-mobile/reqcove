@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `wait_for_flows` (MCP): after acting on the device, wait for the flows it
+  sent to be answered. Take `checkpoint` from `list_flows` (or
+  `capture_stats`) before acting, then wait with `after: checkpoint`: the
+  flows answered since come oldest answer first, each once across calls (pass
+  the answer's `after` on), even when they finish out of order; one that never
+  ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call; at most 16
+  waits at once.
+- `--mcp-http`: a tool call ends when its caller disconnects (it went on to
+  its end before).
 - While mitmdump restarts, the devices' connections wait for it (15 seconds at
   most) instead of being sent to its SOCKS port, which another local process
   could have taken meanwhile; mitmproxy is used again only once its addon says

@@ -189,7 +189,7 @@ func (s *Store) Stats() map[string]any {
 		}
 	}
 	return map[string]any{
-		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted,
+		"flows": len(s.order), "held_bytes": s.heldBytes, "evicted": s.evicted, "checkpoint": s.seq,
 		"oldest_flow": oldest, "newest_flow": newest, "max_flows": s.maxFlows, "max_bytes": s.maxBytes,
 		"flows_with_truncated_bodies": truncated,
 		"state":                       s.state, "state_detail": s.stateDetail, "restarts": s.restarts,

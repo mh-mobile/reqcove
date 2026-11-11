@@ -561,6 +561,7 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 |---|---|
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
+| `wait_for_flows` | after you act on the device: the flows answered (a response or an error) after `after`, the `checkpoint` that `list_flows` (or `capture_stats`) gave before you acted, oldest answer first; it waits up to `timeout` seconds (default 20, at most 30) for one. Pass the answer's `after` to the next call: each flow comes once. The same filters |
 | `get_flow` | one flow; bodies only with `bodies` |
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |

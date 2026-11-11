@@ -1,6 +1,6 @@
 ---
 name: reqcove
-description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, get_flow, list_tls_failures, list_passthrough, list_devices, capture_stats) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
+description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, wait_for_flows, get_flow, list_tls_failures, list_passthrough, list_devices, capture_stats) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
 ---
 
 # Reqcove
@@ -75,6 +75,13 @@ again once they have started it. Do not start it yourself.
    `next_cursor`), and `get_flow` for one flow, with `bodies` only when you
    need them. Bodies are their first 64 KiB (`truncated` says so).
 5. Times are this computer's local time; `since: "10m"` avoids time zones.
+6. What an action sends (a tap through RoamRun, or the user using the app):
+   before acting, take `checkpoint` from `list_flows` (`limit: 1`); act; then
+   `wait_for_flows` with `after: checkpoint` and the host or device. It
+   returns the flows answered since, oldest first; call it again with its
+   `after` for more. `timed_out` is not "nothing was sent": the host may not
+   be in `allow_hosts`, the request may still be on its way, or it went over
+   an open WebSocket (its messages are not recorded).
 
 ## 3. When flows are missing
 

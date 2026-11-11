@@ -24,7 +24,7 @@ const Instructions = `Reqcove records an iPhone's HTTP(S) traffic. Rules:
 // connect, and by which Host, the node checks before this; who names the
 // caller (its device), for the log: each tool call, and each wrong token.
 func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http.Handler {
-	server.AddReceivingMiddleware(logCalls)
+	server.AddReceivingMiddleware(logCalls, endWithRequest)
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20})
 	want := []byte("Bearer " + token)
@@ -37,11 +37,30 @@ func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http
 			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove run printed", http.StatusUnauthorized)
 			return
 		}
-		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, caller)))
+		ctx := context.WithValue(r.Context(), callerKey{}, caller)
+		h.ServeHTTP(w, r.WithContext(context.WithValue(ctx, requestKey{}, r.Context())))
 	}))
 }
 
 type callerKey struct{}
+
+// requestKey holds the HTTP request's own context: the SDK hands a tool its
+// values but not its end, so a caller gone (a disconnect) would leave a
+// wait_for_flows running to its timeout.
+type requestKey struct{}
+
+// endWithRequest ends a call over HTTP when its request ends.
+func endWithRequest(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if rc, ok := ctx.Value(requestKey{}).(context.Context); ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			defer cancel()
+			defer context.AfterFunc(rc, cancel)()
+		}
+		return next(ctx, method, req)
+	}
+}
 
 // logCalls logs the tool calls that came over HTTP (the socket's carry no
 // caller): which device, which tool; not the arguments.

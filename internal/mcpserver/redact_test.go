@@ -15,6 +15,7 @@ import (
 // Every secret value contains S3CRET.
 func TestNoSecretInAnyTool(t *testing.T) {
 	st := capture.NewStore(100, 1<<20)
+	cp := st.Checkpoint()
 	ev := func(m map[string]any) {
 		m["v"] = 2
 		b, _ := json.Marshal(m)
@@ -81,6 +82,7 @@ func TestNoSecretInAnyTool(t *testing.T) {
 	for _, q := range []string{"api", "S3CRET", "token", "Bearer"} {
 		dump("search_flows", map[string]any{"query": q})
 	}
+	dump("wait_for_flows", map[string]any{"after": cp, "limit": 100})
 	dump("summarize", map[string]any{"top": 100})
 	dump("list_devices", nil)
 	dump("list_tls_failures", nil)
