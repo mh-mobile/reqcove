@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -152,4 +153,16 @@ func specLines(v, flag string) ([]string, string, error) {
 		return nil, "", fmt.Errorf("%s: %s is empty", flag, path)
 	}
 	return lines, path, nil
+}
+
+// pythonBelow says a --python value names a version below major.minor
+// ("3.12", "3.12.4", "python3.12"); anything else (a path) is not judged.
+func pythonBelow(v string, major, minor int) bool {
+	m := regexp.MustCompile(`(\d+)\.(\d+)`).FindStringSubmatch(v)
+	if m == nil {
+		return false
+	}
+	a, _ := strconv.Atoi(m[1])
+	b, _ := strconv.Atoi(m[2])
+	return a < major || a == major && b < minor
 }

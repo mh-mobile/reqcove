@@ -36,3 +36,16 @@ func TestMaskPolicyFlags(t *testing.T) {
 		t.Errorf("run with a bad pattern: %v", err)
 	}
 }
+
+// TestPythonBelow: the locked mitmproxy needs 3.14; run says so at start.
+func TestPythonBelow(t *testing.T) {
+	for v, want := range map[string]bool{"3.12": true, "3.13.2": true, "python3.12": true, "3.14": false, "3.15": false, "4.0": false, "/opt/py/bin/python": false} {
+		if got := pythonBelow(v, 3, 14); got != want {
+			t.Errorf("%q: %v", v, got)
+		}
+	}
+	err := run(context.Background(), []string{"--device", "phone", "--allow-hosts", "a.example", "--state", t.TempDir(), "--uvx", "/usr/bin/false", "--python", "3.12"})
+	if err == nil || !strings.Contains(err.Error(), "needs Python 3.14") {
+		t.Errorf("run --python 3.12: %v", err)
+	}
+}

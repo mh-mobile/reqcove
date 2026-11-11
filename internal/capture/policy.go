@@ -138,10 +138,11 @@ func policyStats() map[string]any {
 }
 
 // gqlArgRE: a GraphQL argument with a string value, as in
-// login(password: "x"), raw or inside a JSON string (\"x\"), a block string
-// ("""x""") too; a value cut by the head's end (even right after a
+// login(password: "x"), raw or inside a JSON string (\"x\", where the
+// query's own escaped quote is \\\" and its backslash \\\\), a block
+// string ("""x""", or \"\"\"x\"\"\" inside JSON) too; a value cut by the head's end (even right after a
 // backslash) runs to it.
-var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt])*)([_A-Za-z][_0-9A-Za-z]*)(\s*:\s*)("""(?s:.*?)(?:"""|$)|\\"(?:[^"\\]|\\[^"])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
+var gqlArgRE = regexp.MustCompile(`((?:^|[(,{\s])(?:\s|\\[nrt])*)([_A-Za-z][_0-9A-Za-z]*)(\s*:\s*)("""(?s:.*?)(?:"""|$)|\\"\\"\\"(?s:.*?)(?:\\"\\"\\"|$)|\\"(?:\\\\\\\\|\\\\\\"|\\[^"]|[^"\\])*(?:\\"|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
 // maskGraphQL masks the string values of GraphQL arguments with secret names
 // (login(password: "x")), which are not JSON fields: the query is one string.
@@ -161,6 +162,8 @@ func maskGraphQL(s string, loneCode bool) string {
 		switch {
 		case strings.HasPrefix(v, `"""`):
 			q = `"""`
+		case strings.HasPrefix(v, `\"\"\"`):
+			q = `\"\"\"`
 		case strings.HasPrefix(v, `\"`):
 			q = `\"`
 		}

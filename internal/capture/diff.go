@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -170,7 +171,7 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 	// JSON on both sides, whole: compared by path.
 	if !cutHead {
 		var ja, jb any
-		if json.Unmarshal(a.Head, &ja) == nil && json.Unmarshal(b.Head, &jb) == nil {
+		if decodeJSON(a.Head, &ja) == nil && decodeJSON(b.Head, &jb) == nil {
 			pa, pb := map[string]string{}, map[string]string{}
 			flatten("$", ja, pa)
 			flatten("$", jb, pb)
@@ -217,6 +218,20 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 }
 
 var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// decodeJSON is json.Unmarshal keeping numbers as written: as float64, IDs
+// past 2^53 that differ would read the same.
+func decodeJSON(b []byte, v *any) error {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	if d.More() {
+		return errors.New("more than one JSON value")
+	}
+	return nil
+}
 
 // flatten puts each leaf of v under its path ($.a.b[0]) as compact JSON.
 func flatten(path string, v any, out map[string]string) {

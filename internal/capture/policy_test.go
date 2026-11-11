@@ -91,6 +91,9 @@ func TestMaskGraphQL(t *testing.T) {
 		{`{"query":"mutation { login(password: \"p4ssw0`, "p4ssw0", "login("},
 		{"mutation { setKey(apiKey: \"\"\"k3yvalue\"\"\") { ok } }", "k3yvalue", "setKey("},
 		{`{"query":"{ user(id: \"123\") { name } }"}`, "", `id: \"123\"`},
+		// The query's own escaped quote inside the JSON string (\\\"), and a block string written in JSON.
+		{`{"query":"mutation{login(password: \"ab\\\"cdSECRET\")}"}`, "cdSECRET", "login("},
+		{`{"query":"mutation{setKey(apiKey: \"\"\"k3ySECRET\"\"\")}"}`, "k3ySECRET", "setKey("},
 	} {
 		got := string(maskBody([]byte(c.body), "application/json", true))
 		if c.gone != "" && strings.Contains(got, c.gone) || !strings.Contains(got, c.kept) {
@@ -100,6 +103,10 @@ func TestMaskGraphQL(t *testing.T) {
 	s := NewStore(10, 1<<20)
 	if u := s.mask("https://a.example/graphql?query=mutation%7Blogin(password%3A%22p4ssw0rd%22)%7D&op=Login"); strings.Contains(u, "p4ssw0rd") || !strings.Contains(u, "op=Login") {
 		t.Errorf("GET: %s", u)
+	}
+	// GraphQL's GET variables: JSON in a parameter.
+	if u := s.mask("https://a.example/graphql?query=q&variables=%7B%22password%22%3A%22hunter2%22%2C%22n%22%3A1%7D&op=Login"); strings.Contains(u, "hunter2") || !strings.Contains(u, "op=Login") {
+		t.Errorf("GET variables: %s", u)
 	}
 }
 

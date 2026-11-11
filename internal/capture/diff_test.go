@@ -138,3 +138,18 @@ func TestLongUserAgent(t *testing.T) {
 		t.Error("get_flow lost the whole User-Agent")
 	}
 }
+
+// TestDiffBigNumbers: integers past 2^53 that differ are reported as such.
+func TestDiffBigNumbers(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	body := func(id, b string) {
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"device":"d","host":"h.example","url":"https://h.example/"}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":200,"headers":[["Content-Type","application/json"]]}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"response","head":%q,"size":%d,"final":true,"decoded":true}`, id, base64.StdEncoding.EncodeToString([]byte(b)), len(b))))
+	}
+	body("x", `{"order_id":9007199254740993}`)
+	body("y", `{"order_id":9007199254740992}`)
+	if d, _ := s.DiffFlows("x", "y"); d.ResponseBody.Result != "differs" || !strings.Contains(fields(d), "9007199254740993|9007199254740992") {
+		t.Errorf("%+v %s", d.ResponseBody, fields(d))
+	}
+}

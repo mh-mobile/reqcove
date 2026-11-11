@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -75,5 +76,49 @@ func TestWaitReleased(t *testing.T) {
 	srv.Close() // waits for the handlers still running
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("HTTP handlers ran on %v after their callers left", d)
+	}
+}
+
+// TestWaitCursorFromTheFuture: an after no checkpoint gave (a clock reading,
+// say) is refused, not waited on forever.
+func TestWaitCursorFromTheFuture(t *testing.T) {
+	sock := sockPath(t)
+	st := capture.NewStore(10, 1<<20)
+	defer serve(t, sock, New(st, nil))()
+	cs := agent(t, sock)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "wait_for_flows", Arguments: map[string]any{"after": st.Checkpoint() + 1000, "timeout": 1}})
+	if err != nil || !res.IsError {
+		t.Errorf("a cursor past the newest: %v %+v", err, res)
+	}
+	if cp := call[ListOut](t, cs, "search_flows", map[string]any{"query": "x"}).Checkpoint; cp == 0 {
+		t.Error("search_flows gives no checkpoint")
+	}
+}
+
+// TestWaitPlacesPerCaller: one device over --mcp-http holds at most
+// maxWaitersPerCaller waits; the socket's agent still gets one.
+func TestWaitPlacesPerCaller(t *testing.T) {
+	sock := sockPath(t)
+	st := capture.NewStore(10, 1<<20)
+	server := New(st, nil)
+	defer serve(t, sock, server)()
+	srv := httptest.NewServer(HTTP(server, "tok", func(*http.Request) string { return "busy-device" }))
+	defer srv.Close()
+	hc, err := httpClient(t, srv.URL, "Bearer tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for range maxWaitersPerCaller {
+		go hc.CallTool(ctx, &mcp.CallToolParams{Name: "wait_for_flows", Arguments: map[string]any{"timeout": 30}})
+	}
+	time.Sleep(300 * time.Millisecond)
+	res, err := hc.CallTool(context.Background(), &mcp.CallToolParams{Name: "wait_for_flows", Arguments: map[string]any{"timeout": 1}})
+	if err != nil || !res.IsError {
+		t.Errorf("one more from the busy device: %v %+v", err, res)
+	}
+	if res, err := agent(t, sock).CallTool(context.Background(), &mcp.CallToolParams{Name: "wait_for_flows", Arguments: map[string]any{"timeout": 1}}); err != nil || res.IsError {
+		t.Errorf("the local agent: %v %+v", err, res)
 	}
 }

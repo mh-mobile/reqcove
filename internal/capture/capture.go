@@ -488,10 +488,7 @@ func readLine(r *bufio.Reader, max int) ([]byte, error) {
 			for errors.Is(err, bufio.ErrBufferFull) {
 				_, err = r.ReadSlice('\n')
 			}
-			if err != nil {
-				return nil, err
-			}
-			return nil, errLongLine
+			return nil, errLongLine // counted even when the stream ends there; the next read says EOF
 		}
 		line = append(line, part...)
 		if !errors.Is(err, bufio.ErrBufferFull) {

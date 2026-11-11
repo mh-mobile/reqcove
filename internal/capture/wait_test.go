@@ -140,3 +140,18 @@ func TestWaitEvicted(t *testing.T) {
 		t.Error("a gap reported after the eviction was passed")
 	}
 }
+
+// TestWaitEvictedOpen: a flow still open when evicted, answered later, is
+// reported as a possible gap (its answer would have come after the cursor).
+func TestWaitEvictedOpen(t *testing.T) {
+	s := NewStore(2, 1<<20)
+	ev(s, "request", "a", "")
+	cp := s.Checkpoint()
+	for _, id := range []string{"b", "c"} {
+		ev(s, "request", id, "")
+	}
+	ev(s, "response", "a", `,"status":200`) // a was evicted: an orphan update now
+	if r := waitNow(s, Filter{}, cp); !r.Evicted {
+		t.Errorf("an open flow evicted after the cursor: evicted %v", r.Evicted)
+	}
+}
