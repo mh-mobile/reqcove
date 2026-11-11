@@ -45,6 +45,24 @@ func TestOperationAndEndpoints(t *testing.T) {
 			t.Errorf("%s %s: operation %q, want %q", c.method, c.url, v.Operation, c.op)
 		}
 	}
+	// A partial head, then the whole body: the whole body names it (the last review).
+	for _, c := range []struct{ partial, whole, op string }{
+		{"fragment F on U { a }\n", "fragment F on U { a }\nquery Feed { ...F }", "Feed"},
+		{`{"variables":{"input":{"operationName":"Inner"}},`, `{"variables":{"input":{"operationName":"Inner"}},"operationName":"Outer"}`, "Outer"},
+	} {
+		n++
+		id := fmt.Sprintf("f%d", n)
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"method":"POST","url":"https://api.example.com/graphql","host":"api.example.com","path":"/graphql","headers":[]}`, id)))
+		for _, b := range []struct {
+			head  string
+			final bool
+		}{{c.partial, false}, {c.whole, true}} {
+			s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"request","head":%q,"size":%d,"final":%t,"decoded":true}`, id, base64.StdEncoding.EncodeToString([]byte(b.head)), len(b.head), b.final)))
+		}
+		if v, _ := s.Get(id, false); v.Operation != c.op {
+			t.Errorf("after a partial head %q: operation %q, want %q", c.partial, v.Operation, c.op)
+		}
+	}
 	if rows, _ := s.List(Filter{Operation: "login", Limit: 10}); len(rows) != 1 || rows[0].Operation != "Login" {
 		t.Errorf("filter: %+v", rows)
 	}
