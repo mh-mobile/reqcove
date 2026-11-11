@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：初期段階です**（v0.3）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
+> **開発状況：初期段階です**（v0.4）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
 
 ## 必要なもの
 
@@ -80,7 +80,7 @@ go build -o reqcove ./cmd/reqcove
 | `--device NAME` | 中継するデバイス（`tailscale status` の名前）。複数は繰り返して指定 |
 | `--allow-hosts` | 記録するホスト（その接続は復号する）。`api.example.com`、`*.example.com`、すべてなら `'*'`、`@FILE` |
 | `--pass-hosts` | 許可したホストのうち、復号せずに通すもの。証明書ピンニングをするアプリ向け |
-| `--rules FILE` | 許可したホストへのリクエストの行き先を書き換えるルール（`map_remote`、`map_local` など） |
+| `--rules FILE` | 許可したホストへのリクエストの行き先を書き換えるルール（`map_remote`、`map_local` など）や、ここで応答を返すルール（`mock`） |
 | `--state DIR` | ノードキーと CA を置く状態ディレクトリ。デフォルトは `~/.reqcove` |
 
 すべてのオプションは[ガイド](docs/guide.ja.md#オプション)にあります。
