@@ -270,7 +270,8 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 - For your own app, use a build without pinning. Android apps refuse the CA
   for another reason ([Android](#android)).
 
-Tried: on an iPhone.
+Tried: on an iPhone. That a pass host's decrypted requests go through
+`--upstream-proxy`: a test; that they skip `--rules`: from reading code.
 
 ### Android
 
@@ -548,12 +549,12 @@ other protocols going straight to their servers.
 | `--mcp-http` | [the MCP tools over HTTP](#agents-on-other-devices---mcp-http), on the node's port 8090 |
 | `--dns SERVERS` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
-| `--mask-names a,b` | mask these names too, as the built-in ones (headers, parameters, JSON fields, GraphQL arguments); `@FILE` too |
-| `--mask-values RE` | mask what this pattern (RE2) matches, wherever it is; repeat it, or `@FILE` (one a line: keeps a literal secret out of `ps`) |
+| `--mask-names a,b` | mask whatever has exactly this name too (any spelling: `clientRef` is also `client_ref` and `Client-Ref`, not `X-Client-Ref`): headers, parameters, JSON fields, GraphQL arguments; `@FILE` too |
+| `--mask-values RE` | mask what this pattern (RE2) matches, wherever it is; repeat it, or `@FILE` (one a line: keeps a literal secret out of `ps`; write one as `\Q…\E`) |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked) |
+| `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
 
@@ -568,6 +569,10 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
 | `reqcove version` | the version |
 
+Tried on an iPhone: `--mask-names`; `wait_for_flows` after acting through
+RoamRun. By tests only: `--mask-values`, `diff_flows`, `max_body`, the
+`--mcp-http` rate limit.
+
 From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 `--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`,
 `status --json`.
@@ -578,7 +583,7 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 |---|---|
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
-| `wait_for_flows` | after you act on the device: the flows answered (a response or an error) after `after`, the `checkpoint` that `list_flows` (or `capture_stats`) gave before you acted, oldest answer first; it waits up to `timeout` seconds (default 20, at most 30) for one. Pass the answer's `after` to the next call: each flow comes once. The same filters |
+| `wait_for_flows` | what an action on the device sent: take `checkpoint` from `list_flows` (or `capture_stats`) before acting, then call with `after: checkpoint`. Returns the flows answered since (a response or an error), oldest answer first, waiting up to `timeout` seconds (default 20, at most 30) for the first. Pass its `after` to the next call: each flow comes once. The same filters |
 | `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given |
 | `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |

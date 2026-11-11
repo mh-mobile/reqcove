@@ -10,29 +10,39 @@
   come oldest answer first, as soon as there is one, each once across calls
   (pass the answer's `after` on), even when they finish out of order; one that
   never ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call, 16
-  waits at once. Tried on an iPhone with RoamRun, on the same Wi-Fi and over
-  tethering.
+  waits at once (4 for one `--mcp-http` device); an `after` no checkpoint gave
+  is refused. Tried with one iPhone (Safari, httpbin.org) acted on through
+  RoamRun, on the Mac's Wi-Fi and from another network (tethering).
 - `diff_flows`: two flows compared (one that worked, one that failed): method,
   URL, status, error, headers by name, bodies (JSON by path). Values masked on
   both sides are listed as masked, never as equal; bodies that are not text
-  are not compared while masking is on; with `--no-redact` everything is.
+  are not compared while masking is on; with `--no-redact` everything is. JSON
+  numbers are compared as written (IDs past 2^53 too).
 - `get_flow` takes `max_body`, at most that many bytes of each body head.
 - Every tool is marked read-only and not destructive (`readOnlyHint`,
   `destructiveHint`). `run` prints Codex's command to add the tools beside
   Claude Code's; the guide says how to allow the tools in each, and not to
   allow a shell or network tools along with them.
+- The skill covers `wait_for_flows` and `diff_flows`: run `reqcove init`
+  again to update it.
 
 ### Masking
 
 - `--mask-names a,b`: your own names treated as secret (headers, parameters,
   JSON fields, GraphQL arguments; any spelling). `--mask-values RE`: a
   pattern's matches masked wherever they are (the `key=…` seen in a bank app's
-  User-Agent). Both `@FILE` too; errors never quote a pattern; `capture_stats`
-  counts the matches. Tried on an iPhone (URL, JSON body, Referer).
+  User-Agent; a literal secret in a file goes as `\Q…\E`). Both `@FILE` too;
+  errors never quote a pattern; `capture_stats` counts the matches.
+  `--mask-names` matches the whole name (`clientRef` is not `X-Client-Ref`).
+  `--mask-names` tried on an iPhone's flow (URL, JSON body, Referer);
+  `--mask-values` by tests only.
 - String arguments with secret names in GraphQL documents
   (`login(password: "…")`, in JSON, raw, or a GET `?query=`), and URLs encoded
   twice or three times inside a parameter. A fuzz test found the latter, and a
-  GraphQL value cut after a backslash.
+  GraphQL value cut after a backslash; a review found the query's own escaped
+  quotes and block strings written inside JSON. GraphQL's GET variables
+  (`?variables={"password":…}`), JSON in a URL parameter, are looked into too
+  (they were not in 0.2 either).
 - `Access-Control-Allow-Credentials` (only ever `true`) is no longer masked.
 
 ### Security
@@ -59,6 +69,10 @@
   User-Agents in lists are cut to 256 bytes, ALPN names to printable ASCII;
   `diff_flows` quotes JSON keys that are not plain names; a body's note quotes
   the site's `Content-Encoding`.
+- Docs and `run`'s warning corrected: a `--pass-hosts` host's requests that
+  mitmproxy decrypts anyway (plain HTTP, or on an allowed host's connection)
+  go through `--upstream-proxy` and skip `--rules`, as 0.2.0 already did (the
+  upstream part now a test). The v0.2.0 entry below said they skip both.
 - From a review of outside values put into commands and text: `get_flow` with
   a huge `max_body` crashed `run` (an overflow; now clamped), and a panic in
   any tool now fails that call only; the `rm` commands `run` prints to change
@@ -70,6 +84,9 @@
   past that `429`; a call ends when its caller disconnects.
 - Built with Go 1.27.4 (GO-2026-6859 in 1.27.3's net/http, reachable through
   the `--ui` page's proxy).
+- With the locked mitmproxy, `run` refuses a `--python` below 3.14 at start,
+  saying to give `--mitmproxy-spec` for an older one (through uvx, no lock).
+  A `--uvx` whose file is not named `uvx` also goes through uvx, unlocked.
 
 ### Inside
 

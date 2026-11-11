@@ -11,14 +11,14 @@ How to contribute: `CONTRIBUTING.md`.
 - `internal/exitnode`: the tsnet exit node (a fork of Tailscale through the
   `replace` in `go.mod`), the destination policy, the Remote Proxy, status and
   next steps.
-- `internal/capture`: runs mitmdump through uvx as a child, with the embedded
+- `internal/capture`: runs mitmdump from its lock (uv) as a child, with the embedded
   addon (`addon.py`), and records what it reports (masking, scope, bounds).
 - `internal/mcpserver`: the MCP tools and the Unix socket bridge.
 
 ## Tests
 
 - `go test -race ./...`: the usual tests (CI on macOS and Linux).
-- `REQCOVE_E2E=1 go test ./internal/capture/`: real mitmproxy through uvx (CI too).
+- `REQCOVE_E2E=1 go test ./internal/capture/`: real mitmproxy, from the lock (uv; CI too).
 - `REQCOVE_TRIAL2=1` (memory), `REQCOVE_SOAK=4h` (soak), `REQCOVE_UDP_MEASURE=1`
   (UDP): by hand only.
 - After a fix, check that its test fails with the fix taken out.

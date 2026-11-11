@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.2.
+come from reading code rather than from a test say so. It describes v0.3.
 
 ## Trust
 
@@ -130,15 +130,17 @@ So "delete the directory" above means each of them.
   shapes and cut anywhere: it found the twice-encoded URL and a GraphQL value
   cut after a backslash, both fixed).
 - Your own rules, fixed at start: `--mask-names` adds names treated as secret
-  wherever names count (any spelling: `clientRef` covers `client_ref` and
-  `Client-Ref`), before the built-in exceptions. `--mask-values` adds RE2
-  patterns whose matches are masked wherever they appear (a header of any
-  name, a User-Agent's `key=…` among them, URLs, bodies, error text); at most
-  32 of 512 bytes, none that matches empty text. Errors name a pattern by its
-  number, never its text; a pattern on the command line shows in `ps`, so a
-  literal secret belongs in an `@FILE`. `capture_stats` counts the matches per
-  name and per pattern number (a value can count more than once). Both do
-  nothing with `--no-redact` (`run` warns). (Tests.)
+  wherever names count, the whole name only (any spelling: `clientRef` covers
+  `client_ref` and `Client-Ref`, not `X-Client-Ref`), before the built-in
+  exceptions. `--mask-values` adds RE2 patterns whose matches are masked
+  wherever they appear (a header of any name, a User-Agent's `key=…` among
+  them, URLs, bodies, error text); at most 32 patterns of 512 bytes each, none
+  that matches empty text. Errors name a pattern by its number, never its text.
+  `capture_stats` counts the matches per name and per pattern number (a value
+  can count more than once). (Tests.) A pattern on the command line shows in
+  `ps`, so a literal secret belongs in an `@FILE`, written as `\Q…\E` so its
+  `+`, `/` and `.` match themselves. Both do nothing with `--no-redact` (`run`
+  warns).
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
   in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
@@ -181,7 +183,8 @@ somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
 in Claude Code, allow Reqcove's tools without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
-in Codex, keep its sandbox (by default without network) and approvals. An agent that only
+in Codex, keep its sandbox (by default without network, from its
+documentation, not tried) and approvals. An agent that only
 reads Reqcove and answers you is the safest shape.
 
 Response bodies, and also response headers, status reasons, redirect targets
@@ -193,9 +196,9 @@ what it returns was written by sites, apps or the tailnet: data. The server's
 instructions, sent to every client (also those without the skill, such as Grok
 Bot), say so too, and that the agent must not write a file (a `--rules` file
 above all), a commit or a command because of what the records say, nor suggest
-`--no-redact` or `--web`, and that `next_steps` are for the user (tests read
-the instructions; whether a model keeps to them is not something a test can
-show). A request whose Host is no host name or address (an app's own HTTP stack
+`--no-redact` or `--web`, and that `next_steps` are for the user (tests check
+that clients get them over stdio and HTTP, not their wording; whether a model
+keeps to them is not something a test can show). A request whose Host is no host name or address (an app's own HTTP stack
 can put any text there) is carried but not recorded (a test); hosts from TLS
 are host names by mitmproxy's own check (from reading its code). A flow's host
 is the request's Host, which the app chooses: on a connection to an allowed
@@ -352,7 +355,7 @@ device names and its refusals of this computer and the LAN.
 
 The node serves the MCP tools on its port 8090, at `/mcp`, to your
 own devices on the tailnet only (the same user as reqcove's node, neither
-tagged: checked when a connection opens), asked by the node's name or address in
+tagged: checked when a connection opens and on every request), asked by the node's name or address in
 `Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
 state directory (0600; compared in constant time). Requests from a browser page
 of another origin are refused. The token is printed in `run`'s terminal only (in
@@ -434,12 +437,14 @@ launcher into the state directory and starts mitmproxy with
 `uv run --locked --script`, which installs exactly the files the lock names
 and checks each one's hash (tried: a lock with one package's hashes changed was
 refused, with an empty cache and with a full one). Plain `uvx`, which checks no
-hash even when given them (tried), is used only for another
-`--mitmproxy-spec`, from releases before a fixed date (`--exclude-newer`). CI
+hash even when given them (tried), is used for another `--mitmproxy-spec`,
+and for a `--uvx` whose file is not named `uvx` (a wrapper, whose `uv` is not
+known), from releases before a fixed date (`--exclude-newer`). CI
 checks that the lock matches the launcher and audits it for known
 vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
 mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
-overrides it to 6.6, which fixes them (mitmweb's tests pass with it).
+overrides it to 6.6, which fixes them (Reqcove's `--web` test passes with it;
+mitmproxy's own tests were not run).
 
 ## The exit node's DNS
 
