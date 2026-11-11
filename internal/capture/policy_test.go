@@ -2,8 +2,10 @@ package capture
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setPolicy(t *testing.T, names, values []string) {
@@ -168,6 +170,84 @@ func TestMaskEscapedAndCommented(t *testing.T) {
 		{`{"query":"mutation { login(password:\n  \"p4ssw0rdNL\") { ok } }"}`, "p4ssw0rdNL"},
 		{`{"query":"mutation { login(password: # the user's\n \"p4ssw0rdCM\") { ok } }"}`, "p4ssw0rdCM"},
 		{"mutation { login(\n # note\n password: \"p4ssw0rdRAW\") { ok } }", "p4ssw0rdRAW"},
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
+	}
+}
+
+// TestMaskGson: Gson (Android) writes = and & as \u003d and \u0026; a token
+// parameter so written is masked too, in an array as in a string.
+func TestMaskGson(t *testing.T) {
+	esc := func(s string) string { return strings.NewReplacer("=", "\\"+"u003d", "&", "\\"+"u0026").Replace(s) }
+	for _, body := range []string{
+		`{"urls":["` + esc("https://x.example/cb?a=1&access_token=S3CRETGSON") + `"]}`,
+		`{"m":"see ` + "\\" + `"here` + "\\" + `": ` + esc("https://x.example/cb?access_token=S3CRETGSON") + `"}`,
+	} {
+		if got := string(maskBody([]byte(body), "application/json", false)); strings.Contains(got, "S3CRETGSON") {
+			t.Errorf("%s\n -> %s", body, got)
+		}
+	}
+}
+
+// TestGraphQLCommentsLinear: a long body of comments with no line break
+// (or a quote) does not make each match rescan it.
+func TestGraphQLCommentsLinear(t *testing.T) {
+	head := []byte(strings.Repeat(`(#,a:"v"`, 8200))[:64<<10]
+	start := time.Now()
+	maskBody(head, "application/json", true)
+	if d := time.Since(start); d > slow*2*time.Second {
+		t.Errorf("64 KiB took %v", d)
+	}
+}
+
+// TestMaskSecondReview: what the second review found still leaking.
+func TestMaskSecondReview(t *testing.T) {
+	for _, c := range []struct {
+		body, gone string
+		request    bool
+	}{
+		{"{\"data\":\"say \\\"hello\\\" \\u0073k-abcdefghijklmnopqrstuvwxyz0123\"}", "abcdefghijklmnopqrstuvwxyz0123", true},
+		{"{\"d\":\"{\\\"x\\\":\\\"\\\\u0073k-abcdefghijklmnopqrstuvwxyz0456\\\"}\"}", "abcdefghijklmnopqrstuvwxyz0456", true},
+		{"{\"query\":\"mutation{login(username:\\\"a\\\"\\npassword:\\\"newlineSECRET\\\")}\"}", "newlineSECRET", true},
+		{"mutation{login(password # note\n: \"commentSECRET\")}", "commentSECRET", true},
+		{"mutation{login(password: \"\"\"ab\\\"\"\"blockSECRET\"\"\")}", "blockSECRET", true},
+		{"{\"query\":\"mutation{login(password: \\\"echoSECRET\\\")}\"}", "echoSECRET", false}, // a response echoing the query
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", c.request)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
+	}
+	s := NewStore(10, 1<<20)
+	if u := s.mask("https://a.example/graphql?variables=+%7B%22password%22%3A%22getSECRET%22%7D&op=x"); strings.Contains(u, "getSECRET") {
+		t.Errorf("GET variables after a space: %s", u)
+	}
+}
+
+// TestMaskNestingBounded: JSON in a URL parameter in JSON, level after
+// level, with = hidden as an escape, costs linear time, not a rescan a level.
+func TestMaskNestingBounded(t *testing.T) {
+	bs := "\\"
+	level := `"x"`
+	for len(level) < 240<<10 {
+		level = `{"k":"` + bs + "u0026q" + bs + "u003d" + url.QueryEscape(level) + `"}`
+	}
+	start := time.Now()
+	maskBody([]byte(level), "application/json", false)
+	if d := time.Since(start); d > slow*time.Second {
+		t.Errorf("%d KiB of nesting took %v", len(level)>>10, d)
+	}
+}
+
+// TestMaskEscapedArrays: escaped strings that are no field's value (array
+// elements, a body that is one string) are looked at decoded too.
+func TestMaskEscapedArrays(t *testing.T) {
+	bs := "\\"
+	for _, c := range []struct{ body, gone string }{
+		{`{"a":["` + bs + `u0073k-abcdefghijklmnopqrstuvwxyz0789"]}`, "abcdefghijklmnopqrstuvwxyz0789"},
+		{`{"a":["{` + bs + `"password` + bs + `":` + bs + `"arrSECRET` + bs + `"}"]}`, "arrSECRET"},
+		{`"` + bs + `u0073k-abcdefghijklmnopqrstuvwxyz0790"`, "abcdefghijklmnopqrstuvwxyz0790"},
 	} {
 		if got := string(maskBody([]byte(c.body), "application/json", true)); strings.Contains(got, c.gone) {
 			t.Errorf("%s\n -> %s", c.body, got)

@@ -145,7 +145,12 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
   in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). Personal data, such as e-mail addresses
+  (protobuf, multipart, XML elements and attributes). GraphQL arguments written
+  into the query are found by pattern, not parsed: the layouts three rounds of
+  review found are covered (tests and a fuzz test), but another valid layout
+  may pass. Tools that parse GraphQL (OpenTelemetry, Apollo) drop every value
+  written into the query instead; a later version may do so. Values sent as
+  GraphQL variables are JSON fields, masked by name. Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,

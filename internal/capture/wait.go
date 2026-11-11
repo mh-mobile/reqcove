@@ -61,13 +61,19 @@ func (s *Store) Wait(ctx context.Context, q Filter, after int64) WaitResult {
 		r := WaitResult{After: after, Evicted: s.evictedMark > after}
 		if len(found) > 0 {
 			sort.Slice(found, func(i, j int) bool { return found[i].answered < found[j].answered })
-			if q.Limit > 0 && len(found) > q.Limit {
+			all := q.Limit <= 0 || len(found) <= q.Limit
+			if !all {
 				found = found[:q.Limit]
 			}
 			for _, f := range found {
 				r.Flows = append(r.Flows, s.summary(f))
 			}
 			r.After = found[len(found)-1].answered
+			if all && r.Evicted {
+				// Every match is given: move past the loss too, so the next call
+				// does not report the same gap again.
+				r.After = max(r.After, s.evictedMark)
+			}
 			s.mu.Unlock()
 			return r
 		}

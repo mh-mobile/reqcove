@@ -401,6 +401,7 @@ func (s *Store) evictLocked() {
 		f := s.flows[id]
 		mark := f.answered
 		if mark == 0 { // still open: its answer, had it come, would be after any cursor taken so far
+			s.seq++ // its own: a body event hands out none, so s.seq may be a cursor already given
 			mark = s.seq
 			if s.wake != nil { // and a waiter for it should hear of the gap now, not at its timeout
 				close(s.wake)

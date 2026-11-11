@@ -39,7 +39,7 @@ func TestMaskPolicyFlags(t *testing.T) {
 
 // TestPythonBelow: the locked mitmproxy needs 3.14; run says so at start.
 func TestPythonBelow(t *testing.T) {
-	for v, want := range map[string]bool{"3.12": true, "3.13.2": true, "python3.12": true, "3.14": false, "3.15": false, "4.0": false, "/opt/py/bin/python": false} {
+	for v, want := range map[string]bool{"3.12": true, "3.13.2": true, "python3.12": true, "3.14": false, "3.15": false, "4.0": false, "/opt/py/bin/python": false, "/tmp/app-2.0/python3.14": false, "cpython3.12": true} {
 		if got := pythonBelow(v, 3, 14); got != want {
 			t.Errorf("%q: %v", v, got)
 		}

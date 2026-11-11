@@ -42,9 +42,11 @@
   GraphQL value cut after a backslash; a review found the query's own escaped
   quotes and block strings written inside JSON. GraphQL's GET variables
   (`?variables={"password":…}`), JSON in a URL parameter, are looked into too
-  (they were not in 0.2 either), as are arguments after a line break or a `#`
-  comment, and shapes hidden behind `\u` escapes in a JSON string (which
-  `diff_flows`, decoding, would have shown).
+  (they were not in 0.2 either, also after a space), as are arguments after a
+  line break or a `#` comment (before the colon too), escaped `"""` in block
+  strings, queries echoed back in responses, escaped strings in arrays, and shapes hidden behind `\u` escapes in a JSON string (which
+  `diff_flows`, decoding, would have shown). URL parameters written the way
+  Gson (Android) writes JSON, `=` as `\u003d` and `&` as `\u0026`, are found too.
 - Your `--mask-names` and `--mask-values` win over the built-in exceptions
   (an OpenTelemetry `key`, `WWW-Authenticate`, a cookie's attributes).
 - `Access-Control-Allow-Credentials` (only ever `true`) is no longer masked.

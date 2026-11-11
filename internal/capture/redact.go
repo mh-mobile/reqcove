@@ -25,7 +25,10 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 		return head
 	}
 	s := maskJSON(string(head), request, 0)
-	if request { // GraphQL documents go in requests; scanning every response's text for them was ~20x slower on script-heavy pages
+	// GraphQL documents go in requests, and come back in responses that echo
+	// them (errors, debug): a response is looked at only when it looks like one
+	// (scanning every script-heavy page made masking ~20x slower).
+	if request || strings.Contains(s, `"query"`) || strings.Contains(s, "mutation") || strings.Contains(s, "operationName") {
 		s = maskGraphQL(s, request)
 	}
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
@@ -64,7 +67,16 @@ func maskJSON(s string, loneCode bool, depth int) string {
 		}
 		j := skipSpace(s, keyEnd+1)
 		if j >= len(s) || s[j] != ':' {
-			i = keyEnd + 1 // a value or array element, not a key
+			// A value that is no field's: an array element, or the whole body.
+			// Escaped, it is looked at decoded too, as a field's value is.
+			if lit := s[keyStart : keyEnd+1]; depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && strings.Contains(lit, `\"`) {
+				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
+					b.WriteString(s[last:keyStart])
+					b.WriteString(m)
+					last = keyEnd + 1
+				}
+			}
+			i = keyEnd + 1
 			continue
 		}
 		j = skipSpace(s, j+1)
@@ -99,16 +111,11 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
-		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\u`) && !strings.Contains(s[j:valEnd], `\"`):
-			// \u escapes can hide a shape (\u0073k-… is sk-…): look at the
-			// string decoded, as diff_flows and the agent would read it.
-			if m, ok := maskEscapedString(s[j : valEnd+1]); ok {
-				b.WriteString(s[last:j])
-				b.WriteString(m)
-				last = valEnd + 1
-			}
-		case valClosed && depth == 0 && strings.Contains(s[j:valEnd], `\"`):
-			if m, ok := maskInJSONString(s[j:valEnd+1], loneCode); ok {
+		case valClosed && (depth == 0 && strings.Contains(s[j:valEnd], `\"`) || depth <= 1 && strings.Contains(s[j:valEnd], `\u`)):
+			// A string with escapes is looked at decoded, as diff_flows and the
+			// agent read it: JSON inside it (one level), and shapes and URLs that
+			// \u escapes can hide (\u0073k-… is sk-…), also with quotes around.
+			if m, ok := maskDecodedString(s[j:valEnd+1], loneCode, depth); ok {
 				b.WriteString(s[last:j])
 				b.WriteString(m)
 				last = valEnd + 1
@@ -153,37 +160,25 @@ func attributeName(name, value, after string) bool {
 // {"key": "http.method", "value": {...}}. A lone {"key": "live.a8f3…"} is a key.
 var valueNext = regexp.MustCompile(`^\s*,\s*"value"\s*:`)
 
-// maskInJSONString masks a JSON string literal whose text is JSON itself.
-func maskInJSONString(lit string, loneCode bool) (string, bool) {
-	var inner string
-	if json.Unmarshal([]byte(lit), &inner) != nil || !strings.ContainsAny(inner[:min(len(inner), 1)], "{[") {
-		return "", false
-	}
-	m := maskJSON(inner, loneCode, 1)
-	if m == inner {
-		return "", false
-	}
-	var out strings.Builder
-	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
-	enc.Encode(m)
-	return strings.TrimSuffix(out.String(), "\n"), true
-}
-
-// maskEscapedString masks the shapes and URLs in a JSON string literal read
-// decoded, and writes it again if anything was masked.
-func maskEscapedString(lit string) (string, bool) {
+// maskDecodedString masks a JSON string literal read decoded: the JSON in it
+// (at depth 0, one level down), then the shapes and URLs in it; written again
+// only if anything was masked.
+func maskDecodedString(lit string, loneCode bool, depth int) (string, bool) {
 	var v string
 	if json.Unmarshal([]byte(lit), &v) != nil {
 		return "", false
 	}
-	m := maskTokens(maskURLs(v))
+	m := v
+	if t := strings.TrimLeft(m, " \t\r\n"); depth == 0 && t != "" && strings.ContainsAny(t[:1], "{[") {
+		m = maskJSON(m, loneCode, 1)
+	}
+	m = maskTokens(maskURLs(m))
 	if m == v {
 		return "", false
 	}
 	var out strings.Builder
 	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false)
+	enc.SetEscapeHTML(false) // keep < > & as the site wrote them
 	enc.Encode(m)
 	return strings.TrimSuffix(out.String(), "\n"), true
 }
@@ -509,8 +504,9 @@ func maskCookies(v, sep string, oneCookie bool) string {
 // (some servers keep it in the value); another's is split at ';', so
 // "?view=1;token=" is seen too.
 // In bodies, a value also stops at a quote, < or > and a backslash (HTML
-// attributes, JSON strings), and JSON may write & as \u0026.
-var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)=([^&#\s"<>\\]*)`)
+// attributes, JSON strings), and JSON may write & as \u0026 and = as
+// \u003d (Gson, on Android, does).
+var queryRE = regexp.MustCompile(`([?&;#]|\\u0026)([^=&#;?/\s"<>\\]+)(?:=|\\u003[dD])([^&#\s"<>\\]*)`)
 
 // A URL's password (https://user:pass@host), also with JSON's escaped slashes
 // (https:\/\/user:pass@host, as PHP writes it).
@@ -524,7 +520,7 @@ func maskUserinfo(v string) string {
 }
 
 func maskURLs(v string) string {
-	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") {
+	if strings.IndexByte(v, '=') < 0 && !strings.Contains(v, "@") && !containsFold(v, `\u003d`) {
 		return v // no parameter, no password: skip the regexps (most of a 64 KiB JSON head)
 	}
 	return maskURLsAt(maskUserinfo(v), 0)
@@ -574,11 +570,11 @@ func jsonSecret(v string) bool {
 	if !strings.Contains(v, "%7B") && !strings.Contains(v, "%7b") && !strings.Contains(v, "{") && !strings.Contains(v, "%5B") && !strings.Contains(v, "[") {
 		return false
 	}
-	u := unescapeCut(v)
+	u := strings.TrimLeft(unescapeCut(v), " \t\r\n+") // + is a space in a query
 	if !strings.ContainsAny(u[:min(len(u), 1)], "{[") {
 		return false
 	}
-	return maskJSON(u, true, 1) != u
+	return maskJSON(u, true, 2) != u // depth 2: its strings are not decoded again, or nesting would be unbounded (each level a full rescan)
 }
 
 // graphQLSecret: a URL parameter's value is a GraphQL document (GET
