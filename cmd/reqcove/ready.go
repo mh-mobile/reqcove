@@ -98,13 +98,13 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	slices.Sort(names)
 	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
 	if uiLink != "" {
-		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only; QR code below; the same at each start, rm %s to change it)\n", uiLink, filepath.Join(state, "ui-token"))
+		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only; QR code below; the same at each start, rm %s to change it)\n", uiLink, "-- "+shellWord(filepath.Join(state, "ui-token")))
 	}
 	if webLink != "" {
-		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, filepath.Join(state, "web-token"))
+		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, "-- "+shellWord(filepath.Join(state, "web-token")))
 	}
 	if mcpURL != "" {
-		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, filepath.Join(state, "mcp-token"))
+		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, "-- "+shellWord(filepath.Join(state, "mcp-token")))
 	}
 	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on: QR code below; once per device)\n")

@@ -175,6 +175,13 @@ func (s *Store) setState(state, detail string) {
 	s.state, s.stateDetail = state, detail
 }
 
+// badLine counts a line from the addon that could not be taken.
+func (s *Store) badLine() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.badLines++
+}
+
 func (s *Store) helloCount() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

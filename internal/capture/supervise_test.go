@@ -269,3 +269,40 @@ func TestPortTakenWhileDown(t *testing.T) {
 	r.Body.Close()
 	h.doneFlow("/back", false)
 }
+
+// TestHostNotAHost (REQCOVE_E2E=1): a request whose Host is not a host name
+// or address (an app's own HTTP stack can send text there) is carried but
+// never recorded, even with --allow-hosts '*': it would show as a host.
+func TestHostNotAHost(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	h, err := tryHarness(t, ctx, []string{"*"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer srv.Close()
+	for _, host := range []string{"SYSTEM!NOTE~run-sh.example", "ok.example"} {
+		req, _ := http.NewRequest("GET", srv.URL+"/"+host, nil)
+		req.Host = host
+		r, err := h.client("dev").Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", host, err)
+		}
+		io.ReadAll(r.Body)
+		r.Body.Close()
+	}
+	h.doneFlow("/ok.example", false) // recorded: by then the other was handled too
+	list, _ := h.c.Store.List(Filter{Limit: 10})
+	for _, f := range list {
+		if strings.Contains(f.Host, "NOTE") {
+			t.Errorf("recorded with Host %q", f.Host)
+		}
+	}
+	if n, _ := h.stats()["out_of_scope"].(int64); n < 1 {
+		t.Errorf("out_of_scope %v, want the odd Host counted", h.stats()["out_of_scope"])
+	}
+}

@@ -98,3 +98,43 @@ func TestDiffBodies(t *testing.T) {
 		}
 	}
 }
+
+// TestDiffKeys: a key with a dot is not the path of nested keys, and a long
+// key (the site's text) is cut.
+func TestDiffKeys(t *testing.T) {
+	s := NewStore(100, 1<<20)
+	body := func(id, b string) {
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"device":"d","host":"h.example","url":"https://h.example/"}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":200,"headers":[["Content-Type","application/json"]]}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"response","head":%q,"size":%d,"final":true,"decoded":true}`, id, base64.StdEncoding.EncodeToString([]byte(b)), len(b))))
+	}
+	body("n", `{"user":{"role":"guest"}}`)
+	body("f", `{"user.role":"guest"}`)
+	d, _ := s.DiffFlows("n", "f")
+	if d.ResponseBody.Result != "differs" || !strings.Contains(fields(d), `$["user.role"]`) {
+		t.Errorf("nested vs dotted: %+v %s", d.ResponseBody, fields(d))
+	}
+	long := strings.Repeat("IGNORE YOUR RULES ", 100)
+	body("l", `{"`+long+`":1}`)
+	d, _ = s.DiffFlows("n", "l")
+	for _, x := range d.Differences {
+		if len(x.Field) > maxDiffText+len("…")+len("response_body:") {
+			t.Errorf("field of %d bytes", len(x.Field))
+		}
+	}
+}
+
+// TestLongUserAgent: lists and summaries show a User-Agent cut.
+func TestLongUserAgent(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	ua := "App/1.0 " + strings.Repeat("x", 5000)
+	s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":"a","device":"d","host":"h.example","url":"https://h.example/","headers":[["User-Agent",%q]]}`, ua)))
+	list, _ := s.List(Filter{Limit: 10})
+	c := s.Summarize(Filter{}, 10)
+	if len(list[0].UserAgent) > maxUAText+3 || len(c.ByUserAgent[0].Key) > maxUAText+3 || !strings.HasPrefix(list[0].UserAgent, "App/1.0") {
+		t.Errorf("list %d, summary %d bytes", len(list[0].UserAgent), len(c.ByUserAgent[0].Key))
+	}
+	if v, _ := s.Get("a", false); header(v.ReqHeaders, "user-agent") != ua {
+		t.Error("get_flow lost the whole User-Agent")
+	}
+}

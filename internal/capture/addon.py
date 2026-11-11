@@ -37,6 +37,7 @@ import ruamel.yaml  # mitmproxy's own dependency
 from mitmproxy import connection, ctx, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
+from mitmproxy.net import check
 from mitmproxy.net.tls import starts_like_tls_record
 from mitmproxy.proxy.layers import tcp as tcp_layer
 from mitmproxy.proxy.layers.tls import parse_client_hello
@@ -105,7 +106,7 @@ class _Decoder:
         elif enc == "zstd" and zstd is not None:
             self.d = zstd.ZstdDecompressor()
         elif enc not in ("", "identity"):
-            raise ValueError("cannot decode " + enc)
+            raise ValueError("cannot decode Content-Encoding " + json.dumps(enc))  # quoted: the site's text
         self.raw_deflate_tried = False
 
     def feed(self, data, limit):
@@ -215,8 +216,24 @@ def _parse_rule(kind, spec, base):
     if replacement.startswith("@"):
         replacement = "@" + str(base / Path(replacement[1:]).expanduser())
     rule = modifyheaders.ModifySpec(flt, strutils.escaped_str_to_bytes(subject), replacement)
-    rule.read_replacement()  # a missing @file fails now, not on the first flow
+    if not HEADER_NAME.match(rule.subject):
+        raise RuleError("the header name must be a plain token (letters, digits, - and the like)")
+    if BAD_IN_VALUE.search(rule.read_replacement()):  # a missing @file fails now too, not on the first flow
+        raise RuleError("a header value cannot hold a line break or NUL")
     return rule
+
+
+class RuleError(ValueError):
+    """A rule refused by reqcove itself: its message quotes nothing of the rule."""
+
+
+# HTTP header syntax: a name is a token; a value has no CR, LF or NUL (they
+# would start a header of their own on the wire).
+HEADER_NAME = re.compile(rb"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+BAD_IN_VALUE = re.compile(rb"[\r\n\x00]")
+
+
+HOST_NAME = re.compile(r"^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)*$")
 
 
 class Resolve:
@@ -234,7 +251,9 @@ class Resolve:
     def add(self, spec):
         name, sep, target = spec.partition("=")
         name = name.strip().lower().rstrip(".")
-        if not sep or not name or any(c in name for c in "*/:@ ") or name == "mitm.it":
+        # A host name only (no wildcard, address or control characters): it is
+        # shown in run's log and in errors.
+        if not sep or not HOST_NAME.match(name) or name == "mitm.it":
             raise ValueError("write name=IPv4 or name=IPv4:port, one exact host name")
         ip, _, port = target.strip().partition(":")
         try:
@@ -306,6 +325,8 @@ def load_rules(path):
         for i, spec in enumerate(specs):
             try:
                 addon.replacements.append(_parse_rule(kind, spec, Path(path).parent))
+            except RuleError as e:
+                raise ValueError(f"{kind}[{i}]: {e}") from None
             except Exception as e:
                 # Only the error's kind: mitmproxy's messages quote the filter, the
                 # regex or the value, and any of them can carry a token. They go
@@ -541,7 +562,9 @@ class Reqcove:
         self._put(msg, size)
 
     def requestheaders(self, flow):
-        if not self._in_scope(flow.request.pretty_host):
+        # A Host that is no host name or address (an app's own HTTP stack can
+        # send any text there) is never recorded: it would show as a host.
+        if not check.is_valid_host(flow.request.pretty_host) or not self._in_scope(flow.request.pretty_host):
             # allow_hosts works per connection, so a connection to an allowed host
             # can carry requests to others (HTTP/2 coalescing). Pass them through.
             flow.metadata["reqcove_skip"] = True
@@ -641,6 +664,11 @@ class Reqcove:
         mh = rules["modify_headers"]
         names = [s.subject.decode(errors="replace") for s in mh.replacements if s.matches(flow)]
         mh.run(flow, headers)
+        # An @file is read again for each flow: one changed since it was
+        # checked must not put a line break into the headers either.
+        if any(BAD_IN_VALUE.search(v) for _, v in headers.fields):
+            headers.fields = tuple((k, v) for k, v in headers.fields if not BAD_IN_VALUE.search(v))
+            names.append("(a header with a line break dropped)")
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
 
     def request(self, flow):
@@ -767,7 +795,8 @@ class Reqcove:
         layer = tcp_layer.TCPLayer(nl.context, ignore=False)
         layer.flow.metadata["reqcove_pass"] = {
             "device": self.conn_device.get(nl.context.client.id), "sni": sni, "up": 0, "down": 0,
-            "alpn": [a.decode(errors="replace")[:64] for a in hello.alpn_protocols[:8]],
+            # The client's own bytes: printable ASCII only, cut (protocol ids are short).
+            "alpn": ["".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32] for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
 

@@ -156,11 +156,15 @@ func (s *Store) List(q Filter) ([]Summary, int64) {
 	return out, 0
 }
 
+// maxUAText is how much of a User-Agent lists and summaries show (get_flow
+// has it whole): an app can send a long one, and an agent reads each.
+const maxUAText = 256
+
 // summary: the caller holds s.mu (s.names).
 func (s *Store) summary(f *Flow) Summary {
 	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL,
 		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error,
-		ContentType: header(f.RespHeaders, "content-type"), UserAgent: header(f.ReqHeaders, "user-agent"),
+		ContentType: header(f.RespHeaders, "content-type"), UserAgent: cutTo(header(f.ReqHeaders, "user-agent"), maxUAText),
 		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}
 	if f.Start > 0 {
 		v.Time = unixTime(f.Start).Format("2006-01-02T15:04:05.000Z07:00")
@@ -224,7 +228,7 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 			device = f.Device
 		}
 		add("host", strings.ToLower(f.Host))
-		add("ua", header(f.ReqHeaders, "user-agent"))
+		add("ua", cutTo(header(f.ReqHeaders, "user-agent"), maxUAText))
 		add("status", status)
 		add("method", strings.ToUpper(f.Method))
 		add("device", device)
