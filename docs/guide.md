@@ -553,9 +553,9 @@ other protocols going straight to their servers.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--uvx PATH` | the uvx to run |
-| `--python VERSION` | the Python uvx fetches, 3.14 by default |
-| `--mitmproxy-spec SPEC` | the mitmproxy uvx fetches, `mitmproxy==12.3.1` by default |
+| `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked) |
+| `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
+| `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
 
 The other commands (all but `init` and `version` take `--state DIR` too):
 

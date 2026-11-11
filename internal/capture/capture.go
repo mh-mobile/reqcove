@@ -31,6 +31,33 @@ import (
 //go:embed addon.py
 var addonPy []byte
 
+// mitm.py and its lock run mitmproxy from exactly the files the lock names,
+// hashes checked (uv run --locked; uvx checks none).
+//
+//go:embed mitm.py
+var mitmPy []byte
+
+//go:embed mitm.py.lock
+var mitmLock []byte
+
+// scriptFiles are what Start writes into the state directory for mitmproxy.
+var scriptFiles = []string{"addon.py", "mitm.py", "mitm.py.lock"}
+
+// LockedMitmSpec is the mitmproxy that mitm.py.lock pins. With another
+// --mitmproxy-spec, mitmproxy comes through uvx, its files unchecked.
+const LockedMitmSpec = "mitmproxy==12.3.1"
+
+// PyCommand is how to run tool (mitmdump, mitmweb, or python) for cfg: from
+// the lock with the uv beside uvx, or with uvx --from for another spec, or for
+// a --uvx not named uvx (a wrapper, whose uv is not known).
+func PyCommand(cfg Config, tool string) (string, []string) {
+	if cfg.MitmSpec == LockedMitmSpec && filepath.Base(cfg.Uvx) == "uvx" {
+		uv := filepath.Join(filepath.Dir(cfg.Uvx), "uv") // "uv" itself when uvx is on PATH
+		return uv, []string{"run", "--locked", "--no-project", "--python", cfg.Python, "--script", filepath.Join(cfg.Dir, "mitm.py"), tool}
+	}
+	return cfg.Uvx, []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+}
+
 // Apple's services fail on HTTPS interception
 // (https://support.apple.com/en-us/101555), so these pass through undecrypted.
 // The same list as docs/apple-ignore-hosts.txt.
@@ -97,6 +124,7 @@ type Capture struct {
 	CA          CA     // the CA iPhones must trust
 
 	cfg    Config
+	bin    string // uv, or uvx
 	args   []string
 	ln     net.Listener
 	cancel context.CancelFunc
@@ -151,12 +179,16 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		ln.Close()
 		os.Remove(sock)
 		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
-		os.Remove(filepath.Join(cfg.Dir, "addon.py"))
+		for _, f := range scriptFiles {
+			os.Remove(filepath.Join(cfg.Dir, f))
+		}
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
-	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
-		return fail(err)
+	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+		if err := os.WriteFile(filepath.Join(cfg.Dir, f), b, 0o600); err != nil {
+			return fail(err)
+		}
 	}
 	port, err := freePort()
 	if err != nil {
@@ -209,17 +241,18 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if cfg.WebPort != 0 {
 		tool = "mitmweb"
 	}
-	c.args = []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool,
+	c.bin, c.args = PyCommand(cfg, tool)
+	c.args = append(c.args,
 		"--mode", "socks5", "--listen-host", "127.0.0.1", "--listen-port", fmt.Sprint(port),
-		"--set", "confdir=" + cfg.Confdir,
+		"--set", "confdir="+cfg.Confdir,
 		"--set", "proxyauth=any",
 		// Bodies stream through the addon's callables; store_streamed_bodies
 		// would buffer them in mitmproxy anyway. -q equivalent: errors only.
 		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
 		"--set", fmt.Sprintf("reqcove_body_head=%d", cfg.BodyHead),
-		"-s", addon, "--set", "reqcove_socket=" + sock,
-		"--set", "reqcove_secret_file=" + secretFile,
-		"--set", "reqcove_allow_hosts=" + string(allowJSON)}
+		"-s", addon, "--set", "reqcove_socket="+sock,
+		"--set", "reqcove_secret_file="+secretFile,
+		"--set", "reqcove_allow_hosts="+string(allowJSON))
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
 		if cfg.RulesReload {
@@ -262,7 +295,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 // spawn starts one mitmdump and waits for its addon's hello.
 func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
-	p := &proc{cmd: exec.Command(c.cfg.Uvx, c.args...), done: make(chan struct{})}
+	p := &proc{cmd: exec.Command(c.bin, c.args...), done: make(chan struct{})}
 	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
 	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1") // mitmproxy.log as it happens, not when Python's buffer fills
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -406,7 +439,9 @@ func (c *Capture) Stop() {
 	os.Remove(c.ln.Addr().String())
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
-	os.Remove(filepath.Join(c.cfg.Dir, "addon.py"))
+	for _, f := range scriptFiles {
+		os.Remove(filepath.Join(c.cfg.Dir, f))
+	}
 	if c.WebURL != "" {
 		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
 	}
@@ -539,7 +574,8 @@ func ensureCA(ctx context.Context, cfg Config) error {
 	if err := os.MkdirAll(cfg.Confdir, 0o700); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, cfg.Uvx, "--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, "python", "-c", py, cfg.Confdir, cfg.CAName)
+	bin, args := PyCommand(cfg, "python")
+	cmd := exec.CommandContext(ctx, bin, append(args, "-c", py, cfg.Confdir, cfg.CAName)...)
 	cmd.Stdout, cmd.Stderr = cfg.Log, cfg.Log
 	return cmd.Run()
 }

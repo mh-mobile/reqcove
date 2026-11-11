@@ -427,10 +427,18 @@ entries in a parent can swap the state directory for their own.
 
 ## mitmproxy's own code
 
-mitmproxy runs through `uvx` at a fixed version, with its dependencies resolved
-only from releases before a fixed date (`--exclude-newer`), so a dependency
-released later, a compromised one included, is not picked up. They are not
-pinned by hash.
+mitmproxy and its dependencies (44 packages) come from a lock file built into
+reqcove (`internal/capture/mitm.py.lock`): `run` writes it and a small
+launcher into the state directory and starts mitmproxy with
+`uv run --locked --script`, which installs exactly the files the lock names
+and checks each one's hash (tried: a lock with one package's hashes changed was
+refused, with an empty cache and with a full one). Plain `uvx`, which checks no
+hash even when given them (tried), is used only for another
+`--mitmproxy-spec`, from releases before a fixed date (`--exclude-newer`). CI
+checks that the lock matches the launcher and audits it for known
+vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
+mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
+overrides it to 6.6, which fixes them (mitmweb's tests pass with it).
 
 ## The exit node's DNS
 

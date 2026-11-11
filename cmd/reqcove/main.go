@@ -136,7 +136,7 @@ func other(name string) error {
 // The mitmproxy and Python run uses, unless told otherwise; the Dockerfile
 // fetches the same (TestDockerfileInStep).
 const (
-	defaultMitmSpec = "mitmproxy==12.3.1"
+	defaultMitmSpec = capture.LockedMitmSpec
 	defaultPython   = "3.14"
 )
 
@@ -182,7 +182,7 @@ func run(ctx context.Context, args []string) error {
 	dnsFlag := fs.String("dns", "1.1.1.1:53", `exit node DNS upstreams, comma-separated; "system" for the first nameserver in /etc/resolv.conf`)
 	mitmSpec := fs.String("mitmproxy-spec", defaultMitmSpec, "uvx --from spec for mitmproxy")
 	python := fs.String("python", defaultPython, "Python for uvx")
-	uvx := fs.String("uvx", "uvx", "path to uvx")
+	uvx := fs.String("uvx", "uvx", "path to uvx (uv beside it runs the default mitmproxy from its lock, hashes checked)")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
 	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token run prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")

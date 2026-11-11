@@ -31,8 +31,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && install -d -o 65532 -g 65532 -m 0700 /home/nonroot/.reqcove
 ENV HOME=/home/nonroot UV_CACHE_DIR=/opt/uv/cache UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_PYTHON_PREFERENCE=only-managed
 USER 65532:65532
-# reqcove's own: --python 3.14, uvExcludeNewer, --mitmproxy-spec.
-RUN uvx --python 3.14 --exclude-newer 2026-11-08T00:00:00Z --from mitmproxy==12.3.1 mitmdump --version \
+# As run starts mitmproxy: its launcher and lock in the state directory, then
+# uv run --locked (hashes checked). uv keys the environment by the script's
+# path, so this is the path run writes them to; run writes them again.
+COPY --chown=65532:65532 internal/capture/mitm.py internal/capture/mitm.py.lock /home/nonroot/.reqcove/
+RUN uv run --locked --no-project --python 3.14 --script /home/nonroot/.reqcove/mitm.py mitmdump --version \
+ && rm /home/nonroot/.reqcove/mitm.py /home/nonroot/.reqcove/mitm.py.lock \
  && test ! -e /home/nonroot/.mitmproxy
 # uv's entry points start with #!/bin/sh and a line of shell that runs the
 # env's python (a trampoline), and distroless has no shell: point them at that
