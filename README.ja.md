@@ -4,13 +4,13 @@
 [![release](https://img.shields.io/github/v/release/mh-mobile/reqcove)](https://github.com/mh-mobile/reqcove/releases)
 [![license](https://img.shields.io/github/license/mh-mobile/reqcove)](LICENSE)
 
-iPhone の HTTP(S) 通信を、手元にあっても離れた場所にあっても、AI エージェントに渡すツールです。
+iPhone の HTTP(S) 通信を、iPhone が手元にあっても離れた場所にあっても、AI エージェントに渡すツールです。
 
 Reqcove（レクコーブ）という名称は、request（リクエスト）と cove（入り江）を組み合わせた造語です。リクエストが集まる入り江、というイメージです。
 
 [English](README.md)
 
-iPhone は、あなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は、Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
+iPhone はあなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
 
 ```text
 iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ インターネット
@@ -38,7 +38,7 @@ Homebrew で入れます（macOS と Linux。ソースからビルドし、uv �
 brew install mh-mobile/tap/reqcove
 ```
 
-[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリをダウンロードして使うこともできます（Apple シリコンの macOS、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは、Developer ID で署名し、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
+[Releases](https://github.com/mh-mobile/reqcove/releases) からバイナリをダウンロードして使うこともできます（Apple シリコンの macOS、Linux の amd64 と arm64）。その場合、uv は自分で入れてください。macOS のバイナリは Developer ID で署名してあり、Apple の公証（notarization）を受けています。ブラウザでダウンロードしたものも、そのまま動きます。
 
 ソースからビルドすることもできます（Go 1.27）。
 
@@ -47,7 +47,7 @@ git clone https://github.com/mh-mobile/reqcove && cd reqcove
 go build -o reqcove ./cmd/reqcove
 ```
 
-できた `reqcove` は、`PATH` の通ったディレクトリに置いてください（または `./reqcove` として実行します）。
+できた `reqcove` は `PATH` の通ったディレクトリに置いてください（または `./reqcove` として実行します）。
 
 `go install …@version` は使えません。Reqcove は Tailscale の tsnet の fork を `replace` ディレクティブで使っているためです。
 
@@ -61,8 +61,8 @@ go build -o reqcove ./cmd/reqcove
 
    初回はログイン用の URL が表示され、続けてほかに必要なこと（Exit Node の承認、Tailnet Lock）が表示されます。不足しているものは `reqcove status` でいつでも確認できます。
 2. iPhone の Tailscale アプリで、Exit Node に `reqcove` を選びます。
-3. 同じく iPhone で、Reqcove の CA を信頼します。`reqcove run` が表示する QR コードをカメラで読み（または Safari で `http://mitm.it` を、`http://` から入力して開き）、プロファイルをインストールして（設定 › プロファイルがダウンロード済み）、設定 › 一般 › 情報 › 証明書信頼設定 で信頼します（名前は `Reqcove CA (<コンピュータ名>, <日付>)`）。
-4. エージェントに、MCP ツールと、その使い方を教える Skill を入れます。Claude Code の場合：
+3. 同じく iPhone で、Reqcove の CA を信頼します。`reqcove run` が表示する QR コードをカメラで読むか、Safari で `http://mitm.it` を `http://` から入力して開きます。「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します（名前は `Reqcove CA (<コンピュータ名>, <日付>)`）。
+4. エージェントに、MCP ツールと、その使い方を教える Skill を入れます。Claude Code の場合は次のとおりです。
 
    ```sh
    claude mcp add reqcove -- reqcove mcp
@@ -71,7 +71,7 @@ go build -o reqcove ./cmd/reqcove
 
    あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
-エージェントは、`summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。RoamRun などで iPhone を操作したあとは、その操作で送られたリクエストを `wait_for_flows` で待って受け取れます。`reqcove cleanup` は、すべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
+エージェントは `summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。RoamRun などで iPhone を操作したあとは、その操作で送られたリクエストを `wait_for_flows` で待って受け取れます。`reqcove cleanup` はすべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
 
 ### オプション
 
@@ -95,10 +95,10 @@ go build -o reqcove ./cmd/reqcove
 
 ## セキュリティ
 
-- 記録するのは、`--allow-hosts` のホストへのリクエストだけです。ただし、許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあり（HTTP/2 の接続の再利用）、それも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` に転送されることがあります。Apple のホストへの接続は、常に復号せずに通します。
+- 記録するのは `--allow-hosts` のホストへのリクエストだけです。ただし、許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあり（HTTP/2 の接続の再利用）、それも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` に転送されることがあります。Apple のホストへの接続は常に復号せずに通します。
 - Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません**（`--mask-names` や `--mask-values` で足せます）。メールアドレスなどの個人情報もマスクしません。
-- エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、エージェントに指示しようとすることがあります。
-- Exit Node は、このコンピュータ、LAN、tailnet を宛先として拒否します。
+- エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、サイトがその中でエージェントに指示しようとすることがあります。
+- Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
 
 詳しくは [docs/SECURITY.md](docs/SECURITY.md) を見てください（英語）。
 
@@ -108,7 +108,7 @@ go build -o reqcove ./cmd/reqcove
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
 - IPv6 は拒否し、QUIC は（Apple 宛て以外）ドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
-- iPhone が使用中に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。
+- iPhone が使っている間に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。
 - コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません。
 
 ほかの制限事項は[ガイド](docs/guide.ja.md#制限事項)にあります。
