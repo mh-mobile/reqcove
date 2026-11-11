@@ -5,7 +5,8 @@
 - While mitmdump restarts, the devices' connections wait for it (15 seconds at
   most) instead of being sent to its SOCKS port, which another local process
   could have taken meanwhile; mitmproxy is used again only once its addon says
-  hello, which a mitmproxy that could not bind the port never does (a test).
+  hello, which a mitmproxy that could not bind the port never does (a test). The
+  milliseconds between its death and reqcove noticing it remain (SECURITY.md).
 
 ## v0.2.0 — 2026-11-11
 

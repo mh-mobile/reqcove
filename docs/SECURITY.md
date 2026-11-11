@@ -355,9 +355,10 @@ mitmdump dies, reqcove starts it again on the same port (visible in `ps`), and
 meanwhile another user's process on this computer could take the port. The
 devices' connections then wait (15 seconds at most, then fail) until the new
 mitmdump's addon says hello, which mitmproxy (12.3.1) does only once it
-listens: one that cannot bind the port exits first, and is started again
-(a test: another process holding the port across restarts gets no
-connection, and mitmdump comes back once it is free). One gap remains: between
+listens: one that cannot bind the port exits first, and is started again.
+Tests: while another process holds the port, the restarted mitmdump never
+becomes ready, and comes back once the port is free; while it is not ready, no
+connection is sent to the port. One gap remains, from reading code: between
 mitmdump's death and reqcove noticing it (milliseconds), a connection can
 still be sent to the free port; whoever took it in that moment would get the
 SOCKS password and that connection: plain HTTP readable, HTTPS not. On a
