@@ -545,7 +545,7 @@ func run(ctx context.Context, args []string) error {
 	err = withSystemProxy(*state, *localProxy, func() error {
 		return exitnode.Run(ctx, exitnode.Config{
 			Dir: filepath.Join(*state, "tsnet"), Hostname: hostname, DNS: dns,
-			Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, ProxyPort: *proxyPort, Verbose: *verbose,
+			Devices: devices, SocksAddr: cap.SocksAddr, SocksSecret: cap.SocksSecret, SocksReady: cap.WaitReady, ProxyPort: *proxyPort, Verbose: *verbose,
 			UI:         pageFn,
 			Web:        webAddr,
 			MCP:        mcpHandler,
