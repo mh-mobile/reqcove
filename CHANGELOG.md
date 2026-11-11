@@ -9,6 +9,15 @@
   the answer's `after` on), even when they finish out of order; one that never
   ends (SSE, a long poll) holds nothing up. Up to 30 seconds a call; at most 16
   waits at once.
+- Masking: `--mask-names a,b` treats your own names as secret (headers,
+  parameters, JSON fields, GraphQL arguments; any spelling), and
+  `--mask-values RE` masks a pattern's matches wherever they are (the
+  `key=…` seen in a bank app's User-Agent). Both `@FILE` too; errors never
+  quote a pattern; `capture_stats` counts the matches.
+- Masking: string arguments with secret names in GraphQL documents
+  (`login(password: "…")`, in JSON, raw, or a GET `?query=`), and URLs
+  encoded twice or three times inside a parameter. A fuzz test found the
+  latter, and a GraphQL value cut after a backslash.
 - `diff_flows` (MCP): two flows compared: method, URL, status, error,
   headers by name, bodies (JSON by path). Values masked on both sides are
   listed as masked, never as equal; bodies that are not text are not

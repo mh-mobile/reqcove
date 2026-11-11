@@ -126,8 +126,9 @@ All of them: [the guide](docs/guide.md#options).
   undecrypted.
 - The secrets Reqcove recognises (tokens, keys, cookies, passwords) are masked
   as they arrive. **Other
-  secrets in a body, under names that do not say so, are not found**, and
-  personal data such as e-mail addresses is not masked.
+  secrets in a body, under names that do not say so, are not found** (add
+  yours with `--mask-names` or `--mask-values`), and personal data such as
+  e-mail addresses is not masked.
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.

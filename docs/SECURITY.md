@@ -120,11 +120,27 @@ So "delete the directory" above means each of them.
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
   Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
   error), with only such shapes masked.
+  String arguments with such names in a GraphQL document are masked too
+  (`login(password: "…")`), in a JSON string (the usual `{"query": …}`), a raw
+  body or a GET `?query=` (the parameter's value whole), block strings included.
+  A URL inside a parameter is looked into also when encoded two or three times.
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
-  a value cut before its closing quote is masked too.
+  a value cut before its closing quote is masked too (a fuzz test, over these
+  shapes and cut anywhere: it found the twice-encoded URL and a GraphQL value
+  cut after a backslash, both fixed).
+- Your own rules, fixed at start: `--mask-names` adds names treated as secret
+  wherever names count (any spelling: `clientRef` covers `client_ref` and
+  `Client-Ref`), before the built-in exceptions. `--mask-values` adds RE2
+  patterns whose matches are masked wherever they appear (a header of any
+  name, a User-Agent's `key=…` among them, URLs, bodies, error text); at most
+  32 of 512 bytes, none that matches empty text. Errors name a pattern by its
+  number, never its text; a pattern on the command line shows in `ps`, so a
+  literal secret belongs in an `@FILE`. `capture_stats` counts the matches per
+  name and per pattern number (a value can count more than once). Both do
+  nothing with `--no-redact` (`run` warns). (Tests.)
 - **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`), in arrays, in GraphQL arguments written into the query
-  text (`login(password: "…")`), or in formats other than JSON, forms and text
+  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
+  in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
   (protobuf, multipart, XML elements and attributes). Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it

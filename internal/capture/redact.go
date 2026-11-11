@@ -24,7 +24,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if len(head) == 0 || !utf8.Valid(trimCutRune(head)) {
 		return head
 	}
-	s := maskJSON(string(head), request, 0)
+	s := maskGraphQL(maskJSON(string(head), request, 0), request)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
@@ -280,8 +280,9 @@ func maskTokens(s string) string {
 	return maskShapes(s)
 }
 
-// maskShapes masks the tokenShapes only.
+// maskShapes masks the tokenShapes, and the matches of --mask-values.
 func maskShapes(s string) string {
+	s = maskUserValues(s)
 	for _, t := range tokenShapes {
 		for _, p := range t.prefixes {
 			if strings.Contains(s, p) {
@@ -360,6 +361,9 @@ func secretKind(name string, loneCode bool) bool {
 		}
 		return -1
 	}, lower)
+	if userName(flatName(name)) {
+		return true
+	}
 	if notSecretNames[flat] {
 		return false
 	}
@@ -509,7 +513,7 @@ func maskURLsAt(v string, depth int) string {
 		// The value up to ';' is this name's; each ';name=value' after it is
 		// looked at once, in one pass (recursing on the rest was quadratic).
 		pieces := strings.Split(sub[3], ";")
-		if nestedSecret(pieces[0], depth) {
+		if nestedSecret(pieces[0], depth) || graphQLSecret(pieces[0]) {
 			pieces[0] = "REDACTED"
 		}
 		for i := 1; i < len(pieces); i++ {
@@ -528,6 +532,16 @@ func maskURLsAt(v string, depth int) string {
 		}
 		return sub[1] + sub[2] + "=" + strings.Join(pieces, ";")
 	})
+}
+
+// graphQLSecret: a URL parameter's value is a GraphQL document (GET
+// ?query=…) with a secret argument in it.
+func graphQLSecret(v string) bool {
+	if !strings.Contains(v, "%28") && !strings.Contains(v, "(") {
+		return false
+	}
+	u := unescapeCut(v)
+	return maskGraphQL(u, true) != u
 }
 
 // unescapeCut is url.QueryUnescape for text that may be cut inside a %XX
@@ -551,6 +565,13 @@ func nestedSecret(v string, depth int) bool {
 		return false
 	}
 	inner := unescapeCut(v)
+	// Encoded more than once (a redirect's redirect): decode again, twice at most.
+	for range 2 {
+		if strings.ContainsAny(inner, "?=@") || !strings.Contains(inner, "%") {
+			break
+		}
+		inner = unescapeCut(inner)
+	}
 	if !strings.ContainsAny(inner, "?=@") {
 		return false
 	}
