@@ -1,0 +1,86 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/mh-mobile/reqcove/internal/capture"
+)
+
+// hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
+// a port, saying so: only hosts are matched, not schemes, paths or ports.
+// hostList is a --allow-hosts or --pass-hosts value: as given, or with @FILE
+// the hosts in the file, one a line (or comma-separated), # starting a
+// comment. @~/ is the home directory: the shell expands no ~ after @.
+func hostList(v string) (string, error) {
+	path, ok := strings.CutPrefix(v, "@")
+	if !ok {
+		return v, nil
+	}
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, rest)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err // the flag package names the flag and the value
+	}
+	var hosts []string
+	for i, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		// Checked here, by line number only: a wrong file (.env, say) must not
+		// have its lines, secrets maybe, printed back.
+		for _, h := range strings.Split(line, ",") {
+			if _, err := capture.ParseAllowHosts([]string{hostOf(strings.TrimSpace(h))}); err != nil {
+				return "", fmt.Errorf("%s line %d is not a host list (one host a line, as the flag writes them)", path, i+1)
+			}
+		}
+		hosts = append(hosts, line)
+	}
+	if len(hosts) == 0 {
+		return "", fmt.Errorf("%s has no hosts", path)
+	}
+	return strings.Join(hosts, ","), nil
+}
+
+// hostOf is the host in a value given for one: a URL's, or host:port's.
+func hostOf(h string) string {
+	if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	if hh, port, err := net.SplitHostPort(h); err == nil && port != "" {
+		return hh
+	}
+	return h
+}
+
+func hostsOnly(flagName string, specs []string) []string {
+	var out []string
+	for _, spec := range specs {
+		var hosts []string
+		for _, h := range strings.Split(spec, ",") {
+			h = strings.TrimSpace(h)
+			host, shown := hostOf(h), h
+			if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
+				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
+			}
+			if host != h {
+				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
+			}
+			hosts = append(hosts, host)
+		}
+		out = append(out, strings.Join(hosts, ","))
+	}
+	return out
+}
