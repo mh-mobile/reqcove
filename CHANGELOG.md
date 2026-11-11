@@ -6,7 +6,8 @@
 
 - Response mocks: a `mock:` rule in the `--rules` file answers a request
   (method, URL exact or by prefix, GraphQL operation) with a status, headers
-  and a body (inline or a file, at most 1 MiB), before the other rules; the
+  and a body (inline or a file, at most 1 MiB), before `map_remote` and
+  `map_local` (request `modify_headers` rules apply first); the
   request is not sent to the server (for HTTPS, mitmproxy may have connected
   to it already, to read its certificate). One it would have to hold but
   cannot (a length over 1 MiB, a POST of unknown length) goes on, its
@@ -20,9 +21,10 @@
   without the query, with segments of digits only or a UUID as `{id}`, then
   a GraphQL operation (`POST api.example.com/graphql Login`).
 - Rows (`list_flows`, `search_flows`, `wait_for_flows`) and `get_flow` carry
-  a GraphQL request's `operation`: its `operationName` (JSON or
-  `?operationName=`), else its document's first operation, `(anonymous)` or
-  `(batched)`; a name GraphQL does not allow is not shown. A filter
+  a GraphQL request's `operation`, as mocks read it: the URL's
+  (`?operationName=`, else the `?query=` document's), else Apollo's
+  `X-APOLLO-OPERATION-NAME` header, else the body's (`operationName`, else
+  its document's first operation); `(anonymous)` or `(batched)`; a name GraphQL does not allow is not shown. A filter
   `operation` selects them. Worked out from the masked request as it arrives.
 
 ### Masking
