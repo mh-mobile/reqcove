@@ -279,24 +279,97 @@ class Resolve:
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
+GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
+GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
+GQL_BLOCK = re.compile(r'"""(?:\\"""|[\s\S])*?(?:"""|\Z)')
+GQL_STRING = re.compile(r'"(?:[^"\\\n\r]|\\[\s\S])*(?:"|\Z)')
 # GraphQL tokens, for the first operation: read once, front to back (a pattern
 # searched from every "}" read the rest again from each: quadratic).
 GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
+
+
+def _head(doc, limit=5):
+    """doc's first limit tokens as (kind, text), and whether all of doc fits
+    in fewer; None at a character GraphQL does not allow or a line break in a
+    string, with the tokens before it. As reqcove's Go lexes (gqlLex)."""
+    toks, i, n = [], 0, len(doc)
+    while i < n:
+        c = doc[i]
+        if c in " \t\n\r,\ufeff":
+            i += 1
+            continue
+        if c == "#":
+            while i < n and doc[i] not in "\n\r":
+                i += 1
+            continue
+        if len(toks) == limit:
+            return toks, False
+        if c == "_" or "A" <= c <= "Z" or "a" <= c <= "z":
+            m = GQL_NAME_RUN.match(doc, i)
+            toks.append(("n", m.group()))
+            i = m.end()
+        elif c == "-" or "0" <= c <= "9":
+            i = GQL_NUMBER_RUN.match(doc, i).end()
+            toks.append(("0", ""))
+        elif doc.startswith('"""', i):
+            m = GQL_BLOCK.match(doc, i)
+            toks.append(("b", ""))
+            i = m.end()
+        elif c == '"':
+            m = GQL_STRING.match(doc, i)
+            if m is None:
+                return toks, None
+            toks.append(("s", ""))
+            i = m.end()
+        elif doc.startswith("...", i) or n - i < 3 and "...".startswith(doc[i:]):
+            toks.append((".", ""))
+            i += 3
+        elif c in "!$&():=@[]{|}":
+            toks.append((c, ""))
+            i += 1
+        else:
+            return toks, None
+    return toks, True
+
+
+def _starts(doc):
+    """doc's first tokens start a document, as reqcove's Go decides it
+    (gqlStart): an operation, a fragment, or { then a field with arguments,
+    selections, an alias, another field or a spread, or { name } alone or
+    before another definition. "{count} items" and "query cats" are not."""
+    toks, ok = _head(doc)
+    ended = ok is True and len(toks) < 5
+    if toks and toks[0][0] in "sb":
+        toks = toks[1:]  # a description
+    def is_(k, kind, text=""):
+        return k < len(toks) and toks[k][0] == kind and (not text or toks[k][1] == text)
+    def opens(k):
+        return k < len(toks) and toks[k][0] in "({@"
+    if is_(0, "n", "query") or is_(0, "n", "mutation") or is_(0, "n", "subscription"):
+        return opens(1) or is_(1, "n") and opens(2)
+    if is_(0, "n", "fragment"):
+        return is_(1, "n") and is_(2, "n", "on")
+    if is_(0, "{"):
+        if is_(1, "."):
+            return True
+        if not is_(1, "n"):
+            return False
+        return (opens(2) or is_(2, "n") or is_(2, ".") or is_(2, ":") and is_(3, "n")
+                or is_(2, "}") and (ended and len(toks) == 3 or any(is_(3, "n", w) for w in ("fragment", "query", "mutation", "subscription"))))
+    return False
 
 
 def _first_operation(doc):
     """The name of doc's first operation (past fragments and descriptions),
     "" for an anonymous one, None if doc does not start like a document; one
     pass, as reqcove's Go reads it (gqlDocOperation)."""
-    depth, fragment, keyword, started = 0, False, False, False
+    if not _starts(doc):
+        return None
+    depth, fragment, keyword = 0, False, False
     for m in GQL_TOKEN.finditer(doc):
         kind, text = m.lastgroup, m.group()
         if kind in ("skip", "block", "str"):
             continue
-        if not started:  # "hello query Feed {…}" is text, not a document
-            if not (text == "{" or kind == "name" and text in ("query", "mutation", "subscription", "fragment")):
-                return None
-            started = True
         if keyword:  # just after query, mutation or subscription
             return text if kind == "name" else ""
         if kind == "punct" and text in "{([":
@@ -310,7 +383,7 @@ def _first_operation(doc):
         elif kind == "name" and depth == 0:
             keyword = text in ("query", "mutation", "subscription")
             fragment = fragment or text == "fragment"
-    return "" if started else None
+    return ""
 
 
 def _name(n):
