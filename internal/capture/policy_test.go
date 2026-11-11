@@ -200,3 +200,26 @@ func TestGraphQLCommentsLinear(t *testing.T) {
 		t.Errorf("64 KiB took %v", d)
 	}
 }
+
+// TestMaskSecondReview: what the second review found still leaking.
+func TestMaskSecondReview(t *testing.T) {
+	for _, c := range []struct {
+		body, gone string
+		request    bool
+	}{
+		{"{\"data\":\"say \\\"hello\\\" \\u0073k-abcdefghijklmnopqrstuvwxyz0123\"}", "abcdefghijklmnopqrstuvwxyz0123", true},
+		{"{\"d\":\"{\\\"x\\\":\\\"\\\\u0073k-abcdefghijklmnopqrstuvwxyz0456\\\"}\"}", "abcdefghijklmnopqrstuvwxyz0456", true},
+		{"{\"query\":\"mutation{login(username:\\\"a\\\"\\npassword:\\\"newlineSECRET\\\")}\"}", "newlineSECRET", true},
+		{"mutation{login(password # note\n: \"commentSECRET\")}", "commentSECRET", true},
+		{"mutation{login(password: \"\"\"ab\\\"\"\"blockSECRET\"\"\")}", "blockSECRET", true},
+		{"{\"query\":\"mutation{login(password: \\\"echoSECRET\\\")}\"}", "echoSECRET", false}, // a response echoing the query
+	} {
+		if got := string(maskBody([]byte(c.body), "application/json", c.request)); strings.Contains(got, c.gone) {
+			t.Errorf("%s\n -> %s", c.body, got)
+		}
+	}
+	s := NewStore(10, 1<<20)
+	if u := s.mask("https://a.example/graphql?variables=+%7B%22password%22%3A%22getSECRET%22%7D&op=x"); strings.Contains(u, "getSECRET") {
+		t.Errorf("GET variables after a space: %s", u)
+	}
+}

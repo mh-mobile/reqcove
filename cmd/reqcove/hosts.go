@@ -158,7 +158,7 @@ func specLines(v, flag string) ([]string, string, error) {
 // pythonBelow says a --python value names a version below major.minor
 // ("3.12", "3.12.4", "python3.12"); anything else (a path) is not judged.
 func pythonBelow(v string, major, minor int) bool {
-	m := regexp.MustCompile(`(\d+)\.(\d+)`).FindStringSubmatch(v)
+	m := regexp.MustCompile(`^(?:c?python)?(\d+)\.(\d+)(?:\.\d+)?$`).FindStringSubmatch(v) // a selector, not a path
 	if m == nil {
 		return false
 	}

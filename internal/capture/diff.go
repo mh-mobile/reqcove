@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
 	"strconv"
@@ -231,8 +232,9 @@ func decodeJSON(b []byte, v *any) error {
 	if err := d.Decode(v); err != nil {
 		return err
 	}
-	if d.More() {
-		return errors.New("more than one JSON value")
+	var rest any
+	if err := d.Decode(&rest); err != io.EOF { // More() takes a stray } or ] for the end
+		return errors.New("more after the JSON value")
 	}
 	return nil
 }

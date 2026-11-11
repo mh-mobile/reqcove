@@ -173,3 +173,19 @@ func TestDiffBodyAfterManyHeaders(t *testing.T) {
 		t.Errorf("truncated %v, body %+v", d.Truncated, d.ResponseBody)
 	}
 }
+
+// TestDiffTrailingJunk: a JSON value followed by a stray } or ] is not JSON;
+// two such bodies that differ are not "same".
+func TestDiffTrailingJunk(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	body := func(id, b string) {
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"device":"d","host":"h.example","url":"https://h.example/"}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":200,"headers":[["Content-Type","application/json"]]}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"response","head":%q,"size":%d,"final":true,"decoded":true}`, id, base64.StdEncoding.EncodeToString([]byte(b)), len(b))))
+	}
+	body("x", `{"a":1}]`)
+	body("y", `{"a":1}}`)
+	if d, _ := s.DiffFlows("x", "y"); d.ResponseBody.Result == "same" {
+		t.Errorf("%+v", d.ResponseBody)
+	}
+}
