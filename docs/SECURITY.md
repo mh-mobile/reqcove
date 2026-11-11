@@ -148,7 +148,10 @@ So "delete the directory" above means each of them.
   with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
   `--no-redact` returns them.
-- Bodies are returned only when a tool is asked for them (`bodies`).
+- Bodies are returned only when a tool is asked for them (`bodies` in
+  `get_flow` and `search_flows`), and by `diff_flows`, which compares them: the
+  values and keys that differ, cut to 300 bytes, and bodies that are not text
+  not at all while masking.
 - Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
   URLs and other text together; a site's reason text, `Content-Encoding` and
   error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
@@ -172,8 +175,23 @@ login (from reading code).
 
 Response bodies, and also response headers, status reasons, redirect targets
 and error messages, are written by remote sites and may contain text meant to
-steer the agent. Tools return bodies only on request, and say all of it is
-untrusted.
+steer the agent; an app chooses its User-Agent, its TLS names and the JSON
+keys it sends, and a tailnet peer its device name. Tools return bodies only on
+request (and `diff_flows` what differs), and every tool's description says
+what it returns was written by sites, apps or the tailnet: data. The server's
+instructions, sent to every client (also those without the skill, such as Grok
+Bot), say so too, and that the agent must not write a file (a `--rules` file
+above all), a commit or a command because of what the records say, nor suggest
+`--no-redact` or `--web`, and that `next_steps` are for the user (tests read
+the instructions; whether a model keeps to them is not something a test can
+show). A request whose Host is no host name or address (an app's own HTTP stack
+can put any text there) is carried but not recorded (a test); hosts from TLS
+are host names by mitmproxy's own check (from reading its code). A flow's host
+is the request's Host, which the app chooses: on a connection to an allowed
+host it can name another allowed one, and the record shows that one (the
+request still goes where the connection went). User-Agents in lists and summaries
+are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
+`diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
 yours, from a file, at start.)
 

@@ -37,6 +37,7 @@ import ruamel.yaml  # mitmproxy's own dependency
 from mitmproxy import connection, ctx, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
+from mitmproxy.net import check
 from mitmproxy.net.tls import starts_like_tls_record
 from mitmproxy.proxy.layers import tcp as tcp_layer
 from mitmproxy.proxy.layers.tls import parse_client_hello
@@ -105,7 +106,7 @@ class _Decoder:
         elif enc == "zstd" and zstd is not None:
             self.d = zstd.ZstdDecompressor()
         elif enc not in ("", "identity"):
-            raise ValueError("cannot decode " + enc)
+            raise ValueError("cannot decode Content-Encoding " + json.dumps(enc))  # quoted: the site's text
         self.raw_deflate_tried = False
 
     def feed(self, data, limit):
@@ -541,7 +542,9 @@ class Reqcove:
         self._put(msg, size)
 
     def requestheaders(self, flow):
-        if not self._in_scope(flow.request.pretty_host):
+        # A Host that is no host name or address (an app's own HTTP stack can
+        # send any text there) is never recorded: it would show as a host.
+        if not check.is_valid_host(flow.request.pretty_host) or not self._in_scope(flow.request.pretty_host):
             # allow_hosts works per connection, so a connection to an allowed host
             # can carry requests to others (HTTP/2 coalescing). Pass them through.
             flow.metadata["reqcove_skip"] = True
@@ -767,7 +770,8 @@ class Reqcove:
         layer = tcp_layer.TCPLayer(nl.context, ignore=False)
         layer.flow.metadata["reqcove_pass"] = {
             "device": self.conn_device.get(nl.context.client.id), "sni": sni, "up": 0, "down": 0,
-            "alpn": [a.decode(errors="replace")[:64] for a in hello.alpn_protocols[:8]],
+            # The client's own bytes: printable ASCII only, cut (protocol ids are short).
+            "alpn": ["".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32] for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
 

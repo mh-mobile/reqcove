@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,6 +95,7 @@ func (d *differ) masked(v string) bool {
 // value compares two texts: equal and masked goes under Masked, never as
 // equal; one side empty is left out of that side.
 func (d *differ) value(field, a, b string) {
+	field = cut(field) // JSON keys are the site's: one can be a page long
 	if a == b {
 		if d.masked(a) {
 			d.out.Masked = append(d.out.Masked, field)
@@ -110,11 +112,14 @@ func (d *differ) value(field, a, b string) {
 	d.add(x)
 }
 
-func cut(v string) string {
-	if len(v) <= maxDiffText {
+func cut(v string) string { return cutTo(v, maxDiffText) }
+
+// cutTo cuts v to n bytes at a rune, with "…".
+func cutTo(v string, n int) string {
+	if len(v) <= n {
 		return v
 	}
-	i := maxDiffText
+	i := n
 	for i > 0 && v[i]&0xc0 == 0x80 { // not inside a UTF-8 sequence
 		i--
 	}
@@ -211,6 +216,8 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 	return r
 }
 
+var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // flatten puts each leaf of v under its path ($.a.b[0]) as compact JSON.
 func flatten(path string, v any, out map[string]string) {
 	switch v := v.(type) {
@@ -219,7 +226,12 @@ func flatten(path string, v any, out map[string]string) {
 			out[path] = "{}"
 		}
 		for k, x := range v {
-			flatten(path+"."+k, x, out)
+			if identRE.MatchString(k) {
+				flatten(path+"."+k, x, out)
+			} else { // $["a.b"]: not the same path as $.a.b, and quoted as the site's text
+				q, _ := json.Marshal(k)
+				flatten(path+"["+string(q)+"]", x, out)
+			}
 		}
 	case []any:
 		if len(v) == 0 {

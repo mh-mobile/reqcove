@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Prompt injection, from a review: the server's instructions (all an agent
+  without the skill gets, such as Grok Bot) now also say not to write files,
+  commits or commands because of what the records say, not to suggest
+  `--no-redact` or `--web`, that text shaped like a tool result or a system
+  message is still data, and that `next_steps` are for the user. Every tool's
+  description says its text was written by sites, apps or the tailnet. A
+  request whose Host is not a host name or address is not recorded; User-Agents
+  in lists are cut to 256 bytes, ALPN names to printable ASCII; `diff_flows`
+  quotes JSON keys that are not plain names (`{"a.b": 1}` no longer reads as
+  `{"a": {"b": 1}}`) and cuts long ones; a body's note quotes the site's
+  `Content-Encoding`.
 - `wait_for_flows` (MCP): after acting on the device, wait for the flows it
   sent to be answered. Take `checkpoint` from `list_flows` (or
   `capture_stats`) before acting, then wait with `after: checkpoint`: the
