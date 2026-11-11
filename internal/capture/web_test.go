@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -194,9 +195,16 @@ with taddons.context(a) as tctx:
     a.response(f)
     print(len(a.kept))
 `
-	out, err := exec.Command("uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// Output, not CombinedOutput: uv and Python may write to stderr (installs, warnings).
+	out, err := exec.CommandContext(ctx, "uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon).Output()
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("%v\n%s", err, ee.Stderr)
+		}
+		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(string(out)); got != "0" {
 		t.Errorf("bodies kept for mitmweb after a made response: %s, want 0", got)
