@@ -445,7 +445,8 @@ func run(ctx context.Context, args []string) error {
 	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
-	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s)", mcpSock, mcpHint(*state, hostname))
+	hint := mcpHint(*state, hostname)
+	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s; Codex: %s)", mcpSock, hint, strings.Replace(hint, "claude mcp add", "codex mcp add", 1))
 	if n := staleSkillNote(); n != "" {
 		log.Print(n)
 	}

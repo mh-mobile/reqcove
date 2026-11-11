@@ -60,7 +60,17 @@ directory. Remove the CA's profile from the iPhone first
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
 this computer the [MCP tools](#mcp-tools). They only read, and secrets are
 masked as they arrive
-([what masking does not find](SECURITY.md#what-is-recorded)).
+([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
+`codex mcp add reqcove -- reqcove mcp` (`run` prints both).
+
+Allowing the tools: every tool is marked read-only (`readOnlyHint`), which a
+client may use to ask less (not checked with any client). Claude Code asks
+before a tool it has not been allowed; `"mcp__reqcove"` in `permissions.allow`
+of its settings allows all of Reqcove's (from Claude Code's documentation, not
+tried here). Codex asks before each call
+([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
+reads without asking, also from a `run` started with `--no-redact`; the skill
+and the server's instructions still tell it to stop and ask then.
 
 ### Teach the agent: the skill (`reqcove init`)
 
@@ -562,7 +572,7 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
 | `wait_for_flows` | after you act on the device: the flows answered (a response or an error) after `after`, the `checkpoint` that `list_flows` (or `capture_stats`) gave before you acted, oldest answer first; it waits up to `timeout` seconds (default 20, at most 30) for one. Pass the answer's `after` to the next call: each flow comes once. The same filters |
-| `get_flow` | one flow; bodies only with `bodies` |
+| `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given |
 | `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
 | `summarize` | counts by host, User-Agent, status, method, device, content type; the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
