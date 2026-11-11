@@ -449,7 +449,7 @@ to the server (for HTTPS, mitmproxy may have connected to it already, to read
 its certificate): to see how the app takes an expired session or an empty list.
 
 ```yaml
-mock:                           # Reqcove's own; the first that matches answers, before the other rules
+mock:                           # Reqcove's own; the first that matches answers, before map_remote and map_local
   - match: {method: POST, url: "https://api.example.com/v1/login"}
     status: 401
     headers: {Content-Type: application/json}
@@ -467,7 +467,8 @@ mock:                           # Reqcove's own; the first that matches answers,
   `--allow-hosts` and not in `--pass-hosts`.
 - `status` is 100 to 599 (200 if left out); a body is at most 1 MiB, inline or
   in a file, and none goes with `HEAD`, 204 or 304. `Cache-Control: no-store`
-  is added unless you set one. Response `modify_headers` rules still apply.
+  is added unless you set one. Request `modify_headers` rules apply before
+  the match, response ones still apply.
 - A request a mock may answer (its method and URL match) is held whole until
   its body is in: one whose length is over 1 MiB, or a POST of unknown length,
   goes on unanswered, its `rewrites` saying `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)

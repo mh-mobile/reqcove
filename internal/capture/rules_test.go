@@ -611,6 +611,20 @@ modify_headers:
 			t.Errorf("Feed mock for %s: %q", doc, body)
 		}
 	}
+	// As reqcove's rows name them (the last review): text that only holds the
+	// words is no document; the URL's name comes before the body's; a name
+	// GraphQL does not allow gives way to the document.
+	for _, c := range []struct{ url, body, want string }{
+		{"/graphql", `{"query":"hello query Feed { feed }"}`, "origin /graphql"},
+		{"/graphql", `"query Feed { feed }"`, "origin /graphql"},
+		{"/graphql?operationName=Like", `{"query":"query Feed { feed }"}`, "origin /graphql"},
+		{"/graphql?operationName=Feed", `{"query":"{ feed }"}`, `{"feed":[]}`},
+		{"/graphql", `{"operationName":"Feed-1","query":"query Feed { feed }"}`, `{"feed":[]}`},
+	} {
+		if _, body := do("POST", "http://"+o+c.url, c.body); body != c.want {
+			t.Errorf("POST %s %s: %q, want %q", c.url, c.body, body, c.want)
+		}
+	}
 	// A gzipped body is read (bounded); a bomb is not read past 1 MiB, and goes on.
 	gz := func(b []byte) *bytes.Buffer {
 		var buf bytes.Buffer
@@ -688,7 +702,7 @@ modify_headers:
 	} else if v, _ := h.c.Store.Get(rows[0].ID, false); !slices.Contains(v.Rewrites, "mock: skipped, request body over 1 MiB or of unknown length") {
 		t.Errorf("the chunked Feed's rewrites: %v", v.Rewrites)
 	}
-	for op, n := range map[string]int{"Like": 1} {
+	for op, n := range map[string]int{"Like": 2} { // the GET's, and ?operationName=Like above
 		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 20}); len(rows) != n {
 			t.Errorf("%s rows: %+v", op, rows)
 		}
