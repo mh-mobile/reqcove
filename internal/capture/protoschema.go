@@ -101,7 +101,7 @@ func renderProtoJSON(msg []byte, md protoreflect.MessageDescriptor, request, cut
 	ok := w.named(&b, msg, md, 0)
 	out := b.String()
 	switch {
-	case !ok && !(cut && w.short):
+	case !ok && !(cut && w.short && w.held):
 		return `{"…":"not a ` + string(md.Name()) + `, or not read to its end: not shown"}`
 	case !ok || cut:
 		out += "\n… (cut)"
@@ -272,11 +272,13 @@ func (w *protoWalk) value(raw []byte, typ uint64, fd protoreflect.FieldDescripto
 		if !utf8.Valid(raw) {
 			return fmt.Sprintf(`"string(%d), not UTF-8"`, len(raw))
 		}
-		if w.out+len(raw) > protoMaxOut {
+		js := jsonString(string(raw))
+		if w.out+len(js) > protoMaxOut {
 			return fmt.Sprintf(`"string(%d), past the output's cap"`, len(raw))
 		}
-		w.out += len(raw)
-		return jsonString(string(raw))
+		w.out += len(js)
+		w.held = w.held || depth == 0
+		return js
 	case protoreflect.BytesKind:
 		return fmt.Sprintf(`"bytes(%d)"`, len(raw))
 	case protoreflect.MessageKind, protoreflect.GroupKind:
@@ -288,9 +290,10 @@ func (w *protoWalk) value(raw []byte, typ uint64, fd protoreflect.FieldDescripto
 			return w.any(raw, depth)
 		}
 		var sub strings.Builder
-		if !w.named(&sub, raw, md, depth+1) || w.capped {
+		if !w.named(&sub, raw, md, depth+1) || w.capped && !protoWhole(raw) {
 			return fmt.Sprintf(`"bytes(%d), not a %s"`, len(raw), md.Name())
 		}
+		w.held = w.held || depth == 0
 		return sub.String()
 	}
 	return w.scalar(raw, typ, fd)

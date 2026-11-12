@@ -71,9 +71,27 @@ func TestProtoStructure(t *testing.T) {
 	}
 	// A trial stopped by a cap is not taken as a message.
 	capped := []byte(strings.Repeat("\x08\x01", protoMaxNodes-3))
-	capped = append(capped, pbBytes(2, []byte(strings.Repeat("\x08\x01", 10)))...)
+	capped = append(capped, pbBytes(2, []byte(strings.Repeat("\x08\x01", 10)+"\x07"))...) // not a whole level past the cap
 	if got := renderProtoStructure(capped, false, false); strings.Contains(got, "2 {") {
 		t.Errorf("a capped trial accepted:\n%s", got[len(got)-200:])
+	}
+	// But a large message that is whole still shows (the re-review): the cap
+	// cuts its fields, not the message into bytes(N).
+	var items []byte
+	for range 3000 {
+		items = append(items, pbBytes(1, append(pbVarint(1, 5), pbBytes(2, []byte("abcd"))...))...)
+	}
+	if got := renderProtoStructure(append(pbVarint(1, 200), pbBytes(2, items)...), false, false); !strings.Contains(got, "2 {\n  1 {") || strings.Contains(got, "bytes(") {
+		t.Errorf("a large whole message:\n%s", got[:min(200, len(got))])
+	}
+	// A cut head shows only if what it read is protobuf (a string or a whole
+	// sub-message at the top), and says it is cut even on a field boundary.
+	rnd := []byte{0x51, 0x2d, 0x19, 0xa3, 0x8c, 0x09, 0x9b, 0x3e, 0x01, 0x22, 0x77, 0xf0, 0x10, 0x05, 0x88, 0x6c}
+	if got := renderProtoStructure(rnd, false, true); got != protoNotShown && !strings.Contains(got, "string(") && !strings.Contains(got, " {") {
+		t.Errorf("random bytes, cut: %q", got)
+	}
+	if got := renderProtoStructure(append(pbVarint(1, 150), pbBytes(2, []byte("abcdefghijklmnop"))...), false, true); !strings.HasSuffix(got, "… (cut)\n") {
+		t.Errorf("cut on a field boundary: %q", got)
 	}
 	// One output cap for the whole rendering.
 	if got := renderProtoStructure([]byte(strings.Repeat("\x0a\x02\x08\x01", 13000)), false, false); len(got) > protoMaxOut+4096 {
@@ -253,5 +271,14 @@ func TestProtoReview(t *testing.T) {
 	}
 	if d, _ := s.DiffFlows("a", "b"); d.RequestBody.Result == "same" {
 		t.Errorf("bytes(16) on both sides read as the same: %+v", d.RequestBody)
+	}
+	// Two bodies that are not a Login, both "not shown": never the same (the re-review).
+	for i, b := range [][]byte{{0x0f, 0x01, 0x02}, {0x0f, 0x09, 0x08}} { // wire type 7: no protobuf
+		id := []string{"c", "d"}[i]
+		grpcApply(s, map[string]any{"ev": "request", "id": id, "method": "POST", "url": "https://api.example/t.S/Do", "host": "api.example", "path": "/t.S/Do", "headers": [][2]string{{"Content-Type", "application/x-protobuf"}}})
+		grpcApply(s, map[string]any{"ev": "body", "id": id, "dir": "request", "decoded": true, "final": true, "size": len(b), "head": base64.StdEncoding.EncodeToString(b)})
+	}
+	if d, _ := s.DiffFlows("c", "d"); d.RequestBody.Result == "same" {
+		t.Errorf("two bodies not shown read as the same: %+v", d.RequestBody)
 	}
 }

@@ -93,7 +93,8 @@ func (d *differ) add(x Diff) {
 // masked: v shows a masked value (only while masking is on: with
 // --no-redact, a "[redacted]" in a value is the site's own text).
 func (d *differ) masked(v string) bool {
-	if d.redact && d.proto && (strings.Contains(v, "bytes(") || strings.Contains(v, "string(") || strings.Contains(v, "varint(") || strings.Contains(v, "fixed32") || strings.Contains(v, "fixed64") || strings.Contains(v, "[not read]")) {
+	if d.redact && d.proto && (strings.Contains(v, "bytes(") || strings.Contains(v, "string(") || strings.Contains(v, "varint(") || strings.Contains(v, "fixed32") || strings.Contains(v, "fixed64") ||
+		strings.Contains(v, "[not read]") || strings.Contains(v, "not shown") || strings.Contains(v, "more not read") || strings.Contains(v, "wire type mismatch")) {
 		return true
 	}
 	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED") ||
@@ -105,7 +106,7 @@ func (d *differ) masked(v string) bool {
 func (d *differ) value(field, a, b string) (differs, masked bool) {
 	field = cut(field) // JSON keys are the site's: one can be a page long
 	if a == b {
-		if d.masked(a) {
+		if d.masked(a) || d.proto && d.masked(field) { // a --proto map entry it could not read is in the path ([not read])
 			d.out.Masked = append(d.out.Masked, field)
 			return false, true
 		}

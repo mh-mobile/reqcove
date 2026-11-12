@@ -28,6 +28,7 @@ type protoWalk struct {
 	budget  int  // bytes it may still scan, trials of sub-messages included: linear in the head
 	capped  bool // a cap was reached: what follows is not read
 	short   bool // the top level ran out of bytes (a cut head), rather than read wrong
+	held    bool // the top level read a string or a whole sub-message: a cut prefix is then protobuf, not chance
 }
 
 func (w *protoWalk) printf(b *strings.Builder, format string, a ...any) {
@@ -64,12 +65,14 @@ func renderProtoStructure(msg []byte, request, cut bool) string {
 	var b strings.Builder
 	ok := w.message(&b, msg, 0)
 	switch {
-	case !ok && cut && w.short:
+	case !ok && cut && w.short && w.held:
 		return b.String() + "… (cut)\n"
 	case !ok:
 		return protoNotShown
 	case w.capped:
 		return b.String() + "… (more not read)\n"
+	case cut:
+		return b.String() + "… (cut)\n"
 	}
 	return b.String()
 }
@@ -150,18 +153,56 @@ func (w *protoWalk) span(b *strings.Builder, num uint64, span []byte, depth int)
 	switch {
 	case len(span) > 0 && utf8.Valid(span) && strictText(span):
 		w.printf(b, "%s%d: string(%d)\n", indent, num, len(span))
+		w.held = w.held || depth == 0
 		return
 	case len(span) > 0 && depth+1 < protoMaxDepth && w.budget >= len(span) && !w.capped:
 		w.budget -= len(span)
 		var sub strings.Builder
 		nodes := w.nodes
-		if w.message(&sub, span, depth+1) && !w.capped {
+		if w.message(&sub, span, depth+1) && (!w.capped || protoWhole(span)) {
 			w.printf(b, "%s%d {\n%s%s}\n", indent, num, sub.String(), indent)
+			w.held = w.held || depth == 0
 			return
 		}
 		w.nodes = nodes // a trial that failed counts for nothing shown
 	}
 	w.printf(b, "%s%d: bytes(%d)\n", indent, num, len(span))
+}
+
+// protoWhole: span reads as one level of fields to its end (tags, varints
+// and lengths in bounds), not looking inside: whether a trial a cap stopped
+// was a message all the same.
+func protoWhole(span []byte) bool {
+	for i := 0; i < len(span); {
+		tag, n := protoVarint(span[i:])
+		if n == 0 || tag>>3 == 0 || tag>>3 > 1<<29-1 {
+			return false
+		}
+		i += n
+		switch tag & 7 {
+		case 0:
+			if _, n = protoVarint(span[i:]); n == 0 {
+				return false
+			}
+			i += n
+		case 1:
+			i += 8
+		case 5:
+			i += 4
+		case 2:
+			l, n := protoVarint(span[i:])
+			if n == 0 || l > uint64(len(span)-i-n) {
+				return false
+			}
+			i += n + int(l)
+		default:
+			return false
+		}
+		if i > len(span) {
+			return false
+		}
+	}
+	return true
 }
 
 // isProtobuf: a content type of protobuf bodies (one message, not framed).
