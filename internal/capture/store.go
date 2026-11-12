@@ -531,6 +531,10 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	if !redact {
 		return head, true
 	}
+	if boundary, ok := isMultipartForm(ct); ok && e.Decoded { // each part masked, files by size
+		head, e.view = renderMultipart(head, boundary, e.Dir == "request", e.Truncated || !e.Final), "multipart: each part masked, files by their size"
+		return head, true
+	}
 	if isProtobuf(ct) && e.Decoded { // not text: rendered, its strings by length unless --proto names them
 		head, e.view = renderProto(head, ct, path, e.Dir == "request", e.Truncated || !e.Final) // a partial head is cut too
 		return head, true

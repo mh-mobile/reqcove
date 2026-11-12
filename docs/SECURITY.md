@@ -164,7 +164,8 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). In GraphQL the same
+  (`multipart/mixed`, XML elements and attributes; protobuf and
+  `multipart/form-data` are read as below). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);
@@ -201,6 +202,13 @@ So "delete the directory" above means each of them.
   built-in list does not count as secret, as in JSON (a `cookie` entry of a
   headers map, a `cvv`). (Tests; the fuzz test is of the reading without a
   schema. The `protoc` command above was run once, with protoc 33.0.)
+- `multipart/form-data` (uploads): handed out as reqcove's rendering
+  (`view`), part by part. A part whose name is secret (a lone `code` in a
+  request) is masked whole, as are part headers with secret names; a text
+  part (no filename, a text or JSON type) is masked as a body is; a file
+  part, and a part that is not text, keeps its headers and its size only,
+  never its bytes. A preamble is not shown. At most 256 parts are read.
+  (Tests, and an E2E test with Go's multipart writer.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text

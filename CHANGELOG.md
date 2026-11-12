@@ -34,6 +34,10 @@
   to its end shows nothing. `diff_flows` never calls two structures, nor
   lengths-only values, the same. Tried with tests and a fuzz test (of the
   reading without a schema).
+- `multipart/form-data` bodies (uploads) are handed out, part by part: a
+  secret-named part masked whole, text parts masked as bodies, files and
+  parts that are not text by their size only. Before, they were left out as
+  "not text". Tried with tests and an E2E test (Go's multipart writer).
 
 ### Masking
 
