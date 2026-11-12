@@ -620,8 +620,9 @@ modify_headers:
 		{"/graphql?operationName=Like", `{"query":"query Feed { feed }"}`, "origin /graphql"},
 		{"/graphql?operationName=Feed", `{"query":"{ feed }"}`, `{"feed":[]}`},
 		{"/graphql", `{"operationName":"Feed-1","query":"query Feed { feed }"}`, `{"feed":[]}`},
-		{"/graphql?query=%7B%22term%22%3A%22x%22%7D", `{"operationName":"Feed"}`, `{"feed":[]}`}, // a ?query= that is no document gives way
-		{"/graphql", `{"query":"query Feed"}`, "origin /graphql"},                                // as gqlStart: no ( { @ after the name
+		{"/graphql?query=%7B%22term%22%3A%22x%22%7D", `{"operationName":"Feed"}`, `{"feed":[]}`},    // a ?query= that is no document gives way
+		{"/graphql", `{"query":"fragment F on U { a } query \"x\" Feed { b }"}`, "origin /graphql"}, // no name after query: anonymous, as Go reads it
+		{"/graphql", `{"query":"query Feed"}`, "origin /graphql"},                                   // as gqlStart: no ( { @ after the name
 	} {
 		if _, body := do("POST", "http://"+o+c.url, c.body); body != c.want {
 			t.Errorf("POST %s %s: %q, want %q", c.url, c.body, body, c.want)

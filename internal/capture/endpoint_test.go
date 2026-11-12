@@ -39,6 +39,7 @@ func TestOperationAndEndpoints(t *testing.T) {
 		{"POST", "https://api.example.com/graphql", `{"query":"fragment F on U { a } { ...F }"}`, gqlAnonymous},
 		{"POST", "https://api.example.com/graphql?operationName=Like", `{"query":"query Feed { feed }"}`, "Like"}, // the URL's name first, as mocks read it (the last review)
 		{"POST", "https://api.example.com/graphql?operationName=Feed", `{"query":"{ feed }"}`, "Feed"},
+		{"GET", "https://api.example.com/graphql", `{"operationName":"Feed"}`, ""}, // a GET's body names nothing, as for mocks
 	} {
 		id := flow(c.method, c.url, c.body)
 		if v, _ := s.Get(id, false); v.Operation != c.op {
@@ -49,6 +50,7 @@ func TestOperationAndEndpoints(t *testing.T) {
 	for _, c := range []struct{ partial, whole, op string }{
 		{"fragment F on U { a }\n", "fragment F on U { a }\nquery Feed { ...F }", "Feed"},
 		{`{"variables":{"input":{"operationName":"Inner"}},`, `{"variables":{"input":{"operationName":"Inner"}},"operationName":"Outer"}`, "Outer"},
+		{`{"events":[{"operationName":"Inner"}],`, `{"events":[{"operationName":"Inner"}],"n":1}`, ""}, // the whole body names none
 	} {
 		n++
 		id := fmt.Sprintf("f%d", n)

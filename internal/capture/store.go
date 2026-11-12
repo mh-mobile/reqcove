@@ -398,7 +398,9 @@ func (s *Store) Apply(line []byte) {
 			f.Notes = append(f.Notes, "response headers: "+e.Note)
 		}
 	case "body":
-		if e.op != "" && !f.opNamed { // the URL's or the header's name comes first, as for mocks; a later head corrects a partial one's
+		// The URL's or the header's name comes first, and a GET's body names
+		// nothing, as for mocks; a later head corrects a partial one's.
+		if e.Dir == "request" && !f.opNamed && f.Method != "GET" && (e.op != "" || e.Final) {
 			f.Operation = e.op
 		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
