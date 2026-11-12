@@ -27,7 +27,8 @@ type Summary struct {
 	Origin      string   `json:"origin,omitempty"`
 	Referer     string   `json:"referer,omitempty"`
 	Error       string   `json:"error,omitempty"`
-	MatchedIn   []string `json:"matched_in,omitempty"` // with Filter.Query: url, request_headers, response_headers, request_body, response_body
+	MatchedIn   []string `json:"matched_in,omitempty"`         // with Filter.Query: url, request_headers, response_headers, request_body, response_body, websocket_messages
+	WSMessages  int      `json:"websocket_messages,omitempty"` // messages on its WebSocket so far (list_ws_messages reads them)
 }
 
 // Filter selects flows for List; zero fields match everything.
@@ -95,6 +96,12 @@ func (q Filter) matchedIn(f *Flow) []string {
 		}
 		if (!q.textOnly || checkable(f.RespBody, f.RespHeaders)) && containsFold(f.RespBody.Head, needle) {
 			where = append(where, "response_body")
+		}
+		for _, m := range f.ws.kept() { // heads kept only when masking could read them
+			if containsFold([]byte(m.Head), needle) {
+				where = append(where, "websocket_messages")
+				break
+			}
 		}
 	}
 	return where
@@ -170,7 +177,7 @@ const maxUAText = 256
 // summary: the caller holds s.mu (s.names).
 func (s *Store) summary(f *Flow) Summary {
 	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL, Operation: f.Operation, Mocked: f.Mocked,
-		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error,
+		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error, WSMessages: f.WSMessages,
 		ContentType: header(f.RespHeaders, "content-type"), UserAgent: cutTo(header(f.ReqHeaders, "user-agent"), maxUAText),
 		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}
 	if f.Start > 0 {

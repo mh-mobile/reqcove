@@ -178,6 +178,22 @@ So "delete the directory" above means each of them.
   envelopes only with no control characters) or, with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
   `--no-redact` returns them.
+- WebSocket messages: a text message's first 4 KiB is masked as it arrives,
+  as a body is (a client's with a request's rules, a lone `code` included),
+  and kept only if masking could read it (text with no control characters but
+  a STOMP frame's closing NUL, and SignalR's 0x1e between JSON objects). From
+  a client, shapes only messages have are masked too: a message that is one token-shaped word (bare or as one
+  JSON string), the strings after an auth event's name in an event array
+  (socket.io's `42["authenticate","…"]`, with a namespace and an ack id too),
+  and a SignalR invocation's arguments when its target is such a name
+  (SignalR's records are read one by one; only the first `target` is read,
+  and strings nested deeper in the arguments, as in socket.io's, are not). Binary messages, and those past about 20 a
+  second on one socket, keep their size only. A socket keeps its first 5
+  messages and its newest 100; they are handed out only by
+  `list_ws_messages` (and `reqcove har`). A close's reason is masked as error
+  text is. (Tests, and the E2E test with a real socket.) Not caught: a
+  credential sent positionally in other ways (an array without such an event
+  name, a custom binary framing), as in bodies.
 - Bodies are returned only when a tool is asked for them (`bodies` in
   `get_flow` and `search_flows`), and by `diff_flows`, which compares them: the
   values and keys that differ, cut to 300 bytes, and bodies that are not text
