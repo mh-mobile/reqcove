@@ -228,6 +228,9 @@ func harEntry(v capture.FlowView) harEntryOut {
 	if v.MappedURL != "" {
 		notes = append(notes, "sent to "+v.MappedURL)
 	}
+	if v.Mocked {
+		notes = append(notes, "answered by a reqcove mock rule, not the server")
+	}
 	for _, r := range v.Rewrites {
 		notes = append(notes, "rule: "+r)
 	}

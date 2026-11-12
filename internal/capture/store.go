@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,6 +43,7 @@ type event struct {
 	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
+	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
 	// hello
 	Mitmproxy    string         `json:"mitmproxy"`
 	Python       string         `json:"python"`
@@ -53,9 +55,10 @@ type event struct {
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
-	DroppedBodies int64 `json:"dropped_bodies"`
-	DroppedEvents int64 `json:"dropped_events"`
-	OutOfScope    int64 `json:"out_of_scope"`
+	DroppedBodies int64  `json:"dropped_bodies"`
+	DroppedEvents int64  `json:"dropped_events"`
+	OutOfScope    int64  `json:"out_of_scope"`
+	op            string // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
 }
 
 const wireVersion = 2
@@ -74,6 +77,7 @@ type Body struct {
 type Flow struct {
 	seq         int64       // arrival order; the list cursor
 	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
+	opNamed     bool        // the URL or a header named Operation: the body does not change it
 	ID          string      `json:"id"`
 	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
 	Device      string      `json:"device,omitempty"`
@@ -85,6 +89,8 @@ type Flow struct {
 	URL         string      `json:"url"` // as the app sent it, before --rules
 	MappedURL   string      `json:"mapped_url,omitempty"`
 	Rewrites    []string    `json:"rewrites,omitempty"`
+	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
+	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
 	Host        string      `json:"host"`
 	Path        string      `json:"path"`
 	HTTPVersion string      `json:"http_version"`
@@ -151,7 +157,7 @@ type Store struct {
 	evicted       int64
 	names         map[string]string // device StableID -> display name
 	allow         HostRules         // hosts recorded (--allow-hosts)
-	redact        bool              // mask secrets as they arrive (off: --no-redact)
+	redact        atomic.Bool       // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
 	outOfScope    int64             // requests to hosts outside allow, seen here
 	addonOOS      int64             // the same, seen by the addon
 	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
@@ -164,6 +170,7 @@ type Store struct {
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
+	rulesLoaded   time.Time // when the --rules file was last taken (at start, or a reload)
 }
 
 func (s *Store) setState(state, detail string) {
@@ -220,7 +227,8 @@ func (s *Store) mitmdumpExited(why string) {
 func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.allow, s.redact = allow, redact
+	s.allow = allow
+	s.redact.Store(redact)
 }
 
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
@@ -259,15 +267,33 @@ func NewStore(maxFlows, maxBytes int) *Store {
 	// ponytail: a run recording over 500 flows a second for its whole life (two
 	// seqs a flow: its arrival and its answer) could hand out seqs above the next
 	// run's base, and then its cursors look current.
-	return &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, redact: true, state: "starting",
+	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, state: "starting",
 		started: now, base: now.UnixMilli(), seq: now.UnixMilli()}
+	s.redact.Store(true)
+	return s
 }
 
+// Apply takes one line from the addon. What the event brings is masked
+// before the lock is taken, a body too, so tools do not wait while one is
+// masked (6.9 ms for 64 KiB). Lines of one connection are applied in order,
+// by the one goroutine reading it.
 func (s *Store) Apply(line []byte) {
 	var e event
+	err := json.Unmarshal(line, &e)
+	var head []byte
+	headOK := true // false: the flow was not there when its body was masked
+	if err == nil && e.V == wireVersion {
+		s.maskEvent(&e)
+		if e.Ev == "body" {
+			head, headOK = s.maskHead(&e)
+			if e.Dir == "request" && headOK {
+				e.op = gqlBodyOperation(head) // a POST's body names it, a GET's URL
+			}
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := json.Unmarshal(line, &e); err != nil {
+	if err != nil {
 		s.badLines++
 		return
 	}
@@ -281,11 +307,17 @@ func (s *Store) Apply(line []byte) {
 	case "hello":
 		s.hello = e
 		s.hellos++
+		if e.Rules != nil { // at start, and when a restarted mitmproxy takes the file again
+			s.rulesLoaded = time.Now()
+		}
 		return
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
 		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
+		if e.RulesError == "" {
+			s.rulesLoaded = time.Now()
+		}
 		if s.rulesLog != nil {
 			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
 		}
@@ -319,7 +351,7 @@ func (s *Store) Apply(line []byte) {
 			s.outOfScope++ // only hosts in --allow-hosts are recorded, failures included
 			return
 		}
-		msg := s.maskError(e.Msg)
+		msg := e.Msg
 		if s.allow.Passed(host) { // a --pass-hosts host was decrypted after all: say so, it is why it failed
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
@@ -334,7 +366,7 @@ func (s *Store) Apply(line []byte) {
 		return
 	}
 	f := s.flows[e.ID]
-	if f == nil {
+	if f == nil || !headOK {
 		if e.Ev != "request" {
 			s.orphanUpdates++ // the request event was dropped, evicted or out of scope
 			return
@@ -352,27 +384,24 @@ func (s *Store) Apply(line []byte) {
 	switch e.Ev {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, s.mask(e.URL), e.Host, s.mask(e.Path), e.HTTPVersion
-		f.ReqHeaders = s.maskHeaders(e.Headers)
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
+		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites = s.mask(e.MappedURL), e.Rewrites
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.op != ""
 	case "response":
 		s.answerLocked(f)
-		f.Status, f.Reason, f.RespHeaders = e.Status, s.mask(e.Reason), s.maskHeaders(e.Headers) // a reason is free text from the site
+		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
 		f.Rewrites = append(f.Rewrites, e.Rewrites...)
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "response headers: "+e.Note)
 		}
 	case "body":
-		head, _ := base64.StdEncoding.DecodeString(e.Head)
-		if s.redact {
-			h := f.RespHeaders
-			if e.Dir == "request" {
-				h = f.ReqHeaders
-			}
-			head = maskBody(head, header(h, "content-type"), e.Dir == "request")
+		// The URL's or the header's name comes first, and a GET's body names
+		// nothing, as for mocks; a later head corrects a partial one's.
+		if e.Dir == "request" && !f.opNamed && f.Method != "GET" && (e.op != "" || e.Final) {
+			f.Operation = e.op
 		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
 		if e.Dir == "request" {
@@ -384,7 +413,7 @@ func (s *Store) Apply(line []byte) {
 		f.End, f.State = e.TSEnd, "done"
 		s.answerLocked(f) // a response event dropped by the addon: done answers it too
 	case "error":
-		f.Error, f.State = s.maskError(e.Msg), "error"
+		f.Error, f.State = e.Msg, "error"
 		s.answerLocked(f)
 	case "ws":
 		f.WSMessages++
@@ -392,6 +421,49 @@ func (s *Store) Apply(line []byte) {
 	}
 	s.heldBytes += f.bytes() - before
 	s.evictLocked()
+}
+
+// maskEvent masks, in place, what an event brings that a site or an app
+// wrote: URLs, headers, a reason (free text from the site), an error.
+func (s *Store) maskEvent(e *event) {
+	switch e.Ev {
+	case "request":
+		e.URL, e.Path, e.MappedURL, e.Headers = s.mask(e.URL), s.mask(e.Path), s.mask(e.MappedURL), s.maskHeaders(e.Headers)
+		if e.op = gqlURLOperation(e.URL); e.op == "" {
+			e.op = gqlName(header(e.Headers, "x-apollo-operation-name")) // Apollo's, as mocks read it
+		}
+	case "response":
+		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
+	case "error", "tls_failed":
+		e.Msg = s.maskError(e.Msg)
+	}
+}
+
+// maskHead decodes and masks a body event's head. The lock is held only to
+// read the content type its direction's headers give; the flow is looked up
+// again when the head is stored. ok is false if the flow was not there: the
+// event is then an orphan, even if the flow comes meanwhile, so a head is
+// stored only as masked.
+func (s *Store) maskHead(e *event) (head []byte, ok bool) {
+	head, _ = base64.StdEncoding.DecodeString(e.Head)
+	if !s.redact.Load() {
+		return head, true
+	}
+	s.mu.Lock()
+	f := s.flows[e.ID]
+	var ct string
+	if f != nil {
+		h := f.RespHeaders
+		if e.Dir == "request" {
+			h = f.ReqHeaders
+		}
+		ct = header(h, "content-type")
+	}
+	s.mu.Unlock() // f is not used past here
+	if f == nil {
+		return nil, false
+	}
+	return maskBody(head, ct, e.Dir == "request"), true
 }
 
 func (s *Store) evictLocked() {

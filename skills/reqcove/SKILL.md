@@ -131,10 +131,17 @@ user to reconnect this MCP server once.
 ## 5. A rules file (`--rules FILE`)
 
 Only for hosts in `--allow-hosts`. `map_remote`, `map_local` and
-`modify_headers` use mitmproxy's syntax; `keep_host_header` and `resolve` are
-Reqcove's:
+`modify_headers` use mitmproxy's syntax; `mock`, `keep_host_header` and
+`resolve` are Reqcove's:
 
 ```yaml
+mock:                                                     # answered here; the request is not sent to the server
+  - match: {method: POST, url: "https://api.example.com/v1/login"}   # url: exact without the query, or ending in *
+    status: 401
+    headers: {Content-Type: application/json}
+    body: '{"error":"expired"}'                           # or body_file: (at most 1 MiB)
+  - match: {url: "https://api.example.com/graphql", operation: Feed}  # a GraphQL operation
+    body_file: feed.json
 map_remote:
   - "|https://api.example.com/|http://localhost:3000/"   # to a dev server on this computer
 keep_host_header: true                                    # map_remote keeps the app's Host
@@ -144,7 +151,10 @@ resolve:
 
 Relative paths count from the file. Without `--rules-reload` the user restarts
 `reqcove run` for a change. `get_flow` shows whether a rule applied: `url` is
-what the app sent, `mapped_url` where it went, `rewrites` the rules applied.
+what the app sent, `mapped_url` where it went, `rewrites` the rules applied
+(`mock[0]: 401`). A row with `mocked: true` was answered by a mock: the
+request was not sent to the server. `capture_stats.rules_loaded` says when the file was
+last taken (with `--rules-reload`, about a second or two after a save).
 
 ## 6. Commands
 

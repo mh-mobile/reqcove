@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.4.0 — 2026-11-12
+
+### For agents
+
+- Response mocks: a `mock:` rule in the `--rules` file answers a request
+  (method, URL exact or by prefix, GraphQL operation) with a status, headers
+  and a body (inline or a file, at most 1 MiB), before `map_remote` and
+  `map_local` (request `modify_headers` rules apply first); the
+  request is not sent to the server (for HTTPS, mitmproxy may have connected
+  to it already, to read its certificate). One it would have to hold but
+  cannot (a length over 1 MiB, a POST of unknown length) goes on, its
+  `rewrites` saying `mock: skipped, …`. Its row says `mocked: true`, `rewrites` gives
+  `mock[i]: status` (never the rule's text), a HAR notes it, `summarize`
+  counts them. `Cache-Control: no-store` unless the rule sets one. Hosts in
+  `--allow-hosts` only. `capture_stats.rules_loaded` says when the file was
+  last taken. Tried with the E2E tests, and on an iPhone (Safari; one GraphQL
+  operation of the GitHub app).
+- `summarize` counts by endpoint (`by_endpoint`): method, host and path
+  without the query, with segments of digits only or a UUID as `{id}`, then
+  a GraphQL operation (`POST api.example.com/graphql Login`).
+- Rows (`list_flows`, `search_flows`, `wait_for_flows`) and `get_flow` carry
+  a GraphQL request's `operation`, as mocks read it: the URL's
+  (`?operationName=`, else the `?query=` document's), else Apollo's
+  `X-APOLLO-OPERATION-NAME` header, else the body's (`operationName`, else
+  its document's first operation); `(anonymous)` or `(batched)`; a name GraphQL does not allow is not shown. A filter
+  `operation` selects them. Worked out from the masked request as it arrives.
+
+### Masking
+
+- GraphQL documents are read by a lexer instead of a pattern. An argument, an
+  input object's field or a variable's default whose name is secret has its
+  whole value masked: a string, a number, a list or an object
+  (`pin: "[redacted]"`), as a JSON field's is; enums, booleans, `$variables`
+  and aliases stay. Documents are found where a JSON string at depth 0 or 1
+  (any key, requests and responses), the body or a URL parameter starts like
+  one; a GET `?query=` is masked and escaped again rather than replaced. One
+  that cannot be read is masked whole. Before, variable defaults, lists,
+  numbers, quotes written `\u0022` and responses without a trigger word passed.
+  A second fuzz test writes documents from a small grammar.
+  A `name: "value"` outside a document (prose, a script's object, an error
+  message quoting part of a query) is no longer masked: the pattern caught it
+  in requests, and in responses with a trigger word.
+- A field with a secret name whose value is a list or an object is masked
+  whole (`{"password": "[redacted]"}`; cut by the head's end, to the end).
+- A URL in a form's first field is looked into, as the other fields are.
+- A URL parameter's value goes on after `\/` and Gson's `\u0027` and
+  `\u003d` (before, what followed was left).
+- A string cut by the head's end is read with its escapes undone (`\u`
+  escapes, a cut one dropped), as a whole one is.
+- The fuzz test checks every 5 characters of the secret, as written and
+  decoded, at every cut, in 21 shapes (it checked the whole secret at one cut).
+
+### Inside
+
+- Masking happens before the Store's lock is taken: an event's URLs,
+  headers and error text, and a body's head (the lock is held only to read
+  its content type). Tools no longer wait while a body is masked: with 64 KiB
+  JSON bodies arriving back to back, a `list_flows` and a `get_flow` waited
+  12 ms at the median (17 ms at the 99th percentile) before, 6 µs (95 µs)
+  after (`BenchmarkToolsWhileIngesting`, this Mac). A body whose flow was not
+  there when it was masked is dropped as an orphan, as before.
+
 ## v0.3.0 — 2026-11-11
 
 ### For agents

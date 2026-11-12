@@ -60,7 +60,7 @@ func (s *Store) DiffFlows(a, b string) (FlowDiff, error) {
 			return FlowDiff{}, fmt.Errorf("no flow %q (evicted, or from before reqcove run restarted)", id)
 		}
 	}
-	d := &differ{redact: s.redact, out: FlowDiff{A: s.summary(fa), B: s.summary(fb), Differences: []Diff{}}}
+	d := &differ{redact: s.redact.Load(), out: FlowDiff{A: s.summary(fa), B: s.summary(fb), Differences: []Diff{}}}
 	d.value("method", fa.Method, fb.Method)
 	d.value("url", fa.URL, fb.URL)
 	d.value("mapped_url", fa.MappedURL, fb.MappedURL)

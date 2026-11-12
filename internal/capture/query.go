@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bytes"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,8 @@ type Summary struct {
 	Method      string   `json:"method"`
 	Host        string   `json:"host"`
 	URL         string   `json:"url"`
+	Operation   string   `json:"operation,omitempty"` // GraphQL's
+	Mocked      bool     `json:"mocked,omitempty"`    // a mock rule answered it, not the server
 	State       string   `json:"state"`
 	Status      int      `json:"status,omitempty"`
 	ContentType string   `json:"content_type,omitempty"` // of the response
@@ -35,6 +38,7 @@ type Filter struct {
 	Status       string  // "404", "4xx", or "none" (no response: open or failed)
 	Method       string
 	UserAgent    string // text in the request's User-Agent, lowercase: matched case-insensitively
+	Operation    string // a GraphQL operation's name, case-insensitive
 	Query        string // case-insensitive text in the URL or header names and values (as stored, masked)
 	QueryBodies  bool   // Query also looks in the kept body heads
 	Before       int64  // cursor from a previous page: only older flows
@@ -105,7 +109,8 @@ func (q Filter) match(f *Flow, name string) bool {
 		q.Since != 0 && f.Start < q.Since,
 		q.Until != 0 && f.Start > q.Until,
 		q.Method != "" && !strings.EqualFold(f.Method, q.Method),
-		q.UserAgent != "" && !containsFold(header(f.ReqHeaders, "user-agent"), q.UserAgent):
+		q.UserAgent != "" && !containsFold(header(f.ReqHeaders, "user-agent"), q.UserAgent),
+		q.Operation != "" && !strings.EqualFold(f.Operation, q.Operation):
 		return false
 	}
 	switch {
@@ -128,10 +133,12 @@ func (s *Store) OldCursor(cursor int64) bool {
 
 // List returns the newest matching flows first, and a cursor for the next
 // (older) page, 0 when there is none.
+// ponytail: the search (bodies included) holds s.mu, so a search over many
+// large heads holds up ingest meanwhile; copy the flows out first if it shows.
 func (s *Store) List(q Filter) ([]Summary, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	q.textOnly = s.redact
+	q.textOnly = s.redact.Load()
 	var out []Summary
 	var last int64
 	for i := len(s.order) - 1; i >= 0; i-- {
@@ -162,7 +169,7 @@ const maxUAText = 256
 
 // summary: the caller holds s.mu (s.names).
 func (s *Store) summary(f *Flow) Summary {
-	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL,
+	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL, Operation: f.Operation, Mocked: f.Mocked,
 		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error,
 		ContentType: header(f.RespHeaders, "content-type"), UserAgent: cutTo(header(f.ReqHeaders, "user-agent"), maxUAText),
 		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}
@@ -178,7 +185,8 @@ func (s *Store) summary(f *Flow) Summary {
 // Counts is what summarize returns: how the matching flows split up.
 type Counts struct {
 	Flows       int     `json:"flows"`
-	First       string  `json:"first,omitempty"` // earliest request start
+	Mocked      int     `json:"mocked,omitempty"` // answered by a mock rule, not the server
+	First       string  `json:"first,omitempty"`  // earliest request start
 	Last        string  `json:"last,omitempty"`
 	ByHost      []Count `json:"by_host"`
 	ByUserAgent []Count `json:"by_user_agent"`
@@ -186,6 +194,7 @@ type Counts struct {
 	ByMethod    []Count `json:"by_method"`
 	ByDevice    []Count `json:"by_device"`
 	ByType      []Count `json:"by_content_type"`
+	ByEndpoint  []Count `json:"by_endpoint"` // method, host and path without the query, ids as {id}; a GraphQL operation after it
 }
 
 type Count struct {
@@ -214,6 +223,9 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 			continue
 		}
 		c.Flows++
+		if f.Mocked {
+			c.Mocked++
+		}
 		if f.Start > 0 && (first == 0 || f.Start < first) {
 			first = f.Start
 		}
@@ -233,6 +245,7 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 		add("method", strings.ToUpper(f.Method))
 		add("device", device)
 		add("type", strings.TrimSpace(ct))
+		add("endpoint", endpoint(f))
 	}
 	top := func(kind string) []Count {
 		out := []Count{}
@@ -245,12 +258,33 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 		return out[:min(len(out), n)]
 	}
 	c.ByHost, c.ByUserAgent, c.ByStatus, c.ByMethod, c.ByDevice, c.ByType = top("host"), top("ua"), top("status"), top("method"), top("device"), top("type")
+	c.ByEndpoint = top("endpoint")
 	if first > 0 {
 		c.First = unixTime(first).Format("2006-01-02T15:04:05.000Z07:00")
 		c.Last = unixTime(last).Format("2006-01-02T15:04:05.000Z07:00")
 	}
 	return c
 }
+
+// endpoint: "GET api.example.com/v1/users/{id}" for /v1/users/42?x=1, with
+// segments of digits only or a UUID as {id}, so one endpoint counts once;
+// "POST api.example.com/graphql Login" with a GraphQL operation.
+func endpoint(f *Flow) string {
+	path, _, _ := strings.Cut(f.Path, "?")
+	segs := strings.Split(path, "/")
+	for i, seg := range segs {
+		if seg != "" && (strings.Trim(seg, "0123456789") == "" || uuidRE.MatchString(seg)) {
+			segs[i] = "{id}"
+		}
+	}
+	e := strings.ToUpper(f.Method) + " " + strings.ToLower(f.Host) + strings.Join(segs, "/")
+	if f.Operation != "" {
+		e += " " + f.Operation
+	}
+	return e
+}
+
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // containsFold reports whether lowerNeedle (already lower case) occurs in b,
 // ignoring ASCII case. A short needle (masking's words) is compared in place;

@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.3.
+come from reading code rather than from a test say so. It describes v0.4.
 
 ## Trust
 
@@ -121,9 +121,18 @@ So "delete the directory" above means each of them.
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
   Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
   error), with only such shapes masked.
-  String arguments with such names in a GraphQL document are masked too
-  (`login(password: "…")`), in a JSON string (the usual `{"query": …}`), a raw
-  body or a GET `?query=` (the parameter's value whole), block strings included.
+  A field with a secret name whose value is a list or an object is masked
+  whole (`{"password": "[redacted]"}`).
+  In a GraphQL document, read by a lexer, an argument, an input object's
+  field or a variable's default whose name is such has its whole value masked
+  (`login(password: "[redacted]", pin: "[redacted]")`: a string, a number, a
+  list, an object), as a JSON field's is; enum and boolean values, `$variables`
+  and aliases stay. A document is found where it starts like one: a JSON
+  string at the top level or in JSON inside a string (under any key, in
+  requests and in responses that echo it), the body, or a URL parameter (GET
+  `?query=`, masked and escaped again). One that starts like a document and
+  cannot be read is masked whole, unless it starts like a script's object
+  (`{a: b, …}`, a comma after the first value), which is left as it is. (Tests and the fuzz test.)
   A URL inside a parameter is looked into also when encoded two or three times.
   A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
   a value cut before its closing quote is masked too (a fuzz test, over these
@@ -143,21 +152,18 @@ So "delete the directory" above means each of them.
   `+`, `/` and `.` match themselves. Both do nothing with `--no-redact` (`run`
   warns).
 - **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it), in arrays,
-  in GraphQL arguments that are not strings (`pin: 1234`), or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). GraphQL arguments written
-  into the query are found by pattern, not parsed: the layouts three rounds of
-  review found are covered (tests and a fuzz test), but another valid layout
-  may pass. Tools that parse GraphQL (OpenTelemetry, Apollo) drop every value
-  written into the query instead; a later version may do so. Values sent as
-  GraphQL variables are JSON fields, masked by name. Found by the last review and
-  not masked (most leaked in 0.2 too): a field with a secret name whose value
-  is a list or an object (`{"password": ["…"]}`); in GraphQL, a variable's
-  default (`$password: String = "…"`), a list or a number as an argument, a
-  comment holding a quote, a quote written as `\u0022`, and a query
-  echoed in a response with no `"query"`, `mutation` or `operationName` in it; a
-  URL whose value goes on after `\/` or Gson's `\u0027`; a body cut inside a
-  `\u` escape; JSON or a URL in a form's first field. Personal data, such as e-mail addresses
+  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
+  or in formats other than JSON, forms and text
+  (protobuf, multipart, XML elements and attributes). A value found by its
+  shape (a JWT, a key with a known prefix, `Bearer …`) is not found inside
+  percent-encoded text: JSON encoded in a form field or a URL parameter,
+  `Bearer+…` (checked). In GraphQL the same
+  holds: a secret under an innocent name passes, so ids stay readable and
+  `diff_flows` can compare them (tools that parse GraphQL, such as
+  OpenTelemetry and Apollo, drop every value written into the query instead);
+  and a document quoted mid-message, with prose before it, is not found.
+  Values sent as GraphQL variables are JSON fields, masked by name.
+  Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
   could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
@@ -257,6 +263,15 @@ a 502 rather than sent on as it was (a test), and a `map_remote` whose replaceme
 cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
+A `mock` answers in the site's name: the app, and a web view's page, take it
+as the site's own answer (a script in it runs in that origin, a redirect is
+followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
+header values are checked as `modify_headers`'s are. The records say a flow was
+mocked, with the rule's number and status, never its text. A request a mock may
+answer is held whole until its body is in (the operation is in it): at most
+1 MiB when it says its length; a GET without one can carry more over HTTP/2,
+kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
+over `--mcp-http` an agent has no way to the file at all.
 
 ## An upstream proxy (`--upstream-proxy`)
 
