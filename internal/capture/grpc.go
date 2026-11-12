@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // gRPC (and gRPC-Web, Connect's streams) frame each message: a flag byte (1:
@@ -78,7 +79,7 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 	compressed, written := 0, 0
 	connect := strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/connect+")
 	for _, f := range frames {
-		if written > protoMaxOut { // one cap for the whole body, as for one message
+		if written > protoMaxOut && f.flag&0x80 == 0 { // one cap for the whole body, as for one message
 			if len(lines) == 0 || lines[len(lines)-1] != "[more messages not read]" {
 				lines = append(lines, "[more messages not read]")
 			}
@@ -97,12 +98,16 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 				}
 			}
 			continue
-		case f.flag&2 != 0 && f.flag&1 == 0 && f.payload != nil && connect: // Connect's end of stream: JSON (its error, its trailers), whatever the codec
-			lines = append(lines, "[end of stream] "+string(maskBody(f.payload, "application/json", request)))
+		case f.flag&2 != 0 && f.flag&1 == 0 && f.payload != nil && connect && utf8.Valid(f.payload) && strictText(f.payload): // Connect's end of stream: JSON (its error, its trailers), whatever the codec
+			lines = append(lines, cutTo("[end of stream] "+string(maskBody(f.payload, "application/json", request)), protoMaxOut))
+			if view == "" && !framedJSON(ct) {
+				view = "gRPC frames: Connect's end of stream masked as JSON"
+			}
 			written += len(lines[len(lines)-1])
 			continue
 		case f.flag&2 != 0:
 			lines = append(lines, fmt.Sprintf("[a frame gRPC does not use: %d bytes]", f.size))
+			written += len(lines[len(lines)-1])
 			continue
 		case f.flag&1 != 0:
 			compressed++

@@ -295,3 +295,46 @@ func TestGRPCBodyCap(t *testing.T) {
 		t.Errorf("rendered %d bytes from %d; note %q", len(out), len(msg), note)
 	}
 }
+
+// TestGRPCFinalReview2: round 2 of the final review (Opus).
+func TestGRPCFinalReview2(t *testing.T) {
+	b64 := func(x string) string { return base64.StdEncoding.EncodeToString([]byte(x)) }
+	flow := func(id, ct, body string) FlowView {
+		s := NewStore(10, 1<<20)
+		grpcApply(s, map[string]any{"ev": "request", "id": id, "method": "POST", "url": "https://demo.example/x.Y/Z", "host": "demo.example", "path": "/x.Y/Z", "headers": [][2]string{{"Content-Type", ct}}})
+		grpcApply(s, map[string]any{"ev": "response", "id": id, "status": 200, "headers": [][2]string{{"Content-Type", ct}}})
+		grpcApply(s, map[string]any{"ev": "body", "id": id, "dir": "response", "decoded": true, "final": true, "size": len(body), "head": b64(body)})
+		v, _ := s.Get(id, true)
+		return v
+	}
+	// An end-of-stream frame that is not UTF-8 is never handed out.
+	v := flow("a", "application/connect+proto", grpcFrame1(0, "\x0a\x02hi")+grpcFrame1(2, "\xff"+`{"password":"GRPCr2secret01"}`))
+	dec, _ := base64.StdEncoding.DecodeString(v.RespBodyText)
+	if strings.Contains(v.RespBodyText+string(dec), "GRPCr2secret01") {
+		t.Errorf("an end of stream that is not UTF-8: %q", v.RespBodyText)
+	}
+	// gRPC-Web's trailers are read past the output cap.
+	deep := []byte("\x01")
+	for range 30 {
+		deep = append([]byte{0x0a, byte(len(deep))}, deep...)
+	}
+	v = flow("w", "application/grpc-web+proto", strings.Repeat(grpcFrame1(0, string(deep)), 400)+grpcFrame1(0x80, "grpc-status: 7\r\n"))
+	if header(v.RespTrailers, "grpc-status") != "7" {
+		t.Errorf("trailers past the cap: %v", v.RespTrailers)
+	}
+	// Marker lines and the end of stream count toward the cap.
+	s := NewStore(10, 1<<20)
+	for _, h := range []string{
+		strings.Repeat(grpcFrame1(2, ""), 4096),
+		strings.Repeat(grpcFrame1(0, string(deep)), 35) + strings.Repeat(grpcFrame1(3, ""), 3000) + grpcFrame1(0, string(deep)),
+		strings.Repeat(grpcFrame1(0, string(deep)), 35) + grpcFrame1(2, `{"a":[`+strings.Repeat(`"password":"",`, 4000)+`]}`),
+	} {
+		if out, _, _, _ := s.grpcBody([]byte(h), "application/connect+proto", "/x.Y/Z", false, true, false); len(out) > 2*protoMaxOut+8<<10 {
+			t.Errorf("rendered %d bytes from %d", len(out), len(h))
+		}
+	}
+	// A connect+proto stream that fails at once: its end of stream shows.
+	if v := flow("e", "application/connect+proto", grpcFrame1(2, `{"error":{"code":"unauthenticated"}}`)); !strings.Contains(v.RespBodyText, "unauthenticated") {
+		t.Errorf("an early Connect error: %q (%s)", v.RespBodyText, v.RespBodyEnc)
+	}
+}

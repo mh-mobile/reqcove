@@ -28,7 +28,7 @@
   iPhone (a test app over URLSession: Connect, gRPC-Web and gRPC to
   Connect's demo server, with `--proto`; gRPC's answer showed nothing there:
   fixed after, by a test). A Connect stream's last frame (flag 2: its error,
-  as JSON) is shown as `[end of stream]`, masked.
+  as JSON) is shown as `[end of stream]`, masked (by a test only).
 - Protobuf bodies (gRPC's messages, `application/x-protobuf` and the like) are
   handed out as reqcove's rendering (`view`): without a schema, their
   structure (field numbers, types, lengths, a string's length, numbers in
