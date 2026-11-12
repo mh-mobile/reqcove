@@ -12,7 +12,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 21
+const fuzzShapes = 22
 
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
@@ -69,6 +69,8 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"query":"mutation { `+filler, ` login(password: `+q+secret+q+`) { ok } }"}`, "application/json")
 	case 20: // a response echoing a query under any key, with no trigger word
 		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
+	case 21: // a STOMP frame's header line
+		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}

@@ -152,6 +152,8 @@ func checkable(b Body, headers [][2]string) bool {
 		ct == "application/json", ct == "application/xml", ct == "application/javascript",
 		ct == "application/x-www-form-urlencoded", ct == "application/graphql", ct == "application/x-ndjson":
 		return isText(head)
+	case strings.Contains(ct, "json"), ct == "application/x-sentry-envelope":
+		return strictText(head)
 	}
 	return false
 }
