@@ -221,7 +221,7 @@ func lockState(dir string) (func(), error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or the service: `brew services stop reqcove` first)", dir)
+		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or a service: stop it first, such as with brew services stop reqcove)", dir)
 	}
 	return func() { f.Close() }, nil
 }

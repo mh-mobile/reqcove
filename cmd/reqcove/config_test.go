@@ -23,13 +23,17 @@ func TestConfigWords(t *testing.T) {
 		`--hostname ''`:                       {"--hostname", ""},
 		"  --ui\t":                            {"--ui"},
 	} {
-		got, err := configWords(line)
+		got, err := configWords(line, "")
 		if err != nil || !slices.Equal(got, want) {
 			t.Errorf("%q: %q %v", line, got, err)
 		}
 	}
+	// ~/ starts at home unquoted only, as a shell does.
+	if got, _ := configWords(`--state ~/x '~/y' "~/z" a~/b`, "/h"); !slices.Equal(got, []string{"--state", "/h/x", "~/y", "~/z", "a~/b"}) {
+		t.Errorf("~: %q", got)
+	}
 	for _, bad := range []string{`--device "open`, `--device 'open`} {
-		if _, err := configWords(bad); err == nil {
+		if _, err := configWords(bad, ""); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
 	}
@@ -77,27 +81,55 @@ func TestParseConfig(t *testing.T) {
 	hosts := filepath.Join(t.TempDir(), "hosts")
 	os.WriteFile(hosts, []byte("api.example.com\n*\n"), 0o600)
 	for text, want := range map[string]string{
-		"--no-redact\n":           "--no-redact only on the command line",
-		"--web\n":                 "--web only on the command line",
-		"--rules-reload\n":        "--rules-reload only on the command line",
-		"--config other\n":        "--config only on the command line",
-		"--allow-hosts '*'\n":     "--allow-hosts '*' only on the command line",
-		"--allow-hosts @" + hosts: "--allow-hosts '*' only on the command line",
-		"--device a stray\n":      `"stray" is not a flag`,
+		"--no-redact\n":                    "--no-redact only on the command line",
+		"--web\n":                          "--web only on the command line",
+		"--rules-reload\n":                 "--rules-reload only on the command line",
+		"--config other\n":                 "--config only on the command line",
+		"--allow-hosts '*'\n":              "--allow-hosts '*' only on the command line",
+		"--allow-hosts @" + hosts:          "--allow-hosts '*' only on the command line",
+		"--device a\n--hostname x stray\n": "line 2: a word that is no flag's value",
 	} {
 		fs, _, allow := testFlags()
-		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow); err == nil || !strings.Contains(err.Error(), want) {
+		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow); err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "stray") {
 			t.Errorf("%q: %v, want %q", text, err, want)
 		}
 	}
-	// The file must not be writable by others.
-	fs, _, allow = testFlags()
-	if err := parseConfig(fs, writeConfig(t, "--device a\n", 0o666), allow); err == nil || !strings.Contains(err.Error(), "writable by others") {
-		t.Errorf("0666: %v", err)
+	// Readable and writable by its owner only (it may hold --mask-values patterns).
+	for _, mode := range []os.FileMode{0o666, 0o644, 0o620, 0o604} {
+		fs, _, allow = testFlags()
+		if err := parseConfig(fs, writeConfig(t, "--device a\n", mode), allow); err == nil || !strings.Contains(err.Error(), "others can read or write it") {
+			t.Errorf("%o: %v", mode, err)
+		}
 	}
 	fs, _, allow = testFlags()
-	if err := parseConfig(fs, writeConfig(t, "--device a\n", 0o644), allow); err != nil {
-		t.Errorf("0644: %v", err)
+	if err := parseConfig(fs, t.TempDir(), allow); err == nil || !strings.Contains(err.Error(), "not a plain file") {
+		t.Errorf("a directory: %v", err)
+	}
+	// A value that does not parse is not quoted (it may be a pattern).
+	fs, _, allow = testFlags()
+	fs.Int("proxy-port", 0, "")
+	if err := parseConfig(fs, writeConfig(t, "--proxy-port s3cretish\n", 0o600), allow); err == nil || strings.Contains(err.Error(), "s3cretish") {
+		t.Errorf("bad value: %v", err)
+	}
+}
+
+func TestConfigFileArg(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		path string
+		err  string
+	}{
+		{[]string{"--device", "x", "--config", "/a"}, "/a", ""},
+		{[]string{"--config=/b"}, "/b", ""},
+		{[]string{"-config", "/c"}, "/c", ""},
+		{[]string{"--config", "/a", "--config", "/b"}, "", "once only"},
+		{[]string{"--config"}, "", "needs a file"},
+		{[]string{"--device", "x"}, "", ""},
+	} {
+		path, _, err := configFile(c.args)
+		if path != c.path || (err == nil) != (c.err == "") || err != nil && !strings.Contains(err.Error(), c.err) {
+			t.Errorf("%q: %q %v", c.args, path, err)
+		}
 	}
 }
 

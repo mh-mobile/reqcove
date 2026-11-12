@@ -4,8 +4,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -27,8 +27,10 @@ var configOnlyOnCommandLine = map[string]string{
 	"config":       "one file only",
 }
 
-// configFile returns the path given with --config (or -config) in args, if any.
+// configFile returns the path given with --config (or -config) in args, if
+// any; more than one is refused (only one would be read).
 func configFile(args []string) (string, bool, error) {
+	path, found := "", false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -38,15 +40,21 @@ func configFile(args []string) (string, bool, error) {
 		if !strings.HasPrefix(a, "-") || name != "config" {
 			continue
 		}
+		if found {
+			return "", false, errors.New("--config once only: put the flags in one file")
+		}
+		found = true
 		if hasValue {
-			return value, true, nil
+			path = value
+			continue
 		}
 		if i+1 >= len(args) {
 			return "", false, errors.New("--config needs a file")
 		}
-		return args[i+1], true, nil
+		path = args[i+1]
+		i++
 	}
-	return "", false, nil
+	return path, found, nil
 }
 
 // readConfig reads a --config file into flags: blank lines and lines starting
@@ -54,45 +62,47 @@ func configFile(args []string) (string, bool, error) {
 // are) or "…" (\" and \\ inside), as a shell would: --device "Taro's iPhone";
 // a word starting with ~/ starts at the home directory.
 // The file must be yours and not writable by others.
-func readConfig(path string) ([]string, error) {
-	fi, err := os.Stat(path)
+func readConfig(path string) (words []string, lines []int, err error) {
+	// Opened once, checked and read through the same descriptor: no swap
+	// between the check and the read; O_NONBLOCK so a FIFO cannot hang it.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, fmt.Errorf("--config: %w", err)
+		return nil, nil, fmt.Errorf("--config: %w", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("--config: %w", err)
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("--config %s: not a plain file", path)
+		return nil, nil, fmt.Errorf("--config %s: not a plain file", path)
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return nil, fmt.Errorf("--config %s: not yours: its flags decide what is recorded", path)
+		return nil, nil, fmt.Errorf("--config %s: not yours: its flags decide what is recorded", path)
 	}
-	if fi.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf("--config %s: writable by others (chmod 600 %s): its flags decide what is recorded", path, shellWord(path))
+	if fi.Mode().Perm()&0o077 != 0 {
+		return nil, nil, fmt.Errorf("--config %s: others can read or write it (chmod 600 %s): its flags decide what is recorded, and may hold --mask-values patterns", path, shellWord(path))
 	}
-	b, err := os.ReadFile(path)
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("--config: %w", err)
+		return nil, nil, fmt.Errorf("--config: %w", err)
 	}
-	var out []string
+	home, _ := os.UserHomeDir()
 	for n, line := range strings.Split(string(b), "\n") {
-		words, err := configWords(line)
+		ws, err := configWords(line, home)
 		if err != nil {
-			return nil, fmt.Errorf("--config %s, line %d: %w", path, n+1, err)
+			return nil, nil, fmt.Errorf("--config %s, line %d: %w", path, n+1, err)
 		}
-		out = append(out, words...)
-	}
-	for i, w := range out {
-		if rest, ok := strings.CutPrefix(w, "~/"); ok { // as a shell would: --state ~/x
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return nil, err
-			}
-			out[i] = filepath.Join(home, rest)
+		for range ws {
+			lines = append(lines, n+1)
 		}
+		words = append(words, ws...)
 	}
-	return out, nil
+	return words, lines, nil
 }
 
-func configWords(line string) ([]string, error) {
+// configWords splits a line; an unquoted word starting with ~/ starts at home.
+func configWords(line, home string) ([]string, error) {
 	var words []string
 	var w strings.Builder
 	in := false // a word is under way (an empty '' is one too)
@@ -128,6 +138,11 @@ func configWords(line string) ([]string, error) {
 			}
 			in = true
 		default:
+			if !in && home != "" && strings.HasPrefix(line[i:], "~/") { // as a shell would: --state ~/x
+				w.WriteString(home) // in place of the ~; the / comes next
+				in = true
+				continue
+			}
 			w.WriteByte(c)
 			in = true
 		}
@@ -143,15 +158,27 @@ func configWords(line string) ([]string, error) {
 // --allow-hosts so far (the file's), checked after @FILE is read: '*' there
 // is refused however it is spelled.
 func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string) error {
-	words, err := readConfig(path)
+	words, lines, err := readConfig(path)
 	if err != nil {
 		return err
 	}
-	if err := fs.Parse(words); err != nil {
-		return fmt.Errorf("--config %s: %w", path, err)
+	// Errors say the line, never a value (it may be a --mask-values pattern),
+	// and do not exit or print run's usage.
+	fs.Init(fs.Name(), flag.ContinueOnError)
+	out := fs.Output()
+	fs.SetOutput(io.Discard)
+	err = fs.Parse(words)
+	fs.Init(fs.Name(), flag.ExitOnError)
+	fs.SetOutput(out)
+	if err != nil {
+		why := "a flag or its value does not parse (run -h lists them)"
+		if name, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: "); ok {
+			why = "no flag " + name
+		}
+		return fmt.Errorf("--config %s: %s", path, why)
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("--config %s: %q is not a flag (quote values with spaces, such as --device \"Taro's iPhone\")", path, fs.Arg(0))
+		return fmt.Errorf("--config %s, line %d: a word that is no flag's value (quote values with spaces, such as --device \"Taro's iPhone\")", path, lines[len(words)-fs.NArg()])
 	}
 	var refused error
 	fs.Visit(func(f *flag.Flag) {
@@ -162,7 +189,13 @@ func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string) error {
 	if refused != nil {
 		return refused
 	}
-	if allow, err := capture.ParseAllowHosts(hostsOnly("--allow-hosts", *allowSpecs)); err == nil && allow.All {
+	var hosts []string // as hostsOnly takes them, without its log line (run logs it once)
+	for _, spec := range *allowSpecs {
+		for _, h := range strings.Split(spec, ",") {
+			hosts = append(hosts, hostOf(strings.TrimSpace(h)))
+		}
+	}
+	if allow, err := capture.ParseAllowHosts([]string{strings.Join(hosts, ",")}); err == nil && allow.All {
 		return fmt.Errorf("--config %s: --allow-hosts '*' only on the command line (it records every site)", path)
 	}
 	return nil

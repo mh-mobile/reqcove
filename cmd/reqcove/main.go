@@ -198,7 +198,7 @@ func run(ctx context.Context, args []string) error {
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
-	fs.String("config", "", "a file of these flags, one a line (as for `brew services`), read before the command line's; --no-redact, --web, --rules-reload and --allow-hosts '*' are refused there. The file must be yours and not writable by others")
+	fs.String("config", "", "a `FILE` of these flags, one a line (for brew services), read before the command line's; --no-redact, --web, --rules-reload and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
 	if takeFlags == nil { // the docs test reads no file
 		if path, ok, err := configFile(args); err != nil {
 			return err
