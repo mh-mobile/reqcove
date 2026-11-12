@@ -44,6 +44,7 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
+	Trailers    [][2]string `json:"trailers"`   // done: the response's trailers (HTTP/2's: gRPC's status)
 	Text        bool        `json:"text"`       // ws: a text message
 	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)
 	Code        int         `json:"code"`       // ws_end: the close code
@@ -59,12 +60,13 @@ type event struct {
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
-	DroppedBodies int64  `json:"dropped_bodies"`
-	DroppedEvents int64  `json:"dropped_events"`
-	OutOfScope    int64  `json:"out_of_scope"`
-	op            string // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
-	wsHead        string // ws: the message's head, masked before the lock
-	wsNote        string // ws: why it has none
+	DroppedBodies int64       `json:"dropped_bodies"`
+	DroppedEvents int64       `json:"dropped_events"`
+	OutOfScope    int64       `json:"out_of_scope"`
+	op            string      // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
+	grpcTrailers  [][2]string // body: gRPC-Web's trailer frame, masked
+	wsHead        string      // ws: the message's head, masked before the lock
+	wsNote        string      // ws: why it has none
 }
 
 const wireVersion = 2
@@ -81,37 +83,38 @@ type Body struct {
 }
 
 type Flow struct {
-	seq         int64       // arrival order; the list cursor
-	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
-	ws          *wsLog      // a WebSocket's kept messages
-	opNamed     bool        // the URL or a header named Operation: the body does not change it
-	ID          string      `json:"id"`
-	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
-	Device      string      `json:"device,omitempty"`
-	Client      string      `json:"client,omitempty"`
-	Start       float64     `json:"start"`
-	End         float64     `json:"end,omitempty"`
-	State       string      `json:"state"` // open, done, error
-	Method      string      `json:"method"`
-	URL         string      `json:"url"` // as the app sent it, before --rules
-	MappedURL   string      `json:"mapped_url,omitempty"`
-	Rewrites    []string    `json:"rewrites,omitempty"`
-	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
-	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
-	Host        string      `json:"host"`
-	Path        string      `json:"path"`
-	HTTPVersion string      `json:"http_version"`
-	ReqHeaders  [][2]string `json:"request_headers"`
-	ReqBody     Body        `json:"request_body"`
-	Status      int         `json:"status,omitempty"`
-	Reason      string      `json:"reason,omitempty"`
-	RespHeaders [][2]string `json:"response_headers,omitempty"`
-	RespBody    Body        `json:"response_body"`
-	WSMessages  int         `json:"websocket_messages,omitempty"`
-	WSBytes     int64       `json:"websocket_bytes,omitempty"`
-	WSClose     *WSClose    `json:"websocket_close,omitempty"` // how the socket ended; none while it is open
-	Error       string      `json:"error,omitempty"`
-	Notes       []string    `json:"notes,omitempty"` // reqcove's, about what it left out
+	seq          int64       // arrival order; the list cursor
+	answered     int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
+	ws           *wsLog      // a WebSocket's kept messages
+	opNamed      bool        // the URL or a header named Operation: the body does not change it
+	ID           string      `json:"id"`
+	Conn         string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
+	Device       string      `json:"device,omitempty"`
+	Client       string      `json:"client,omitempty"`
+	Start        float64     `json:"start"`
+	End          float64     `json:"end,omitempty"`
+	State        string      `json:"state"` // open, done, error
+	Method       string      `json:"method"`
+	URL          string      `json:"url"` // as the app sent it, before --rules
+	MappedURL    string      `json:"mapped_url,omitempty"`
+	Rewrites     []string    `json:"rewrites,omitempty"`
+	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
+	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
+	Host         string      `json:"host"`
+	Path         string      `json:"path"`
+	HTTPVersion  string      `json:"http_version"`
+	ReqHeaders   [][2]string `json:"request_headers"`
+	ReqBody      Body        `json:"request_body"`
+	Status       int         `json:"status,omitempty"`
+	Reason       string      `json:"reason,omitempty"`
+	RespHeaders  [][2]string `json:"response_headers,omitempty"`
+	RespTrailers [][2]string `json:"response_trailers,omitempty"` // HTTP/2's, or gRPC-Web's last frame: gRPC's status
+	RespBody     Body        `json:"response_body"`
+	WSMessages   int         `json:"websocket_messages,omitempty"`
+	WSBytes      int64       `json:"websocket_bytes,omitempty"`
+	WSClose      *WSClose    `json:"websocket_close,omitempty"` // how the socket ended; none while it is open
+	Error        string      `json:"error,omitempty"`
+	Notes        []string    `json:"notes,omitempty"` // reqcove's, about what it left out
 }
 
 // bytes is what a flow holds that a site or an app controls the size of: the
@@ -130,7 +133,7 @@ func (f *Flow) bytes() int {
 	if f.WSClose != nil {
 		n += len(f.WSClose.Reason)
 	}
-	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
+	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders, f.RespTrailers} {
 		for _, kv := range h {
 			n += len(kv[0]) + len(kv[1]) + 64 // and the strings' and slot's own overhead
 		}
@@ -431,6 +434,9 @@ func (s *Store) Apply(line []byte) {
 		if e.Dir == "request" && !f.opNamed && f.Method != "GET" && (e.op != "" || e.Final) {
 			f.Operation = e.op
 		}
+		if e.Dir == "response" && e.grpcTrailers != nil && f.RespTrailers == nil {
+			f.RespTrailers = e.grpcTrailers
+		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
 		if e.Dir == "request" {
 			f.ReqBody = b
@@ -438,6 +444,9 @@ func (s *Store) Apply(line []byte) {
 			f.RespBody = b
 		}
 	case "done":
+		if len(e.Trailers) > 0 {
+			f.RespTrailers = e.Trailers
+		}
 		if f.Status != 101 || !strings.EqualFold(header(f.RespHeaders, "upgrade"), "websocket") { // a WebSocket is open until ws_end (an h2c or other 101 is not one)
 			f.End, f.State = e.TSEnd, "done"
 		}
@@ -477,6 +486,8 @@ func (s *Store) maskEvent(e *event) {
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
 	case "error", "tls_failed":
 		e.Msg = s.maskError(e.Msg)
+	case "done":
+		e.Trailers = s.maskHeaders(e.Trailers)
 	case "ws_end":
 		e.Reason = s.mask(e.Reason)
 	}
@@ -505,6 +516,14 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	s.mu.Unlock() // f is not used past here
 	if f == nil {
 		return nil, false
+	}
+	if isGRPC(ct) && e.Decoded { // framed: masked message by message, and described
+		var note string
+		head, note, e.grpcTrailers = s.grpcBody(head, ct, e.Dir == "request")
+		if e.Note == "" {
+			e.Note = note
+		}
+		return head, true
 	}
 	return maskBody(head, ct, e.Dir == "request"), true
 }

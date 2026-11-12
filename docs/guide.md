@@ -248,6 +248,7 @@ Reqcove's CA. Who trusts it differs:
 | a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | a Rails app (Net::HTTP, Faraday) |
 | this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
 | another Mac | as a `--device` on the exit node, with the Tailscale app ([how](#another-mac)) | a macOS 27 VM |
+| gRPC apps | their calls and status; the messages' contents not yet ([how](#grpc)) | the E2E test only |
 
 ### Apps that pin certificates (`--pass-hosts`)
 
@@ -272,6 +273,24 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 
 Tried: on an iPhone. That a pass host's decrypted requests go through
 `--upstream-proxy`: a test; that they skip `--rules`: from reading code.
+
+### gRPC
+
+A gRPC call is a flow: its path names the method (`/pkg.Service/Method`), and
+rows and `summarize` show its status (`grpc_status`: `0` is OK, `16`
+UNAUTHENTICATED, …; `pending` until its trailers come), read from the response
+headers when there is no message (a trailers-only answer, the usual error),
+else from the trailers (HTTP/2's, or gRPC-Web's last frame). `grpc_message` is
+decoded and masked. A body's note counts its messages and their sizes;
+protobuf messages are not handed out while masking (they are not text), JSON
+ones (`application/grpc+json`, `connect+json`) are, one a line, masked as JSON.
+Metadata ending in `-bin` (binary) shows its size only.
+
+Apps built on gRPC-core (Google's SDKs among them) trust their own list of
+CAs, not the ones the iPhone trusts, so their calls show as TLS failures (from
+gRPC's mailing list, not tried). Tried so far: the E2E test, gRPC's shape over
+HTTP/2 through mitmproxy (a body over 64 KiB with its status in the trailers,
+and a trailers-only error), not an app on an iPhone.
 
 ### Android
 
@@ -625,10 +644,10 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic), GraphQL operation (`operation: "Login"`: its `operationName`, or the document's first operation; rows show it); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
 | `wait_for_flows` | what an action on the device sent: take `checkpoint` from `list_flows` (or `capture_stats`) before acting, then call with `after: checkpoint`. Returns the flows answered since (a response or an error), oldest answer first, waiting up to `timeout` seconds (default 20, at most 30) for the first. Pass its `after` to the next call: each flow comes once. The same filters. A WebSocket is answered once, when it opens (`101`), and stays `open` until it closes |
-| `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given |
+| `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given; `response_trailers` (HTTP/2's, or gRPC-Web's last frame) |
 | `list_ws_messages` | a WebSocket's messages (a row with `websocket_messages`), oldest first, after a cursor (`after`: a checkpoint, or the last page's `after`); filters `direction` (`client`, `server`) and `text`. A text message's first 4 KiB, masked as it arrived as bodies are; a binary one, one past about 20 a second on its socket, or text masking cannot read gives its size only. Kept are the socket's first 5 messages (an auth message is usually one) and its newest 100; `missed` counts the others after the cursor (`missed_at_most` when the cursor itself falls among them: then some may be from before it). `open` and `close` (code, who closed) say how the socket stands. Messages wake no `wait_for_flows`, but a timed-out wait lists the sockets that got messages since (`websocket_activity`); `search_flows` with `bodies` looks in the kept ones |
 | `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
-| `summarize` | counts by host, User-Agent, status, method, device, content type, and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
+| `summarize` | counts by host, User-Agent, status, method, device, content type, gRPC status (`by_grpc_status`), and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |

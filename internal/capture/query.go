@@ -29,6 +29,8 @@ type Summary struct {
 	Error       string   `json:"error,omitempty"`
 	MatchedIn   []string `json:"matched_in,omitempty"`         // with Filter.Query: url, request_headers, response_headers, request_body, response_body, websocket_messages
 	WSMessages  int      `json:"websocket_messages,omitempty"` // messages on its WebSocket so far (list_ws_messages reads them)
+	GRPCStatus  string   `json:"grpc_status,omitempty"`        // gRPC's status code (0 is OK), or pending until its trailers come
+	GRPCMessage string   `json:"grpc_message,omitempty"`
 }
 
 // Filter selects flows for List; zero fields match everything.
@@ -180,6 +182,7 @@ func (s *Store) summary(f *Flow) Summary {
 		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error, WSMessages: f.WSMessages,
 		ContentType: header(f.RespHeaders, "content-type"), UserAgent: cutTo(header(f.ReqHeaders, "user-agent"), maxUAText),
 		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}
+	v.GRPCStatus, v.GRPCMessage = grpcStatus(f)
 	if f.Start > 0 {
 		v.Time = unixTime(f.Start).Format("2006-01-02T15:04:05.000Z07:00")
 	}
@@ -191,17 +194,18 @@ func (s *Store) summary(f *Flow) Summary {
 
 // Counts is what summarize returns: how the matching flows split up.
 type Counts struct {
-	Flows       int     `json:"flows"`
-	Mocked      int     `json:"mocked,omitempty"` // answered by a mock rule, not the server
-	First       string  `json:"first,omitempty"`  // earliest request start
-	Last        string  `json:"last,omitempty"`
-	ByHost      []Count `json:"by_host"`
-	ByUserAgent []Count `json:"by_user_agent"`
-	ByStatus    []Count `json:"by_status"` // "none": no response (open or failed)
-	ByMethod    []Count `json:"by_method"`
-	ByDevice    []Count `json:"by_device"`
-	ByType      []Count `json:"by_content_type"`
-	ByEndpoint  []Count `json:"by_endpoint"` // method, host and path without the query, ids as {id}; a GraphQL operation after it
+	Flows        int     `json:"flows"`
+	Mocked       int     `json:"mocked,omitempty"` // answered by a mock rule, not the server
+	First        string  `json:"first,omitempty"`  // earliest request start
+	Last         string  `json:"last,omitempty"`
+	ByHost       []Count `json:"by_host"`
+	ByUserAgent  []Count `json:"by_user_agent"`
+	ByStatus     []Count `json:"by_status"` // "none": no response (open or failed)
+	ByMethod     []Count `json:"by_method"`
+	ByDevice     []Count `json:"by_device"`
+	ByType       []Count `json:"by_content_type"`
+	ByEndpoint   []Count `json:"by_endpoint"`              // method, host and path without the query, ids as {id}; a GraphQL operation after it
+	ByGRPCStatus []Count `json:"by_grpc_status,omitempty"` // gRPC flows by status (0 OK, 16 UNAUTHENTICATED, …; pending)
 }
 
 type Count struct {
@@ -253,6 +257,9 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 		add("device", device)
 		add("type", strings.TrimSpace(ct))
 		add("endpoint", endpoint(f))
+		if st, _ := grpcStatus(f); st != "" {
+			add("grpc", st)
+		}
 	}
 	top := func(kind string) []Count {
 		out := []Count{}
@@ -266,6 +273,9 @@ func (s *Store) Summarize(q Filter, n int) Counts {
 	}
 	c.ByHost, c.ByUserAgent, c.ByStatus, c.ByMethod, c.ByDevice, c.ByType = top("host"), top("ua"), top("status"), top("method"), top("device"), top("type")
 	c.ByEndpoint = top("endpoint")
+	if len(tally["grpc"]) > 0 {
+		c.ByGRPCStatus = top("grpc")
+	}
 	if first > 0 {
 		c.First = unixTime(first).Format("2006-01-02T15:04:05.000Z07:00")
 		c.Last = unixTime(last).Format("2006-01-02T15:04:05.000Z07:00")
