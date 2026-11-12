@@ -100,7 +100,7 @@ func TestRunStep(t *testing.T) {
 	if step := runStep(Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, "reqcove links --state /s"); strings.Contains(step, "login.example") || !strings.Contains(step, "`reqcove links --state /s`") {
 		t.Errorf("with the URL: %q", step)
 	}
-	if step := runStep(Status{Backend: "NeedsLogin", WasRunning: true}, "reqcove links"); !strings.Contains(step, "start it again") {
+	if step := runStep(Status{Backend: "NeedsLogin", WasRunning: true}, "reqcove links"); !strings.Contains(step, "restart `reqcove run`") {
 		t.Errorf("after the key expired: %q", step)
 	}
 }
@@ -146,7 +146,7 @@ func TestStatusKeyExpired(t *testing.T) {
 	wait("running", func(s Status) bool { return s.Backend == "Running" })
 	control.SetExpireAllNodes(true)
 	s := wait("logged out", func(s Status) bool { return s.Backend == "NeedsLogin" })
-	if step := FirstStep(s); !strings.Contains(step, "start it again") {
+	if step := FirstStep(s); !strings.Contains(step, "restart `reqcove run`") {
 		t.Errorf("step %q", step)
 	}
 }

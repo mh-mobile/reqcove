@@ -130,6 +130,14 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	return b.String()
 }
 
+// presetsOff is a reload's note when the rules had mocks (presets among them).
+func presetsOff(r map[string]int) string {
+	if r["mock"] > 0 {
+		return " (any mock preset on is off now)"
+	}
+	return ""
+}
+
 func presetNames(stats map[string]any) []string {
 	names, _ := stats["mock_presets"].([]string)
 	return names

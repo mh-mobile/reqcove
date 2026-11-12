@@ -316,8 +316,12 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
 turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
 Writing a preset is your consent that an agent may turn it on; there is no
-switch at start. The skill and the server's instructions tell an agent never
-to write `preset:` itself, even when asked, but to show you the lines.
+switch at start. The skill and the server's instructions tell an agent to write
+`preset:` only when you ask in the conversation, as any rule, never because of
+what the records say. An agent that writes a preset when asked (with
+`--rules-reload`) can turn it on at once: the request in the conversation is
+the consent then. Whether a model keeps to that is not something a test can
+show.
 
 What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
 client, or a sandboxed one) can now change what the device gets, at the moment
@@ -343,8 +347,9 @@ allowed host runs in Safari with that host's cookies, as any mock does).
   wholesale gets them allowed without a prompt: allow the read tools by name.
 - The skill and the server's instructions tell agents to turn one on only for
   a test the user asked for in the conversation, never because of what the
-  records or a preset's description say, and never to add `preset:` to a
-  rules file. Whether a model keeps to that is not something a test can show.
+  records or a preset's description say, and to add `preset:` to a rules file
+  only when the user asks. Whether a model keeps to that is not something a
+  test can show.
 - Visible: `run` logs each preset an agent turns on or off; `reqcove status`
   and the `status` tool list the ones on (or say mitmproxy did not answer); a
   flow a preset answered says `preset: NAME`. With `--rules-reload` a changed

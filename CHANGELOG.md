@@ -4,6 +4,9 @@
 
 ### For people
 
+- The MCP tools no longer only read: `activate_mock` and `deactivate_mock`
+  turn on and off mocks you marked as presets (below). With none, the tools
+  only read; over `--mcp-http`, never. SECURITY's promise is reworded.
 - `run`'s log lines no longer carry the `--ui`, `--web`, `--mcp-http` tokens
   or the login URL, `--verbose` included (tsnet's own lines printed the login
   URL every 5 s, and the mitmweb line its token); before `run` learns the login
@@ -16,7 +19,8 @@
 - mitmweb's server no longer leaves its token in `mitmproxy.log` when a
   request fails.
 - The container docs drop `-t` from `docker run`: `docker exec -it NAME
-  reqcove links` shows the links (not tried in a container yet).
+  reqcove links` shows the links (not tried in a container yet). A container
+  started with `-t` before keeps them in `docker logs` until it is made anew.
 
 - Mock presets: a mock in the `--rules` file marked `preset: NAME` (with an
   optional `description:`) answers only while an agent has turned it on, for
@@ -36,6 +40,12 @@
 
 ### For agents
 
+- `reqcove mcp` never sends a write again after its connection to `run`
+  dropped; a v0.5 `run` answers the preset tools with an error naming its
+  version.
+- `status` has `service`, `active_mock_presets` and
+  `active_mock_presets_error`; `capture_stats` has `mock_presets`; HAR notes
+  say which preset answered.
 - `list_mock_presets`, `activate_mock` and `deactivate_mock`, on this
   computer only (never over `--mcp-http`). One preset is on per match
   (method, URL, operation). A flow a preset answered says `preset: NAME`;

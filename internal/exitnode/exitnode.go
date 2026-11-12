@@ -413,7 +413,7 @@ func FirstStepWith(s Status, linksCmd string) string {
 	}
 	switch {
 	case s.Backend == "NeedsLogin" && s.WasRunning:
-		return "log in again (the node's key expired or it was logged out): stop `reqcove run`, start it again, and open the login URL (`" + linksCmd + "` prints it)"
+		return "log in again (the node's key expired or it was logged out): restart `reqcove run` (or its service: brew services restart reqcove), and open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsLogin":
 		return "log in: open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsMachineAuth":

@@ -26,7 +26,7 @@ func parseUpstream(raw, ca string) (string, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
-		return "", fmt.Errorf("--upstream-proxy %q: want http://HOST:PORT", raw)
+		return "", errors.New("--upstream-proxy: want http://HOST:PORT (no user or password, no path)") // never the value: it may hold a password
 	}
 	c, err := net.DialTimeout("tcp", u.Host, 3*time.Second)
 	if err != nil {

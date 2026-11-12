@@ -68,7 +68,7 @@ mkdir -p "$(brew --prefix)/etc/reqcove"
 printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
 chmod 600 "$(brew --prefix)/etc/reqcove/config"
 brew services start reqcove
-reqcove links        # the login URL, the first time; the --ui link
+reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
 reqcove status       # "service: homebrew.mxcl.reqcove"
 ```
 
@@ -179,7 +179,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 `run` serves the same tools over HTTP on the node, but the mock preset ones
 (`list_mock_presets`, `activate_mock`, `deactivate_mock`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
-`Authorization: Bearer <token>`.
+`Authorization: Bearer <token>` (`reqcove links` prints them again; off a
+terminal, only it).
 
 - **Grok Bot**: Connect apps › Tailscale, to join your tailnet (under Tailnet
   Lock, sign its device). Then Connect apps › Add a custom connector: type
@@ -232,7 +233,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 ```
 
 `run` serves a read-only page on the node's port 80 and prints its link with a
-QR code. Scan it with the iPhone's camera: Safari opens the list, which follows
+QR code (`reqcove links` prints them again; off a terminal, only it). Scan it with the iPhone's camera: Safari opens the list, which follows
 new flows every second (split view puts it beside the app). Tap a flow for its
 headers and bodies, masked as the MCP tools return them.
 
@@ -289,7 +290,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --web
 mitmweb runs instead of mitmdump, on `http://127.0.0.1:8081` (8091-8099 while
 another run has 8081: [two addresses](several-exit-nodes.md#ports)) and, for
 your own devices on the tailnet, on the node's port 8081, with the link and QR
-code `run` prints.
+code `run` (or `reqcove links`) prints.
 
 - Nothing is masked ([SECURITY](SECURITY.md#mitmweb---web)). It shows bodies
   up to 2 MB each, and keeps the newest 10,000 flows and 256 MB of bodies.
@@ -652,8 +653,10 @@ mock:
   `reqcove status` and the `status` tool show which are on.
 - One answer already waiting out its `delay_ms` still goes out after the
   preset is turned off.
-- Never let an agent add `preset:` to the file: writing a preset is your
-  consent that an agent may turn it on.
+- A preset in the file is your consent that an agent may turn it on. An
+  agent writes one only when you ask it to in the conversation (the skill and
+  the server's instructions say so), never because of what the records say;
+  with `--rules-reload` it can then turn it on at once.
 
 Tried with the E2E tests (real mitmproxy): on and off, by time and by count,
 one per match (also two GraphQL operations on one URL, each its own), a change
