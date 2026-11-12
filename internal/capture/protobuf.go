@@ -25,7 +25,6 @@ type protoWalk struct {
 	request bool
 	nodes   int
 	budget  int // bytes it may still scan, trials of sub-messages included: linear in the head
-	b       strings.Builder
 }
 
 func protoVarint(b []byte) (uint64, int) {

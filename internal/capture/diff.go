@@ -78,6 +78,7 @@ func (s *Store) DiffFlows(a, b string) (FlowDiff, error) {
 
 type differ struct {
 	redact bool
+	proto  bool // comparing protobuf read with --proto: its lengths-only values hide what may differ
 	out    FlowDiff
 }
 
@@ -92,6 +93,9 @@ func (d *differ) add(x Diff) {
 // masked: v shows a masked value (only while masking is on: with
 // --no-redact, a "[redacted]" in a value is the site's own text).
 func (d *differ) masked(v string) bool {
+	if d.redact && d.proto && (strings.Contains(v, "bytes(") || strings.Contains(v, "string(") || strings.Contains(v, "varint(") || strings.Contains(v, "fixed32") || strings.Contains(v, "fixed64") || strings.Contains(v, "[not read]")) {
+		return true
+	}
 	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED") ||
 		strings.Contains(v, "[binary ") || strings.Contains(v, "[compressed, ") || strings.Contains(v, "[cut: ")) // gRPC's: the bytes behind them may differ
 }
@@ -179,6 +183,8 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 		}
 		return r
 	}
+	d.proto = strings.HasPrefix(a.View, "protobuf as") || strings.HasPrefix(b.View, "protobuf as")
+	defer func() { d.proto = false }()
 	cutHead := a.Truncated || b.Truncated || !a.Final || !b.Final
 	// JSON on both sides, whole: compared by path.
 	if !cutHead {

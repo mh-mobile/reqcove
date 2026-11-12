@@ -59,8 +59,7 @@ func grpcFrames(head []byte) []grpcFrame {
 }
 
 // grpcBody masks a framed body's head: JSON messages de-framed (one per
-// line) and masked as JSON; others described, their bytes kept as they are
-// (not text: never handed out while masking). gRPC-Web's trailer frame gives
+// line) and masked as JSON; protobuf ones rendered (renderProto). gRPC-Web's trailer frame gives
 // trailers, its lines masked as headers are.
 // Not framed after all (a text body under such a type): masked as a body.
 // Without masking (redact false), the head stays as it came.

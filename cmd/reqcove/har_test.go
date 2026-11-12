@@ -108,6 +108,13 @@ func TestHAR(t *testing.T) {
 	if !strings.Contains(out, "response trailers: grpc-status: 0") {
 		t.Errorf("trailers in the HAR:\n%s", out)
 	}
+	// A rendering of protobuf says it is not the bytes.
+	ev(map[string]any{"ev": "request", "id": "pb1", "device": "devA", "host": "grpc.example.org", "method": "POST", "ts": 171.0, "url": "https://grpc.example.org/v1/x", "headers": [][2]string{{"Content-Type", "application/x-protobuf"}}})
+	ev(map[string]any{"ev": "body", "id": "pb1", "dir": "request", "decoded": true, "final": true, "size": 5, "head": b64("\x0a\x03abc")})
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "grpc.example.org"}) })
+	if !strings.Contains(out, "reqcove's rendering, not the body's bytes: protobuf structure") || !strings.Contains(out, "1: string(3)") {
+		t.Errorf("trailers in the HAR:\n%s", out)
+	}
 	// More than a page of list_flows (500), and a flow still open: all of them,
 	// in order, the open one said to be open.
 	for i := 0; i < 600; i++ {

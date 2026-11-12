@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,5 +209,28 @@ func TestProtoSchema(t *testing.T) {
 	os.WriteFile(bad, []byte("PBsecretFile not a descriptor"), 0o600)
 	if _, err := LoadProtoSchema(bad); err == nil || strings.Contains(err.Error(), "PBsecretFile") {
 		t.Errorf("a bad file: %v", err)
+	}
+}
+
+// TestProtoReview: the item review (Fable): two --proto bodies that differ
+// only behind bytes(N) are never "same".
+func TestProtoReview(t *testing.T) {
+	path, login := protoTestSchema(t)
+	defer protoSchema.Store(nil)
+	if _, err := LoadProtoSchema(path); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(10, 1<<20)
+	for i, avatar := range []string{"0123456789abcdef", "fedcba9876543210"} {
+		m := dynamicpb.NewMessage(login)
+		m.Set(login.Fields().ByName("user"), protoreflect.ValueOfString("alice"))
+		m.Set(login.Fields().ByName("avatar"), protoreflect.ValueOfBytes([]byte(avatar)))
+		b, _ := proto.Marshal(m)
+		id := []string{"a", "b"}[i]
+		grpcApply(s, map[string]any{"ev": "request", "id": id, "method": "POST", "url": "https://api.example/t.S/Do", "host": "api.example", "path": "/t.S/Do", "headers": [][2]string{{"Content-Type", "application/x-protobuf"}}})
+		grpcApply(s, map[string]any{"ev": "body", "id": id, "dir": "request", "decoded": true, "final": true, "size": len(b), "head": base64.StdEncoding.EncodeToString(b)})
+	}
+	if d, _ := s.DiffFlows("a", "b"); d.RequestBody.Result == "same" {
+		t.Errorf("bytes(16) on both sides read as the same: %+v", d.RequestBody)
 	}
 }

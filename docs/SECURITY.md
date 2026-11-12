@@ -181,18 +181,24 @@ So "delete the directory" above means each of them.
   frames) is the exception: reqcove hands out its own rendering instead of
   the bytes (`view` says so). Without a schema, it is the structure only:
   field numbers, wire types, lengths, a string's length but never its text,
-  and numbers in responses; in requests only 1-byte numbers (enums,
-  booleans), as a lone `code` is masked in requests. A span of printable text
-  is always a string, never read as a message, as its bytes would then show
-  as numbers; random bytes (`bytes` fields, about 1 in 100 for 16 random
-  bytes) can still read as one, and a few of their bytes then show as
-  numbers. Lengths show (a password's length). With `--proto FILE` (your
+  and numbers in responses; in requests only 1-byte numbers (0 to 127:
+  enums, booleans, but also a PIN or CVV that small), larger ones as their
+  byte count, as a lone `code` is masked in requests. A span of printable
+  text is always a string, never read as a message, as its bytes would then
+  show as numbers; random bytes (`bytes` fields) can still read as one: in a
+  response usually all of their bytes then show as numbers (about 1 in 100
+  16-byte values whole, 1 in 1,000 32-byte ones), in a request parts of
+  them (field numbers and 1-byte numbers). Lengths show (a password's
+  length). With `--proto FILE` (your
   compiled schema), a message whose type is known (a gRPC, Connect or Twirp
   method by its path, or `messageType` in the content type) is read with
   its field names (the proto names, never `json_name`) as JSON and masked
   by name as JSON is; `bytes` show their length, and fields the schema does
   not have their structure. A schema that is stale or wrong can give a
-  token an innocent name, which then passes. (Tests and a fuzz test.)
+  token an innocent name, which then passes; so do values under names the
+  built-in list does not count as secret, as in JSON (a `cookie` entry of a
+  headers map, a `cvv`). (Tests; the fuzz test is of the reading without a
+  schema. The `protoc` command above was run once, with protoc 33.0.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text

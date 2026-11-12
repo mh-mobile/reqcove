@@ -305,6 +305,9 @@ func harBody(text, enc string, b capture.Body) (string, string, string) {
 	if b.Note != "" {
 		notes = append(notes, b.Note)
 	}
+	if b.View != "" {
+		notes = append(notes, "reqcove's rendering, not the body's bytes: "+b.View)
+	}
 	return text, enc, strings.Join(notes, "; ")
 }
 
