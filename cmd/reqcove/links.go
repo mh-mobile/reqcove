@@ -39,6 +39,12 @@ type userLinks struct {
 	login    string // the login URL shown last
 }
 
+// newUserLinks is run's: the steps (status, the tools) name its links command too.
+func newUserLinks(w *os.File, red *exitnode.Redactor, state, cmd string) *userLinks {
+	stepLinksCmd = cmd
+	return &userLinks{w: w, terminal: isTerminal(w), red: red, state: state, cmd: cmd}
+}
+
 // status keeps login-url while the node waits for a login, and shows a new
 // login URL on the terminal.
 func (u *userLinks) status(s exitnode.Status) {

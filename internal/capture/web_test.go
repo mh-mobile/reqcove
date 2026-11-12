@@ -149,17 +149,15 @@ func TestWeb(t *testing.T) {
 	if fi, err := os.Stat(cfg); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("config.yaml: %v %v", fi, err)
 	}
-	// A failed request with the token: tornado logs its URI (4xx as warnings).
-	if r, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/no-such-page?token=%s", port, token)); err == nil {
-		r.Body.Close()
-	}
 	h.c.Stop()
 	if exists(cfg) {
 		t.Error("the mitmweb password is left in config.yaml after Stop")
 	}
 	// mitmweb prints its URL without the token when web_password is set (12.3.1's
-	// webaddons.py), and the addon masks it in tornado's lines.
-	if b, _ := os.ReadFile(mitmLog.Name()); strings.Contains(string(b), token) {
+	// webaddons.py). Its 500 on /big's cut content (above) is logged with the
+	// URI, ?token= and all (termlog_verbosity=error keeps only errors): the
+	// addon masks the token there.
+	if b, _ := os.ReadFile(mitmLog.Name()); strings.Contains(string(b), token) || !strings.Contains(string(b), "token=[redacted]") {
 		t.Errorf("the mitmweb password is in mitmproxy.log:\n%s", b)
 	}
 }

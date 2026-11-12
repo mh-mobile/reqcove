@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -156,12 +157,22 @@ func TestUserLinks(t *testing.T) {
 
 // The steps name this node's `reqcove links` (with --state), as run sets it.
 func TestStepsNameLinksState(t *testing.T) {
-	stepLinksCmd = "reqcove links --state /s"
+	newUserLinks(os.Stderr, &exitnode.Redactor{W: os.Stderr}, "/s", "reqcove links --state /s")
 	defer func() { stepLinksCmd = "reqcove links" }()
 	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
 	out := statusOut(exitnode.Status{Backend: "NeedsLogin"}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil)
 	if !strings.Contains(strings.Join(out.NextSteps, "\n"), "`reqcove links --state /s`") {
 		t.Errorf("steps %v", out.NextSteps)
+	}
+}
+
+// run installs the filter first, and leaves it for main's log.Fatal.
+func TestRunInstallsRedactor(t *testing.T) {
+	defer log.SetOutput(os.Stderr)
+	log.SetOutput(os.Stderr)
+	run(context.Background(), []string{"--state", t.TempDir()}) // no --device: returns early
+	if _, ok := log.Writer().(*exitnode.Redactor); !ok {
+		t.Errorf("log output %T", log.Writer())
 	}
 }
 
