@@ -657,7 +657,10 @@ one per match (also two GraphQL operations on one URL, each its own), a change
 of the file turning them off, refusals (an unknown name, over 5 minutes or 20
 requests, the socket without reqcove's secret), a delay on one HTTP/2 stream
 while another on the same connection is answered at once, and close over
-HTTP/1 and HTTP/2. Not tried yet on an iPhone.
+HTTP/1 and HTTP/2. On an iPhone (iOS 27.3, a test app over URLSession, an
+agent turning presets on over MCP): a 503 once, then the app's retry reached
+the server; an 8 s delay; a close, which CFNetwork did not retry by itself (the
+app's own retry was closed too); a 401 on login.
 
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:
