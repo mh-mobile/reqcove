@@ -95,6 +95,17 @@ func TestPresetTools(t *testing.T) {
 	}
 }
 
+// A run without the preset tools (v0.5) answers activate_mock with a tool
+// error that says so, not a protocol error.
+func TestPresetToolsOlderRun(t *testing.T) {
+	sock := sockPath(t)
+	cs := agent(t, sock)
+	defer serve(t, sock, New(storeWith("a"), nil))()
+	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p"}); !isErr || !strings.Contains(got, "older version") {
+		t.Errorf("%q %v", got, isErr)
+	}
+}
+
 // A write whose connection closes mid-call is never sent again: the first may
 // have landed, and a second would reset a count of 1. The listener stays, so a
 // resend would reach it.
