@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -41,7 +42,9 @@ func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error 
 // toolList is New's tools as an agent sees them, status included.
 func toolList(ctx context.Context) ([]*mcp.Tool, error) {
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := New(capture.NewStore(1, 1), func() StatusOut { return StatusOut{} }).Connect(ctx, st, nil)
+	srv := New(capture.NewStore(1, 1), func() StatusOut { return StatusOut{} })
+	AddPresetTools(srv, capture.NewStore(1, 1), noPresets{})
+	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +109,7 @@ func (p *proxy) session(ctx context.Context, failed *mcp.ClientSession) (*mcp.Cl
 	}
 	p.failedAt = time.Time{}
 	if n := p.dials.Add(1); n > 1 {
-		p.note = "reqcove run restarted: its records start anew, so flow ids and cursors from before it are gone."
+		p.note = "reqcove run restarted: its records start anew, so flow ids and cursors from before it are gone, and every mock preset is off."
 	}
 	if v := cs.InitializeResult().ServerInfo.Version; v != Version {
 		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: reconnect the agent's MCP server (/mcp in Claude Code) for the tools of the version running.", v, Version)
@@ -153,8 +156,10 @@ func (p *proxy) takeNote(cs *mcp.ClientSession) string {
 }
 
 // call forwards one tool call. A connection that closed (`run` restarted) is
-// dialled again and the call sent once more: every tool is read-only. `run`'s
-// own answers, errors included, go back as they are.
+// dialled again and a read-only call sent once more; a write (activate_mock)
+// never is, since it may have landed. `run`'s own answers, errors included,
+// go back as they are; a `run` without the tool (an older one) answers that
+// it does not have it.
 func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -182,7 +187,16 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return out, nil
 		case !closed(err):
+			if presetTools[req.Params.Name] && strings.Contains(err.Error(), "unknown tool") {
+				v := "an older version"
+				if r := cs.InitializeResult(); r != nil && r.ServerInfo != nil {
+					v = "version " + r.ServerInfo.Version
+				}
+				return toolError("the running reqcove (" + v + ") has no " + req.Params.Name + ": restart `reqcove run` with this one (" + Version + ")"), nil
+			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
+		case writeTools[req.Params.Name]:
+			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call list_mock_presets to see"), nil
 		case try == 1:
 			return p.down(), nil
 		}
@@ -214,4 +228,8 @@ func closed(err error) bool {
 // down is the tool error while `run` is not there.
 func (p *proxy) down() *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: p.notRunning}}}
+}
+
+func toolError(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }

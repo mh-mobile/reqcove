@@ -296,6 +296,9 @@ class Resolve:
 
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
+MOCK_DELAY_MS = 30000  # under URLSession's default timeout (60 s): slow, not a timeout
+PRESET_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_mock's bounds (Go checks them too)
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
@@ -458,14 +461,19 @@ class Mock:
     body; nothing of it reaches the origin (no request is sent: a connection
     mitmproxy opened early may exist). Errors quote nothing of the rule."""
 
-    KEYS = {"match", "status", "headers", "body", "body_file"}
+    KEYS = {"match", "status", "headers", "body", "body_file", "preset", "description", "delay_ms", "fault"}
 
     def __init__(self):
-        self.replacements = []  # (method or None, url, operation or None, status, headers, body)
+        # (method or None, url, operation or None, status, headers, body, preset or None, description, delay_ms, fault or None)
+        self.replacements = []
+        # A preset answers only while an agent has turned it on (activate_mock):
+        # name -> [deadline (time.monotonic()), requests left or None, expires_at (time.time())].
+        # Kept here, so a reload (a new Mock) turns every preset off.
+        self.active = {}
 
     def add(self, spec, base):
         if not isinstance(spec, dict) or set(map(str, spec)) - self.KEYS:
-            raise RuleError("a mock is a mapping of match, status, headers, and body or body_file")
+            raise RuleError("a mock is a mapping of match, status, headers, body or body_file, and preset, description, delay_ms, fault")
         m = spec.get("match")
         if not isinstance(m, dict) or set(map(str, m)) - {"method", "url", "operation"} or not isinstance(m.get("url"), str):
             raise RuleError("match needs url, and may have method and operation")
@@ -483,6 +491,26 @@ class Mock:
         if u.port in (80, 443):
             raise RuleError("leave out the default port")
         url = f"{u.scheme}://{u.netloc.lower()}{u.path or '/'}" + ("*" if url.endswith("*") else "")  # a request's path is / at least
+        preset, description = spec.get("preset"), spec.get("description", "")
+        if preset is not None and not (isinstance(preset, str) and PRESET_NAME.fullmatch(preset)):
+            raise RuleError("preset must be a name of letters, digits, '.', '_' and '-', at most 64")
+        if preset is not None and preset in self.presets():
+            raise RuleError("another mock has this preset name")
+        if "description" in spec and (preset is None or not isinstance(description, str) or len(description) > 200 or BAD_IN_VALUE.search(description.encode()) or "\n" in description):
+            raise RuleError("description goes with preset: one line of text, at most 200 characters")
+        delay = spec.get("delay_ms", 0)
+        if not isinstance(delay, int) or isinstance(delay, bool) or not 0 <= delay <= MOCK_DELAY_MS:
+            raise RuleError(f"delay_ms must be a number from 0 to {MOCK_DELAY_MS}")
+        fault = spec.get("fault")
+        if fault is not None and fault != "close":
+            raise RuleError("fault can only be close")
+        if fault and {"status", "headers", "body", "body_file"} & set(spec):
+            raise RuleError("a mock with fault: close sends no answer: no status, headers or body")
+        key = (method.upper() if method else None, url, op)
+        for other in self.replacements:
+            if other[:3] == key and (other[6] is None) != (preset is None):
+                # A plain mock would always answer before the preset, or never let it.
+                raise RuleError("a plain mock and a preset have the same match")
         status = spec.get("status", 200)
         if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
             raise RuleError("status must be a number from 100 to 599")
@@ -519,22 +547,40 @@ class Mock:
             too_big = len(body) > MOCK_BODY
         if too_big:
             raise RuleError("the body is over 1 MiB")
-        self.replacements.append((method.upper() if method else None, url, op, status, hs, body))
+        self.replacements.append(key + (status, hs, body, preset, description, delay, fault))
 
     def hosts(self):
         return [urllib.parse.urlsplit(url.removesuffix("*")).hostname for _, url, *_ in self.replacements]
 
+    def presets(self):
+        return [m[6] for m in self.replacements if m[6] is not None]
+
+    def _on(self, name):
+        """Whether preset name is on now; one past its time is turned off.
+        Both clocks: the monotonic one stops while the computer sleeps (macOS,
+        Linux), the wall clock can be set back; whichever ends first wins."""
+        a = self.active.get(name)
+        if a and (time.monotonic() >= a[0] or time.time() >= a[2]):
+            del self.active[name]
+            a = None
+        return a is not None
+
     def candidates(self, flow):
-        """The rules flow's method and URL match, operation aside."""
+        """The rules flow's method and URL match, operation aside: presets that
+        are on first, then plain mocks; a preset that is off is none."""
         r = flow.request
         port = "" if (r.scheme, r.port) in (("http", 80), ("https", 443)) else f":{r.port}"
         bare = f"{r.scheme}://{r.pretty_host.lower().rstrip('.')}{port}{r.path.split('?', 1)[0]}"
         whole = bare + ("?" + r.path.split("?", 1)[1] if "?" in r.path else "")
-        return [i for i, (method, url, *_) in enumerate(self.replacements)
+        hits = [i for i, (method, url, *_) in enumerate(self.replacements)
                 if (method is None or method == r.method.upper()) and (whole.startswith(url[:-1]) if url.endswith("*") else bare == url)]
+        on = [i for i in hits if self.replacements[i][6] is not None and self._on(self.replacements[i][6])]
+        return on + [i for i in hits if self.replacements[i][6] is None]
 
     def answer(self, flow):
-        """The first rule matching flow, made into its response: (index, status), or None."""
+        """The first rule matching flow, made into its response:
+        (index, status or "close", preset or None, delay_ms), or None. A preset
+        that answers uses one of its requests."""
         op = False  # not read yet: read once, whatever it gives
         for i in self.candidates(flow):
             want = self.replacements[i][2]
@@ -543,12 +589,60 @@ class Mock:
                     op = _operation(flow.request)
                 if op != want:
                     continue
-            _, _, _, status, hs, body = self.replacements[i]
+            _, _, _, status, hs, body, preset, _, delay, fault = self.replacements[i]
+            if preset is not None:
+                a = self.active[preset]
+                if a[1] is not None:
+                    a[1] -= 1
+                    if a[1] <= 0:
+                        del self.active[preset]
+            if fault == "close":
+                return i, "close", preset, delay
             if flow.request.method == "HEAD" or status in (204, 304) or status < 200:
                 body = b""
             flow.response = http.Response.make(status, body, hs)
-            return i, status
+            return i, status, preset, delay
         return None
+
+    def control(self, req):
+        """An agent's request through reqcove (activate_mock and the others):
+        the answer, or ValueError with why not."""
+        op = req.get("op")
+        if op == "list":
+            out = []
+            for method, url, operation, status, _, _, preset, description, delay, fault in self.replacements:
+                if preset is None:
+                    continue
+                on = self._on(preset)
+                a = self.active.get(preset)
+                out.append({
+                    "name": preset, "description": description, "method": method, "url": url, "operation": operation,
+                    "status": None if fault else status, "delay_ms": delay, "fault": fault,
+                    "active": on, "remaining": a[1] if a else None, "expires_at": a[2] if a else None,
+                })
+            return {"presets": out}
+        name = req.get("name")
+        mine = [m for m in self.replacements if m[6] is not None and m[6] == name]
+        if not mine:
+            raise ValueError(f"no preset named {name!r}" if isinstance(name, str) and PRESET_NAME.fullmatch(name) else "no preset by that name")
+        if op == "deactivate":
+            on = self._on(name)
+            self.active.pop(name, None)
+            return {"name": name, "was_active": on}
+        if op != "activate":
+            raise ValueError("unknown request")
+        seconds, times = req.get("seconds"), req.get("times")
+        if not isinstance(seconds, int) or isinstance(seconds, bool) or not 1 <= seconds <= PRESET_SECONDS:
+            raise ValueError(f"seconds must be from 1 to {PRESET_SECONDS}")
+        if times is not None and (not isinstance(times, int) or isinstance(times, bool) or not 1 <= times <= PRESET_TIMES):
+            raise ValueError(f"times must be from 1 to {PRESET_TIMES}")
+        key = mine[0][:3]
+        off = [m[6] for m in self.replacements if m[6] not in (None, name) and m[:3] == key and self._on(m[6])]
+        for other in off:  # one preset on per match: the later one
+            del self.active[other]
+        now = time.time()
+        self.active[name] = [time.monotonic() + seconds, times, now + seconds]
+        return {"name": name, "expires_at": now + seconds, "times": times, "turned_off": off}
 
 
 # --web: mitmweb's flows are bounded as Reqcove's records are.
@@ -650,7 +744,44 @@ class Reqcove:
         self.rules_watch = None
         self.upstream = None  # (host, port) of --upstream-proxy
         self.rules_error = ""
+        self.control_server = None
         threading.Thread(target=self._writer, daemon=True).start()
+
+    async def _serve_control(self, path):
+        """reqcove's requests about presets, one JSON line each way, on the
+        event loop as the hooks (so a count never races a request). Each must
+        carry the SOCKS5 secret: the socket is reqcove's alone."""
+        async def one(reader, writer):
+            try:
+                line = await asyncio.wait_for(reader.readline(), 5)
+                req = json.loads(line or b"{}")
+                if not isinstance(req, dict) or self.secret is None or not hmac.compare_digest(str(req.get("secret", "")).encode(), self.secret.encode()):
+                    out = {"error": "refused"}
+                elif not self.rules or not self.rules["mock"].presets():
+                    out = {"error": "no presets: the --rules file marks no mock with preset:"} if req.get("op") != "list" else {"presets": []}
+                else:
+                    try:
+                        out = self.rules["mock"].control(req)
+                    except ValueError as e:
+                        out = {"error": str(e)}
+                writer.write((json.dumps(out) + "\n").encode())
+                await writer.drain()
+            except Exception:
+                pass  # a bad request: no answer
+            finally:
+                writer.close()
+        try:
+            os.unlink(path)  # a crashed run's
+        except OSError:
+            pass
+        try:
+            server = await asyncio.start_unix_server(one, path)
+            os.chmod(path, 0o600)
+        except OSError as e:
+            print(f"reqcove: the presets' socket: {type(e).__name__}", file=sys.stderr)
+            return
+        async with server:
+            await server.serve_forever()
 
     def load(self, loader):
         loader.add_option("reqcove_socket", str, "", "Unix socket of `reqcove run`.")
@@ -663,6 +794,7 @@ class Reqcove:
         loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
+        loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns mock presets on and off.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -732,6 +864,8 @@ class Reqcove:
                 if not changed or not settled:
                     continue
                 self.rules_stamp = stamp
+                if self.rules:
+                    self.rules["mock"].active.clear()  # a changed file turns presets off, loaded or not
                 rules, why = self._load_checked(path) if stamp else (None, "the file is gone")
                 if rules is not None:
                     self.rules = rules
@@ -746,6 +880,7 @@ class Reqcove:
             "rules": dict({k: len(a.replacements) for k, a in rules.items()}, keep_host_header=int(rules["map_remote"].keep_host_header)) if rules else None,
             "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in rules["resolve"].replacements.items()] if rules else None,
             "rules_error": self.rules_error,
+            "presets": rules["mock"].presets() if rules else [],
         }
 
     def socks5_auth(self, data):
@@ -821,6 +956,8 @@ class Reqcove:
         # before it advertises the exit node. The writer says hello again on
         # every reconnect.
         self.put_event(self._hello())
+        if ctx.options.reqcove_control and self.control_server is None:
+            self.control_server = asyncio.get_running_loop().create_task(self._serve_control(ctx.options.reqcove_control))
         if ctx.options.reqcove_rules_reload and ctx.options.reqcove_rules and self.rules_watch is None:
             self.rules_watch = asyncio.get_running_loop().create_task(self._watch_rules(ctx.options.reqcove_rules))
 
@@ -921,8 +1058,15 @@ class Reqcove:
         With mocks (from request(), the body in), a mock comes first."""
         done = self._modify_headers(flow, flow.request.headers, "request", rules)
         if mocks and (hit := rules["mock"].answer(flow)):
+            i, status, preset, delay = hit
             flow.metadata["reqcove_mocked"] = True
-            done.append(f"mock[{hit[0]}]: {hit[1]}")  # its index and status, never its text
+            flow.metadata["reqcove_delay"] = delay
+            if preset is not None:
+                flow.metadata["reqcove_preset"] = preset
+            if status == "close":
+                flow.metadata["reqcove_close"] = True
+            # Its index, preset name and status, never its text.
+            done.append(f"mock[{i}]" + (f" preset {preset}" if preset else "") + f": {status}" + (f", after {delay} ms" if delay else ""))
             return done
         if self._small_body(flow.request):
             rules["map_local"].request(flow)
@@ -977,7 +1121,19 @@ class Reqcove:
             names.append("(a header with a line break dropped)")
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
 
-    def request(self, flow):
+    async def request(self, flow):
+        self._request(flow)
+        # A mock's delay_ms, then its answer or fault: close. Awaited, so the
+        # loop (other flows, other HTTP/2 streams) goes on meanwhile.
+        if delay := flow.metadata.pop("reqcove_delay", 0):
+            await asyncio.sleep(delay / 1000)
+        if flow.metadata.get("reqcove_close"):
+            if flow.killable:
+                flow.kill()  # HTTP/1: the connection; HTTP/2: this stream
+            else:  # never on to the server: the mock answered for it
+                flow.response = http.Response.make(502, b"reqcove: a mock's fault: close could not close this request")
+
+    def _request(self, flow):
         ev = flow.metadata.pop("reqcove_pending", None)
         if ev is not None:
             try:
@@ -988,6 +1144,8 @@ class Reqcove:
             if "reqcove_mapped" in flow.metadata:
                 ev["mapped_url"] = flow.metadata["reqcove_mapped"]
             ev["mocked"] = bool(flow.metadata.get("reqcove_mocked"))
+            if preset := flow.metadata.get("reqcove_preset"):
+                ev["preset"] = preset
             self.put_event(ev)
             if flow.response:
                 flow.metadata["reqcove_local"] = True  # made here: copied whole in response()
@@ -1071,7 +1229,10 @@ class Reqcove:
             return
         if ev := flow.metadata.pop("reqcove_pending", None):
             self.put_event(ev)  # it failed before its body was in: recorded as it came
-        self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": flow.error.msg[:SHORT]})
+        msg = flow.error.msg[:SHORT]
+        if flow.metadata.get("reqcove_close"):
+            msg = "closed by a mock (fault: close)" + (f", preset {flow.metadata['reqcove_preset']}" if flow.metadata.get("reqcove_preset") else "")
+        self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": msg})
 
     def websocket_message(self, flow):
         if flow.metadata.get("reqcove_skip"):

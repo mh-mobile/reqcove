@@ -66,15 +66,19 @@ directory. Remove the CA's profile from the iPhone first
 ## Read the traffic with an agent
 
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
-this computer the [MCP tools](#mcp-tools). They only read, and secrets are
-masked as they arrive
+this computer the [MCP tools](#mcp-tools). They read, and secrets are
+masked as they arrive; the one change they can make is to turn on, for at most
+5 minutes, a mock you marked as a [preset](#presets-an-agent-can-turn-on)
+(with none, they only read; over `--mcp-http`, never)
 ([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
 `codex mcp add reqcove -- reqcove mcp` (`run` prints both).
 
-Allowing the tools: every tool is marked read-only (`readOnlyHint`), which a
-client may use to ask less (not checked with any client). Claude Code asks
-before a tool it has not been allowed; `"mcp__reqcove"` in `permissions.allow`
-of its settings allows all of Reqcove's (from Claude Code's documentation, not
+Allowing the tools: the tools that read are marked read-only (`readOnlyHint`),
+which a client may use to ask less (not checked with any client);
+`activate_mock` and `deactivate_mock` are not. Claude Code asks before a tool
+it has not been allowed. Allow the read tools by name
+(`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
+since v0.6 also allows `activate_mock` (from Claude Code's documentation, not
 tried here). Codex asks before each call
 ([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
 reads without asking, also from a `run` started with `--no-redact`; the skill
@@ -116,7 +120,8 @@ cloud computer joins your tailnet through Tailscale's OAuth apps):
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` serves the same tools over HTTP on the node, and prints the URL,
+`run` serves the same tools over HTTP on the node, but the mock preset ones
+(`list_mock_presets`, `activate_mock`, `deactivate_mock`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
 `Authorization: Bearer <token>`.
 
@@ -548,6 +553,56 @@ outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
 GraphQL operation of the GitHub app mocked while its others, on the same
 connection, reached GitHub.
 
+#### Presets an agent can turn on
+
+A mock with `preset: NAME` does nothing until an agent turns it on, for at most
+5 minutes: so an agent can check how the app takes a 503, a slow answer or a
+dropped connection, and turn it off again, without editing the file.
+
+```yaml
+mock:
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-503             # letters, digits, . _ -; at most 64
+    description: the profile API is down   # optional, one line, at most 200 characters
+    status: 503
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-slow
+    delay_ms: 8000                  # at most 30000 (URLSession's default timeout is 60 s)
+    body: '{"name":"slow"}'
+  - match: {url: "https://api.example.com/v1/feed"}
+    preset: feed-drop
+    fault: close                    # no answer: HTTP/1 closes the connection, HTTP/2 resets the stream
+```
+
+- The tools: `list_mock_presets`, `activate_mock(name, minutes, times)` (at
+  most 5 minutes, 5 if left out; with `times`, at most 20 requests, then off),
+  `deactivate_mock(name)`. Only an agent on this computer has them (`reqcove
+  mcp` and `run`'s socket); never over `--mcp-http`.
+- A preset that is on answers before other mocks; one that is off is no mock at
+  all. One preset is on per match (method, URL and operation): turning on
+  another for the same match turns the first off. Turning on one already on
+  replaces its limits.
+- Any matching request uses a count, whoever sent it (Safari, another device,
+  an app's retry). The row says `preset: NAME`; a closed one's error says a
+  mock closed it.
+- `delay_ms` and `fault: close` work in plain mocks too. `delay_ms` delays a
+  mock's answer only (an answer from the server is never delayed).
+- With `--rules-reload`, a changed file (also one that does not load) turns
+  every preset off; so does a restart of mitmproxy or of `run`. `run` logs each
+  one an agent turns on or off (not one that ends by its time or count);
+  `reqcove status` and the `status` tool show which are on.
+- One answer already waiting out its `delay_ms` still goes out after the
+  preset is turned off.
+- Never let an agent add `preset:` to the file: writing a preset is your
+  consent that an agent may turn it on.
+
+Tried with the E2E tests (real mitmproxy): on and off, by time and by count,
+one per match (also two GraphQL operations on one URL, each its own), a change
+of the file turning them off, refusals (an unknown name, over 5 minutes or 20
+requests, the socket without reqcove's secret), a delay on one HTTP/2 stream
+while another on the same connection is answered at once, and close over
+HTTP/1 and HTTP/2. Not tried yet on an iPhone.
+
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:
 
@@ -698,7 +753,10 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | whether everything is set up, and the next steps if not |
+| `status` | whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`) |
+| `list_mock_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file: what each matches and answers, whether it is on, requests left, when it turns off; never bodies or header values |
+| `activate_mock` | turn a preset on, for at most 5 minutes (`minutes`) and, with `times`, at most 20 requests; returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
+| `deactivate_mock` | turn a preset off. Not over `--mcp-http` |
 
 ## Limits
 

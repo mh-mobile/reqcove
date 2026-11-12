@@ -87,7 +87,7 @@ func firstIPv4(ips []string) string {
 // and the next steps, numbered, in one place.
 // Off a terminal (terminal false) the callers pass hints in place of the
 // links and the token, and there are no QR codes.
-func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool) string {
+func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool, presets []string) string {
 	var b strings.Builder
 	qr := "; QR code below"
 	if !terminal {
@@ -115,6 +115,9 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
+	if len(presets) > 0 {
+		fmt.Fprintf(&b, "presets:  %s  (mocks an agent may turn on for at most 5 minutes; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
+	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")
 		for i, st := range steps {
@@ -125,6 +128,11 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	}
 	fmt.Fprintf(&b, "──────────────────────────────────\n")
 	return b.String()
+}
+
+func presetNames(stats map[string]any) []string {
+	names, _ := stats["mock_presets"].([]string)
+	return names
 }
 
 // readyGate says when the node is ready to report: Running at two polls in a

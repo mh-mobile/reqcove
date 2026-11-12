@@ -41,9 +41,9 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは読み取り専用で、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを最長 5 分有効にすることだけです（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
-ツールの許可：どのツールにも読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。Claude Code は許可していないツールを使う前に確認します。設定の `permissions.allow` に `"mcp__reqcove"` を入れると、Reqcove のツールをまとめて許可できます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
+ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。`activate_mock` と `deactivate_mock` には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、v0.6 からは `activate_mock` も許可されます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）
 
@@ -62,7 +62,7 @@ reqcove init --client codex     # または、名前を挙げたものだけ（-
 
 ### ほかのデバイスのエージェントから使う（`--mcp-http`）
 
-tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、同じツールをノードから HTTP で提供します。
+tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、モックのプリセットのツール（`list_mock_presets`、`activate_mock`、`deactivate_mock`）を除いた同じツールを、ノードから HTTP で提供します。
 
 ```sh
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
@@ -308,6 +308,35 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone では、Safari（httpbin.org）への 401 と、GitHub アプリの GraphQL の operation 1 つをモックできることを確認しました（同じ接続のほかの operation は GitHub に届きました）。
 
+#### エージェントが有効にできるプリセット
+
+`preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは最長 5 分です。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
+
+```yaml
+mock:
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-503             # 英数字と . _ -。64 文字まで
+    description: the profile API is down   # 省略可。1 行、200 文字まで
+    status: 503
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-slow
+    delay_ms: 8000                  # 30000 まで（URLSession の既定のタイムアウトは 60 秒）
+    body: '{"name":"slow"}'
+  - match: {url: "https://api.example.com/v1/feed"}
+    preset: feed-drop
+    fault: close                    # 応答しない。HTTP/1 は接続を閉じ、HTTP/2 はストリームをリセットする
+```
+
+- ツールは `list_mock_presets`、`activate_mock(name, minutes, times)`（最長 5 分。省略すると 5 分。`times` を付けると、最大 20 件のリクエストに応答したら無効になる）、`deactivate_mock(name)` です。使えるのはこのコンピュータのエージェント（`reqcove mcp` と `run` のソケット）だけで、`--mcp-http` からは使えません。
+- 有効なプリセットは、ほかのモックより先に応答します。無効なプリセットは、モックとして扱いません。同じ match（メソッド、URL、operation）で有効にできるプリセットは 1 つです。同じ match の別のプリセットを有効にすると、先のものは無効になります。有効なものをもう一度有効にすると、期限と回数が置き換わります。
+- 一致したリクエストは、誰が送ったものでも（Safari、別のデバイス、アプリの再試行）回数を使います。一覧の行には `preset: 名前` が付き、閉じたものの error には、モックが閉じたと書かれます。
+- `delay_ms` と `fault: close` は、普通のモックでも使えます。`delay_ms` が遅らせるのはモックの応答だけです（サーバーからの応答は遅らせません）。
+- `--rules-reload` のときは、ファイルが変わると（読み込めないファイルでも）、すべてのプリセットが無効になります。mitmproxy や `run` が再起動したときも同じです。`run` は、エージェントが有効・無効にするたびにログに書きます（時間や回数で終わったものは書きません）。`reqcove status` と `status` ツールは、いま有効なものを表示します。
+- `delay_ms` で待っている途中の応答は、プリセットを無効にしたあとも、そのまま返ります。
+- エージェントにファイルへ `preset:` を書かせないでください。プリセットを書くことが、エージェントに有効にしてよいという同意になります。
+
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、有効と無効、時間と回数で無効になること、match ごとに 1 つだけ有効なこと（1 つの URL の 2 つの GraphQL operation は、それぞれ別に有効にできること）、ファイルの変更で無効になること、拒否（ない名前、5 分や 20 件を超える指定、reqcove の秘密を持たないソケットへの要求）、HTTP/2 の 1 つのストリームを遅らせている間に、同じ接続の別のストリームにはすぐ応答すること、HTTP/1 と HTTP/2 での close です。iPhone ではまだ試していません。
+
 `resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
 
 ```yaml
@@ -408,7 +437,10 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
 | `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
-| `status` | セットアップが完了しているか。未完了なら次の手順 |
+| `status` | セットアップが完了しているか。未完了なら次の手順。有効にしたモックのプリセット（`active_mock_presets`） |
+| `list_mock_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。それぞれの match と応答、有効か、残りの回数、無効になる時刻。ボディやヘッダーの値は返さない |
+| `activate_mock` | プリセットを有効にする。最長 5 分（`minutes`）、`times` を付けると最大 20 件。`wait_for_flows` 用の `checkpoint` と、同じ match で無効にしたプリセットを返す。`--mcp-http` からは使えない |
+| `deactivate_mock` | プリセットを無効にする。`--mcp-http` からは使えない |
 
 ## 制限事項
 

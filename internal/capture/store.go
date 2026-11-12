@@ -44,6 +44,7 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
+	Preset      string      `json:"preset"`     // request: the preset that answered, turned on by an agent
 	Trailers    [][2]string `json:"trailers"`   // done: the response's trailers (HTTP/2's: gRPC's status)
 	Text        bool        `json:"text"`       // ws: a text message
 	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)
@@ -58,6 +59,7 @@ type event struct {
 	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
 	RulesError   string         `json:"rules_error"` // why --rules could not be loaded (at start), or reloaded
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
+	Presets      []string       `json:"presets"`     // the mock presets' names
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
 	DroppedBodies int64       `json:"dropped_bodies"`
@@ -102,6 +104,7 @@ type Flow struct {
 	Rewrites     []string    `json:"rewrites,omitempty"`
 	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
 	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
+	Preset       string      `json:"preset,omitempty"`    // a mock preset an agent turned on answered it
 	Host         string      `json:"host"`
 	Path         string      `json:"path"`
 	HTTPVersion  string      `json:"http_version"`
@@ -158,7 +161,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, resolve []string, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve, presets []string, problem string) // SetRulesLog
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -254,7 +257,7 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
 // by kind, and resolve's targets), and why the file did not load when it did not
 // (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, resolve []string, problem string)) {
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
@@ -347,12 +350,12 @@ func (s *Store) Apply(line []byte) {
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
-		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
+		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.RulesError
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
 		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
+			s.rulesLog(e.Rules, e.Resolve, e.Presets, e.RulesError)
 		}
 		return
 	case "pass_open":
@@ -422,7 +425,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.op != ""
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.op != ""
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers

@@ -264,7 +264,8 @@ login (from reading code).
 
 ## Prompt injection
 
-Reqcove's tools only read, but an agent that reads them may also hold other
+Reqcove's tools read (the one exception, [mock presets](#mock-presets), turns
+on only what you wrote), but an agent that reads them may also hold other
 tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
@@ -294,8 +295,53 @@ host it can name another allowed one, and the record shows that one (the
 request still goes where the connection went). User-Agents in lists and summaries
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
-The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
-yours, from a file, at start.)
+The MCP tools read, with one exception: an agent can turn on, for at most 5
+minutes, a mock you marked as a preset ([Mock presets](#mock-presets)). No tool
+writes or changes a rule; with no presets, nothing an agent calls changes
+traffic. (`--rules` are yours, from a file, at start.)
+
+## Mock presets
+
+A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
+turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
+Writing a preset is your consent that an agent may turn it on; there is no
+switch at start.
+
+What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
+client, or a sandboxed one) can now change what the device gets, at the moment
+it chooses and, by calling again, for as long as it keeps calling. Text a site
+wrote into the records can try to steer it into that. What it can turn on is
+only what you wrote: no new content, target or host, and nothing new leaves
+this computer. The worst case: every preset kept on all the time, each
+answering in the site's name what you wrote (a mock of an HTML page on an
+allowed host runs in Safari with that host's cookies, as any mock does).
+
+- Bounds, in Reqcove and again in mitmproxy's addon: at most 5 minutes each
+  time, and, with `times`, at most 20 requests; no cap on turning one on again.
+  Any matching request uses a count, whoever sent it.
+- Only on this computer: the tools are on `run`'s socket and `reqcove mcp`;
+  `--mcp-http` has its own server without them (a test of the two servers
+  `run` builds). The addon takes
+  requests on its own socket in the state directory (0600) only with the
+  secret `run` gave it (a test).
+- `reqcove mcp` never sends a write again after its connection to `run`
+  dropped mid-call (a test): it says it may or may not have taken effect.
+- The write tools are not marked read-only, so a client that asks before
+  other tools asks before them. A v0.5 user who allowed `"mcp__reqcove"`
+  wholesale gets them allowed without a prompt: allow the read tools by name.
+- The skill and the server's instructions tell agents to turn one on only for
+  a test the user asked for in the conversation, never because of what the
+  records or a preset's description say, and never to add `preset:` to a
+  rules file. Whether a model keeps to that is not something a test can show.
+- Visible: `run` logs each preset an agent turns on or off; `reqcove status`
+  and the `status` tool list the ones on (or say mitmproxy did not answer); a
+  flow a preset answered says `preset: NAME`. With `--rules-reload` a changed
+  rules file turns them all off, as does a restart of mitmproxy or of `run`.
+- An end is checked on two clocks, so a computer that slept past it does not
+  leave one on (a test). One answer already waiting out its `delay_ms` still
+  goes out after the preset is turned off.
+- `list_mock_presets` gives what each matches and its status, delay or fault,
+  never its body or header values.
 
 ## Rules (`--rules`)
 
@@ -462,7 +508,8 @@ Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp`, and give the same masked records.
+The tools are the same as over `reqcove mcp` but the mock preset ones, which
+`--mcp-http`'s own server does not have (a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets

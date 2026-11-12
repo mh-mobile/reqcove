@@ -449,14 +449,22 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
+		logPresets := func(names []string) {
+			if len(names) > 0 {
+				log.Printf("mock presets (off until an agent turns one on, for at most 5 minutes): %s", strings.Join(names, ", "))
+			}
+		}
+		names, _ := s["mock_presets"].([]string)
+		logPresets(names)
 		if *rulesReload {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
-			cap.Store.SetRulesLog(func(r map[string]int, resolve []string, problem string) {
+			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
 				if problem != "" {
-					log.Printf("--rules: %s does not load (%s); the rules before it still apply", *rules, problem)
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply, with every mock preset off", *rules, problem)
 					return
 				}
-				log.Printf("rules from %s, again: %v", *rules, r)
+				log.Printf("rules from %s, again: %v (every mock preset off)", *rules, r)
+				logPresets(presets)
 				if len(resolve) > 0 {
 					log.Printf("resolve: %s", strings.Join(resolve, ", "))
 				}
@@ -485,12 +493,25 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
-	tools := mcpserver.New(cap.Store, func() mcpserver.StatusOut {
+	remoteStatus := func() mcpserver.StatusOut {
 		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
-	})
+	}
+	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
+		out := remoteStatus()
+		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
+			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
+			defer cancel()
+			if ps, err := cap.Presets(ctx); err == nil {
+				out.ActivePresets = mcpserver.PresetsView(ps, true)
+			} else {
+				out.PresetsError = err.Error()
+			}
+		}
+		return out
+	}, remoteStatus, cap)
 	var mcpHandler http.Handler
-	if *mcpHTTP {
-		mcpHandler = mcpserver.HTTP(tools, mcpToken, exitnode.Caller)
+	if *mcpHTTP { // its own server: read-only, never the preset tools
+		mcpHandler = mcpserver.HTTP(remote, mcpToken, exitnode.Caller)
 	}
 	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
@@ -551,7 +572,7 @@ func run(ctx context.Context, args []string) error {
 			ca = "http://mitm.it"
 		}
 		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal))
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats())))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})

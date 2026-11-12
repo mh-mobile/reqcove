@@ -346,6 +346,15 @@ func TestRulesRefused(t *testing.T) {
 		"mock star after the host":    {"mock: [{match: {url: \"http://127.0.0.1*\"}}]\n", "mock[0]: url takes no query"},
 		"mock body_file a device":     {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body_file: /dev/zero}]\n", "mock[0]: body_file must be a plain file"},
 		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
+		"preset bad name":             {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: \"a b\"}]\n", "mock[0]: preset must be a name"},
+		"preset twice":                {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a}, {match: {url: \"http://127.0.0.1/x\"}, preset: a}]\n", "mock[1]: another mock has this preset name"},
+		"description alone":           {"mock: [{match: {url: \"http://127.0.0.1/x\"}, description: hi}]\n", "mock[0]: description goes with preset"},
+		"description two lines":       {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a, description: \"a\\nb\"}]\n", "mock[0]: description goes with preset"},
+		"description long":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a, description: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx}]\n", "mock[0]: description goes with preset"},
+		"delay too long":              {"mock: [{match: {url: \"http://127.0.0.1/x\"}, delay_ms: 30001}]\n", "mock[0]: delay_ms must be a number from 0 to 30000"},
+		"fault other":                 {"mock: [{match: {url: \"http://127.0.0.1/x\"}, fault: hold}]\n", "mock[0]: fault can only be close"},
+		"fault with status":           {"mock: [{match: {url: \"http://127.0.0.1/x\"}, fault: close, status: 500}]\n", "mock[0]: a mock with fault: close sends no answer"},
+		"plain and preset same match": {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a}, {match: {url: \"http://127.0.0.1/x\"}}]\n", "mock[1]: a plain mock and a preset have the same match"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rules := filepath.Join(t.TempDir(), "rules.yaml")
@@ -510,7 +519,7 @@ func TestRulesReloadSettles(t *testing.T) {
 	}
 	var mu sync.Mutex
 	taken := 0
-	h.c.Store.SetRulesLog(func(map[string]int, []string, string) { mu.Lock(); taken++; mu.Unlock() })
+	h.c.Store.SetRulesLog(func(map[string]int, []string, []string, string) { mu.Lock(); taken++; mu.Unlock() })
 	count := func() int { mu.Lock(); defer mu.Unlock(); return taken }
 	for i := 1; i <= 60; i++ { // 3 s of changes, every 50 ms: settling would need a pause of a whole second
 		write(i)
@@ -573,6 +582,12 @@ modify_headers:
 	}
 	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:5") {
 		t.Errorf("rules loaded: %s", got)
+	}
+	if _, err := h.c.Activate(ctx, "any", 60, 0); err == nil || !strings.Contains(err.Error(), "no presets") {
+		t.Errorf("no presets: %v", err)
+	}
+	if ps, err := h.c.Presets(ctx); err != nil || len(ps) != 0 {
+		t.Errorf("list without presets: %v %v", ps, err)
 	}
 	hc := h.client("dev")
 	do := func(method, url, body string) (*http.Response, string) {
