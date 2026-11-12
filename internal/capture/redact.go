@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"regexp"
@@ -31,6 +32,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
+	s = maskLines(s, request)
 	return []byte(maskTokens(maskURLs(s)))
 }
 
@@ -340,7 +342,7 @@ func maskForm(s string, request bool) string {
 		if !ok {
 			continue
 		}
-		if secretName(formName(name)) || i == 0 && nestedSecret(val, 0) { // maskURLs looks into the fields after an &, not the first; before JSON and documents, which start with { too
+		if secretName(formName(name)) || i == 0 && nestedSecret(val, 0) || b64JSONSecret(val) { // maskURLs looks into the fields after an &, not the first; before JSON and documents, which start with { too
 			parts[i] = name + "=[redacted]"
 		} else if m, ok := gqlParam(val, 0); ok { // before JSON: {login(…)} starts with { too; a field not encoded as it should be too
 			parts[i] = name + "=" + m
@@ -349,8 +351,96 @@ func maskForm(s string, request bool) string {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}
 		}
+		// A token's shape hidden by percent-encoding (%22eyJ…, Bearer+…): the
+		// shapes need a word boundary before it, and %22 or + gives none.
+		if _, cur, _ := strings.Cut(parts[i], "="); strings.ContainsAny(cur, "%+") {
+			if d := unescapeCut(cur); maskTokens(d) != d {
+				parts[i] = name + "=" + url.QueryEscape(maskTokens(d))
+			}
+		}
 	}
 	return strings.Join(parts, "&")
+}
+
+// encodedToken: a URL parameter's value hides a token's shape behind
+// percent-encoding (?q=%7B%22t%22%3A%22eyJ…, Bearer+…).
+func encodedToken(v string) bool {
+	if !strings.ContainsAny(v, "%+") {
+		return false
+	}
+	d := unescapeCut(v)
+	return maskTokens(d) != d
+}
+
+// b64JSONSecret: a value that is base64 of a JSON object with a secret in it
+// (AppSync's ?header=eyJ…, graphql-ws's header-… protocol): no dots, so not a
+// JWT's shape. Only the first run of base64 is read, once.
+func b64JSONSecret(v string) bool {
+	v = unescapeCut(v)
+	if !strings.HasPrefix(v, "eyJ") && !strings.HasPrefix(v, "eyAi") && !strings.HasPrefix(v, "ewo") { // {" { " {\n
+		return false
+	}
+	n := 0
+	for n < len(v) && (v[n] >= 'A' && v[n] <= 'Z' || v[n] >= 'a' && v[n] <= 'z' || v[n] >= '0' && v[n] <= '9' || strings.IndexByte("+/-_", v[n]) >= 0) {
+		n++
+	}
+	raw := strings.NewReplacer("-", "+", "_", "/").Replace(v[:n-n%4]) // a cut quantum dropped
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return false
+	}
+	d := strings.ToValidUTF8(string(b), "")
+	return maskJSON(d, true, 2) != d || maskTokens(d) != d
+}
+
+// A "name: value" line (STOMP's passcode:, YAML, headers written into a body)
+// whose name is secret: the rest of the line is masked.
+var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*:[ \t]*)([^\r\n]+)`)
+
+func maskLines(s string, loneCode bool) string {
+	if !strings.Contains(s, ":") {
+		return s
+	}
+	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := lineFieldRE.FindStringSubmatch(m)
+		v := sub[4]
+		if !secretKind(sub[2], loneCode) || strings.HasPrefix(v, "[redacted]") || strings.HasPrefix(v, `"[redacted]`) || strings.HasPrefix(v, "REDACTED") {
+			return m
+		}
+		if maskTokens(v) != v {
+			return m // its shape is masked anyway, and "Bearer [redacted]" keeps the scheme
+		}
+		return sub[1] + sub[2] + sub[3] + "[redacted]"
+	})
+}
+
+// maskWSProtocols: Sec-WebSocket-Protocol lists names, but some clients carry
+// a credential in it: after a name that says so (access_token, <token>), as
+// base64 JSON (graphql-ws's header-<…>), after Kubernetes' bearer prefix, or
+// as a long value shaped like one.
+var wsProtoNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,40}$`) // a bare name such as access_token
+
+func maskWSProtocols(v string) string {
+	items := strings.Split(v, ",")
+	out := make([]string, len(items))
+	for i, it := range items {
+		t := strings.TrimSpace(it)
+		lead := it[:len(it)-len(strings.TrimLeft(it, " \t"))]
+		const k8s = "base64url.bearer.authorization.k8s.io."
+		switch {
+		case i > 0 && wsProtoNameRE.MatchString(strings.TrimSpace(items[i-1])) && secretName(strings.TrimSpace(items[i-1])) && !secretName(t):
+			out[i] = lead + "[redacted]"
+		case strings.HasPrefix(t, "header-") && b64JSONSecret(t[len("header-"):]):
+			out[i] = lead + "header-[redacted]"
+		case strings.HasPrefix(t, k8s):
+			out[i] = lead + k8s + "[redacted]"
+		case len(t) >= 32 && credentialLike(t):
+			out[i] = lead + "[redacted]"
+		default:
+			out[i] = it
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func formName(n string) string {
@@ -460,6 +550,8 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
 			out[i][1] = maskCookies(kv[1], ";", true)
+		case name == "sec-websocket-protocol":
+			out[i][1] = maskTokens(maskWSProtocols(kv[1]))
 		case strings.HasSuffix(name, "-authenticate"):
 			// WWW-Authenticate, Proxy-Authenticate: a challenge (scheme, realm, error),
 			// not a credential, and what says why a 401 came; a token it quotes still goes
@@ -652,7 +744,7 @@ func maskURLsAt(v string, depth int) string {
 		// The value up to ';' is this name's; each ';name=value' after it is
 		// looked at once, in one pass (recursing on the rest was quadratic).
 		pieces := strings.Split(sub[3], ";")
-		if nestedSecret(pieces[0], depth) || jsonSecret(pieces[0]) {
+		if nestedSecret(pieces[0], depth) || jsonSecret(pieces[0]) || encodedToken(pieces[0]) || b64JSONSecret(pieces[0]) {
 			pieces[0] = "REDACTED"
 		}
 		for i := 1; i < len(pieces); i++ {

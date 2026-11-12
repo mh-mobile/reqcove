@@ -119,8 +119,16 @@ So "delete the directory" above means each of them.
   credentials recognisable by their shape are masked: `Bearer`/`Basic`/`Token`
   values that look like credentials (not the next word of a sentence), JWTs,
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
-  Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
-  error), with only such shapes masked.
+  Google API keys), also behind percent-encoding (JSON encoded in a form
+  field or a URL parameter, `Bearer+…`). `WWW-Authenticate` keeps its
+  challenge (scheme, realm, error), with only such shapes masked.
+  A line `name: value` in a text body whose name is secret (a STOMP frame's
+  `passcode:`, YAML, headers written into a body) has the rest of the line
+  masked. A URL parameter or form field holding base64 of a JSON object with a
+  secret in it (AppSync's `?header=`) is masked whole, and so is a credential
+  carried in `Sec-WebSocket-Protocol` (after a name such as `access_token`, as
+  graphql-ws's `header-` base64 JSON, after Kubernetes' bearer prefix, or a
+  long value shaped like one). (Tests.)
   A field with a secret name whose value is a list or an object is masked
   whole (`{"password": "[redacted]"}`).
   In a GraphQL document, read by a lexer, an argument, an input object's
@@ -154,10 +162,7 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). A value found by its
-  shape (a JWT, a key with a known prefix, `Bearer …`) is not found inside
-  percent-encoded text: JSON encoded in a form field or a URL parameter,
-  `Bearer+…` (checked). In GraphQL the same
+  (protobuf, multipart, XML elements and attributes). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);

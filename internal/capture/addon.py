@@ -285,7 +285,7 @@ GQL_BLOCK = re.compile(r'"""(?:\\"""|[\s\S])*?(?:"""|\Z)')
 GQL_STRING = re.compile(r'"(?:[^"\\\n\r]|\\[\s\S])*(?:"|\Z)')
 # GraphQL tokens, for the first operation: read once, front to back (a pattern
 # searched from every "}" read the rest again from each: quadratic).
-GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
+GQL_TOKEN = re.compile(r'''(?P<skip>[ \t\n\r,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
 
 
 def _head(doc, limit=5):

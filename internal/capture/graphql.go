@@ -383,31 +383,73 @@ func gqlBodyOperation(head []byte) string {
 	if t[0] != '{' && t[0] != '[' {
 		return gqlDocOperation(string(t)) // application/graphql
 	}
-	var one struct {
-		OperationName string `json:"operationName"`
-		Query         string `json:"query"`
-	}
 	var many []json.RawMessage
 	switch {
 	case t[0] == '[' && json.Unmarshal(t, &many) == nil:
 		for _, m := range many {
-			one.OperationName, one.Query = "", "" // a field an element lacks would keep the last one's: its query lexed again, quadratic
-			if json.Unmarshal(m, &one) == nil && (one.OperationName != "" || gqlDocOperation(one.Query) != "") {
+			if op, query, ok := gqlFields(m); ok && (op != "" || gqlDocOperation(query) != "") {
 				return gqlBatched
 			}
 		}
 		return ""
-	case t[0] == '{' && json.Unmarshal(t, &one) == nil:
-		if op := gqlName(one.OperationName); op != "" {
-			return op
+	case t[0] == '{':
+		if op, query, ok := gqlFields(t); ok {
+			if op := gqlName(op); op != "" {
+				return op
+			}
+			return gqlDocOperation(query)
 		}
-		return gqlDocOperation(one.Query)
 	}
-	if m := gqlOperationField.FindSubmatch(t); m != nil { // cut by the head's end
-		if t[0] == '[' {
+	// Cut by the head's end, so json cannot read it.
+	if t[0] == '[' {
+		if gqlOperationField.Match(t) {
 			return gqlBatched
 		}
-		return string(m[1])
+		return ""
+	}
+	return gqlTopOperationName(string(t))
+}
+
+// gqlFields reads a request object's operationName and query by their exact
+// keys, as mocks do (Go's json would take OperationName too); a value that is
+// not a string counts as absent.
+func gqlFields(m []byte) (op, query string, ok bool) {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(m, &obj) != nil {
+		return "", "", false
+	}
+	json.Unmarshal(obj["operationName"], &op)
+	json.Unmarshal(obj["query"], &query)
+	return op, query, true
+}
+
+// gqlTopOperationName finds "operationName" among the top-level keys of a
+// head cut before its end; one nested in variables or extensions is not it.
+func gqlTopOperationName(s string) string {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		case '"':
+			end, ok := jsonStringEnd(s, i)
+			if !ok {
+				return ""
+			}
+			if depth == 1 && s[i:end+1] == `"operationName"` {
+				if j := skipSpace(s, end+1); j < len(s) && s[j] == ':' {
+					if j = skipSpace(s, j+1); j < len(s) && s[j] == '"' {
+						if e, ok := jsonStringEnd(s, j); ok {
+							return gqlName(s[j+1 : e])
+						}
+					}
+					return ""
+				}
+			}
+			i = end
+		}
 	}
 	return ""
 }
