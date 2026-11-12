@@ -54,7 +54,7 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 	h.Set("Cache-Control", "no-store")
 	if k := r.URL.Query().Get("k"); k != "" {
 		if !u.valid(k) {
-			http.Error(w, "reqcove: this link's token was changed; open the link reqcove run prints now", http.StatusForbidden)
+			http.Error(w, "reqcove: this link's token was changed; open the link reqcove links prints now", http.StatusForbidden)
 			return
 		}
 		// Kept 400 days (the token lasts until its file is deleted), so a device that
@@ -64,7 +64,7 @@ func (u *UI) Serve(w http.ResponseWriter, r *http.Request, deviceID string, all 
 		return
 	}
 	if c, err := r.Cookie(cookie); err != nil || !u.valid(c.Value) {
-		http.Error(w, "reqcove: open the link reqcove run prints (its QR code) to see this page", http.StatusForbidden)
+		http.Error(w, "reqcove: open the link reqcove links (or reqcove run) prints, or its QR code, to see this page", http.StatusForbidden)
 		return
 	}
 	switch r.URL.Path {

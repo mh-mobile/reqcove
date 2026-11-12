@@ -21,7 +21,8 @@ class Reqcove < Formula
       State, including a CA private key, lives in ~/.reqcove.
 
       To keep it running at login (`brew services start reqcove`), write run's
-      flags, one a line, in #{etc}/reqcove/config (chmod 600), such as:
+      flags, one a line, in #{etc}/reqcove/config (mkdir -p #{etc}/reqcove;
+      chmod 600 the file), such as:
         --device iphone
         --allow-hosts api.example.com
       `reqcove links` prints the login URL; the log is #{var}/log/reqcove.log.

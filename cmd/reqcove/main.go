@@ -192,7 +192,7 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", defaultPython, "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx (uv beside it runs the default mitmproxy from its lock, hashes checked)")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
-	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token run prints", exitnode.MCPPort, exitnode.MCPPort))
+	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token reqcove links prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
@@ -470,10 +470,10 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
 			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
 				if problem != "" {
-					log.Printf("--rules: %s does not load (%s); the rules before it still apply, with every mock preset off", *rules, problem)
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(r))
 					return
 				}
-				log.Printf("rules from %s, again: %v (every mock preset off)", *rules, r)
+				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(r))
 				logPresets(presets)
 				if len(resolve) > 0 {
 					log.Printf("resolve: %s", strings.Join(resolve, ", "))
@@ -738,7 +738,7 @@ func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 
 // notRunningMsg is what the agent's tools answer while run is not running.
 func notRunningMsg(state string) string {
-	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal and leaves it running (if it is restarting, wait a few seconds). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
+	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal, or its service (brew services start reqcove), and leaves it running (if it is restarting or fetching mitmproxy the first time, wait). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
 }
 
 // tailscaleStatus is `tailscale status --json` from the Tailscale CLI, if any

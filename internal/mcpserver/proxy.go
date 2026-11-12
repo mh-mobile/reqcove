@@ -112,7 +112,7 @@ func (p *proxy) session(ctx context.Context, failed *mcp.ClientSession) (*mcp.Cl
 		p.note = "reqcove run restarted: its records start anew, so flow ids and cursors from before it are gone, and every mock preset is off."
 	}
 	if v := cs.InitializeResult().ServerInfo.Version; v != Version {
-		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: reconnect the agent's MCP server (/mcp in Claude Code) for the tools of the version running.", v, Version)
+		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: run both at one version: restart reqcove run with the newer one, then reconnect the agent's MCP server (/mcp in Claude Code).", v, Version)
 	}
 	p.cs = cs
 	return cs, nil

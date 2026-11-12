@@ -44,7 +44,7 @@ mkdir -p "$(brew --prefix)/etc/reqcove"
 printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
 chmod 600 "$(brew --prefix)/etc/reqcove/config"
 brew services start reqcove
-reqcove links        # 初回はログイン用の URL。--ui のリンクも
+reqcove links        # 初回はログイン用の URL（1 分ほど待つ：初回は mitmproxy を取得する。tail -f "$(brew --prefix)/var/log/reqcove.log"）
 reqcove status       # 「service: homebrew.mxcl.reqcove」と出る
 ```
 
@@ -101,7 +101,7 @@ tailnet のほかの場所にいるエージェント、たとえば Grok Bot（
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します。
+`run` は、URL（`http://reqcove.<tailnet>.ts.net:8090/mcp`）と、エージェントに渡すヘッダー（`Authorization: Bearer <トークン>`）を表示します（`reqcove links` でもう一度表示できます。ターミナルでないときは `reqcove links` だけが表示します）。
 
 - Grok Bot：「Connect apps › Tailscale」で tailnet に入れます（Tailnet Lock を使っていれば、そのデバイスに署名します）。次に「Connect apps › カスタムコネクタを追加」で、種類に「リモート HTTPS」（名前は HTTPS ですが、tailnet の `http://` の URL で使えます。tailnet の中は WireGuard で暗号化されています）、サーバー URL にその URL、HTTP ヘッダーにキー `Authorization` と値 `Bearer <トークン>` を入れます。設定画面では、このコネクタは「エラー」でツール 0 個と表示されます。Grok Bot が tailnet に届くのはチャットの中だけだからです。チャットで頼んでください。ヘッダーの値は画面に出さずにコピーできます：`printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`
 - ほかのコンピュータの Claude Code（ヘッダーは `~/.claude.json` に保存されます）：
@@ -131,7 +131,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 ```
 
-`run` は、ノードの 80 番ポートで読み取り専用のページを提供し、そのリンクを QR コードと一緒に表示します。iPhone のカメラで読み取ると、Safari で一覧が開きます。一覧は 1 秒ごとに新しいフローを追います（Split View でアプリと並べることもできます）。フローをタップすると、ヘッダーとボディを確認できます。MCP ツールが返すものと同じく、マスク済みです。
+`run` は、ノードの 80 番ポートで読み取り専用のページを提供し、そのリンクを QR コードと一緒に表示します（`reqcove links` でもう一度表示できます。ターミナルでないときは `reqcove links` だけが表示します）。iPhone のカメラで読み取ると、Safari で一覧が開きます。一覧は 1 秒ごとに新しいフローを追います（Split View でアプリと並べることもできます）。フローをタップすると、ヘッダーとボディを確認できます。MCP ツールが返すものと同じく、マスク済みです。
 
 - 検索欄に入力すると、その場で URL とヘッダーを絞り込みます。「bodies too」をオンにすると、保持しているボディの先頭も対象になり、一覧は新しいフローを追わなくなります（すべての記録を調べるためです）。ステータス（2xx〜5xx、応答なし）や、フローのページからホストでも絞り込めます。
 - Clear はそれまでのフローを一覧から隠します。「Show all」で戻ります。削除はしないので、エージェントからは引き続き見えます。
@@ -165,7 +165,7 @@ reqcove har > flows.har
 reqcove run --device iphone --allow-hosts 'api.example.com' --web
 ```
 
-mitmdump の代わりに mitmweb が起動します。このコンピュータでは `http://127.0.0.1:8081`（ほかの run が 8081 を使っていれば 8091〜8099。[アドレスは 2 つ](several-exit-nodes.ja.md#ポート)）、tailnet にある自分のデバイスからはノードの 8081 番ポートで、`run` が表示するリンクか QR コードから開けます。
+mitmdump の代わりに mitmweb が起動します。このコンピュータでは `http://127.0.0.1:8081`（ほかの run が 8081 を使っていれば 8091〜8099。[アドレスは 2 つ](several-exit-nodes.ja.md#ポート)）、tailnet にある自分のデバイスからはノードの 8081 番ポートで、`run`（または `reqcove links`）が表示するリンクか QR コードから開けます。
 
 - 何もマスクされません（[SECURITY](SECURITY.md#mitmweb---web)）。ボディは 1 つ 2 MB まで表示し、新しい 1 万件のフローと、合計 256 MB までのボディを保持します。
 - リンクは起動のたびに同じです（トークンは状態ディレクトリの `web-token`）。再起動後はリンクをもう一度開いてください。トークンなしのブックマークでは、トークンの入力を求められます。
@@ -343,7 +343,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 #### エージェントが有効にできるプリセット
 
-`preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは最長 5 分です。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
+`preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは 1 回につき最長 5 分で、何度でも有効にし直せます（上限なし。[SECURITY](SECURITY.md#mock-presets)）。プリセットと同じ match（メソッド、URL、operation）の普通のモックは、読み込みで断ります（プリセットの代わりに応答してしまうためです）。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
 
 ```yaml
 mock:
@@ -366,7 +366,7 @@ mock:
 - `delay_ms` と `fault: close` は、普通のモックでも使えます。`delay_ms` が遅らせるのはモックの応答だけです（サーバーからの応答は遅らせません）。
 - `--rules-reload` のときは、ファイルが変わると（読み込めないファイルでも）、すべてのプリセットが無効になります。mitmproxy や `run` が再起動したときも同じです。`run` は、エージェントが有効・無効にするたびにログに書きます（時間や回数で終わったものは書きません）。`reqcove status` と `status` ツールは、いま有効なものを表示します。
 - `delay_ms` で待っている途中の応答は、プリセットを無効にしたあとも、そのまま返ります。
-- エージェントにファイルへ `preset:` を書かせないでください。プリセットを書くことが、エージェントに有効にしてよいという同意になります。
+- ファイルにプリセットがあることが、エージェントに有効にしてよいという同意になります。エージェントが `preset:` を書くのは、会話の中であなたが頼んだときだけです（Skill とサーバーの instructions がそう伝えます）。記録に書かれていたことを理由には書きません。`--rules-reload` のときは、書いてすぐ有効にできます。
 
 確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、有効と無効、時間と回数で無効になること、match ごとに 1 つだけ有効なこと（1 つの URL の 2 つの GraphQL operation は、それぞれ別に有効にできること）、ファイルの変更で無効になること、拒否（ない名前、5 分や 20 件を超える指定、reqcove の秘密を持たないソケットへの要求）、HTTP/2 の 1 つのストリームを遅らせている間に、同じ接続の別のストリームにはすぐ応答すること、HTTP/1 と HTTP/2 での close です。iPhone（iOS 27.3。URLSession を使うテスト用アプリ。エージェントが MCP でプリセットを有効にした）では、次を確かめました。503 を 1 回返したあと、アプリのやり直しがサーバーに届いたこと。8 秒の遅延。close では CFNetwork が自分でやり直さなかったこと（アプリ自身のやり直しも閉じられた）。ログインへの 401。
 
@@ -446,6 +446,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | | |
 |---|---|
 | `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
+| `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
 | `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
 | `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |

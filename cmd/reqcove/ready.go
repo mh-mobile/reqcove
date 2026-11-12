@@ -116,7 +116,7 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
 	if len(presets) > 0 {
-		fmt.Fprintf(&b, "presets:  %s  (mocks an agent may turn on for at most 5 minutes; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
+		fmt.Fprintf(&b, "presets:  %s  (mocks an agent may turn on, at most 5 minutes each time; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")
@@ -128,6 +128,14 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	}
 	fmt.Fprintf(&b, "──────────────────────────────────\n")
 	return b.String()
+}
+
+// presetsOff is a reload's note when the rules had mocks (presets among them).
+func presetsOff(r map[string]int) string {
+	if r["mock"] > 0 {
+		return " (any mock preset on is off now)"
+	}
+	return ""
 }
 
 func presetNames(stats map[string]any) []string {
