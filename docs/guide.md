@@ -285,15 +285,18 @@ holds it: a body over 64 KiB loses it). `grpc_message` is decoded and masked
 (with `--no-redact`, as sent). Trailers are searched, compared by `diff_flows`
 and written to a HAR's comment. A body's note counts its messages and their sizes;
 JSON ones (`application/grpc+json`, `connect+json`) are handed out one a line,
-masked as JSON, protobuf ones as below. Metadata ending in `-bin` (binary)
-shows its size only.
+masked as JSON, protobuf ones as below; a Connect stream's last frame (its
+error, its trailers: JSON) as `[end of stream]`, masked as JSON. A Connect
+stream's outcome is in that frame, not in `grpc_status`. Metadata ending in
+`-bin` (binary) shows its size only.
 
 Protobuf bodies (gRPC's messages, and `application/x-protobuf` and the like)
 are not text, so reqcove hands out its own rendering of them, marked by the
 body's `view`. Without a schema it is the structure only: field numbers,
 types and lengths, `string(12)` for a string (never its text), and numbers in
 responses (in requests only those under 128, such as enums and booleans; a
-larger one, such as a code sent as a number, shows its byte count):
+larger one, such as a code sent as a number, shows its byte count; a PIN under
+128 shows too):
 
 ```
 1: 150
@@ -319,7 +322,9 @@ certificates to trust, unless a debug build trusts Reqcove's CA (not tried).
 Tried: on an iPhone, a test app calling Connect's demo server through
 URLSession (the system's trust, the CA installed) over Connect, gRPC-Web and
 gRPC, with `--proto` (statuses from the trailers and from gRPC-Web's last
-frame, the messages by their names); and the E2E test, gRPC's shape over
+frame, the messages by their names, except gRPC's answer, which showed nothing
+on the build tried: fixed since, by a test, not tried again on the iPhone; the
+reading without a schema by tests only); and the E2E test, gRPC's shape over
 HTTP/2 through mitmproxy (a body over 64 KiB with its status in the trailers,
 and a trailers-only error).
 
@@ -662,8 +667,9 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove version` | the version |
 
 Tried on an iPhone: `--mask-names`; `wait_for_flows` after acting through
-RoamRun. By tests only: `--mask-values`, `diff_flows`, `max_body`, the
-`--mcp-http` rate limit.
+RoamRun; with a test app, `diff_flows` (a request sent twice),
+`list_ws_messages` and `--proto`. By tests only: `--mask-values`, `max_body`,
+the `--mcp-http` rate limit, `multipart/form-data`.
 
 From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 `--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`,
@@ -696,8 +702,9 @@ The main ones are in the [README](../README.md#limits). The rest:
   (and without `--allow-hosts` as well). QUIC on a port other than 443 goes on,
   unrecorded.
 - mitmproxy holds each WebSocket message until it is complete, and inflates a
-  compressed one (permessage-deflate) whole, so one huge message can use a lot
-  of memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
+  compressed one (permessage-deflate) whole (from reading mitmproxy's code; no
+  compressed message has been tried), so one huge message can use a lot of
+  memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
   minute after 5 restarts in a row, `run` stops.
 - Phone calls through the exit node have not been tried.

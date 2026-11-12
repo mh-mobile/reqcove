@@ -202,7 +202,7 @@ func TestGRPCE2E(t *testing.T) {
 	if strings.Contains(fmt.Sprint(v.RespTrailers), "GRPCe2eTrailer1") || header(v.RespTrailers, "grpc-status") != "0" {
 		t.Errorf("trailers: %v", v.RespTrailers)
 	}
-	if !v.RespBody.Truncated || !strings.HasPrefix(v.RespBody.Note, "gRPC: 3 messages (30000, 30000, ") || !strings.HasPrefix(v.RespBodyText, "1: string(1)\n") || !strings.Contains(v.RespBodyText, "[cut: 30000 bytes]") {
+	if !v.RespBody.Truncated || !strings.HasPrefix(v.RespBody.Note, "gRPC: 3 messages (30000, 30000, ") || !strings.HasPrefix(v.RespBodyText, "1: string(1)\n") || !strings.Contains(v.RespBodyText, "[cut: 30000 bytes]") && !strings.Contains(v.RespBodyText, "[more messages not read]") {
 		t.Errorf("a body over 64 KiB: note %q truncated %v text %d", v.RespBody.Note, v.RespBody.Truncated, len(v.RespBodyText))
 	}
 }
@@ -263,5 +263,35 @@ func TestGRPCItemReview(t *testing.T) {
 	// Trailers are searched.
 	if rows, _ := s.List(Filter{Query: "grpc-status", Limit: 10}); len(rows) == 0 {
 		t.Errorf("trailers not searched")
+	}
+}
+
+// TestConnectStream: a Connect stream's answer ends with a frame of flag 2
+// (JSON: its error); the final review found such answers left out whole.
+func TestConnectStream(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	b64 := func(x string) string { return base64.StdEncoding.EncodeToString([]byte(x)) }
+	body := grpcFrame1(0, `{"sentence":"hi"}`) + grpcFrame1(2, `{"error":{"code":"unauthenticated","message":"token GRPCconnect01x expired","details":[]},"metadata":{"x-session-token":["GRPCconnect02x"]}}`)
+	grpcApply(s, map[string]any{"ev": "request", "id": "c", "method": "POST", "url": "https://demo.example/x.Y/Introduce", "host": "demo.example", "path": "/x.Y/Introduce", "headers": [][2]string{{"Content-Type", "application/connect+json"}}})
+	grpcApply(s, map[string]any{"ev": "response", "id": "c", "status": 200, "headers": [][2]string{{"Content-Type", "application/connect+json"}}})
+	grpcApply(s, map[string]any{"ev": "body", "id": "c", "dir": "response", "decoded": true, "final": true, "size": len(body), "head": b64(body)})
+	v, _ := s.Get("c", true)
+	if !strings.Contains(v.RespBodyText, `"sentence":"hi"`) || !strings.Contains(v.RespBodyText, "[end of stream]") || !strings.Contains(v.RespBodyText, "unauthenticated") || strings.Contains(v.RespBodyText, "GRPCconnect02x") {
+		t.Errorf("a Connect stream: %q (%s)", v.RespBodyText, v.RespBodyEnc)
+	}
+}
+
+// TestGRPCBodyCap: one output cap for a whole gRPC body (the final review:
+// 980 messages nested 30 deep rendered to 1.9 MB).
+func TestGRPCBodyCap(t *testing.T) {
+	deep := []byte("\x01")
+	for range 30 {
+		deep = append([]byte{0x0a, byte(len(deep))}, deep...)
+	}
+	msg := []byte(strings.Repeat(grpcFrame1(0, string(deep)), (64<<10)/(len(deep)+5)))
+	s := NewStore(10, 1<<20)
+	out, note, _, _ := s.grpcBody(msg, "application/grpc", "/x.Y/Z", false, true, false)
+	if len(out) > 2*protoMaxOut || !strings.Contains(string(out), "[more messages not read]") || !strings.HasPrefix(note, "gRPC: ") {
+		t.Errorf("rendered %d bytes from %d; note %q", len(out), len(msg), note)
 	}
 }
