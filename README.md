@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.5). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.6). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
 
 ## What you need
@@ -96,7 +96,7 @@ The agent reads the records through MCP tools such as `summarize`, `list_flows`,
 `search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)). After
 it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
 requests that action sent. With a mock you marked as a preset in the
-`--rules` file, it can also turn that mock on for a few minutes
+`--rules` file, it can also turn that mock on, a few minutes at a time
 (`activate_mock`, [presets](docs/guide.md#presets-an-agent-can-turn-on)) to
 see how the app takes an error; it cannot write or change a rule.
 `reqcove cleanup` lists how to undo everything; stopping, restarting and

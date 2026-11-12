@@ -343,7 +343,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 #### エージェントが有効にできるプリセット
 
-`preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは最長 5 分です。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
+`preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは 1 回につき最長 5 分で、何度でも有効にし直せます（上限なし。[SECURITY](SECURITY.md#mock-presets)）。プリセットと同じ match（メソッド、URL、operation）の普通のモックは、読み込みで断ります（プリセットの代わりに応答してしまうためです）。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
 
 ```yaml
 mock:
@@ -446,6 +446,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | | |
 |---|---|
 | `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
+| `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
 | `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
 | `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |

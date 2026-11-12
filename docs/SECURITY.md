@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.5.
+come from reading code rather than from a test say so. It describes v0.6.
 
 ## Trust
 
@@ -270,7 +270,7 @@ tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's tools without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_mock`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -316,7 +316,8 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
 turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
 Writing a preset is your consent that an agent may turn it on; there is no
-switch at start.
+switch at start. The skill and the server's instructions tell an agent never
+to write `preset:` itself, even when asked, but to show you the lines.
 
 What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
 client, or a sandboxed one) can now change what the device gets, at the moment
@@ -475,9 +476,10 @@ again) and passed through a 0600 file, never the command line. A link with it
 (`?token=`) opened by a browser through the node is answered, once mitmweb
 accepts it, with a redirect to the same URL without it (a test, with a stand-in
 for mitmweb), so the password does not stay in the address bar; whether
-Safari's history keeps the first URL is not checked. `run` prints the links with
-the tokens on its standard error: in the terminal's scrollback, and in a file if
-you send it there, they stay valid until the token files are deleted. mitmweb's
+Safari's history keeps the first URL is not checked. On a terminal `run` prints
+the links with the tokens (they stay in its scrollback, valid until the token
+files are deleted); off one it prints none. `reqcove links` prints them again,
+from `links` (0600) in the state directory. mitmweb's
 cookie does not outlast its restart (it signs it with a key made at each start,
 from reading its code), so after one the link is needed again. The node also relays
 its port 8081 to it for your own devices on the tailnet (the same user, untagged:
@@ -485,7 +487,7 @@ not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).
 The password still guards it, and it gives what it gives on this computer: with
 it, mitmweb's options can be changed (scripts included), which runs code on this
-computer. The link with the password is printed in `run`'s terminal only. A phone on the
+computer. The link with the password is printed on `run`'s terminal and by `reqcove links` only. A phone on the
 Remote Proxy reaches it the same way (its requests and WebSocket tunnels to the
 node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
 open stays open if the device stops counting as yours. Tried from an iPhone on

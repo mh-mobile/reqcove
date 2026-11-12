@@ -16,18 +16,21 @@
 - mitmweb's server no longer leaves its token in `mitmproxy.log` when a
   request fails.
 - The container docs drop `-t` from `docker run`: `docker exec -it NAME
-  reqcove links` shows the links.
+  reqcove links` shows the links (not tried in a container yet).
 
 - Mock presets: a mock in the `--rules` file marked `preset: NAME` (with an
   optional `description:`) answers only while an agent has turned it on, for
-  at most 5 minutes and, if it says, 20 requests. Mocks also take `delay_ms`
-  (at most 30000) and `fault: close`. With `--rules-reload` a changed rules
+  at most 5 minutes each time (it can turn it on again, with no cap) and, if
+  it says, 20 requests. Tried on an iPhone (a 503 once, a delay, a close, a
+  401). Mocks also take `delay_ms` (at most 30000) and `fault: close`. A
+  plain mock with the same match as a preset is refused at load. With `--rules-reload` a changed rules
   file turns presets off, as does a restart of mitmproxy or of `run`; `run`
   logs each one an agent turns on or off.
 - `run --config FILE` reads run's flags, one a line (`--no-redact`, `--web`,
   `--rules-reload` and `--allow-hosts '*'` stay on the command line), and the
   Homebrew formula has a service: `brew services start reqcove` with the
-  flags in `$(brew --prefix)/etc/reqcove/config`.
+  flags in `$(brew --prefix)/etc/reqcove/config` (the file by tests;
+  `brew services` itself not tried yet). `reqcove status` names the service.
 - If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
   allows `activate_mock`: allow the read tools by name instead.
 

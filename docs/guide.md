@@ -612,8 +612,11 @@ connection, reached GitHub.
 #### Presets an agent can turn on
 
 A mock with `preset: NAME` does nothing until an agent turns it on, for at most
-5 minutes: so an agent can check how the app takes a 503, a slow answer or a
-dropped connection, and turn it off again, without editing the file.
+5 minutes each time; it can turn it on again, with no cap
+([SECURITY](SECURITY.md#mock-presets)). So an agent can check how the app takes
+a 503, a slow answer or a dropped connection, and turn it off again, without
+editing the file. A plain mock with the same match (method, URL, operation) as
+a preset is refused at load: it would answer in its place.
 
 ```yaml
 mock:
@@ -783,6 +786,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | | |
 |---|---|
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
+| `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
 | `reqcove mcp` | the MCP server for an agent on this computer |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
