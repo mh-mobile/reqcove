@@ -522,7 +522,7 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	}
 	if isGRPC(ct) && e.Decoded { // framed: masked message by message, and described
 		var note string
-		head, note, e.grpcTrailers, e.view = s.grpcBody(head, ct, path, e.Dir == "request", redact, e.Truncated)
+		head, note, e.grpcTrailers, e.view = s.grpcBody(head, ct, path, e.Dir == "request", redact, e.Truncated || !e.Final)
 		if e.Note == "" {
 			e.Note = note
 		}
@@ -532,7 +532,7 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 		return head, true
 	}
 	if isProtobuf(ct) && e.Decoded { // not text: rendered, its strings by length unless --proto names them
-		head, e.view = renderProto(head, ct, path, e.Dir == "request", e.Truncated)
+		head, e.view = renderProto(head, ct, path, e.Dir == "request", e.Truncated || !e.Final) // a partial head is cut too
 		return head, true
 	}
 	return maskBody(head, ct, e.Dir == "request"), true

@@ -53,11 +53,31 @@ func TestProtoStructure(t *testing.T) {
 	if leak(resp+req, fuzzSecret) != "" {
 		t.Errorf("a string's contents shown")
 	}
-	if got := renderProtoStructure(msg[:len(msg)-3], false, true); !strings.HasSuffix(got, "… (not protobuf from here, or cut)\n") {
+	if got := renderProtoStructure(msg[:len(msg)-3], false, true); !strings.HasSuffix(got, "… (cut)\n") || !strings.HasPrefix(got, "1: 150\n") {
 		t.Errorf("cut:\n%s", got)
 	}
-	if got := renderProtoStructure([]byte("not protobuf at all"), false, false); !strings.Contains(got, "not protobuf") {
-		t.Errorf("text: %q", got)
+	if got := renderProtoStructure(msg[:len(msg)-3], false, false); got != protoNotShown {
+		t.Errorf("not cut, yet short:\n%s", got)
+	}
+	// What does not read as protobuf shows nothing (the item review, Opus):
+	// a token under a protobuf type read as fixed64 gave its bytes as a number.
+	for _, b := range []string{"a12345678secretkk", "not protobuf at all", "493817"} {
+		if got, _ := renderProto([]byte(b), "application/x-protobuf", "/v1/x", false, false); string(got) != protoNotShown {
+			t.Errorf("%q -> %q", b, got)
+		}
+	}
+	if got := renderProtoStructure(append([]byte{0x80}, "12345678secretkk"...), false, false); got != protoNotShown {
+		t.Errorf("bytes past an error: %q", got)
+	}
+	// A trial stopped by a cap is not taken as a message.
+	capped := []byte(strings.Repeat("\x08\x01", protoMaxNodes-3))
+	capped = append(capped, pbBytes(2, []byte(strings.Repeat("\x08\x01", 10)))...)
+	if got := renderProtoStructure(capped, false, false); strings.Contains(got, "2 {") {
+		t.Errorf("a capped trial accepted:\n%s", got[len(got)-200:])
+	}
+	// One output cap for the whole rendering.
+	if got := renderProtoStructure([]byte(strings.Repeat("\x0a\x02\x08\x01", 13000)), false, false); len(got) > protoMaxOut+4096 {
+		t.Errorf("output %d bytes", len(got))
 	}
 	// Cost on shapes a site can send, 64 KiB each.
 	deep := []byte("x")
@@ -178,10 +198,11 @@ func TestProtoSchema(t *testing.T) {
 	inner2, _ := anypb.New(&descriptorpb.FileOptions{GoPackage: proto.String("PBanyValue")})
 	set("extra", protoreflect.ValueOfMessage(inner2.ProtoReflect()))
 	b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(m)
-	b = append(b, pbBytes(99, []byte(fuzzSecret))...) // a field the schema does not have
+	b = append(b, pbBytes(99, []byte(fuzzSecret))...)       // a field the schema does not have
+	b = append(b, pbBytes(9, []byte("PBsecretAsDelta"))...) // a string where the schema says sint32 delta: never its bytes as numbers
 	out, view := renderProto(b, "application/grpc", "/t.S/Do", true, false)
 	got := string(out)
-	for _, s := range []string{"PBsecret01", "PBsecret02", "PBsecret03", "PBsecretBytes", "424242", fuzzSecret[:6]} {
+	for _, s := range []string{"PBsecret01", "PBsecret02", "PBsecret03", "PBsecretBytes", "424242", fuzzSecret[:6], "40,33"} {
 		if strings.Contains(got, s) {
 			t.Errorf("%s left in %s", s, got)
 		}

@@ -24,7 +24,23 @@ const (
 type protoWalk struct {
 	request bool
 	nodes   int
-	budget  int // bytes it may still scan, trials of sub-messages included: linear in the head
+	out     int  // bytes written, kept or not: one cap for the whole rendering
+	budget  int  // bytes it may still scan, trials of sub-messages included: linear in the head
+	capped  bool // a cap was reached: what follows is not read
+	short   bool // the top level ran out of bytes (a cut head), rather than read wrong
+}
+
+func (w *protoWalk) printf(b *strings.Builder, format string, a ...any) {
+	n, _ := fmt.Fprintf(b, format, a...)
+	w.out += n
+}
+
+// full: a cap is reached; the rest is not read.
+func (w *protoWalk) full() bool {
+	if w.nodes++; w.nodes > protoMaxNodes || w.out > protoMaxOut {
+		w.capped = true
+	}
+	return w.capped
 }
 
 func protoVarint(b []byte) (uint64, int) {
@@ -38,31 +54,45 @@ func protoVarint(b []byte) (uint64, int) {
 	return 0, 0
 }
 
+// protoNotShown is what a body that does not read as protobuf gives: none of
+// it, as what was read before the error could be another format's bytes.
+const protoNotShown = "(not protobuf, or not read to its end: not shown)\n"
+
 // renderProtoStructure renders msg; cut says the head ended inside it.
 func renderProtoStructure(msg []byte, request, cut bool) string {
 	w := &protoWalk{request: request, budget: 32*len(msg) + 1024}
 	var b strings.Builder
 	ok := w.message(&b, msg, 0)
-	out := b.String()
-	if !ok {
-		out += "… (not protobuf from here, or cut)\n"
-	} else if cut {
-		out += "… (cut)\n"
+	switch {
+	case !ok && cut && w.short:
+		return b.String() + "… (cut)\n"
+	case !ok:
+		return protoNotShown
+	case w.capped:
+		return b.String() + "… (more not read)\n"
 	}
-	return out
+	return b.String()
 }
 
 // message writes msg's fields, one a line at depth's indent; false if it is
-// not a whole message (it then wrote what it could read).
+// not a whole message.
 func (w *protoWalk) message(b *strings.Builder, msg []byte, depth int) bool {
 	indent := strings.Repeat("  ", depth)
+	short := func() bool {
+		if depth == 0 {
+			w.short = true
+		}
+		return false
+	}
 	for i := 0; i < len(msg); {
-		if w.nodes++; w.nodes > protoMaxNodes || b.Len() > protoMaxOut {
-			b.WriteString(indent + "… (more not read)\n")
+		if w.full() {
 			return true
 		}
 		tag, n := protoVarint(msg[i:])
-		if n == 0 || tag>>3 == 0 || tag>>3 > 1<<29-1 {
+		if n == 0 {
+			return short()
+		}
+		if tag>>3 == 0 || tag>>3 > 1<<29-1 {
 			return false
 		}
 		i += n
@@ -71,12 +101,12 @@ func (w *protoWalk) message(b *strings.Builder, msg []byte, depth int) bool {
 		case 0:
 			v, n := protoVarint(msg[i:])
 			if n == 0 {
-				return false
+				return short()
 			}
 			if w.request && n > 1 {
-				fmt.Fprintf(b, "%s%d: varint(%d bytes)\n", indent, num, n)
+				w.printf(b, "%s%d: varint(%d bytes)\n", indent, num, n)
 			} else {
-				fmt.Fprintf(b, "%s%d: %d\n", indent, num, v)
+				w.printf(b, "%s%d: %d\n", indent, num, v)
 			}
 			i += n
 		case 1, 5:
@@ -85,21 +115,21 @@ func (w *protoWalk) message(b *strings.Builder, msg []byte, depth int) bool {
 				size = 4
 			}
 			if len(msg)-i < size {
-				return false
+				return short()
 			}
 			switch {
 			case w.request:
-				fmt.Fprintf(b, "%s%d: fixed%d\n", indent, num, size*8)
+				w.printf(b, "%s%d: fixed%d\n", indent, num, size*8)
 			case size == 8:
-				fmt.Fprintf(b, "%s%d: fixed64 %d\n", indent, num, binary.LittleEndian.Uint64(msg[i:]))
+				w.printf(b, "%s%d: fixed64 %d\n", indent, num, binary.LittleEndian.Uint64(msg[i:]))
 			default:
-				fmt.Fprintf(b, "%s%d: fixed32 %d\n", indent, num, binary.LittleEndian.Uint32(msg[i:]))
+				w.printf(b, "%s%d: fixed32 %d\n", indent, num, binary.LittleEndian.Uint32(msg[i:]))
 			}
 			i += size
 		case 2:
 			l, n := protoVarint(msg[i:])
 			if n == 0 || l > uint64(len(msg)-i-n) {
-				return false
+				return short()
 			}
 			i += n
 			span := msg[i : i+int(l)]
@@ -113,24 +143,25 @@ func (w *protoWalk) message(b *strings.Builder, msg []byte, depth int) bool {
 }
 
 // span writes a length-delimited field: text as its length, a whole
-// sub-message as its fields, other bytes as their length.
+// sub-message as its fields, other bytes as their length. A trial that a cap
+// stopped is not a whole message.
 func (w *protoWalk) span(b *strings.Builder, num uint64, span []byte, depth int) {
 	indent := strings.Repeat("  ", depth)
 	switch {
 	case len(span) > 0 && utf8.Valid(span) && strictText(span):
-		fmt.Fprintf(b, "%s%d: string(%d)\n", indent, num, len(span))
+		w.printf(b, "%s%d: string(%d)\n", indent, num, len(span))
 		return
-	case len(span) > 0 && depth+1 < protoMaxDepth && w.budget >= len(span):
+	case len(span) > 0 && depth+1 < protoMaxDepth && w.budget >= len(span) && !w.capped:
 		w.budget -= len(span)
 		var sub strings.Builder
-		if nodes := w.nodes; w.message(&sub, span, depth+1) {
-			fmt.Fprintf(b, "%s%d {\n%s%s}\n", indent, num, sub.String(), indent)
+		nodes := w.nodes
+		if w.message(&sub, span, depth+1) && !w.capped {
+			w.printf(b, "%s%d {\n%s%s}\n", indent, num, sub.String(), indent)
 			return
-		} else {
-			w.nodes = nodes // a trial that failed counts for nothing shown
 		}
+		w.nodes = nodes // a trial that failed counts for nothing shown
 	}
-	fmt.Fprintf(b, "%s%d: bytes(%d)\n", indent, num, len(span))
+	w.printf(b, "%s%d: bytes(%d)\n", indent, num, len(span))
 }
 
 // isProtobuf: a content type of protobuf bodies (one message, not framed).
@@ -146,6 +177,9 @@ func isProtobuf(ct string) bool {
 // renderProto renders a protobuf message: with --proto and its type known,
 // as JSON masked by name; else its structure only.
 func renderProto(msg []byte, ct, path string, request, cut bool) ([]byte, string) {
+	if len(msg) > 0 && utf8.Valid(trimCutRune(msg)) && strictText(trimCutRune(msg)) {
+		return []byte(protoNotShown), "protobuf structure: none, the body is text" // text under a protobuf type: its bytes would read as numbers
+	}
 	if md := protoMessageType(ct, path, request); md != nil {
 		return []byte(renderProtoJSON(msg, md, request, cut)), "protobuf as " + string(md.FullName()) + " (--proto)"
 	}

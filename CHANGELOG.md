@@ -30,8 +30,10 @@
   responses, only small ones in requests); with `--proto FILE` (a compiled
   schema), as JSON with their field names, masked by name. The type comes
   from the method in the path (gRPC, gRPC-Web, Connect, Twirp) or
-  `messageType` in the content type. `diff_flows` never calls two
-  structures the same. Tried with tests and a fuzz test.
+  `messageType` in the content type. A body that does not read as protobuf
+  to its end shows nothing. `diff_flows` never calls two structures, nor
+  lengths-only values, the same. Tried with tests and a fuzz test (of the
+  reading without a schema).
 
 ### Masking
 

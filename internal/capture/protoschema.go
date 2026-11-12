@@ -100,8 +100,11 @@ func renderProtoJSON(msg []byte, md protoreflect.MessageDescriptor, request, cut
 	var b strings.Builder
 	ok := w.named(&b, msg, md, 0)
 	out := b.String()
-	if !ok || cut {
-		out += "\n… (cut, or not this message from here)"
+	switch {
+	case !ok && !(cut && w.short):
+		return `{"…":"not a ` + string(md.Name()) + `, or not read to its end: not shown"}`
+	case !ok || cut:
+		out += "\n… (cut)"
 	}
 	return string(maskBody([]byte(out), "application/json", request))
 }
@@ -130,13 +133,25 @@ func (w *protoWalk) named(b *strings.Builder, msg []byte, md protoreflect.Messag
 		}
 	}
 	ok := true
+	start := b.Len()
+	defer func() { w.out += b.Len() - start }()
+	short := func() {
+		ok = false
+		if depth == 0 {
+			w.short = true
+		}
+	}
 	for i := 0; i < len(msg); {
-		if w.nodes++; w.nodes > protoMaxNodes || b.Len() > protoMaxOut {
+		if w.full() {
 			add("…", `"more not read"`, false)
 			break
 		}
 		tag, n := protoVarint(msg[i:])
-		if n == 0 || tag>>3 == 0 || tag>>3 > 1<<29-1 {
+		if n == 0 {
+			short()
+			break
+		}
+		if tag>>3 == 0 || tag>>3 > 1<<29-1 {
 			ok = false
 			break
 		}
@@ -147,7 +162,8 @@ func (w *protoWalk) named(b *strings.Builder, msg []byte, md protoreflect.Messag
 		case 0:
 			_, n := protoVarint(msg[i:])
 			if n == 0 {
-				ok = false
+				short()
+				break
 			}
 			raw, i = msg[i:i+n], i+n
 		case 1, 5:
@@ -156,14 +172,14 @@ func (w *protoWalk) named(b *strings.Builder, msg []byte, md protoreflect.Messag
 				size = 4
 			}
 			if len(msg)-i < size {
-				ok = false
+				short()
 				break
 			}
 			raw, i = msg[i:i+size], i+size
 		case 2:
 			l, n := protoVarint(msg[i:])
 			if n == 0 || l > uint64(len(msg)-i-n) {
-				ok = false
+				short()
 				break
 			}
 			raw, i = msg[i+n:i+n+int(l)], i+n+int(l)
@@ -190,6 +206,10 @@ func (w *protoWalk) named(b *strings.Builder, msg []byte, md protoreflect.Messag
 			continue
 		}
 		if typ == 2 && fd.Kind() != protoreflect.StringKind && fd.Kind() != protoreflect.BytesKind && fd.Kind() != protoreflect.MessageKind && fd.Kind() != protoreflect.GroupKind {
+			if !fd.IsList() { // a wrong or stale schema: read as protobuf does, an unknown field
+				add(strconv.Itoa(int(num)), jsonString(strings.TrimSpace(w.unknown(num, typ, raw, depth))), false)
+				continue
+			}
 			for _, v := range w.packed(raw, fd) { // packed repeated scalars
 				add(key, v, true)
 			}
@@ -252,6 +272,10 @@ func (w *protoWalk) value(raw []byte, typ uint64, fd protoreflect.FieldDescripto
 		if !utf8.Valid(raw) {
 			return fmt.Sprintf(`"string(%d), not UTF-8"`, len(raw))
 		}
+		if w.out+len(raw) > protoMaxOut {
+			return fmt.Sprintf(`"string(%d), past the output's cap"`, len(raw))
+		}
+		w.out += len(raw)
 		return jsonString(string(raw))
 	case protoreflect.BytesKind:
 		return fmt.Sprintf(`"bytes(%d)"`, len(raw))
@@ -264,7 +288,7 @@ func (w *protoWalk) value(raw []byte, typ uint64, fd protoreflect.FieldDescripto
 			return w.any(raw, depth)
 		}
 		var sub strings.Builder
-		if !w.named(&sub, raw, md, depth+1) {
+		if !w.named(&sub, raw, md, depth+1) || w.capped {
 			return fmt.Sprintf(`"bytes(%d), not a %s"`, len(raw), md.Name())
 		}
 		return sub.String()
