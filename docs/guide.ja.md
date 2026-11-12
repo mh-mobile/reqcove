@@ -153,7 +153,7 @@ Reqcove が復号できるのは、クライアントが Reqcove を通して送
 | 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Rails のアプリ（Net::HTTP、Faraday） |
 | このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome、iOS 27 のシミュレーターの Safari |
 | 別の Mac | Exit Node の `--device` として。Tailscale のアプリで（[手順](#別の-mac-を記録する)） | macOS 27 の VM |
-| gRPC のアプリ | 呼び出しとステータス。メッセージの中身はまだ（[詳しく](#grpc)） | E2E テストだけ |
+| gRPC のアプリ | 呼び出しとステータス。protobuf のメッセージは構造だけ、`--proto` を渡せば名前付きで（[詳しく](#grpc)） | E2E テストだけ |
 
 ### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
 
@@ -173,7 +173,19 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### gRPC
 
-gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。protobuf のメッセージはテキストではないので、マスク中は返しません。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。protobuf のメッセージは下のとおりです。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+
+protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` など）はテキストではないので、Reqcove は中身のバイト列ではなく、Reqcove が書き起こしたものを返します。ボディの `view` がその印です。スキーマがないときは構造だけです。フィールドの番号、型、長さ、文字列は `string(12)` のように長さだけ（中身は出しません）、レスポンスの数値を出します。リクエストの数値は小さいもの（enum や真偽値）だけで、数値で送ったコードは隠れたままです。
+
+```
+1: 150
+2: string(12)
+3 {
+  1: string(3)
+}
+```
+
+`--proto FILE` に、コンパイルしたスキーマ（`protoc --descriptor_set_out=FILE --include_imports`）を渡すと、型がわかるメッセージは、フィールドの名前付きの JSON として出し、JSON と同じく名前でマスクします。型は、パスが示すメソッド（gRPC、gRPC-Web、Connect、Twirp の `/pkg.Service/Method`。リクエストでは入力、レスポンスでは出力の型）か、Content-Type の `messageType` から決めます。`bytes` のフィールドは長さだけ、スキーマにないフィールドは構造だけを出します。`--no-redact` のときは、protobuf のボディは届いたまま残します。
 
 gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。確かめたのは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。iPhone のアプリでは、まだ試していません。
 
@@ -346,6 +358,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--pass-hosts HOSTS` | 許可したホストのうち、復号せずに通すもの。書き方は同じ（`'*'` は不可）。[証明書ピンニング](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | `--rules FILE` | 許可したホストに適用する[ルール](#ルールを書く--rules) |
 | `--rules-reload` | そのファイルが変わるたびに読み直す |
+| `--proto FILE` | コンパイルした protobuf のスキーマ。[メッセージを名前付きで読む](#grpc) |
 | `--upstream-proxy URL` | 復号したリクエストを[上流の HTTP プロキシ](#上流プロキシに回す--upstream-proxy)に回す |
 | `--upstream-ca FILE` | そのプロキシの CA（PEM か DER） |
 | `--local-proxy` | このコンピュータのアプリ用のプロキシ（`127.0.0.1:8082`）。[iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) |

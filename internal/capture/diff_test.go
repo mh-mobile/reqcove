@@ -91,7 +91,7 @@ func TestDiffBodies(t *testing.T) {
 	body("p2", "\x08\x96\x01", 3, true, false, "application/x-protobuf")
 	body("t1", "hello", 5, true, false, "text/plain")
 	body("t2", "hello", 5, true, false, "text/plain")
-	for _, c := range []struct{ a, b, want string }{{"c1", "c2", "heads_same"}, {"p1", "p2", "not_compared"}, {"t1", "t2", "same"}, {"t1", "c1", "differs"}} {
+	for _, c := range []struct{ a, b, want string }{{"c1", "c2", "heads_same"}, {"p1", "p2", "masked"}, {"t1", "t2", "same"}, {"t1", "c1", "differs"}} {
 		d, _ := s.DiffFlows(c.a, c.b)
 		if d.ResponseBody.Result != c.want {
 			t.Errorf("%s vs %s: %+v, want %s", c.a, c.b, d.ResponseBody, c.want)

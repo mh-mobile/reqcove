@@ -143,6 +143,9 @@ func checkable(b Body, headers [][2]string) bool {
 	if len(b.Head) == 0 {
 		return true
 	}
+	if b.View != "" { // reqcove's rendering of protobuf: text, masked as it was written
+		return true
+	}
 	if !b.Decoded {
 		return false
 	}

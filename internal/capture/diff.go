@@ -171,6 +171,13 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 	case d.redact && (!checkable(a, ha) || !checkable(b, hb)):
 		r.Result, r.Note = "not_compared", "not text, so not checked for secrets: not compared (reqcove run --no-redact compares it)"
 		return r
+	case d.redact && (strings.HasPrefix(a.View, "protobuf structure") || strings.HasPrefix(b.View, "protobuf structure")):
+		// Strings show their lengths only: the same structure may hold other values.
+		r.Result, r.Note = "differs", "protobuf read without a schema: the structures differ"
+		if string(a.Head) == string(b.Head) {
+			r.Result, r.Note = "masked", "protobuf read without a schema: the same structure, but its strings (and a request's numbers) are not shown, so they may differ"
+		}
+		return r
 	}
 	cutHead := a.Truncated || b.Truncated || !a.Final || !b.Final
 	// JSON on both sides, whole: compared by path.

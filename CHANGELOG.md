@@ -24,6 +24,14 @@
   masked as JSON. `-bin` metadata shows its size only; `grpc-message` is
   decoded and masked. Trailers are searched, compared by `diff_flows` and
   written to a HAR's comment. Tried with an E2E test over HTTP/2, not an app.
+- Protobuf bodies (gRPC's messages, `application/x-protobuf` and the like) are
+  handed out as reqcove's rendering (`view`): without a schema, their
+  structure (field numbers, types, lengths, a string's length, numbers in
+  responses, only small ones in requests); with `--proto FILE` (a compiled
+  schema), as JSON with their field names, masked by name. The type comes
+  from the method in the path (gRPC, gRPC-Web, Connect, Twirp) or
+  `messageType` in the content type. `diff_flows` never calls two
+  structures the same. Tried with tests and a fuzz test.
 
 ### Masking
 

@@ -248,7 +248,7 @@ Reqcove's CA. Who trusts it differs:
 | a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | a Rails app (Net::HTTP, Faraday) |
 | this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
 | another Mac | as a `--device` on the exit node, with the Tailscale app ([how](#another-mac)) | a macOS 27 VM |
-| gRPC apps | their calls and status; the messages' contents not yet ([how](#grpc)) | the E2E test only |
+| gRPC apps | their calls and status; protobuf messages by structure, or by name with `--proto` ([how](#grpc)) | the E2E test only |
 
 ### Apps that pin certificates (`--pass-hosts`)
 
@@ -284,9 +284,33 @@ else from the trailers (HTTP/2's, or gRPC-Web's last frame when the kept head
 holds it: a body over 64 KiB loses it). `grpc_message` is decoded and masked
 (with `--no-redact`, as sent). Trailers are searched, compared by `diff_flows`
 and written to a HAR's comment. A body's note counts its messages and their sizes;
-protobuf messages are not handed out while masking (they are not text), JSON
-ones (`application/grpc+json`, `connect+json`) are, one a line, masked as JSON.
-Metadata ending in `-bin` (binary) shows its size only.
+JSON ones (`application/grpc+json`, `connect+json`) are handed out one a line,
+masked as JSON, protobuf ones as below. Metadata ending in `-bin` (binary)
+shows its size only.
+
+Protobuf bodies (gRPC's messages, and `application/x-protobuf` and the like)
+are not text, so reqcove hands out its own rendering of them, marked by the
+body's `view`. Without a schema it is the structure only: field numbers,
+types and lengths, `string(12)` for a string (never its text), and numbers in
+responses (in requests only small ones, such as enums and booleans: a code
+sent as a number stays hidden):
+
+```
+1: 150
+2: string(12)
+3 {
+  1: string(3)
+}
+```
+
+With `--proto FILE`, your compiled schema (`protoc --descriptor_set_out=FILE
+--include_imports`), a message whose type is known is shown as JSON with its
+field names and masked by name, as JSON is: the type comes from the method
+its path names (gRPC, gRPC-Web, Connect, Twirp: `/pkg.Service/Method`, the
+input in a request, the output in a response) or from `messageType` in the
+content type. `bytes` fields show their length; fields the schema does not
+have, their structure. With `--no-redact`, protobuf bodies are kept as they
+came.
 
 Apps built on gRPC-core (Google's SDKs among them) trust their own list of
 CAs, not the ones the iPhone trusts, so their calls show as TLS failures (from
@@ -602,6 +626,7 @@ other protocols going straight to their servers.
 | `--pass-hosts HOSTS` | allowed hosts carried undecrypted, written the same way (not `'*'`): [pinning](#apps-that-pin-certificates---pass-hosts) |
 | `--rules FILE` | [rules](#rules---rules) for allowed hosts |
 | `--rules-reload` | read that file again whenever it changes |
+| `--proto FILE` | a compiled protobuf schema: [read messages by their names](#grpc) |
 | `--upstream-proxy URL` | send decrypted requests on through [an HTTP proxy](#an-upstream-proxy---upstream-proxy) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER) |
 | `--local-proxy` | a proxy on `127.0.0.1:8082` for this computer's apps: [the iOS Simulator](#the-ios-simulator---local-proxy) |

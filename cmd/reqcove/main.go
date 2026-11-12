@@ -167,6 +167,7 @@ func run(ctx context.Context, args []string) error {
 	rules := fs.String("rules", "", "YAML file of map_remote, map_local and modify_headers rules (mitmproxy's syntax), and mock, resolve and keep_host_header (reqcove's), applied to --allow-hosts hosts only")
 	web := fs.Bool("web", false, "run mitmweb instead of mitmdump: on http://127.0.0.1:8081 (8091-8099 while another run has it), and on the node's port 8081 for your own devices on the tailnet (no masking, can edit and replay; a link with a token is printed)")
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
+	protoFile := fs.String("proto", "", "a compiled protobuf schema (protoc --descriptor_set_out=FILE --include_imports): messages of its gRPC, Connect and Twirp methods are read with their field names and masked by name; without it, protobuf shows its structure only")
 	var maskNameSpecs, maskValueSpecs []string
 	fs.Func("mask-names", "names to mask as secret too, as the built-in ones are (headers, URL and form parameters, JSON fields, GraphQL arguments), comma-separated, or @FILE (one a line)", func(v string) error {
 		maskNameSpecs = append(maskNameSpecs, v)
@@ -269,6 +270,16 @@ func run(ctx context.Context, args []string) error {
 		log.Print("WARN: --mask-names and --mask-values do nothing with --no-redact")
 	} else if err := capture.SetMaskPolicy(maskNames, maskValues); err != nil {
 		return err
+	}
+	if *protoFile != "" {
+		if *noRedact {
+			log.Print("WARN: --proto does nothing with --no-redact: protobuf bodies are kept as they came")
+		}
+		n, err := capture.LoadProtoSchema(*protoFile)
+		if err != nil {
+			return fmt.Errorf("--proto %s: %w", *protoFile, err)
+		}
+		log.Printf("--proto: %d message types from %s", n, *protoFile)
 	}
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
