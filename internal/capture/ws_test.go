@@ -140,9 +140,18 @@ func TestWSE2E(t *testing.T) {
 	defer cancel()
 	mux := http.NewServeMux()
 	var wg sync.WaitGroup
+	ended := make(chan struct{}) // the server got the last message: closing then loses none in flight
 	mux.Handle("/ws", websocket.Handler(func(ws *websocket.Conn) {
 		websocket.Message.Send(ws, `{"type":"welcome","session_token":"WSe2eServer01"}`)
-		io.Copy(io.Discard, ws)
+		for {
+			var m []byte
+			if websocket.Message.Receive(ws, &m) != nil {
+				return
+			}
+			if string(m) == "end" {
+				close(ended)
+			}
+		}
 	}))
 	mux.HandleFunc("/beside", func(w http.ResponseWriter, r *http.Request) { w.Write(bytes.Repeat([]byte("b"), 100<<10)) })
 	srv := httptest.NewServer(mux)
@@ -176,6 +185,12 @@ func TestWSE2E(t *testing.T) {
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	wg.Wait()
+	websocket.Message.Send(ws, "end")
+	select {
+	case <-ended:
+	case <-time.After(60 * time.Second):
+		t.Fatal("the server never got the last message")
+	}
 	ws.Close()
 	t.Logf("an HTTP request beside the flood: %v", time.Since(start).Round(time.Millisecond))
 	var id string
