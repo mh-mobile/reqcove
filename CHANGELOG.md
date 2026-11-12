@@ -4,9 +4,10 @@
 
 ### For people
 
-- `run`'s log lines no longer carry the login URL or the `--ui`, `--web`,
-  `--mcp-http` tokens, `--verbose` included (tsnet's own lines printed the
-  login URL every 5 s, and the mitmweb line its token). On a terminal `run`
+- `run`'s log lines no longer carry the `--ui`, `--web`, `--mcp-http` tokens
+  or the login URL, `--verbose` included (tsnet's own lines printed the login
+  URL every 5 s, and the mitmweb line its token); before `run` learns the login
+  URL, it is recognized by its usual shapes (Tailscale's, Headscale's). On a terminal `run`
   still shows them; off one (a service, `docker logs` without `-t`) it names
   `reqcove links` in their place.
 - `reqcove links` prints the login URL and those links again, with QR codes,

@@ -22,10 +22,12 @@ The four steps are in the [README](../README.md#use).
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 
 - The login URL, and the `--ui`, `--web` and `--mcp-http` links with their
-  tokens, are shown on `run`'s terminal only: never in its log lines
-  (`--verbose` too) or the MCP tools. Whoever opens the login URL first puts the
+  tokens, are shown on `run`'s terminal only, not in its log lines (`--verbose`
+  too; the login URL by its usual shapes until `run` learns it,
+  [SECURITY](SECURITY.md#the-login-url)) or the MCP tools. Whoever opens the login URL first puts the
   node in their own tailnet ([SECURITY](SECURITY.md#the-login-url)).
-- `reqcove links` prints them again, with QR codes, in your terminal (it refuses
+- `reqcove links` prints them again (and mitmweb's link on this computer, the
+  CA's), with QR codes, in your terminal (it refuses
   when its output is not a terminal). Off a terminal (a service, `docker logs`),
   `run` prints "`reqcove links` prints it" in their place. While `run` runs they
   are kept in `login-url` and `links` (0600) in the state directory.

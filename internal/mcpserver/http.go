@@ -50,7 +50,7 @@ func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http
 			log.Printf("--mcp-http: %s sent no token or a wrong one", caller)
 			// No WWW-Authenticate: a client could take it for OAuth and go looking.
 			w.Header().Set("Connection", "close")
-			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove run printed", http.StatusUnauthorized)
+			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove links prints", http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), callerKey{}, caller)

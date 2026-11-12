@@ -597,9 +597,10 @@ first puts this node in their own tailnet, so it is printed on `run`'s terminal
 only: the `status` tool, and with it the agent and its model provider, says where
 to find it but does not carry it.
 
-- `run`'s log lines never carry it, nor the `--ui`, `--web`, `--mcp-http` tokens:
-  every line goes through one filter that replaces the tokens and any URL shaped
-  as a control server's login URL (`/a/…`, Headscale's `/register/…`), and the
+- `run`'s log lines do not carry it, nor the `--ui`, `--web`, `--mcp-http` tokens:
+  every line `run` logs (and the error it exits with) goes through one filter that replaces the tokens and any URL shaped
+  as a control server's login URL (Tailscale's `/a/<hex>`, Headscale's
+  `/register/…` and `/register?key=…`), and the
   login URL itself once `run` has seen it. Under `--verbose` that covers tsnet's
   own lines, which print it before `run` learns it (a test reads them from a test
   control server). The filter knows those shapes only: a control server whose
@@ -608,9 +609,12 @@ to find it but does not carry it.
   prints neither the URL nor the links, only that `reqcove links` prints them.
 - `login-url` (while login is pending) and `links` (the ones with tokens, once
   `run` is ready) are kept in the state directory, 0600, and removed when `run`
-  starts and stops. 0600 keeps other users out, not a program running as you:
+  starts and when it stops (after a crash, until the next start: `reqcove links`
+  does not check that `run` is up). 0600 keeps other users out, not a program running as you:
   an agent with a shell can read them, as it can the node's key, the tokens and
-  the CA's key in the same directory.
+  the CA's key in the same directory. tsnet also keeps its own lines, the login
+  URL among them, in a buffer file there (`tsnet/tailscaled.log*.txt`, 0600),
+  also without `--verbose` (from reading code).
 - `reqcove links` refuses when its output is not a terminal: a help against an
   agent running it, not a guarantee (a program can give it a terminal). The
   skill and the server's instructions tell agents never to run it.

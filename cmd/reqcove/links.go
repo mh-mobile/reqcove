@@ -6,11 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"golang.org/x/term"
 )
 
@@ -24,6 +27,65 @@ const (
 	loginURLFile = "login-url" // while the node waits for a login
 	linksFile    = "links"     // once run is ready: name=value lines
 )
+
+// userLinks shows the user what is for their eyes only: on run's terminal,
+// and in the two files for `reqcove links`; never in a log line.
+type userLinks struct {
+	w        io.Writer // run's terminal, when terminal
+	terminal bool
+	red      *exitnode.Redactor
+	state    string
+	cmd      string // `reqcove links` for this state
+	login    string // the login URL shown last
+}
+
+// status keeps login-url while the node waits for a login, and shows a new
+// login URL on the terminal.
+func (u *userLinks) status(s exitnode.Status) {
+	p := filepath.Join(u.state, loginURLFile)
+	switch {
+	case s.Backend == "NeedsLogin" && s.AuthURL != "" && s.AuthURL != u.login:
+		u.login = s.AuthURL
+		u.red.Add(u.login)
+		if err := writePrivate(p, []byte(u.login+"\n")); err != nil {
+			log.Printf("WARN: %s: %v", loginURLFile, err)
+		}
+		if u.terminal {
+			fmt.Fprintf(u.w, "login URL: %s\n  (whoever opens it first puts this node in their tailnet; `%s` prints it again)\n", u.login, u.cmd)
+		}
+	case u.login != "" && s.Backend != "NeedsLogin":
+		u.login = ""
+		os.Remove(p)
+	}
+}
+
+// web shows mitmweb's link on this computer (with its token).
+func (u *userLinks) web(local string) {
+	if u.terminal {
+		fmt.Fprintf(u.w, "mitmweb on %s\n", local)
+		return
+	}
+	addr, _, _ := strings.Cut(local, "?")
+	log.Printf("mitmweb on %s (its link: `%s`)", addr, u.cmd)
+}
+
+// ready writes the links file and returns what the ready block shows for the
+// links and the token: themselves on a terminal, else a hint.
+func (u *userLinks) ready(ui, web, webLocal, mcp, mcpToken, ca string) (shownUI, shownWeb, shownToken string) {
+	if err := writePrivate(filepath.Join(u.state, linksFile), formatLinks([]linkLine{{"ui", ui}, {"web", web}, {"web-local", webLocal}, {"mcp", mcp}, {"mcp-token", mcpToken}, {"ca", ca}})); err != nil {
+		log.Printf("WARN: %s: %v", linksFile, err)
+	}
+	if u.terminal {
+		return ui, web, mcpToken
+	}
+	hint := func(v string) string {
+		if v == "" {
+			return ""
+		}
+		return "(`" + u.cmd + "` prints it)"
+	}
+	return hint(ui), hint(web), hint(mcpToken)
+}
 
 // isTerminal: run's stderr is someone's terminal (also `docker run -t`).
 func isTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
@@ -62,10 +124,14 @@ func links(_ context.Context, args []string) error {
 	if err := parseFlags(fls, args); err != nil {
 		return err
 	}
-	if !isTerminal(os.Stdout) {
+	return linksTo(os.Stdout, *state)
+}
+
+func linksTo(out *os.File, state string) error {
+	if !isTerminal(out) {
 		return errors.New("reqcove links prints only to a terminal: its links carry tokens, and the login URL puts this node in whoever's tailnet opens it first. Run it in your own terminal")
 	}
-	return printLinks(os.Stdout, *state)
+	return printLinks(out, state)
 }
 
 func printLinks(w *os.File, state string) error {
@@ -103,6 +169,11 @@ func printLinks(w *os.File, state string) error {
 		case "web":
 			fmt.Fprintf(w, "--web:    %s  (mitmweb: unmasked, can edit and replay)\n", v)
 			codes = append(codes, qrItem{v, "--web (mitmweb, unmasked)"})
+		case "web-local":
+			fmt.Fprintf(w, "          %s  (the same, on this computer)\n", v)
+		case "ca":
+			fmt.Fprintf(w, "CA:       %s  (on an iPhone, with the exit node on; once per device)\n", v)
+			codes = append(codes, qrItem{v, "CA (with the exit node on)"})
 		case "mcp":
 			hasMCP = true
 			fmt.Fprintf(w, "--mcp-http: %s\n", v)

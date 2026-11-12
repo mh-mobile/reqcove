@@ -149,10 +149,10 @@ func defaultState() string {
 }
 
 func run(ctx context.Context, args []string) error {
-	logOut := log.Writer()
-	red := &exitnode.Redactor{W: logOut} // tokens and login URLs never in a log line
+	// Tokens and login URLs never in a log line: kept after run returns, so
+	// main's log.Fatal goes through it too.
+	red := &exitnode.Redactor{W: log.Writer()}
 	log.SetOutput(red)
-	defer log.SetOutput(logOut)
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
 	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
@@ -332,8 +332,10 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
-	onTerminal := isTerminal(os.Stderr)
 	linksCmd := withState("reqcove links", *state)
+	stepLinksCmd = linksCmd
+	defer func() { stepLinksCmd = "reqcove links" }()
+	user := &userLinks{w: os.Stderr, terminal: isTerminal(os.Stderr), red: red, state: *state, cmd: linksCmd}
 	for _, name := range []string{loginURLFile, linksFile} { // a crashed run's, and this one's at the end
 		p := filepath.Join(*state, name)
 		os.Remove(p)
@@ -466,7 +468,7 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	if *web {
-		log.Printf("mitmweb on http://127.0.0.1:%d/ (its link: `%s`)", webLocal, linksCmd)
+		user.web(cap.WebURL)
 		if webLocal != exitnode.WebPort {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
@@ -520,23 +522,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	var shown bool
 	var gate readyGate
-	var loginURL string
 	onStatus := func(s exitnode.Status) {
 		node.set(s)
-		switch {
-		case s.Backend == "NeedsLogin" && s.AuthURL != "" && s.AuthURL != loginURL:
-			loginURL = s.AuthURL
-			red.Add(loginURL)
-			if err := writePrivate(filepath.Join(*state, loginURLFile), []byte(loginURL+"\n")); err != nil {
-				log.Printf("WARN: %s: %v", loginURLFile, err)
-			}
-			if onTerminal { // for the user's eyes: never in a log line
-				fmt.Fprintf(os.Stderr, "login URL: %s\n  (whoever opens it first puts this node in their tailnet; `%s` prints it again)\n", loginURL, linksCmd)
-			}
-		case loginURL != "" && s.Backend != "NeedsLogin":
-			loginURL = ""
-			os.Remove(filepath.Join(*state, loginURLFile))
-		}
+		user.status(s)
 		ip := firstIPv4(s.IPs)
 		if shown || ip == "" || !gate.ready(s) {
 			return
@@ -559,19 +547,12 @@ func run(ctx context.Context, args []string) error {
 			}
 			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
 		}
-		if err := writePrivate(filepath.Join(*state, linksFile), formatLinks([]linkLine{{"ui", uiLink}, {"web", webLink}, {"mcp", mcpURL}, {"mcp-token", mcpToken}})); err != nil {
-			log.Printf("WARN: %s: %v", linksFile, err)
+		var ca string
+		if len(devices) > 0 {
+			ca = "http://mitm.it"
 		}
-		shownUI, shownWeb, shownToken := uiLink, webLink, mcpToken
-		if !onTerminal { // a service, docker logs: the links stay in the file
-			hint := "(`" + linksCmd + "` prints it)"
-			for _, v := range []*string{&shownUI, &shownWeb, &shownToken} {
-				if *v != "" {
-					*v = hint
-				}
-			}
-		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, onTerminal))
+		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})

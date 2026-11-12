@@ -2,12 +2,13 @@ package main
 
 import (
 	"bytes"
-	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 )
 
@@ -23,11 +24,16 @@ func TestRedactor(t *testing.T) {
 		"To start this tsnet server, restart with TS_AUTHKEY set, or go to: https://hs.example.com/register/mkey:0123abcd\n",
 		`popped "https://login.tailscale.com/a/1a2b3c4d5e6f"` + "\n",
 		"--ui http://100.64.0.1/?k=ABCDEFGHIJKLMNOPQRSTUVWXYZ\n",
+		"older Headscale: https://hs.example.com/register?key=oldkey123\n",
+		"rules: map_remote https://api.example.com/auth/login and /a/b\n",
 	} {
 		r.Write([]byte(line))
 	}
 	got := b.String()
-	for _, leak := range []string{"1a2b3c4d5e6f", "mkey:0123abcd", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"} {
+	if !strings.Contains(got, "https://api.example.com/auth/login and /a/b") {
+		t.Errorf("a URL that is no login URL masked:\n%s", got)
+	}
+	for _, leak := range []string{"1a2b3c4d5e6f", "mkey:0123abcd", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "oldkey123"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("%q left in:\n%s", leak, got)
 		}
@@ -101,9 +107,61 @@ func TestPrintLinks(t *testing.T) {
 func TestLinksNotATerminal(t *testing.T) {
 	dir := t.TempDir()
 	writePrivate(filepath.Join(dir, loginURLFile), []byte("https://login.tailscale.com/a/abc\n"))
-	err := links(context.Background(), []string{"--state", dir})
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	err := linksTo(w, dir)
 	if err == nil || !strings.Contains(err.Error(), "only to a terminal") {
 		t.Errorf("err %v", err)
+	}
+}
+
+// run's own wiring: off a terminal the login URL and the links reach neither
+// its output nor its log, only the 0600 files, and the login URL is masked
+// in later log lines; on a terminal the user sees them.
+func TestUserLinks(t *testing.T) {
+	const login = "https://ctl.example.com/login/0123abcdef" // a shape the filter does not know
+	for _, terminal := range []bool{false, true} {
+		dir := t.TempDir()
+		var out, logs bytes.Buffer
+		red := &exitnode.Redactor{W: &logs}
+		log.SetOutput(red)
+		u := &userLinks{w: &out, terminal: terminal, red: red, state: dir, cmd: "reqcove links --state " + dir}
+		u.status(exitnode.Status{Backend: "NeedsLogin", AuthURL: login})
+		if fi, err := os.Stat(filepath.Join(dir, loginURLFile)); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("login-url: %v %v", fi, err)
+		}
+		u.web("http://127.0.0.1:8081/?token=WEBTOKENWEBTOKEN")
+		ui, web, tok := u.ready("http://100.64.0.1/?k=UITOKENUITOKEN", "http://100.64.0.1:8081/?token=WEBTOKENWEBTOKEN", "http://127.0.0.1:8081/?token=WEBTOKENWEBTOKEN", "http://n.ts.net:8090/mcp", "MCPTOKENMCPTOKEN", "http://mitm.it")
+		log.Printf("again: %s", login) // masked by its value
+		shown := out.String() + ui + web + tok
+		for _, secret := range []string{"0123abcdef", "WEBTOKENWEBTOKEN", "UITOKENUITOKEN", "MCPTOKENMCPTOKEN"} {
+			if strings.Contains(logs.String(), secret) {
+				t.Errorf("terminal %v: %s in the log:\n%s", terminal, secret, logs.String())
+			}
+			if strings.Contains(shown, secret) != terminal {
+				t.Errorf("terminal %v: %s shown %v:\n%s", terminal, secret, !terminal, shown)
+			}
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, linksFile)); !strings.Contains(string(b), "mcp-token=MCPTOKENMCPTOKEN") || !strings.Contains(string(b), "web-local=http://127.0.0.1:8081/") {
+			t.Errorf("links file: %q", b)
+		}
+		u.status(exitnode.Status{Backend: "Running"})
+		if _, err := os.Stat(filepath.Join(dir, loginURLFile)); err == nil {
+			t.Error("login-url kept after the login")
+		}
+	}
+	log.SetOutput(os.Stderr)
+}
+
+// The steps name this node's `reqcove links` (with --state), as run sets it.
+func TestStepsNameLinksState(t *testing.T) {
+	stepLinksCmd = "reqcove links --state /s"
+	defer func() { stepLinksCmd = "reqcove links" }()
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	out := statusOut(exitnode.Status{Backend: "NeedsLogin"}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil)
+	if !strings.Contains(strings.Join(out.NextSteps, "\n"), "`reqcove links --state /s`") {
+		t.Errorf("steps %v", out.NextSteps)
 	}
 }
 

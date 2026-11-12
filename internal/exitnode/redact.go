@@ -16,10 +16,11 @@ type Redactor struct {
 	secrets []string
 }
 
-// loginURLs: Tailscale's (/a/…), Headscale's (/register/…) and testcontrol's
-// (/auth/…) login URLs, as tsnet's lines quote them (authURL=…, "AuthURL is
-// …", "go to: …").
-var loginURLs = regexp.MustCompile(`https?://[^\s"'<>]*/(?:a|auth|register)/[^\s"'<>]+`)
+// loginURLs: Tailscale's (/a/<hex>), testcontrol's (/auth/<hex>) and
+// Headscale's (/register/…, older ones /register?key=…) login URLs, as
+// tsnet's lines quote them (authURL=…, "AuthURL is …", "go to: …"). A path
+// such as /auth/login is not one.
+var loginURLs = regexp.MustCompile(`https?://[^\s"'<>]*/(?:(?:a|auth)/[0-9a-f]{8,}|register/|register\?key=)[^\s"'<>]*`)
 
 // RedactedLink replaces a login URL in the log.
 const RedactedLink = "[a link: `reqcove links` prints it]"

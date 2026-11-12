@@ -389,7 +389,7 @@ func runStep(s Status, linksCmd string) string {
 	if s.Backend == "NeedsLogin" && s.AuthURL == "" && !s.WasRunning {
 		return ""
 	}
-	return firstStep(s, linksCmd)
+	return FirstStepWith(s, linksCmd)
 }
 
 // lockedOut: Tailscale's own warning, raised once the netmap was checked
@@ -401,9 +401,10 @@ func lockedOut(health []string) bool {
 // FirstStep is the one thing the user must do next for the node, or "". It
 // never carries the login URL: whoever opens it first puts this node in their
 // tailnet, so it stays in run's terminal and `reqcove links`.
-func FirstStep(s Status) string { return firstStep(s, "reqcove links") }
+func FirstStep(s Status) string { return FirstStepWith(s, "reqcove links") }
 
-func firstStep(s Status, linksCmd string) string {
+// FirstStepWith is FirstStep naming linksCmd (`reqcove links --state DIR`).
+func FirstStepWith(s Status, linksCmd string) string {
 	for _, h := range s.Health {
 		// tsnet stops the node: reqcove keeps logs off (SetNoLogsNoSupport) and never turns them on.
 		if strings.Contains(h, "tailnet requires logging") {
@@ -414,7 +415,7 @@ func firstStep(s Status, linksCmd string) string {
 	case s.Backend == "NeedsLogin" && s.WasRunning:
 		return "log in again (the node's key expired or it was logged out): stop `reqcove run`, start it again, and open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsLogin":
-		return "log in: open the login URL (`reqcove run` prints it on its terminal, `" + linksCmd + "` in yours)"
+		return "log in: open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsMachineAuth":
 		return "approve this device in the admin console (Machines): your tailnet requires device approval"
 	case s.LockEnabled && s.NodeKey != "" && lockedOut(s.Health):

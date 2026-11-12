@@ -50,7 +50,7 @@ func TestNextSteps(t *testing.T) {
 		want    []string // substrings, in order; none: no steps
 	}{
 		{"all set", ok, ready, allow, nil, nil},
-		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"`reqcove links` in yours"}},
+		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"`reqcove links` prints it"}},
 		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
 		// Just after start the key looks unsigned until the netmap is checked: no step yet.
 		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
