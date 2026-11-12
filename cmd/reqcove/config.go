@@ -77,6 +77,9 @@ func readConfig(path string) (words []string, lines []int, err error) {
 	if !fi.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("--config %s: not a plain file", path)
 	}
+	if fi.Size() > 1<<20 {
+		return nil, nil, fmt.Errorf("--config %s: over 1 MiB", path)
+	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
 		return nil, nil, fmt.Errorf("--config %s: not yours: its flags decide what is recorded", path)
 	}
@@ -171,11 +174,13 @@ func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string) error {
 	fs.Init(fs.Name(), flag.ExitOnError)
 	fs.SetOutput(out)
 	if err != nil {
-		why := "a flag or its value does not parse (run -h lists them)"
-		if name, ok := strings.CutPrefix(err.Error(), "flag provided but not defined: "); ok {
-			why = "no flag " + name
+		// The word that failed: the last one taken, or for bad syntax the next.
+		i := len(words) - len(fs.Args()) - 1
+		if strings.HasPrefix(err.Error(), "bad flag syntax") {
+			i++
 		}
-		return fmt.Errorf("--config %s: %s", path, why)
+		i = min(max(i, 0), len(lines)-1)
+		return fmt.Errorf("--config %s, line %d: a flag or its value does not parse (run -h lists the flags)", path, lines[i])
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("--config %s, line %d: a word that is no flag's value (quote values with spaces, such as --device \"Taro's iPhone\")", path, lines[len(words)-fs.NArg()])

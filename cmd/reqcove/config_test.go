@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -87,6 +88,8 @@ func TestParseConfig(t *testing.T) {
 		"--config other\n":                 "--config only on the command line",
 		"--allow-hosts '*'\n":              "--allow-hosts '*' only on the command line",
 		"--allow-hosts @" + hosts:          "--allow-hosts '*' only on the command line",
+		"--allow-hosts '*:443'\n":          "--allow-hosts '*' only on the command line",
+		"--allow-hosts https://*/\n":       "--allow-hosts '*' only on the command line",
 		"--device a\n--hostname x stray\n": "line 2: a word that is no flag's value",
 	} {
 		fs, _, allow := testFlags()
@@ -105,11 +108,28 @@ func TestParseConfig(t *testing.T) {
 	if err := parseConfig(fs, t.TempDir(), allow); err == nil || !strings.Contains(err.Error(), "not a plain file") {
 		t.Errorf("a directory: %v", err)
 	}
-	// A value that does not parse is not quoted (it may be a pattern).
-	fs, _, allow = testFlags()
-	fs.Int("proxy-port", 0, "")
-	if err := parseConfig(fs, writeConfig(t, "--proxy-port s3cretish\n", 0o600), allow); err == nil || strings.Contains(err.Error(), "s3cretish") {
-		t.Errorf("bad value: %v", err)
+	// A word or value that does not parse is never quoted (it may be part of a
+	// pattern): the line says where.
+	for text, line := range map[string]string{
+		"--device a\n--proxy-port s3cretish\n":     "line 2:",
+		"--device a\n\n--mask \\Qs3cret -xyz\\E\n": "line 3:",
+		"--device a\n---s3cret\n":                  "line 2:",
+		"--proxy-port\n":                           "line 1:",
+	} {
+		fs, _, allow = testFlags()
+		fs.Int("proxy-port", 0, "")
+		fs.String("mask", "", "")
+		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow); err == nil || strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "xyz") || !strings.Contains(err.Error(), line) {
+			t.Errorf("%q: %v, want %s", text, err, line)
+		}
+	}
+	// A FIFO is refused at once, not waited on.
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err == nil {
+		fs, _, allow = testFlags()
+		if err := parseConfig(fs, fifo, allow); err == nil || !strings.Contains(err.Error(), "not a plain file") {
+			t.Errorf("fifo: %v", err)
+		}
 	}
 }
 
@@ -152,6 +172,10 @@ func TestStatusService(t *testing.T) {
 	t.Setenv("XPC_SERVICE_NAME", "homebrew.mxcl.reqcove")
 	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "homebrew.mxcl.reqcove" {
 		t.Errorf("service %q", s)
+	}
+	t.Setenv("XPC_SERVICE_NAME", "homebrew.mxcl.skhd") // a terminal another brew service started
+	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "" {
+		t.Errorf("under another service: %q", s)
 	}
 	t.Setenv("XPC_SERVICE_NAME", "application.com.apple.Terminal.123") // a terminal's
 	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "" {
