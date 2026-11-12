@@ -177,13 +177,36 @@ So "delete the directory" above means each of them.
   another type naming `json`, such as `application/x-amz-json-1.1`, and Sentry
   envelopes only with no control characters) or, with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
-  `--no-redact` returns them.
+  `--no-redact` returns them. Protobuf (by its content type, or in gRPC's
+  frames) is the exception: reqcove hands out its own rendering instead of
+  the bytes (`view` says so); a body that does not read as protobuf to its
+  end (or is text) shows nothing, and a head cut before its end shows what
+  it read only when that held a string or a whole sub-message. Without a schema, it is the structure only:
+  field numbers, wire types, lengths, a string's length but never its text,
+  and numbers in responses; in requests only 1-byte numbers (0 to 127:
+  enums, booleans, but also a PIN or CVV that small), larger ones as their
+  byte count, as a lone `code` is masked in requests. A span of printable
+  text is always a string, never read as a message, as its bytes would then
+  show as numbers; random bytes (`bytes` fields) can still read as one: in a
+  response usually all of their bytes then show as numbers (about 1 in 100
+  16-byte values whole, 1 in 1,000 32-byte ones), in a request parts of
+  them (field numbers and 1-byte numbers). Lengths show (a password's
+  length). With `--proto FILE` (your
+  compiled schema), a message whose type is known (a gRPC, Connect or Twirp
+  method by its path, or `messageType` in the content type) is read with
+  its field names (the proto names, never `json_name`) as JSON and masked
+  by name as JSON is; `bytes` show their length, and fields the schema does
+  not have their structure. A schema that is stale or wrong can give a
+  token an innocent name, which then passes; so do values under names the
+  built-in list does not count as secret, as in JSON (a `cookie` entry of a
+  headers map, a `cvv`). (Tests; the fuzz test is of the reading without a
+  schema. The `protoc` command above was run once, with protoc 33.0.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text
   `password=…` in it is not caught). Framed JSON messages are masked as JSON;
-  protobuf ones are not handed out while masking; a body under a gRPC type
-  that is not framed is masked as a body. (Tests, and an E2E test over
+  protobuf ones are rendered as above; a body under a gRPC type that is not
+  framed is masked as a body. (Tests, and an E2E test over
   HTTP/2.)
 - WebSocket messages: a text message's first 4 KiB is masked as it arrives,
   as a body is (a client's with a request's rules, a lone `code` included),

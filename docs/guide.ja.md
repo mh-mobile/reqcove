@@ -153,7 +153,7 @@ Reqcove が復号できるのは、クライアントが Reqcove を通して送
 | 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Rails のアプリ（Net::HTTP、Faraday） |
 | このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome、iOS 27 のシミュレーターの Safari |
 | 別の Mac | Exit Node の `--device` として。Tailscale のアプリで（[手順](#別の-mac-を記録する)） | macOS 27 の VM |
-| gRPC のアプリ | 呼び出しとステータス。メッセージの中身はまだ（[詳しく](#grpc)） | E2E テストだけ |
+| gRPC のアプリ | 呼び出しとステータス。protobuf のメッセージは構造だけ、`--proto` を渡せば名前付きで（[詳しく](#grpc)） | E2E テストだけ |
 
 ### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
 
@@ -173,7 +173,19 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### gRPC
 
-gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。protobuf のメッセージはテキストではないので、マスク中は返しません。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。protobuf のメッセージは下のとおりです。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+
+protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` など）はテキストではないので、Reqcove は中身のバイト列ではなく、Reqcove が書き起こしたものを返します。ボディの `view` がその印です。スキーマがないときは構造だけです。フィールドの番号、型、長さ、文字列は `string(12)` のように長さだけ（中身は出しません）、レスポンスの数値を出します。リクエストの数値は 128 未満のもの（enum や真偽値など）だけを出し、それより大きいもの（数値で送ったコードなど）はバイト数だけを出します。128 未満なら、PIN などもそのまま出ます。
+
+```
+1: 150
+2: string(12)
+3 {
+  1: string(3)
+}
+```
+
+`--proto FILE` に、コンパイルしたスキーマ（`protoc --descriptor_set_out=FILE --include_imports`）を渡すと、型がわかるメッセージは、フィールドの名前付きの JSON として出し、JSON と同じく名前でマスクします。型は、パスが示すメソッド（gRPC、gRPC-Web、Connect、Twirp の `/pkg.Service/Method`。リクエストでは入力、レスポンスでは出力の型）か、Content-Type の `messageType` から決めます。`bytes` のフィールドは長さだけ、スキーマにないフィールドは構造だけを出します。`--no-redact` のときは、protobuf のボディは届いたまま残します。
 
 gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。確かめたのは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。iPhone のアプリでは、まだ試していません。
 
@@ -346,6 +358,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--pass-hosts HOSTS` | 許可したホストのうち、復号せずに通すもの。書き方は同じ（`'*'` は不可）。[証明書ピンニング](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | `--rules FILE` | 許可したホストに適用する[ルール](#ルールを書く--rules) |
 | `--rules-reload` | そのファイルが変わるたびに読み直す |
+| `--proto FILE` | コンパイルした protobuf のスキーマ。[メッセージを名前付きで読む](#grpc) |
 | `--upstream-proxy URL` | 復号したリクエストを[上流の HTTP プロキシ](#上流プロキシに回す--upstream-proxy)に回す |
 | `--upstream-ca FILE` | そのプロキシの CA（PEM か DER） |
 | `--local-proxy` | このコンピュータのアプリ用のプロキシ（`127.0.0.1:8082`）。[iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) |
@@ -386,7 +399,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `list_flows` | フローを新しい順に一覧。デバイス、ホスト（サブドメインを含む）、時間（`since: "10m"`）、ステータスコード（`404`、`4xx`、`none`）、メソッド、User-Agent（アプリ名など、含まれる文字列で指定。アプリのバンドル ID は通信に含まれない）、GraphQL の operation（`operation: "Login"`。`operationName`、なければ文書の最初の operation。一覧の行にも出る）で絞り込み。ページング対応。ホストが 1 件も一致しないときは、記録にある似たホスト（`acmeshop.com` に対する `acme-shop.com` など）を `similar_hosts` で返す |
 | `search_flows` | URL とヘッダーのテキストを検索（`bodies` を指定するとボディの先頭も対象）。絞り込みと `similar_hosts` は同じ |
 | `wait_for_flows` | デバイスでの操作が送った通信を読む。操作の前に `list_flows`（または `capture_stats`）の `checkpoint` を控え、操作のあと `after: checkpoint` で呼ぶ。それ以降に返事（レスポンスかエラー）が来たフローを、返事の早い順に返す。まだなければ、最初の 1 件を最長 `timeout` 秒（デフォルト 20、最大 30）待つ。結果の `after` を次の呼び出しに渡せば、同じフローは二度返らない。絞り込みは同じ。WebSocket は開いたとき（`101`）に一度だけ返り、閉じるまで `open` のまま |
-| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ（`max_body` を指定すると、それぞれそのバイト数まで）。`response_trailers` は HTTP/2 のトレーラー（gRPC-Web では最後のフレーム） |
+| `get_flow` | フローを 1 件取得。ボディは `bodies` を指定したときだけ（`max_body` を指定すると、それぞれそのバイト数まで）。`response_trailers` は HTTP/2 のトレーラー（gRPC-Web では最後のフレーム）。`view` のあるボディは、protobuf を Reqcove が書き起こしたもので、バイト列そのものではない（[gRPC](#grpc)） |
 | `list_ws_messages` | WebSocket のメッセージ（一覧の行に `websocket_messages` があるフロー）を古い順に読む。`after` にはチェックポイントか、前のページの `after` を渡す。`direction`（`client`、`server`）と `text` で絞り込める。テキストのメッセージは先頭 4 KiB を、ボディと同じく届いた時点でマスクして返す。バイナリのもの、その接続で毎秒約 20 件を超えた分、マスクの仕組みで読めないテキストは、大きさだけを返す。残すのは、接続の最初の 5 件（認証のメッセージはたいていここに入る）と新しい 100 件で、`after` より後でそれ以外のものの数は `missed` に出る（`after` 自体がそれらの間にあるときは `missed_at_most` が付き、`after` より前のものも数えに入りうる）。`open` と `close`（コード、閉じた側）で接続の状態がわかる。メッセージでは `wait_for_flows` は返らないが、時間切れの答えに、その間にメッセージがあった接続が `websocket_activity` として並ぶ。`search_flows` は `bodies` を付けると、残したメッセージも探す |
 | `diff_flows` | 2 つのフローを比べる（成功したものと失敗したものなど）。メソッド、URL、ステータスコード、エラー、ヘッダー（名前ごと）、ボディ（JSON はパスごと）。マスク中は、両方でマスクされた値を「同じ」とは言わず `masked` に並べ（元の値は違うかもしれない）、テキストでないボディは比べない。`--no-redact` のときは全部比べる |
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type、gRPC のステータス（`by_grpc_status`）、エンドポイントごとの件数。エンドポイント（`by_endpoint`）は、メソッド、ホスト、クエリを除いたパス（ID は `{id}`）、GraphQL なら operation（`GET api.example.com/v1/users/{id}`、`POST api.example.com/graphql Login`）。絞り込みと `similar_hosts` は同じ |

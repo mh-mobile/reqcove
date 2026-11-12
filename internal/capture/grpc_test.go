@@ -77,7 +77,7 @@ func TestGRPCStatus(t *testing.T) {
 	if r := row("b"); r.GRPCStatus != "0" || strings.Contains(fmt.Sprint(v.RespTrailers), "GRPCsecretTrailer1") {
 		t.Errorf("trailers: %q %v", r.GRPCStatus, v.RespTrailers)
 	}
-	if !strings.Contains(v.RespBody.Note, "gRPC: 3 messages (5, 4, 7 bytes), 1 compressed") || v.RespBodyText != "" {
+	if !strings.Contains(v.RespBody.Note, "gRPC: 3 messages (5, 4, 7 bytes), 1 compressed") || v.RespBodyText != "1: string(3)\n\n[compressed, 4 bytes]\n1: string(5)\n" || !strings.HasPrefix(v.RespBody.View, "protobuf structure") {
 		t.Errorf("a proto body: note %q text %q", v.RespBody.Note, v.RespBodyText)
 	}
 	// gRPC-Web: its trailer frame; framed JSON (+json) de-framed and masked.
@@ -202,7 +202,7 @@ func TestGRPCE2E(t *testing.T) {
 	if strings.Contains(fmt.Sprint(v.RespTrailers), "GRPCe2eTrailer1") || header(v.RespTrailers, "grpc-status") != "0" {
 		t.Errorf("trailers: %v", v.RespTrailers)
 	}
-	if !v.RespBody.Truncated || !strings.HasPrefix(v.RespBody.Note, "gRPC: 3 messages (30000, 30000, ") || v.RespBodyText != "" {
+	if !v.RespBody.Truncated || !strings.HasPrefix(v.RespBody.Note, "gRPC: 3 messages (30000, 30000, ") || !strings.HasPrefix(v.RespBodyText, "1: string(1)\n") || !strings.Contains(v.RespBodyText, "[cut: 30000 bytes]") {
 		t.Errorf("a body over 64 KiB: note %q truncated %v text %d", v.RespBody.Note, v.RespBody.Truncated, len(v.RespBodyText))
 	}
 }

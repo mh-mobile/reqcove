@@ -65,6 +65,7 @@ type event struct {
 	OutOfScope    int64       `json:"out_of_scope"`
 	op            string      // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
 	grpcTrailers  [][2]string // body: gRPC-Web's trailer frame, masked
+	view          string      // body: what the head was rendered as (Body.View)
 	wsHead        string      // ws: the message's head, masked before the lock
 	wsNote        string      // ws: why it has none
 }
@@ -80,6 +81,7 @@ type Body struct {
 	Decoded   bool   `json:"decoded"`             // head is decoded (false: wire bytes)
 	Encoding  string `json:"encoding,omitempty"`
 	Note      string `json:"note,omitempty"`
+	View      string `json:"view,omitempty"` // the head is reqcove's rendering, not the bytes: protobuf's structure, or the message type --proto read it as
 }
 
 type Flow struct {
@@ -437,7 +439,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Dir == "response" && e.grpcTrailers != nil && f.RespTrailers == nil {
 			f.RespTrailers = e.grpcTrailers
 		}
-		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
+		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note, e.view}
 		if e.Dir == "request" {
 			f.ReqBody = b
 		} else {
@@ -506,13 +508,13 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	redact := s.redact.Load()
 	s.mu.Lock()
 	f := s.flows[e.ID]
-	var ct string
+	var ct, path string
 	if f != nil {
 		h := f.RespHeaders
 		if e.Dir == "request" {
 			h = f.ReqHeaders
 		}
-		ct = header(h, "content-type")
+		ct, path = header(h, "content-type"), f.Path
 	}
 	s.mu.Unlock() // f is not used past here
 	if f == nil {
@@ -520,13 +522,17 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	}
 	if isGRPC(ct) && e.Decoded { // framed: masked message by message, and described
 		var note string
-		head, note, e.grpcTrailers = s.grpcBody(head, ct, e.Dir == "request", redact)
+		head, note, e.grpcTrailers, e.view = s.grpcBody(head, ct, path, e.Dir == "request", redact, e.Truncated || !e.Final)
 		if e.Note == "" {
 			e.Note = note
 		}
 		return head, true
 	}
 	if !redact {
+		return head, true
+	}
+	if isProtobuf(ct) && e.Decoded { // not text: rendered, its strings by length unless --proto names them
+		head, e.view = renderProto(head, ct, path, e.Dir == "request", e.Truncated || !e.Final) // a partial head is cut too
 		return head, true
 	}
 	return maskBody(head, ct, e.Dir == "request"), true

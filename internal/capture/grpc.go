@@ -59,18 +59,18 @@ func grpcFrames(head []byte) []grpcFrame {
 }
 
 // grpcBody masks a framed body's head: JSON messages de-framed (one per
-// line) and masked as JSON; others described, their bytes kept as they are
-// (not text: never handed out while masking). gRPC-Web's trailer frame gives
+// line) and masked as JSON; protobuf ones rendered (renderProto). gRPC-Web's trailer frame gives
 // trailers, its lines masked as headers are.
 // Not framed after all (a text body under such a type): masked as a body.
 // Without masking (redact false), the head stays as it came.
-func (s *Store) grpcBody(head []byte, ct string, request, redact bool) (out []byte, note string, trailers [][2]string) {
+// Protobuf messages are rendered (renderProto) while masking.
+func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool) (out []byte, note string, trailers [][2]string, view string) {
 	frames := grpcFrames(head)
 	if len(frames) == 0 {
 		if !redact {
-			return head, "", nil
+			return head, "", nil, ""
 		}
-		return maskBody(head, ct, request), "", nil
+		return maskBody(head, ct, request), "", nil, ""
 	}
 	var lines []string
 	var sizes []string
@@ -91,8 +91,12 @@ func (s *Store) grpcBody(head []byte, ct string, request, redact bool) (out []by
 			lines = append(lines, fmt.Sprintf("[compressed, %d bytes]", f.size))
 		case f.payload == nil:
 			lines = append(lines, fmt.Sprintf("[cut: %d bytes]", f.size))
-		default:
+		case framedJSON(ct):
 			lines = append(lines, string(f.payload))
+		default:
+			var r []byte
+			r, view = renderProto(f.payload, ct, path, request, false)
+			lines = append(lines, string(r))
 		}
 		sizes = append(sizes, fmt.Sprint(f.size))
 	}
@@ -110,11 +114,14 @@ func (s *Store) grpcBody(head []byte, ct string, request, redact bool) (out []by
 	if compressed > 0 {
 		note += fmt.Sprintf(", %d compressed (not read)", compressed)
 	}
-	if !framedJSON(ct) || !redact {
-		return head, note, trailers
+	if !redact {
+		return head, note, trailers, ""
 	}
 	text := strings.Join(lines, "\n")
-	return maskBody([]byte(text), "application/json", request), note + "; de-framed: one message a line", trailers
+	if !framedJSON(ct) {
+		return []byte(text), note + "; one message after another", trailers, view
+	}
+	return maskBody([]byte(text), "application/json", request), note + "; de-framed: one message a line", trailers, ""
 }
 
 // grpcStatus is a flow's gRPC status: its response headers' (trailers-only),
