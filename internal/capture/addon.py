@@ -23,6 +23,7 @@ import os
 import hmac
 import ipaddress
 import json
+import logging
 import queue
 import re
 import socket
@@ -38,6 +39,21 @@ import ruamel.yaml  # mitmproxy's own dependency
 from mitmproxy import connection, ctx, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
+
+
+class _NoWebToken(logging.Filter):
+    """mitmweb's server (tornado) logs a failed request's URI, ?token= and
+    all, into mitmproxy.log: the token is masked first."""
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if "token=" in msg:
+            record.msg, record.args = re.sub(r"token=[^&\s'\")]+", "token=[redacted]", msg), None
+        return True
+
+
+for _name in ("tornado.access", "tornado.application", "tornado.general"):
+    logging.getLogger(_name).addFilter(_NoWebToken())
 from mitmproxy.net import check
 from mitmproxy.net.tls import starts_like_tls_record
 from mitmproxy.proxy.layers import tcp as tcp_layer

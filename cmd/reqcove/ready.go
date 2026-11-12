@@ -23,8 +23,8 @@ type qrItem struct{ url, caption string }
 // printQRs prints QR codes for the terminal, side by side when it is wide
 // enough. Low error correction keeps them small: they are scanned off a screen.
 func printQRs(w *os.File, items ...qrItem) {
-	if fi, err := w.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return // a log file or pipe: the URLs in the lines above are enough
+	if !isTerminal(w) {
+		return // a log file or pipe: no QR codes (and no tokens in them)
 	}
 	cols, _, err := term.GetSize(int(w.Fd()))
 	if err != nil {
@@ -85,8 +85,14 @@ func firstIPv4(ips []string) string {
 
 // readyBlock is what run prints once the node is up: the devices, the links
 // and the next steps, numbered, in one place.
-func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string) string {
+// Off a terminal (terminal false) the callers pass hints in place of the
+// links and the token, and there are no QR codes.
+func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool) string {
 	var b strings.Builder
+	qr := "; QR code below"
+	if !terminal {
+		qr = ""
+	}
 	fmt.Fprintf(&b, "\n──────── reqcove is ready ────────\n")
 	var names []string
 	for _, n := range devices {
@@ -98,16 +104,16 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	slices.Sort(names)
 	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
 	if uiLink != "" {
-		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only; QR code below; the same at each start, rm %s to change it)\n", uiLink, "-- "+shellWord(filepath.Join(state, "ui-token")))
+		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only%s; the same at each start, rm %s to change it)\n", uiLink, qr, "-- "+shellWord(filepath.Join(state, "ui-token")))
 	}
 	if webLink != "" {
-		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay; QR code below; rm %s to change it)\n", webLink, "-- "+shellWord(filepath.Join(state, "web-token")))
+		fmt.Fprintf(&b, "--web:    %s  (mitmweb: unmasked, can edit and replay%s; rm %s to change it)\n", webLink, qr, "-- "+shellWord(filepath.Join(state, "web-token")))
 	}
 	if mcpURL != "" {
 		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, "-- "+shellWord(filepath.Join(state, "mcp-token")))
 	}
 	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
-		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on: QR code below; once per device)\n")
+		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")

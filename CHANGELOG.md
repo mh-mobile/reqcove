@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### For people
+
+- `run`'s log lines no longer carry the `--ui`, `--web`, `--mcp-http` tokens
+  or the login URL, `--verbose` included (tsnet's own lines printed the login
+  URL every 5 s, and the mitmweb line its token); before `run` learns the login
+  URL, it is recognized by its usual shapes (Tailscale's, Headscale's). On a terminal `run`
+  still shows them; off one (a service, `docker logs` without `-t`) it names
+  `reqcove links` in their place.
+- `reqcove links` prints the login URL and those links again, with QR codes,
+  and only to a terminal. `run` keeps them in `login-url` and `links` (0600)
+  in the state directory while it runs.
+- mitmweb's server no longer leaves its token in `mitmproxy.log` when a
+  request fails.
+- The container docs drop `-t` from `docker run`: `docker exec -it NAME
+  reqcove links` shows the links.
+
+### For agents
+
+- `next_steps` says the login URL comes from `reqcove links`; the skill and the
+  server's instructions say never to run it.
+
 ## v0.5.0 — 2026-11-12
 
 ### For agents

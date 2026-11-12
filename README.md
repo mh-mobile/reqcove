@@ -72,9 +72,9 @@ through a `replace` directive.
    reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
    ```
 
-   The first time, it prints a login URL, then what else is needed (approving
-   the exit node, Tailnet Lock). `reqcove status` always says what is still
-   missing.
+   The first time, it prints a login URL on its terminal (`reqcove links`
+   prints it again), then what else is needed (approving the exit node,
+   Tailnet Lock). `reqcove status` always says what is still missing.
 2. On the iPhone, in the Tailscale app, choose the exit node `reqcove`.
 3. Still on the iPhone, trust Reqcove's CA: scan the QR code `reqcove run`
    prints with the Camera (or open `http://mitm.it` in Safari, typing the

@@ -64,6 +64,8 @@ type Config struct {
 	// The caller listens, so a port taken stops run before anything changes.
 	LocalProxy net.Listener
 	Verbose    bool // log tsnet's backend and every flow decision
+	// LinksCmd is the command that prints this node's login URL and links, for the log.
+	LinksCmd string
 	// StatusCmd is the command that shows this node's status, for the log
 	// (with --state for a node of another state); empty: reqcove status.
 	StatusCmd string
@@ -285,7 +287,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			status := nodeStatus(ctx, lc, st)
 			wasRunning = wasRunning || status.Backend == "Running"
 			status.WasRunning = wasRunning
-			if step, changed := steps.next(runStep(status)); changed {
+			if step, changed := steps.next(runStep(status, cmp.Or(cfg.LinksCmd, "reqcove links"))); changed {
 				if step != "" {
 					log.Print(step)
 				}
@@ -383,11 +385,11 @@ func (s *settled) next(step string) (string, bool) {
 // runStep is FirstStep for `reqcove run`'s own terminal: while the login URL
 // is still on its way (a few seconds), nothing, rather than "open the URL that
 // `reqcove run` prints".
-func runStep(s Status) string {
+func runStep(s Status, linksCmd string) string {
 	if s.Backend == "NeedsLogin" && s.AuthURL == "" && !s.WasRunning {
 		return ""
 	}
-	return FirstStep(s)
+	return FirstStepWith(s, linksCmd)
 }
 
 // lockedOut: Tailscale's own warning, raised once the netmap was checked
@@ -396,8 +398,13 @@ func lockedOut(health []string) bool {
 	return slices.ContainsFunc(health, func(h string) bool { return strings.Contains(h, healthmsg.LockedOut) })
 }
 
-// FirstStep is the one thing the user must do next for the node, or "".
-func FirstStep(s Status) string {
+// FirstStep is the one thing the user must do next for the node, or "". It
+// never carries the login URL: whoever opens it first puts this node in their
+// tailnet, so it stays in run's terminal and `reqcove links`.
+func FirstStep(s Status) string { return FirstStepWith(s, "reqcove links") }
+
+// FirstStepWith is FirstStep naming linksCmd (`reqcove links --state DIR`).
+func FirstStepWith(s Status, linksCmd string) string {
 	for _, h := range s.Health {
 		// tsnet stops the node: reqcove keeps logs off (SetNoLogsNoSupport) and never turns them on.
 		if strings.Contains(h, "tailnet requires logging") {
@@ -406,12 +413,9 @@ func FirstStep(s Status) string {
 	}
 	switch {
 	case s.Backend == "NeedsLogin" && s.WasRunning:
-		return "log in again (the node's key expired or it was logged out): stop `reqcove run`, start it again, and open the login URL it prints"
-	case s.Backend == "NeedsLogin" && s.AuthURL != "":
-		return "log in: open " + s.AuthURL
+		return "log in again (the node's key expired or it was logged out): stop `reqcove run`, start it again, and open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsLogin":
-		// No URL yet, or left out on purpose (the status tool never carries it).
-		return "log in: open the login URL that `reqcove run` prints in its terminal"
+		return "log in: open the login URL (`" + linksCmd + "` prints it)"
 	case s.Backend == "NeedsMachineAuth":
 		return "approve this device in the admin console (Machines): your tailnet requires device approval"
 	case s.LockEnabled && s.NodeKey != "" && lockedOut(s.Health):

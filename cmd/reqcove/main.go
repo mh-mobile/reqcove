@@ -67,6 +67,8 @@ Usage:
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
   reqcove status     what reqcove is doing, and the next steps
+  reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
+                     terminal only (never for an agent)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
@@ -116,6 +118,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"har":     har,
 	"cleanup": func(_ context.Context, args []string) error { return cleanup(args) },
 	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
+	"links":   links,
 }
 
 // noFlags are the commands that take nothing.
@@ -146,6 +149,10 @@ func defaultState() string {
 }
 
 func run(ctx context.Context, args []string) error {
+	// Tokens and login URLs never in a log line: kept after run returns, so
+	// main's log.Fatal goes through it too.
+	red := &exitnode.Redactor{W: log.Writer()}
+	log.SetOutput(red)
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
 	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
@@ -325,6 +332,14 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
+	linksCmd := withState("reqcove links", *state)
+	user := newUserLinks(os.Stderr, red, *state, linksCmd)
+	defer func() { stepLinksCmd = "reqcove links" }()
+	for _, name := range []string{loginURLFile, linksFile} { // a crashed run's, and this one's at the end
+		p := filepath.Join(*state, name)
+		os.Remove(p)
+		defer os.Remove(p)
+	}
 	if err := keepNodeName(*state, hostname); err != nil {
 		return err
 	}
@@ -401,6 +416,7 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("a new token in %s", filepath.Join(*state, t.name))
 		}
 	}
+	red.Add(uiToken, webToken, mcpToken)
 	cap, err := capture.Start(ctx, capture.Config{
 		Dir: *state, Confdir: filepath.Join(*state, "mitmproxy"),
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
@@ -415,6 +431,7 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name())
 	}
 	defer cap.Stop()
+	red.Add(cap.SocksSecret)
 	s := cap.Store.Stats()
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
 	if ca := cap.CA; ca.Name != "" {
@@ -450,7 +467,7 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	if *web {
-		log.Printf("mitmweb on %s", cap.WebURL)
+		user.web(cap.WebURL)
 		if webLocal != exitnode.WebPort {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
@@ -506,6 +523,7 @@ func run(ctx context.Context, args []string) error {
 	var gate readyGate
 	onStatus := func(s exitnode.Status) {
 		node.set(s)
+		user.status(s)
 		ip := firstIPv4(s.IPs)
 		if shown || ip == "" || !gate.ready(s) {
 			return
@@ -528,7 +546,12 @@ func run(ctx context.Context, args []string) error {
 			}
 			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
 		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, mcpURL, mcpToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
+		var ca string
+		if len(devices) > 0 {
+			ca = "http://mitm.it"
+		}
+		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
@@ -578,6 +601,7 @@ func run(ctx context.Context, args []string) error {
 			MCP:        mcpHandler,
 			LocalProxy: localLn,
 			StatusCmd:  withState("reqcove status", *state),
+			LinksCmd:   linksCmd,
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})

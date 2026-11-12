@@ -22,7 +22,7 @@ import (
 
 // runAgainst starts reqcove's node against a fresh testcontrol, set up by
 // prep, and returns the control and a way to wait for a status.
-func runAgainst(t *testing.T, prep func(*testcontrol.Server)) (*testcontrol.Server, func(what string, ok func(Status) bool) Status) {
+func runAgainst(t *testing.T, prep func(*testcontrol.Server), opts ...func(*Config)) (*testcontrol.Server, func(what string, ok func(Status) bool) Status) {
 	t.Helper()
 	netns.SetEnabled(false)
 	t.Cleanup(func() { netns.SetEnabled(true) })
@@ -35,7 +35,7 @@ func runAgainst(t *testing.T, prep func(*testcontrol.Server)) (*testcontrol.Serv
 	control.HTTPTestServer = httptest.NewServer(control)
 	t.Cleanup(control.HTTPTestServer.Close)
 	statuses := make(chan Status, 100)
-	go Run(ctx, Config{
+	cfg := Config{
 		Dir: filepath.Join(t.TempDir(), "reqcove"), Hostname: "reqcove", ControlURL: control.HTTPTestServer.URL,
 		DNS: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:53")}, Devices: []string{"phone"},
 		OnStatus: func(s Status) {
@@ -44,7 +44,11 @@ func runAgainst(t *testing.T, prep func(*testcontrol.Server)) (*testcontrol.Serv
 			default:
 			}
 		},
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	go Run(ctx, cfg)
 	wait := func(what string, ok func(Status) bool) Status {
 		t.Helper()
 		var last Status
@@ -90,13 +94,13 @@ func TestSettledStep(t *testing.T) {
 }
 
 func TestRunStep(t *testing.T) {
-	if step := runStep(Status{Backend: "NeedsLogin"}); step != "" {
+	if step := runStep(Status{Backend: "NeedsLogin"}, "reqcove links"); step != "" {
 		t.Errorf("before the URL: %q", step)
 	}
-	if step := runStep(Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}); !strings.Contains(step, "https://login.example/a/1") {
+	if step := runStep(Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, "reqcove links --state /s"); strings.Contains(step, "login.example") || !strings.Contains(step, "`reqcove links --state /s`") {
 		t.Errorf("with the URL: %q", step)
 	}
-	if step := runStep(Status{Backend: "NeedsLogin", WasRunning: true}); !strings.Contains(step, "start it again") {
+	if step := runStep(Status{Backend: "NeedsLogin", WasRunning: true}, "reqcove links"); !strings.Contains(step, "start it again") {
 		t.Errorf("after the key expired: %q", step)
 	}
 }
@@ -108,14 +112,31 @@ func TestStatusLoginNeeded(t *testing.T) {
 	control, wait := runAgainst(t, func(c *testcontrol.Server) { c.RequireAuth = true })
 	s := wait("asked to log in", func(s Status) bool { return s.Backend == "NeedsLogin" && s.AuthURL != "" })
 	time.Sleep(6 * time.Second) // tsnet would print its own login line every 5 s
-	if got := logs.String(); !strings.Contains(got, "log in: open "+s.AuthURL) || strings.Contains(got, "TS_AUTHKEY") || strings.Contains(got, "prints in its terminal") {
+	if got := logs.String(); !strings.Contains(got, "log in: open the login URL") || strings.Contains(got, s.AuthURL) || strings.Contains(got, "TS_AUTHKEY") {
 		t.Errorf("run's log:\n%s", got)
 	}
-	if step := FirstStep(s); !strings.HasPrefix(step, "log in: open "+s.AuthURL) {
+	if step := FirstStep(s); strings.Contains(step, s.AuthURL) || !strings.Contains(step, "`reqcove links`") {
 		t.Errorf("step %q", step)
 	}
 	if !strings.HasPrefix(s.AuthURL, control.HTTPTestServer.URL) {
 		t.Errorf("auth URL %q is not the control's", s.AuthURL)
+	}
+}
+
+// Under --verbose tsnet logs the login URL itself (authURL=…, "AuthURL is
+// …", every 5 s "go to: …"), some lines before run's first poll learns it:
+// through the Redactor, none reach the log.
+func TestVerboseLoginURLRedacted(t *testing.T) {
+	var logs syncBuffer
+	log.SetOutput(&Redactor{W: &logs})
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	_, wait := runAgainst(t, func(c *testcontrol.Server) { c.RequireAuth = true }, func(c *Config) { c.Verbose = true })
+	s := wait("asked to log in", func(s Status) bool { return s.Backend == "NeedsLogin" && s.AuthURL != "" })
+	time.Sleep(6 * time.Second) // tsnet's own login line, every 5 s
+	got := logs.String()
+	_, key, _ := strings.Cut(s.AuthURL, "/auth/")
+	if key == "" || strings.Contains(got, key) || !strings.Contains(got, RedactedLink) {
+		t.Errorf("key %q; log:\n%s", key, got)
 	}
 }
 

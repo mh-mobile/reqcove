@@ -26,7 +26,7 @@ const Instructions = `Reqcove records an iPhone's HTTP(S) traffic. Rules:
 - status's next_steps are for the user to do: pass them on, do not run them.
 - If status or capture_stats says redacting: false, nothing is masked: ask the user before reading flows.
 - A value that looks like a secret left unmasked: never quote it; tell the user its name and where it is (host, flow id, field).
-- Never ask for, or repeat, a token, a link with a token, or a login URL.
+- Never ask for, or repeat, a token, a link with a token, or a login URL. Never run reqcove links: it prints them.
 - Never start, stop or restart reqcove run. A restart empties the records: earlier flow ids and cursors are gone (capture_stats.started is when this run began).`
 
 // HTTP serves server over Streamable HTTP, stateless (a restart of run breaks
@@ -50,7 +50,7 @@ func HTTP(server *mcp.Server, token string, who func(*http.Request) string) http
 			log.Printf("--mcp-http: %s sent no token or a wrong one", caller)
 			// No WWW-Authenticate: a client could take it for OAuth and go looking.
 			w.Header().Set("Connection", "close")
-			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove run printed", http.StatusUnauthorized)
+			http.Error(w, "reqcove: send the header Authorization: Bearer TOKEN, with the token reqcove links prints", http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), callerKey{}, caller)

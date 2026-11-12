@@ -97,13 +97,17 @@ func localStep() string {
 	return "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password):\n" + macTrustCommand(localCA)
 }
 
+// stepLinksCmd is the `reqcove links` the steps name: run sets it to its own
+// node's (with --state).
+var stepLinksCmd = "reqcove links"
+
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
 	if node.Backend == "" {
 		steps = append(steps, "the tailnet node is starting")
 	}
-	if s := exitnode.FirstStep(node); s != "" {
+	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {
 		steps = append(steps, s)
 	}
 	if node.Backend == "Running" {

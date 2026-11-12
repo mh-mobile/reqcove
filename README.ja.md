@@ -59,7 +59,7 @@ go build -o reqcove ./cmd/reqcove
    reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
    ```
 
-   初回はログイン用の URL が表示され、続けてほかに必要なこと（Exit Node の承認、Tailnet Lock）が表示されます。不足しているものは `reqcove status` でいつでも確認できます。
+   初回はターミナルにログイン用の URL が表示され（`reqcove links` でもう一度表示できます）、続けてほかに必要なこと（Exit Node の承認、Tailnet Lock）が表示されます。不足しているものは `reqcove status` でいつでも確認できます。
 2. iPhone の Tailscale アプリで、Exit Node に `reqcove` を選びます。
 3. 同じく iPhone で、Reqcove の CA を信頼します。`reqcove run` が表示する QR コードをカメラで読むか、Safari で `http://mitm.it` を `http://` から入力して開きます。「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します（名前は `Reqcove CA (<コンピュータ名>, <日付>)`）。
 4. エージェントに、MCP ツールと、その使い方を教える Skill を入れます。Claude Code の場合は次のとおりです。
