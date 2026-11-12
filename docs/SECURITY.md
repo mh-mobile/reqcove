@@ -122,13 +122,15 @@ So "delete the directory" above means each of them.
   Google API keys), also behind percent-encoding (JSON encoded in a form
   field or a URL parameter, `Bearer+…`). `WWW-Authenticate` keeps its
   challenge (scheme, realm, error), with only such shapes masked.
-  A line `name: value` in a text body whose name is secret (a STOMP frame's
-  `passcode:`, YAML, headers written into a body) has the rest of the line
-  masked. A URL parameter or form field holding base64 of a JSON object with a
-  secret in it (AppSync's `?header=`) is masked whole, and so is a credential
+  A line `name: value` in a text body that is not a GraphQL document, or in a
+  JSON string, whose name is secret (a STOMP frame's `passcode:`, also inside
+  SockJS's JSON; a YAML mapping; headers written into a body) has the rest of
+  the line masked; YAML list items (`- password: …`) and quoted names are not
+  looked at. A URL parameter or form field holding base64 of a JSON object with
+  a secret in it (AppSync's `?header=`) is masked whole, and so is a credential
   carried in `Sec-WebSocket-Protocol` (after a name such as `access_token`, as
-  graphql-ws's `header-` base64 JSON, after Kubernetes' bearer prefix, or a
-  long value shaped like one). (Tests.)
+  AppSync's `header-` base64 JSON, after Kubernetes' bearer prefix, or a long
+  value shaped like one that is not a dotted name). (Tests.)
   A field with a secret name whose value is a list or an object is masked
   whole (`{"password": "[redacted]"}`).
   In a GraphQL document, read by a lexer, an argument, an input object's
@@ -171,8 +173,9 @@ So "delete the directory" above means each of them.
   Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
-  could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
-  with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
+  could not undo) and text, by its content type (JSON, XML, forms, text, …;
+  another type naming `json`, such as `application/x-amz-json-1.1`, and Sentry
+  envelopes only with no control characters) or, with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
   `--no-redact` returns them.
 - Bodies are returned only when a tool is asked for them (`bodies` in

@@ -117,3 +117,53 @@ func TestV05OperationNits(t *testing.T) {
 		}
 	}
 }
+
+// TestV05ItemReview: the item review of the masking gaps (Opus).
+func TestV05ItemReview(t *testing.T) {
+	b64 := func(x string) string { return base64.StdEncoding.EncodeToString([]byte(x)) }
+	s := NewStore(10, 1<<20)
+
+	// A GraphQL document one argument per line keeps its variables and
+	// aliases, and its operation (lines are for text that is no document).
+	doc := "fragment F on Q {\n  session: viewer {\n    id\n  }\n}\nmutation Login {\n  login(\n    password: $password\n  ) {\n    refreshToken: refresh_token\n  }\n}\n"
+	got := string(maskBody([]byte(doc), "application/graphql", true))
+	if !strings.Contains(got, "password: $password") || !strings.Contains(got, "refreshToken: refresh_token") || !strings.Contains(got, "session: viewer {") || gqlBodyOperation([]byte(got)) != "Login" {
+		t.Errorf("a document: %q (operation %q)", got, gqlBodyOperation([]byte(got)))
+	}
+	// STOMP inside JSON strings (SockJS), whole and cut anywhere.
+	for _, frame := range []string{
+		`["CONNECT\nlogin:guest\npasscode:ReviewSockJS01\naccept-version:1.1,1.0\n\n\u0000"]`,
+		`["SEND\ndestination:/q\npasscode:ReviewSockJS02\n\nhi"]`,
+	} {
+		at := strings.Index(frame, "passcode:") + len("passcode:")
+		for cut := at; cut <= len(frame); cut++ {
+			if got := string(maskBody([]byte(frame[:cut]), "text/plain", true)); strings.Contains(got, "ReviewSockJS0"[:min(cut-at, 13)]) && cut-at >= 5 {
+				t.Errorf("SockJS cut at %d: %q", cut, got)
+				break
+			}
+		}
+	}
+	// A binary type whose name says json is not handed out as text.
+	if checkable(Body{Head: []byte("{i\x08passwordSi\x07hunter2}"), Decoded: true}, [][2]string{{"Content-Type", "application/ubjson"}}) {
+		t.Errorf("UBJSON handed out")
+	}
+	// After access_token, a token that reads as a secret name in camelCase.
+	if got := s.maskHeaders([][2]string{{"Sec-WebSocket-Protocol", "access_token, v3AGnKzk3uJV6jPw"}})[0][1]; strings.Contains(got, "v3AGnKzk") {
+		t.Errorf("Sec-WebSocket-Protocol token: %q", got)
+	}
+	// Long dotted protocol names stay.
+	for _, p := range []string{"json.reliable.webpubsub.azure.v1", "protobuf.reliable.webpubsub.azure.v1, json.webpubsub.azure.v1"} {
+		if got := s.maskHeaders([][2]string{{"Sec-WebSocket-Protocol", p}})[0][1]; got != p {
+			t.Errorf("Sec-WebSocket-Protocol %q -> %q", p, got)
+		}
+	}
+	// Base64 of { then CR LF or a tab.
+	for _, j := range []string{"{\r\n  \"Authorization\": \"ReviewB64a01\"\r\n}", "{\t\"token\":\"ReviewB64b01\"}"} {
+		if got := s.mask("https://h.example/x?header=" + url.QueryEscape(b64(j)) + "&p=1"); !strings.Contains(got, "header=REDACTED") {
+			t.Errorf("base64 JSON %q: %s", j, got)
+		}
+	}
+	if got := s.mask("https://h.example/x?h=e30="); !strings.Contains(got, "h=e30=") {
+		t.Errorf("base64 of {} masked: %s", got)
+	}
+}

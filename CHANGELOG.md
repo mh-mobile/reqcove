@@ -8,15 +8,17 @@
   percent-encoding too: JSON encoded in a form field or a URL parameter,
   `Bearer+…` (before, the shapes needed a word boundary that `%22` and `+` do
   not give).
-- A `name: value` line in a text body with a secret name (a STOMP frame's
-  `passcode:`, YAML) has the rest of the line masked.
+- A `name: value` line with a secret name, in a text body that is not a
+  GraphQL document or in a JSON string (a STOMP frame's `passcode:`, also in
+  SockJS's JSON; a YAML mapping), has the rest of the line masked.
 - Base64 of a JSON object with a secret in it, as a URL parameter or form field
   (AppSync realtime's `?header=`), is masked whole; so is a credential carried
-  in `Sec-WebSocket-Protocol` (`access_token, …`, graphql-ws's `header-…`,
+  in `Sec-WebSocket-Protocol` (`access_token, …`, AppSync's `header-…`,
   Kubernetes' bearer prefix).
 - Bodies of JSON under other content types (`application/x-amz-json-1.1`, as
   Cognito and Amplify send, any type naming `json`) and Sentry envelopes are
-  handed out; before, they were masked but left out as "not text".
+  handed out when they hold no control characters; before, they were masked
+  but left out as "not text".
 
 ### Inside
 

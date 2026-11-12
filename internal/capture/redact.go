@@ -27,12 +27,14 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	}
 	// A GraphQL document as the body (application/graphql, or shaped like
 	// one); those in JSON strings are found by maskJSON.
-	s, _ := maskGraphQLDoc(string(head), request)
+	s, isDoc := maskGraphQLDoc(string(head), request)
 	s = maskJSON(s, request, 0)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
-	s = maskLines(s, request)
+	if !isDoc {
+		s = maskLines(s, request)
+	}
 	return []byte(maskTokens(maskURLs(s)))
 }
 
@@ -88,7 +90,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteString(s[last:keyStart])
 				b.WriteString(m)
 				last = keyEnd + 1
-			} else if depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && strings.Contains(lit, `\"`) {
+			} else if depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) {
 				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
 					b.WriteString(s[last:keyStart])
 					b.WriteString(m)
@@ -155,7 +157,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
-		case valClosed && (depth == 0 && strings.Contains(s[j:valEnd], `\"`) || depth <= 1 && strings.Contains(s[j:valEnd], `\u`)):
+		case valClosed && (depth == 0 && (strings.Contains(s[j:valEnd], `\"`) || strings.Contains(s[j:valEnd], `\n`)) || depth <= 1 && strings.Contains(s[j:valEnd], `\u`)):
 			// A string with escapes is looked at decoded, as diff_flows and the
 			// agent read it: JSON inside it (one level), and shapes and URLs that
 			// \u escapes can hide (\u0073k-… is sk-…), also with quotes around.
@@ -210,6 +212,9 @@ func maskDecodedString(lit string, loneCode bool, depth int) (string, bool) {
 	m := v
 	if t := strings.TrimLeft(m, " \t\r\n"); depth == 0 && t != "" && strings.ContainsAny(t[:1], "{[") {
 		m = maskJSON(m, loneCode, 1)
+	}
+	if _, isDoc := maskGraphQLDoc(m, loneCode); !isDoc {
+		m = maskLines(m, loneCode)
 	}
 	m = maskTokens(maskURLs(m))
 	if m == v {
@@ -270,7 +275,7 @@ func containerEnd(s string, open int) (int, bool) {
 // closed one is read decoded: JSON in it (at depth 0), and shapes and URLs
 // escapes can hide. Only escaped ones are looked at, as closed ones.
 func cutSecret(lit string, loneCode bool, depth int) bool {
-	if !(depth == 0 && strings.Contains(lit, `\"`) || depth <= 1 && strings.Contains(lit, `\u`)) {
+	if !(depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) || depth <= 1 && strings.Contains(lit, `\u`)) {
 		return false
 	}
 	var v string
@@ -281,6 +286,9 @@ func cutSecret(lit string, loneCode bool, depth int) bool {
 	m := v
 	if depth == 0 {
 		m = maskJSON(m, loneCode, 1)
+	}
+	if _, isDoc := maskGraphQLDoc(m, loneCode); !isDoc {
+		m = maskLines(m, loneCode)
 	}
 	return maskTokens(maskURLs(m)) != v
 }
@@ -373,11 +381,11 @@ func encodedToken(v string) bool {
 }
 
 // b64JSONSecret: a value that is base64 of a JSON object with a secret in it
-// (AppSync's ?header=eyJ…, graphql-ws's header-… protocol): no dots, so not a
+// (AppSync's ?header=eyJ…, AppSync's header-… protocol): no dots, so not a
 // JWT's shape. Only the first run of base64 is read, once.
 func b64JSONSecret(v string) bool {
 	v = unescapeCut(v)
-	if !strings.HasPrefix(v, "eyJ") && !strings.HasPrefix(v, "eyAi") && !strings.HasPrefix(v, "ewo") { // {" { " {\n
+	if len(v) < 4 || v[0] != 'e' || !strings.ContainsRune("wxyz0123456789+/-_", rune(v[1])) { // base64 of {
 		return false
 	}
 	n := 0
@@ -390,6 +398,9 @@ func b64JSONSecret(v string) bool {
 		return false
 	}
 	d := strings.ToValidUTF8(string(b), "")
+	if d == "" || d[0] != '{' || !strings.HasPrefix(strings.TrimLeft(d[1:], " \t\r\n"), `"`) {
+		return false
+	}
 	return maskJSON(d, true, 2) != d || maskTokens(d) != d
 }
 
@@ -416,7 +427,7 @@ func maskLines(s string, loneCode bool) string {
 
 // maskWSProtocols: Sec-WebSocket-Protocol lists names, but some clients carry
 // a credential in it: after a name that says so (access_token, <token>), as
-// base64 JSON (graphql-ws's header-<…>), after Kubernetes' bearer prefix, or
+// base64 JSON (AppSync's header-<…>), after Kubernetes' bearer prefix, or
 // as a long value shaped like one.
 var wsProtoNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,40}$`) // a bare name such as access_token
 
@@ -428,13 +439,13 @@ func maskWSProtocols(v string) string {
 		lead := it[:len(it)-len(strings.TrimLeft(it, " \t"))]
 		const k8s = "base64url.bearer.authorization.k8s.io."
 		switch {
-		case i > 0 && wsProtoNameRE.MatchString(strings.TrimSpace(items[i-1])) && secretName(strings.TrimSpace(items[i-1])) && !secretName(t):
+		case i > 0 && wsProtoNameRE.MatchString(strings.TrimSpace(items[i-1])) && secretName(strings.TrimSpace(items[i-1])) && !(t == strings.ToLower(t) && secretName(t)):
 			out[i] = lead + "[redacted]"
 		case strings.HasPrefix(t, "header-") && b64JSONSecret(t[len("header-"):]):
 			out[i] = lead + "header-[redacted]"
 		case strings.HasPrefix(t, k8s):
 			out[i] = lead + k8s + "[redacted]"
-		case len(t) >= 32 && credentialLike(t):
+		case len(t) >= 32 && credentialLike(t) && !dottedName.MatchString(t):
 			out[i] = lead + "[redacted]"
 		default:
 			out[i] = it

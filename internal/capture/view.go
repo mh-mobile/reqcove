@@ -150,9 +150,10 @@ func checkable(b Body, headers [][2]string) bool {
 		return strictText(head)
 	case strings.HasPrefix(ct, "text/"), strings.HasSuffix(ct, "+json"), strings.HasSuffix(ct, "+xml"),
 		ct == "application/json", ct == "application/xml", ct == "application/javascript",
-		ct == "application/x-www-form-urlencoded", ct == "application/graphql", ct == "application/x-ndjson",
-		strings.Contains(ct, "json"), ct == "application/x-sentry-envelope": // x-amz-json-1.1 (Cognito, Amplify); Sentry's lines of JSON
+		ct == "application/x-www-form-urlencoded", ct == "application/graphql", ct == "application/x-ndjson":
 		return isText(head)
+	case strings.Contains(ct, "json"), ct == "application/x-sentry-envelope":
+		return strictText(head)
 	}
 	return false
 }
