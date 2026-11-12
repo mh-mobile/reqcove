@@ -180,8 +180,11 @@ So "delete the directory" above means each of them.
   `--no-redact` returns them.
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
-  1 KiB. Framed JSON messages are masked as JSON; protobuf ones are not
-  handed out while masking. (Tests, and an E2E test over HTTP/2.)
+  1 KiB, as other header values are (by shapes and URLs: a free-text
+  `password=…` in it is not caught). Framed JSON messages are masked as JSON;
+  protobuf ones are not handed out while masking; a body under a gRPC type
+  that is not framed is masked as a body. (Tests, and an E2E test over
+  HTTP/2.)
 - WebSocket messages: a text message's first 4 KiB is masked as it arrives,
   as a body is (a client's with a request's rules, a lone `code` included),
   and kept only if masking could read it (text with no control characters but

@@ -280,8 +280,10 @@ A gRPC call is a flow: its path names the method (`/pkg.Service/Method`), and
 rows and `summarize` show its status (`grpc_status`: `0` is OK, `16`
 UNAUTHENTICATED, …; `pending` until its trailers come), read from the response
 headers when there is no message (a trailers-only answer, the usual error),
-else from the trailers (HTTP/2's, or gRPC-Web's last frame). `grpc_message` is
-decoded and masked. A body's note counts its messages and their sizes;
+else from the trailers (HTTP/2's, or gRPC-Web's last frame when the kept head
+holds it: a body over 64 KiB loses it). `grpc_message` is decoded and masked
+(with `--no-redact`, as sent). Trailers are searched, compared by `diff_flows`
+and written to a HAR's comment. A body's note counts its messages and their sizes;
 protobuf messages are not handed out while masking (they are not text), JSON
 ones (`application/grpc+json`, `connect+json`) are, one a line, masked as JSON.
 Metadata ending in `-bin` (binary) shows its size only.

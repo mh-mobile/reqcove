@@ -14,7 +14,7 @@ import (
 
 // Diff is one field that differs between two flows.
 type Diff struct {
-	Field string `json:"field"`       // status, method, url, mapped_url, error, request_header:NAME, response_header:NAME, request_body:PATH, response_body:PATH
+	Field string `json:"field"`       // status, method, url, mapped_url, error, request_header:NAME, response_header:NAME, response_trailer:NAME, request_body:PATH, response_body:PATH
 	A     any    `json:"a,omitempty"` // absent on that side when left out
 	B     any    `json:"b,omitempty"`
 }
@@ -70,6 +70,7 @@ func (s *Store) DiffFlows(a, b string) (FlowDiff, error) {
 	d.value("error", fa.Error, fb.Error)
 	d.headers("request_header:", fa.ReqHeaders, fb.ReqHeaders)
 	d.headers("response_header:", fa.RespHeaders, fb.RespHeaders)
+	d.headers("response_trailer:", fa.RespTrailers, fb.RespTrailers)
 	d.out.RequestBody = d.body("request_body:", fa.ReqBody, fb.ReqBody, fa.ReqHeaders, fb.ReqHeaders)
 	d.out.ResponseBody = d.body("response_body:", fa.RespBody, fb.RespBody, fa.RespHeaders, fb.RespHeaders)
 	return d.out, nil
@@ -91,7 +92,8 @@ func (d *differ) add(x Diff) {
 // masked: v shows a masked value (only while masking is on: with
 // --no-redact, a "[redacted]" in a value is the site's own text).
 func (d *differ) masked(v string) bool {
-	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED"))
+	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED") ||
+		strings.Contains(v, "[binary ") || strings.Contains(v, "[compressed, ") || strings.Contains(v, "[cut: ")) // gRPC's: the bytes behind them may differ
 }
 
 // value compares two texts: equal and masked goes under Masked, never as

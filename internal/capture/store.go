@@ -447,6 +447,9 @@ func (s *Store) Apply(line []byte) {
 		if len(e.Trailers) > 0 {
 			f.RespTrailers = e.Trailers
 		}
+		if e.Note != "" {
+			f.Notes = append(f.Notes, "response trailers: "+e.Note)
+		}
 		if f.Status != 101 || !strings.EqualFold(header(f.RespHeaders, "upgrade"), "websocket") { // a WebSocket is open until ws_end (an h2c or other 101 is not one)
 			f.End, f.State = e.TSEnd, "done"
 		}
@@ -500,9 +503,7 @@ func (s *Store) maskEvent(e *event) {
 // stored only as masked.
 func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	head, _ = base64.StdEncoding.DecodeString(e.Head)
-	if !s.redact.Load() {
-		return head, true
-	}
+	redact := s.redact.Load()
 	s.mu.Lock()
 	f := s.flows[e.ID]
 	var ct string
@@ -519,10 +520,13 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	}
 	if isGRPC(ct) && e.Decoded { // framed: masked message by message, and described
 		var note string
-		head, note, e.grpcTrailers = s.grpcBody(head, ct, e.Dir == "request")
+		head, note, e.grpcTrailers = s.grpcBody(head, ct, e.Dir == "request", redact)
 		if e.Note == "" {
 			e.Note = note
 		}
+		return head, true
+	}
+	if !redact {
 		return head, true
 	}
 	return maskBody(head, ct, e.Dir == "request"), true

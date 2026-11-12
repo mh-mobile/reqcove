@@ -206,3 +206,62 @@ func TestGRPCE2E(t *testing.T) {
 		t.Errorf("a body over 64 KiB: note %q truncated %v text %d", v.RespBody.Note, v.RespBody.Truncated, len(v.RespBodyText))
 	}
 }
+
+// TestGRPCItemReview: the item review of gRPC status (Opus).
+func TestGRPCItemReview(t *testing.T) {
+	b64 := func(x string) string { return base64.StdEncoding.EncodeToString([]byte(x)) }
+	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJHUlBDcmV2aWV3MSJ9.R1JQQ3Jldmlld1NpZzAx"
+	flow := func(s *Store, id, ct, body string) FlowView {
+		grpcApply(s, map[string]any{"ev": "request", "id": id, "method": "POST", "url": "https://api.example/pkg.Svc/M", "host": "api.example", "path": "/pkg.Svc/M", "headers": [][2]string{{"Content-Type", ct}}})
+		grpcApply(s, map[string]any{"ev": "response", "id": id, "status": 200, "headers": [][2]string{{"Content-Type", ct}}})
+		grpcApply(s, map[string]any{"ev": "body", "id": id, "dir": "response", "decoded": true, "final": true, "size": len(body), "head": b64(body)})
+		v, _ := s.Get(id, true)
+		return v
+	}
+	s := NewStore(100, 1<<20)
+	// An unframed text body under a gRPC type is masked as a body.
+	for i, ct := range []string{"application/grpc+xml", "application/connect+xml", "application/grpc-json", "application/grpc+json"} {
+		v := flow(s, fmt.Sprint("x", i), ct, `<error>Bearer `+jwt+` access_token=`+jwt+`</error>`)
+		if strings.Contains(v.RespBodyText, "R1JQQ3Jldmlld1NpZzAx") {
+			t.Errorf("%s: %q", ct, v.RespBodyText)
+		}
+	}
+	if rows, _ := s.List(Filter{Query: "R1JQQ3Jldmlld1NpZzAx", QueryBodies: true, Limit: 10}); len(rows) != 0 {
+		t.Errorf("search found a masked token: %+v", rows)
+	}
+	// gRPC-Web's text form is not read as frames; plain JSON under +json is a body.
+	if v := flow(s, "wt", "application/grpc-web-text", b64(grpcFrame1(0, "\x0a\x01a"))); strings.Contains(v.RespBody.Note, "messages") {
+		t.Errorf("grpc-web-text read as frames: %q", v.RespBody.Note)
+	}
+	if v := flow(s, "pj", "application/grpc+json", `{"error":"bad","password":"GRPCreview2"}`); !strings.Contains(v.RespBodyText, `"error":"bad"`) || strings.Contains(v.RespBodyText, "GRPCreview2") {
+		t.Errorf("plain JSON under grpc+json: %q (%s)", v.RespBodyText, v.RespBodyEnc)
+	}
+	// Placeholders are never "equal" in diff_flows.
+	for _, id := range []string{"d1", "d2"} {
+		grpcApply(s, map[string]any{"ev": "request", "id": id, "method": "POST", "url": "https://api.example/pkg.Svc/D", "host": "api.example", "path": "/pkg.Svc/D", "headers": [][2]string{{"x-trace-bin", b64(id + "x")}}})
+	}
+	if d, _ := s.DiffFlows("d1", "d2"); !strings.Contains(fmt.Sprint(d.Masked), "x-trace-bin") {
+		t.Errorf("diff of -bin values: %+v", d)
+	}
+	// Without masking, the status still comes from gRPC-Web's frame.
+	s2 := NewStore(10, 1<<20)
+	s2.SetScope(HostRules{All: true}, false)
+	body := grpcFrame1(0, "\x0a\x01a") + grpcFrame1(0x80, "grpc-status: 5\r\n")
+	flow(s2, "nr", "application/grpc-web+proto", body)
+	if rows, _ := s2.List(Filter{Limit: 1}); rows[0].GRPCStatus != "5" {
+		t.Errorf("--no-redact: %q", rows[0].GRPCStatus)
+	}
+	// Past the frame cap, the note says so; trailers cut by the addon say so.
+	many := strings.Repeat(grpcFrame1(0, "a"), grpcMaxFrames+10)
+	if v := flow(s, "many", "application/grpc", many); !strings.Contains(v.RespBody.Note, "more not read") || len(v.RespBody.Note) > 400 {
+		t.Errorf("the frame cap: %d bytes, %q…", len(v.RespBody.Note), v.RespBody.Note[:min(80, len(v.RespBody.Note))])
+	}
+	grpcApply(s, map[string]any{"ev": "done", "id": "many", "ts_end": 1.0, "trailers": [][2]string{{"grpc-status", "0"}}, "note": "more headers not recorded"})
+	if v, _ := s.Get("many", false); !strings.Contains(fmt.Sprint(v.Notes), "response trailers: more headers not recorded") {
+		t.Errorf("trailers note: %v", v.Notes)
+	}
+	// Trailers are searched.
+	if rows, _ := s.List(Filter{Query: "grpc-status", Limit: 10}); len(rows) == 0 {
+		t.Errorf("trailers not searched")
+	}
+}

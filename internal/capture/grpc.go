@@ -15,10 +15,13 @@ import (
 // gRPC-Web's last frame).
 
 // isGRPC: a gRPC, gRPC-Web or Connect streaming content type, framed so.
+// gRPC-Web's text form (base64) is not read as frames.
 func isGRPC(ct string) bool {
 	ct = strings.ToLower(strings.TrimSpace(ct))
-	return strings.HasPrefix(ct, "application/grpc") || strings.HasPrefix(ct, "application/connect+")
+	return (strings.HasPrefix(ct, "application/grpc") || strings.HasPrefix(ct, "application/connect+")) && !strings.HasPrefix(ct, "application/grpc-web-text")
 }
+
+const grpcMaxFrames = 4096
 
 // framedJSON: the framed messages are JSON (grpc+json, connect+json).
 func framedJSON(ct string) bool {
@@ -32,12 +35,16 @@ type grpcFrame struct {
 	size    int    // its declared length
 }
 
-// grpcFrames reads the frames in a head, at most 4096 of them; one cut by the
-// head's end comes last, with no payload. Never allocates by a length a site
-// declared.
+// grpcFrames reads the frames in a head, at most grpcMaxFrames; one cut by
+// the head's end comes last, with no payload. nil if the head is not framed
+// (a flag gRPC does not use: 1 compressed, 0x80 gRPC-Web's trailers). Never
+// allocates by a length a site declared.
 func grpcFrames(head []byte) []grpcFrame {
 	var out []grpcFrame
-	for i := 0; i+5 <= len(head) && len(out) < 4096; {
+	for i := 0; i+5 <= len(head) && len(out) < grpcMaxFrames; {
+		if head[i]&^0x81 != 0 {
+			return nil
+		}
 		n := int(binary.BigEndian.Uint32(head[i+1 : i+5]))
 		f := grpcFrame{flag: head[i], size: n}
 		if n > len(head)-i-5 {
@@ -55,10 +62,15 @@ func grpcFrames(head []byte) []grpcFrame {
 // line) and masked as JSON; others described, their bytes kept as they are
 // (not text: never handed out while masking). gRPC-Web's trailer frame gives
 // trailers, its lines masked as headers are.
-func (s *Store) grpcBody(head []byte, ct string, request bool) (out []byte, note string, trailers [][2]string) {
+// Not framed after all (a text body under such a type): masked as a body.
+// Without masking (redact false), the head stays as it came.
+func (s *Store) grpcBody(head []byte, ct string, request, redact bool) (out []byte, note string, trailers [][2]string) {
 	frames := grpcFrames(head)
 	if len(frames) == 0 {
-		return head, "", nil
+		if !redact {
+			return head, "", nil
+		}
+		return maskBody(head, ct, request), "", nil
 	}
 	var lines []string
 	var sizes []string
@@ -87,11 +99,18 @@ func (s *Store) grpcBody(head []byte, ct string, request bool) (out []byte, note
 	if len(trailers) > 0 {
 		trailers = s.maskHeaders(trailers)
 	}
-	note = fmt.Sprintf("gRPC: %d messages (%s bytes)", len(sizes), strings.Join(sizes, ", "))
+	shown := sizes
+	if len(shown) > 32 {
+		shown = append(shown[:32:32], "…")
+	}
+	note = fmt.Sprintf("gRPC: %d messages (%s bytes)", len(sizes), strings.Join(shown, ", "))
+	if len(frames) == grpcMaxFrames {
+		note = fmt.Sprintf("gRPC: the first %d messages (%s bytes), more not read", len(sizes), strings.Join(shown, ", "))
+	}
 	if compressed > 0 {
 		note += fmt.Sprintf(", %d compressed (not read)", compressed)
 	}
-	if !framedJSON(ct) {
+	if !framedJSON(ct) || !redact {
 		return head, note, trailers
 	}
 	text := strings.Join(lines, "\n")

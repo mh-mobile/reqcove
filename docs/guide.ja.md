@@ -173,7 +173,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### gRPC
 
-gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム）から読みます。`grpc_message` はデコードしてマスクします。ボディの注記には、メッセージの数と大きさが出ます。protobuf のメッセージはテキストではないので、マスク中は返しません。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。protobuf のメッセージはテキストではないので、マスク中は返しません。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
 
 gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。確かめたのは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。iPhone のアプリでは、まだ試していません。
 

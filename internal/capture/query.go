@@ -80,7 +80,7 @@ func (q Filter) matchedIn(f *Flow) []string {
 	if inHeaders(f.ReqHeaders) {
 		where = append(where, "request_headers")
 	}
-	if inHeaders(f.RespHeaders) {
+	if inHeaders(f.RespHeaders) || inHeaders(f.RespTrailers) {
 		where = append(where, "response_headers")
 	}
 	if q.QueryBodies {
