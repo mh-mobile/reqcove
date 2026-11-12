@@ -180,7 +180,7 @@ type Store struct {
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
 	wake          chan struct{} // closed when a flow is answered, for Wait; nil until a waiter asks
 	started       time.Time
-	base          int64  // the first seq is base+1: base is started in unix ms, so a cursor of an earlier run is below it
+	base          int64  // the first seq is base+1: base is started in unix µs, so a cursor of an earlier run is below it
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
@@ -278,11 +278,11 @@ const (
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
 	now := time.Now()
-	// ponytail: a run recording over 500 flows a second for its whole life (two
-	// seqs a flow: its arrival and its answer) could hand out seqs above the next
-	// run's base, and then its cursors look current.
+	// ponytail: a run handing out over a million seqs a second for its whole
+	// life (two a flow, its arrival and its answer, and one a WebSocket message)
+	// could pass the next run's base, and then its cursors look current.
 	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, state: "starting",
-		started: now, base: now.UnixMilli(), seq: now.UnixMilli()}
+		started: now, base: now.UnixMicro(), seq: now.UnixMicro()}
 	s.redact.Store(true)
 	return s
 }
@@ -292,6 +292,15 @@ func NewStore(maxFlows, maxBytes int) *Store {
 // masked (6.9 ms for 64 KiB). Lines of one connection are applied in order,
 // by the one goroutine reading it.
 func (s *Store) Apply(line []byte) {
+	// A line a bug in masking cannot read must not take reqcove (the exit
+	// node with it) down: it is counted as a bad line.
+	defer func() {
+		if r := recover(); r != nil {
+			s.mu.Lock()
+			s.badLines++
+			s.mu.Unlock()
+		}
+	}()
 	var e event
 	err := json.Unmarshal(line, &e)
 	var head []byte
@@ -427,7 +436,7 @@ func (s *Store) Apply(line []byte) {
 			f.RespBody = b
 		}
 	case "done":
-		if f.Status != 101 { // a WebSocket is open until ws_end
+		if f.Status != 101 || !strings.EqualFold(header(f.RespHeaders, "upgrade"), "websocket") { // a WebSocket is open until ws_end (an h2c or other 101 is not one)
 			f.End, f.State = e.TSEnd, "done"
 		}
 		s.answerLocked(f) // a response event dropped by the addon: done answers it too
@@ -500,14 +509,19 @@ func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 
 func (s *Store) evictLocked() {
 	for len(s.order) > 0 && (len(s.order) > s.maxFlows || s.heldBytes > s.maxBytes) {
-		id := s.order[0]
+		// An open socket that is talking is passed over for the next flow (among
+		// the oldest few), so s.order stays in seq order (List pages by it).
+		i := 0
+		for k := 0; k < min(len(s.order)-1, 16); k++ {
+			if f := s.flows[s.order[k]]; f.ws == nil || f.WSClose != nil || f.State != "open" {
+				i = k
+				break
+			}
+		}
+		id := s.order[i]
+		copy(s.order[1:i+1], s.order[:i])
 		s.order = s.order[1:]
 		f := s.flows[id]
-		if f.ws != nil && !f.ws.bumped && f.WSClose == nil && f.State == "open" {
-			f.ws.bumped = true // an open socket that is talking: moved to the back once, not evicted first
-			s.order = append(s.order, id)
-			continue
-		}
 		mark := f.answered
 		if mark == 0 { // still open: its answer, had it come, would be after any cursor taken so far
 			s.seq++ // its own: a body event hands out none, so s.seq may be a cursor already given

@@ -45,7 +45,6 @@ type wsLog struct {
 	first, last []WSMessage
 	bytes       int // heads and notes kept
 	lastSeq     int64
-	bumped      bool // moved to the back of the eviction order once
 }
 
 func (w *wsLog) add(m WSMessage) {
@@ -58,7 +57,7 @@ func (w *wsLog) add(m WSMessage) {
 	w.last = append(w.last, m)
 	if len(w.last) > wsKeepLast {
 		w.bytes -= len(w.last[0].Head) + len(w.last[0].Note)
-		w.last = append(w.last[:0:0], w.last[1:]...) // a copy: one handed out keeps its own
+		w.last = w.last[1:] // kept() copies out; append reallocates as it grows
 	}
 }
 
@@ -85,42 +84,68 @@ func (s *Store) wsHead(e *event) (head, note string) {
 		return string(trimCutRune(b)), ""
 	}
 	t := trimCutRune(b)
-	if !strictText([]byte(strings.TrimSuffix(string(t), "\x00"))) {
+	// A STOMP frame's closing NUL and SignalR's record separators are the
+	// framing, not the text.
+	if !strictText([]byte(strings.ReplaceAll(strings.TrimSuffix(string(t), "\x00"), "\x1e", "\n"))) {
 		return "", "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
 	}
 	return maskWSMessage(string(t), e.FromClient), ""
 }
 
-// maskWSMessage masks a message as a body, then two shapes only messages
-// have, in what a client sends: a bare token as the whole message, and the
-// values after an auth event's name in an event array (socket.io's
-// 42["authenticate","…"]).
+// maskWSMessage masks a message as a body, then shapes only messages have,
+// in what a client sends: a bare token (or one JSON string) as the whole
+// message, the values after an auth event's name in an event array
+// (socket.io's 42["authenticate","…"]), and a SignalR invocation's arguments
+// whose target is one. SignalR's records, each ended by 0x1e, are masked one
+// by one.
 func maskWSMessage(m string, fromClient bool) string {
+	if strings.Contains(m, "\x1e") {
+		recs := strings.Split(m, "\x1e")
+		for i, r := range recs {
+			recs[i] = maskWSRecord(r, fromClient)
+		}
+		return strings.Join(recs, "\x1e")
+	}
+	return maskWSRecord(m, fromClient)
+}
+
+func maskWSRecord(m string, fromClient bool) string {
 	m = string(maskBody([]byte(m), "", fromClient))
 	if !fromClient {
 		return m
 	}
 	t := strings.TrimSpace(strings.TrimSuffix(m, "\x00"))
-	if len(t) >= 16 && !strings.ContainsAny(t, " \t\r\n\"'{}[]:,<>") && credentialLike(t) && strings.ContainsAny(t, "0123456789") && strings.IndexFunc(t, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
+		t = t[1 : len(t)-1] // one JSON string
+	}
+	if len(t) >= 16 && !strings.ContainsAny(t, " \t\r\n\"'{}[]:,<>\\") && credentialLike(t) && strings.ContainsAny(t, "0123456789") && strings.IndexFunc(t, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
 		return strings.Replace(m, t, "[redacted]", 1)
 	}
-	return maskAuthEvent(m)
+	return maskSignalR(maskAuthEvent(m))
 }
 
 // wsAuthEvents name events that send a credential as their arguments.
 var wsAuthEvents = map[string]bool{"authenticate": true, "authorize": true, "auth": true, "login": true, "signin": true, "identify": true}
 
-// maskAuthEvent: an event array (after socket.io's digits and namespace)
-// whose first element names an auth event or a secret: its string elements
-// after it are masked (objects in it are masked by name already).
+func wsAuthName(raw string) bool {
+	flat := strings.ToLower(strings.NewReplacer("_", "", "-", "", ":", "", ".", "", " ", "").Replace(raw))
+	return wsAuthEvents[flat] || secretName(raw)
+}
+
+// maskAuthEvent: an event array (after socket.io's packet type, namespace and
+// ack id) whose first element names an auth event or a secret: its string
+// elements after it are masked (objects in it are masked by name already).
 func maskAuthEvent(m string) string {
-	i := 0
-	for i < len(m) && m[i] >= '0' && m[i] <= '9' {
-		i++
+	digits := func(i int) int {
+		for i < len(m) && m[i] >= '0' && m[i] <= '9' {
+			i++
+		}
+		return i
 	}
-	if i < len(m) && m[i] == '/' { // a namespace: /chat,
+	i := digits(0)
+	if i < len(m) && m[i] == '/' { // a namespace: /chat, then maybe an ack id
 		if k := strings.IndexByte(m[i:], ','); k > 0 {
-			i += k + 1
+			i = digits(i + k + 1)
 		}
 	}
 	if i >= len(m) || m[i] != '[' {
@@ -131,19 +156,55 @@ func maskAuthEvent(m string) string {
 		return m
 	}
 	end, ok := jsonStringEnd(m, j)
-	name := strings.ToLower(strings.NewReplacer("_", "", "-", "", ":", "", ".", "").Replace(m[j+1 : end]))
-	if !ok || !wsAuthEvents[name] && !secretName(m[j+1:end]) {
+	if !ok || !wsAuthName(m[j+1:end]) {
 		return m
 	}
+	return maskArrayStrings(m, end+1)
+}
+
+// maskSignalR: a SignalR invocation whose target names an auth event or a
+// secret has its arguments' strings masked.
+func maskSignalR(m string) string {
+	k := strings.Index(m, `"target"`)
+	if k < 0 || !strings.Contains(m, `"arguments"`) {
+		return m
+	}
+	j := skipSpace(m, k+len(`"target"`))
+	if j >= len(m) || m[j] != ':' {
+		return m
+	}
+	j = skipSpace(m, j+1)
+	if j >= len(m) || m[j] != '"' {
+		return m
+	}
+	end, ok := jsonStringEnd(m, j)
+	if !ok || !wsAuthName(m[j+1:end]) {
+		return m
+	}
+	a := strings.Index(m, `"arguments"`)
+	j = skipSpace(m, a+len(`"arguments"`))
+	if j >= len(m) || m[j] != ':' {
+		return m
+	}
+	j = skipSpace(m, j+1)
+	if j >= len(m) || m[j] != '[' {
+		return m
+	}
+	return maskArrayStrings(m, j+1)
+}
+
+// maskArrayStrings masks the string elements of the array whose elements
+// begin at m[from] (after its [ or after an element and before a comma);
+// objects and arrays in it are skipped.
+func maskArrayStrings(m string, from int) string {
 	var b strings.Builder
 	last := 0
-	for k := end + 1; k < len(m); {
+	for k := from; k < len(m); {
 		k = skipSpace(m, k)
-		if k >= len(m) || m[k] != ',' {
-			break
+		if k < len(m) && m[k] == ',' {
+			k = skipSpace(m, k+1)
 		}
-		k = skipSpace(m, k+1)
-		if k >= len(m) {
+		if k >= len(m) || m[k] == ']' {
 			break
 		}
 		switch m[k] {
@@ -160,7 +221,11 @@ func maskAuthEvent(m string) string {
 			e, _ := containerEnd(m, k)
 			k = e + 1
 		default:
+			n := k
 			for k < len(m) && m[k] != ',' && m[k] != ']' {
+				k++
+			}
+			if k == n {
 				k++
 			}
 		}
@@ -179,11 +244,13 @@ type WSPage struct {
 	After    int64       `json:"after"`    // pass it back for the next page: the last message's seq, or the after given
 	More     bool        `json:"more,omitempty"`
 	// Missed counts messages after `after` that are no longer kept (between
-	// the socket's first messages and its newest), never their contents.
-	Missed int      `json:"missed,omitempty"`
-	Total  int      `json:"total"` // messages on the socket so far, kept or not
-	Open   bool     `json:"open"`
-	Close  *WSClose `json:"close,omitempty"`
+	// the socket's first messages and its newest), never their contents; at
+	// most that many when the cursor itself falls among them (MissedAtMost).
+	Missed       int      `json:"missed,omitempty"`
+	MissedAtMost bool     `json:"missed_at_most,omitempty"`
+	Total        int      `json:"total"` // messages on the socket so far, kept or not
+	Open         bool     `json:"open"`
+	Close        *WSClose `json:"close,omitempty"`
 }
 
 // WSQuery selects messages for WSList.
@@ -226,6 +293,9 @@ func (s *Store) WSList(id string, q WSQuery) (WSPage, error) {
 		}
 		if m.N > prevN+1 {
 			p.Missed += m.N - prevN - 1
+			// The cursor lies among dropped messages: those before it are
+			// counted too, as which they were is not known.
+			p.MissedAtMost = p.MissedAtMost || q.After > 0 && prevN == len(f.ws.first) && len(f.ws.first) > 0 && q.After > f.ws.first[len(f.ws.first)-1].Seq
 		}
 		prevN = m.N
 		p.After = m.Seq

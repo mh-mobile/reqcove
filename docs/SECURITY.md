@@ -182,9 +182,11 @@ So "delete the directory" above means each of them.
   as a body is (a client's with a request's rules, a lone `code` included),
   and kept only if masking could read it (text with no control characters but
   a STOMP frame's closing NUL). From a client, two shapes only messages have
-  are masked too: a message that is one token-shaped word, and the strings
-  after an auth event's name in an event array (socket.io's
-  `42["authenticate","…"]`). Binary messages, and those past about 20 a
+  are masked too: a message that is one token-shaped word (bare or as one
+  JSON string), the strings after an auth event's name in an event array
+  (socket.io's `42["authenticate","…"]`, with a namespace and an ack id too),
+  and a SignalR invocation's arguments when its target is such a name
+  (SignalR's records are read one by one). Binary messages, and those past about 20 a
   second on one socket, keep their size only. A socket keeps its first 5
   messages and its newest 100; they are handed out only by
   `list_ws_messages` (and `reqcove har`). A close's reason is masked as error

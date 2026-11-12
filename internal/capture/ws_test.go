@@ -28,7 +28,7 @@ func wsEvent(s *Store, id string, n int, fromClient bool, text string, capped bo
 
 func wsFlow(s *Store, id string) {
 	s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"method":"GET","url":"wss://chat.example/ws","host":"chat.example","path":"/ws","headers":[]}`, id)))
-	s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":101,"headers":[]}`, id)))
+	s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"response","id":%q,"status":101,"headers":[["Upgrade","websocket"]]}`, id)))
 	s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"done","id":%q,"ts_end":1700000000}`, id)))
 }
 
@@ -251,4 +251,91 @@ func TestWSFramingsCut(t *testing.T) {
 			t.Errorf("%q -> %q", m, got)
 		}
 	}
+}
+
+// TestWSItemReview: the item review of WebSocket messages (Opus).
+func TestWSItemReview(t *testing.T) {
+	S := fuzzSecret
+	// Truncated framing never panics, and a panic anywhere in Apply is a bad
+	// line, not a crash.
+	for _, m := range []string{`["`, `42["`, `[ "`, `42/chat,["`, `{"target":"`, `{"target":"Authenticate","arguments":["`} {
+		maskWSMessage(m, true)
+	}
+	s := NewStore(5, 1<<20)
+	wsFlow(s, "p")
+	wsEvent(s, "p", 1, true, `["`, false)
+	if v, err := s.Get("p", false); err != nil || v.WSMessages != 1 {
+		t.Errorf("a truncated message: %v %+v", err, v)
+	}
+	// socket.io with a namespace and an ack id; a token as one JSON string;
+	// SignalR's records, an auth target's arguments among them.
+	for _, m := range []string{
+		`42/chat,12["authenticate","` + S + `"]`,
+		`"` + S + `aa11"`,
+		`{"protocol":"json","version":1}` + "\x1e" + `{"type":1,"target":"Authenticate","arguments":["` + S + `"]}` + "\x1e",
+	} {
+		if got := maskWSMessage(m, true); leak(got, S) != "" {
+			t.Errorf("%q -> %q", m, got)
+		}
+	}
+	wsFlow(s, "sr")
+	sr := `{"type":1,"target":"Send","arguments":["hello"]}` + "\x1e"
+	wsEvent(s, "sr", 1, true, sr, false)
+	if p, _ := s.WSList("sr", WSQuery{}); len(p.Messages) != 1 || p.Messages[0].Head != sr {
+		t.Errorf("a SignalR message: %+v", p.Messages)
+	}
+	// Paging stays newest first, and complete, while an open socket is passed
+	// over at eviction.
+	s = NewStore(5, 1<<20)
+	wsFlow(s, "sock")
+	wsEvent(s, "sock", 1, true, "hi", false)
+	for i := range 8 {
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":"h%d","method":"GET","url":"https://x.example/%d","host":"x.example","path":"/","headers":[]}`, i, i)))
+	}
+	var ids []string
+	for cursor := int64(0); ; {
+		rows, next := s.List(Filter{Limit: 1, Before: cursor})
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	if strings.Join(ids, ",") != "h7,h6,h5,h4,sock" {
+		t.Errorf("pages after eviction: %v", ids)
+	}
+	// A 101 that is no WebSocket is done at once.
+	s.Apply([]byte(`{"v":2,"ev":"request","id":"h2c","method":"GET","url":"http://x.example/","host":"x.example","path":"/","headers":[]}`))
+	s.Apply([]byte(`{"v":2,"ev":"response","id":"h2c","status":101,"headers":[["Upgrade","h2c"]]}`))
+	s.Apply([]byte(`{"v":2,"ev":"done","id":"h2c","ts_end":1700000000}`))
+	if v, _ := s.Get("h2c", false); v.State != "done" {
+		t.Errorf("an h2c 101: %s", v.State)
+	}
+	// A cursor among the dropped messages: missed is an upper bound.
+	s = NewStore(10, 1<<20)
+	wsFlow(s, "m")
+	var cp int64
+	for n := 1; n <= 500; n++ {
+		wsEvent(s, "m", n, true, "x", false)
+		if n == 300 {
+			cp = s.Checkpoint()
+		}
+	}
+	if p, _ := s.WSList("m", WSQuery{After: cp}); !p.MissedAtMost || p.Messages[0].N != 401 {
+		t.Errorf("a cursor among dropped messages: %+v", p)
+	}
+	// Cursors are microseconds: a flood of messages cannot pass the next run's base.
+	if c := NewStore(1, 1).Checkpoint(); c < time.Now().UnixMicro()-int64(time.Minute/time.Microsecond) {
+		t.Errorf("checkpoint %d is not in µs", c)
+	}
+}
+
+// FuzzWSMessage: masking a message, in either direction, never panics.
+func FuzzWSMessage(f *testing.F) {
+	for _, m := range []string{`42["authenticate","x"]`, `42/chat,1["login",{"a":1},"y"]`, `{"target":"Login","arguments":["z"]}` + "\x1e", `"tok"`, "CONNECT\npasscode:x\n\n\x00"} {
+		f.Add(m, true)
+	}
+	f.Fuzz(func(t *testing.T, m string, fromClient bool) { maskWSMessage(m, fromClient) })
 }

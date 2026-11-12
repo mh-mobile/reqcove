@@ -87,7 +87,7 @@ func TestHAR(t *testing.T) {
 	}
 	// A WebSocket: its kept messages, masked, in _webSocketMessages, past one page.
 	ev(map[string]any{"ev": "request", "id": "w1", "device": "devA", "host": "ws.example.com", "method": "GET", "ts": 160.0, "url": "wss://ws.example.com/"})
-	ev(map[string]any{"ev": "response", "id": "w1", "status": 101})
+	ev(map[string]any{"ev": "response", "id": "w1", "status": 101, "headers": [][2]string{{"Upgrade", "websocket"}}})
 	ev(map[string]any{"ev": "ws", "id": "w1", "from_client": true, "text": true, "size": 30, "ts": 160.5, "head": b64(`{"authToken":"wsS3cr3tHAR"}`)})
 	for i := range 150 {
 		ev(map[string]any{"ev": "ws", "id": "w1", "from_client": false, "text": true, "size": 8, "ts": 161.0 + float64(i), "head": b64(fmt.Sprintf(`{"n":%d}`, i))})

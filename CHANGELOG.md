@@ -13,7 +13,8 @@
   `get_flow` gives how (`websocket_close`). A timed-out `wait_for_flows`
   lists the sockets that got messages since (`websocket_activity`);
   `search_flows` with `bodies` looks in kept messages; a HAR has them in
-  `_webSocketMessages`. An open socket that talks is evicted after the others.
+  `_webSocketMessages`. An open socket that talks is evicted after the others
+  (among the oldest 16). A 101 that is not a WebSocket (h2c) is done at once.
   Tried with the E2E test (a real socket through mitmproxy, a flood of 50,000
   messages beside an HTTP request).
 
@@ -37,6 +38,11 @@
 
 ### Inside
 
+- Cursors (checkpoints, `next_cursor`, `after`) count in microseconds, so a
+  run handing out many (WebSocket messages take one each) cannot reach the
+  next run's, which would make old cursors look current. A line from the
+  addon that masking fails on is counted as a bad line instead of stopping
+  `reqcove run`.
 - A GraphQL request's operation is read by its keys' exact case, as mocks
   read it (`OperationName` is not it); in a head cut before its end, only a
   top-level `operationName` counts, not one nested in variables. Mocks no
