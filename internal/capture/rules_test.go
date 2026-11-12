@@ -519,7 +519,7 @@ func TestRulesReloadSettles(t *testing.T) {
 	}
 	var mu sync.Mutex
 	taken := 0
-	h.c.Store.SetRulesLog(func(map[string]int, []string, string) { mu.Lock(); taken++; mu.Unlock() })
+	h.c.Store.SetRulesLog(func(map[string]int, []string, []string, string) { mu.Lock(); taken++; mu.Unlock() })
 	count := func() int { mu.Lock(); defer mu.Unlock(); return taken }
 	for i := 1; i <= 60; i++ { // 3 s of changes, every 50 ms: settling would need a pause of a whole second
 		write(i)

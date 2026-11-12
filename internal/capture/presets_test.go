@@ -3,11 +3,13 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,5 +202,98 @@ func TestMockPresets(t *testing.T) {
 	}
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("after a reload that failed: %q", got)
+	}
+}
+
+// TestMockFaults (REQCOVE_E2E=1): delay_ms holds one answer while another
+// stream on the same HTTP/2 connection is answered at once; fault: close
+// resets an HTTP/2 stream (the connection goes on) and closes an HTTP/1
+// connection; the rows say a mock closed them.
+func TestMockFaults(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "origin %s", r.URL.Path)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	caFile := filepath.Join(t.TempDir(), "origin.pem")
+	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600)
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`mock:
+  - match: {url: "%[1]s/slow"}
+    preset: slow
+    delay_ms: 2000
+    body: slow
+  - match: {url: "%[1]s/close"}
+    fault: close
+  - match: {url: "%[1]s/close-later"}
+    preset: close-later
+    fault: close
+    delay_ms: 300
+`, srv.URL)), 0o600)
+	up := startUpstream(t)
+	defer up.ln.Close()
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream, c.UpstreamCA, c.Rules = up.ln.Addr().String(), caFile, rules })
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := h.client("dev").Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	h2 := &http.Client{Transport: tr, Timeout: time.Minute}
+	get := func(hc *http.Client, path string) (string, time.Duration, bool) {
+		start := time.Now()
+		var reused bool
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused }}))
+		resp, err := hc.Do(req)
+		if err != nil {
+			return "error: " + err.Error(), time.Since(start), reused
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.ProtoMajor != 2 && hc == h2 {
+			t.Errorf("%s: HTTP/%d", path, resp.ProtoMajor)
+		}
+		return string(b), time.Since(start), reused
+	}
+	if got, _, _ := get(h2, "/warm"); got != "origin /warm" { // one connection, then two streams on it
+		t.Fatalf("warm: %q", got)
+	}
+	if _, err := h.c.Activate(ctx, "slow", 60, 0); err != nil {
+		t.Fatal(err)
+	}
+	slow := make(chan time.Duration)
+	go func() { _, d, _ := get(h2, "/slow"); slow <- d }()
+	time.Sleep(300 * time.Millisecond)
+	if got, d, reused := get(h2, "/fast"); got != "origin /fast" || d > time.Second || !reused {
+		t.Errorf("a second stream while one waits: %q in %v (same connection: %v)", got, d, reused)
+	}
+	if d := <-slow; d < 2*time.Second || d > 5*time.Second {
+		t.Errorf("delay_ms 2000: %v", d)
+	}
+	// HTTP/2: the stream is reset, the connection goes on.
+	if got, _, _ := get(h2, "/close"); !strings.HasPrefix(got, "error") {
+		t.Errorf("close over HTTP/2: %q", got)
+	}
+	if got, _, reused := get(h2, "/after"); got != "origin /after" || !reused {
+		t.Errorf("after a reset stream: %q (same connection: %v)", got, reused)
+	}
+	// HTTP/1: the connection closes.
+	h1 := &http.Client{Transport: h.client("dev").Transport, Timeout: time.Minute}
+	if got, _, _ := get(h1, "/close"); !strings.HasPrefix(got, "error") {
+		t.Errorf("close over HTTP/1: %q", got)
+	}
+	h.c.Activate(ctx, "close-later", 60, 1)
+	if got, d, _ := get(h1, "/close-later"); !strings.HasPrefix(got, "error") || d < 300*time.Millisecond {
+		t.Errorf("close after a delay: %q in %v", got, d)
+	}
+	f := h.doneFlow("/close-later", false)
+	if f.Preset != "close-later" || !strings.Contains(f.Error, "closed by a mock (fault: close), preset close-later") {
+		t.Errorf("row: preset %q, error %q", f.Preset, f.Error)
 	}
 }

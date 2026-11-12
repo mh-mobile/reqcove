@@ -221,9 +221,10 @@ func status(ctx context.Context, args []string) error {
 		return nil
 	}
 	var out struct {
-		Node      exitnode.Status `json:"node"`
-		NextSteps []string        `json:"next_steps"`
-		Capture   map[string]any  `json:"capture"`
+		Node      exitnode.Status       `json:"node"`
+		NextSteps []string              `json:"next_steps"`
+		Capture   map[string]any        `json:"capture"`
+		Active    []mcpserver.PresetOut `json:"active_mock_presets"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -243,6 +244,17 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
+	if names, _ := c["mock_presets"].([]any); len(names) > 0 {
+		var on []string
+		for _, p := range out.Active {
+			s := p.Name + " until " + p.ExpiresAt
+			if p.Remaining != nil {
+				s += fmt.Sprintf(", %d requests left", *p.Remaining)
+			}
+			on = append(on, s)
+		}
+		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), orDash(strings.Join(on, "; ")))
+	}
 	printCA(*state)
 	if len(out.NextSteps) == 0 {
 		fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
@@ -253,6 +265,14 @@ func status(ctx context.Context, args []string) error {
 		fmt.Println("  - " + strings.ReplaceAll(s, "\n", "\n    ")) // a command on a line of its own
 	}
 	return nil
+}
+
+func joinAny(v []any) string {
+	s := make([]string, len(v))
+	for i, x := range v {
+		s[i] = fmt.Sprint(x)
+	}
+	return strings.Join(s, ", ")
 }
 
 func offlineStatus(state, uvx string) error {

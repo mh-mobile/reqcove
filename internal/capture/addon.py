@@ -1125,8 +1125,11 @@ class Reqcove:
         # loop (other flows, other HTTP/2 streams) goes on meanwhile.
         if delay := flow.metadata.pop("reqcove_delay", 0):
             await asyncio.sleep(delay / 1000)
-        if flow.metadata.get("reqcove_close") and flow.killable:
-            flow.kill()  # HTTP/1: the connection; HTTP/2: this stream
+        if flow.metadata.get("reqcove_close"):
+            if flow.killable:
+                flow.kill()  # HTTP/1: the connection; HTTP/2: this stream
+            else:  # never on to the server: the mock answered for it
+                flow.response = http.Response.make(502, b"reqcove: a mock's fault: close could not close this request")
 
     def _request(self, flow):
         ev = flow.metadata.pop("reqcove_pending", None)

@@ -180,7 +180,7 @@ func TestRunInstallsRedactor(t *testing.T) {
 // and promises no QR codes.
 func TestReadyBlockOffTerminal(t *testing.T) {
 	hint := "(`reqcove links` prints it)"
-	got := readyBlock(map[string]string{"n1": "iphone"}, hint, "", "http://n.ts.net:8090/mcp", hint, "/s", nil, false)
+	got := readyBlock(map[string]string{"n1": "iphone"}, hint, "", "http://n.ts.net:8090/mcp", hint, "/s", nil, false, nil)
 	if strings.Contains(got, "QR code") || !strings.Contains(got, "--ui:     "+hint) || !strings.Contains(got, "Bearer "+hint) {
 		t.Errorf("block:\n%s", got)
 	}

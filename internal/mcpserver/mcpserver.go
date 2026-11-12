@@ -155,7 +155,10 @@ type StatusOut struct {
 	// PassHosts is --pass-hosts: carried undecrypted, their connections listed
 	// by list_passthrough, never their contents.
 	PassHosts []string       `json:"pass_hosts,omitempty"`
-	Capture   map[string]any `json:"capture"` // capture_stats
+	Capture   map[string]any `json:"capture"` // capture_stats (mock_presets: the presets' names)
+	// ActivePresets are the mock presets an agent has turned on now (not over
+	// --mcp-http, whose server has no preset tools).
+	ActivePresets []PresetOut `json:"active_mock_presets,omitempty"`
 }
 
 // New returns an MCP server with the read-only tools over st; status, when

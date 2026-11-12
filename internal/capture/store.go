@@ -59,6 +59,7 @@ type event struct {
 	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
 	RulesError   string         `json:"rules_error"` // why --rules could not be loaded (at start), or reloaded
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
+	Presets      []string       `json:"presets"`     // the mock presets' names
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
 	DroppedBodies int64       `json:"dropped_bodies"`
@@ -160,7 +161,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, resolve []string, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve, presets []string, problem string) // SetRulesLog
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -256,7 +257,7 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
 // by kind, and resolve's targets), and why the file did not load when it did not
 // (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, resolve []string, problem string)) {
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
@@ -349,12 +350,12 @@ func (s *Store) Apply(line []byte) {
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
-		s.hello.Rules, s.hello.Resolve, s.hello.RulesError = e.Rules, e.Resolve, e.RulesError
+		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.RulesError
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
 		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.Resolve, e.RulesError)
+			s.rulesLog(e.Rules, e.Resolve, e.Presets, e.RulesError)
 		}
 		return
 	case "pass_open":
