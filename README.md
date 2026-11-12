@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.3). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.4). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
 
 ## What you need
@@ -106,7 +106,7 @@ updating are in [the guide](docs/guide.md#stop-restart-update).
 | `--device NAME` | a device to carry (as in `tailscale status`); repeat for more |
 | `--allow-hosts` | hosts whose requests are recorded (their connections decrypted): `api.example.com`, `*.example.com`, `'*'` for all, `@FILE` |
 | `--pass-hosts` | allowed hosts to carry undecrypted, for apps that pin certificates |
-| `--rules FILE` | rewrite where allowed hosts' requests go (`map_remote`, `map_local`, …) |
+| `--rules FILE` | rewrite where allowed hosts' requests go (`map_remote`, `map_local`, …), or answer them here (`mock`) |
 | `--state DIR` | where the node key and the CA live, `~/.reqcove` by default |
 
 All of them: [the guide](docs/guide.md#options).
