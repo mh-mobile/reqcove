@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (v0.5.0)
+## v0.5.0 — 2026-11-12
 
 ### For agents
 
