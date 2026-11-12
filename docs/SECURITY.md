@@ -300,6 +300,17 @@ minutes, a mock you marked as a preset ([Mock presets](#mock-presets)). No tool
 writes or changes a rule; with no presets, nothing an agent calls changes
 traffic. (`--rules` are yours, from a file, at start.)
 
+## A flags file (`--config`)
+
+`run --config FILE` (for `brew services`) takes run's flags from a file: what
+can write that file decides the next start's flags. So it must be yours and
+readable by you only (refused otherwise; it may hold `--mask-values` patterns),
+errors name its lines, never a value, and the flags that take masking off,
+show traffic unmasked, record every site or let a file change where requests
+go while running stay on the command line: `--no-redact`, `--web`,
+`--allow-hosts '*'` (also through `@FILE`) and `--rules-reload` are refused in
+it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+
 ## Mock presets
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent

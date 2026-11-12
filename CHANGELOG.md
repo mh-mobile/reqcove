@@ -24,6 +24,10 @@
   (at most 30000) and `fault: close`. With `--rules-reload` a changed rules
   file turns presets off, as does a restart of mitmproxy or of `run`; `run`
   logs each one an agent turns on or off.
+- `run --config FILE` reads run's flags, one a line (`--no-redact`, `--web`,
+  `--rules-reload` and `--allow-hosts '*'` stay on the command line), and the
+  Homebrew formula has a service: `brew services start reqcove` with the
+  flags in `$(brew --prefix)/etc/reqcove/config`.
 - If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
   allows `activate_mock`: allow the read tools by name instead.
 

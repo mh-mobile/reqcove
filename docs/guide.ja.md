@@ -35,6 +35,39 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 確認状況：Claude Code のセッション中に `run` を再起動して確認。
 
+### 常駐させる（`brew services`）
+
+ログインしたら `run` を起動させるには、フラグを 1 行に 1 つずつファイルに書き、`brew services` で起動します。先に注意：Mac がスリープしている間、Exit Node を使っている iPhone はインターネットにつながりません。スリープする前に Exit Node をオフにしてください。
+
+```sh
+mkdir -p "$(brew --prefix)/etc/reqcove"
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
+chmod 600 "$(brew --prefix)/etc/reqcove/config"
+brew services start reqcove
+reqcove links        # 初回はログイン用の URL。--ui のリンクも
+reqcove status       # 「service: homebrew.mxcl.reqcove」と出る
+```
+
+- `--config FILE` は、`run` のフラグを 1 行に 1 つずつ読みます（`#` から後ろはコメント。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリ。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます）。コマンドラインのフラグはその後に読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。`--no-redact`、`--web`、`--rules-reload`、`--allow-hosts '*'`（`@FILE` で指定したものも）はファイルでは断り、コマンドラインでだけ使えます。ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。`--config` は 1 つだけです。
+- ファイルがないときや断ったときは、サービスは 1 回で終わります（`brew services` がエラーを表示します）。繰り返し起動し直すことはありません。ほかの理由で終わったときも同じなので、`brew services restart reqcove` で起動し直してください（`brew upgrade reqcove` のあとも）。指定しなければ、何も読みません。
+- ログは `$(brew --prefix)/var/log/reqcove.log` です。状態ディレクトリの `mitmproxy.log` も伸び続けます。launchd も reqcove もローテーションしないので、ときどき空にしてください。どちらにもログイン用の URL やトークンは入りません。それらは `reqcove links` が自分のターミナルに表示します。
+- 同じ状態ディレクトリで、ターミナルから `run` を起動すると「使用中」と断られます。先に `brew services stop reqcove` を実行してください。
+- `run` は動いている間、Mac のアイドルスリープを止めます（`caffeinate -i`。ターミナルから起動したときと同じで、バッテリーでも止めるので電池を使います）。ふたを閉じたときや、スリープを選んだときは止められません。
+
+Linux では、Homebrew の `brew services` が同じ formula から systemd のユニットを作ります（Homebrew のドキュメントによる。試していません。`status` はサービスを表示しません）。Homebrew を使わないなら、systemd のユーザーユニットで同じことができます（例です。試していません）。
+
+```ini
+# ~/.config/systemd/user/reqcove.service。そのあと systemctl --user enable --now reqcove と loginctl enable-linger $USER
+[Service]
+ExecStart=%h/.local/bin/reqcove run --config %h/.config/reqcove/config
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=default.target
+```
+
+確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。`brew services` そのもの（PATH、ログイン、再起動、スリープ）、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
+
 ### 元に戻す（`reqcove cleanup`）
 
 `reqcove cleanup` が手順を表示します。`--delete-state` を付けると、状態ディレクトリを削除します。先に、iPhone から CA のプロファイルを削除してください（[SECURITY](SECURITY.md#the-cas-private-key)）。
@@ -403,6 +436,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
+| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
 | `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、デフォルトの mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認）。ファイル名が `uvx` でないパスは uvx として実行する（ロックもハッシュの確認もなし） |
 | `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
 | `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |

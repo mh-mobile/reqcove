@@ -38,11 +38,15 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 // puts this node in their own tailnet. The steps point at run's terminal instead.
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
+	service := ""
+	if v := os.Getenv("XPC_SERVICE_NAME"); strings.HasPrefix(v, "homebrew.mxcl.reqcove") { // launchd's label, under brew services (not a terminal another brew service started)
+		service = v
+	}
 	hosts := allow.Hosts
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts}
+	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
 }
 
 // pageSteps are the next steps the --ui page shows the device id: built from it
@@ -226,12 +230,16 @@ func status(ctx context.Context, args []string) error {
 		Capture   map[string]any        `json:"capture"`
 		Active    []mcpserver.PresetOut `json:"active_mock_presets"`
 		ActiveErr string                `json:"active_mock_presets_error"`
+		Service   string                `json:"service"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
+	if out.Service != "" {
+		fmt.Printf("  service:     %s (brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log)\n", out.Service)
+	}
 	fmt.Printf("  node:        %s %s %s\n", orDash(n.Node), strings.Join(n.IPs, " "), n.Backend)
 	fmt.Printf("  exit node:   approved=%v", n.ExitApproved)
 	if n.LockEnabled {

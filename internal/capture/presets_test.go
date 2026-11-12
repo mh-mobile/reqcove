@@ -98,10 +98,10 @@ func TestMockPresets(t *testing.T) {
 	if got := get("/profile", ""); got != "503 down" {
 		t.Errorf("once: %q", got)
 	}
-	if got := get("/profile", ""); got != "200 origin /profile" {
+	if got := get("/profile?n=after-once", ""); got != "200 origin /profile" {
 		t.Errorf("after once: %q", got)
 	}
-	if f := h.doneFlow("/profile", false); f.Preset != "" {
+	if f := h.doneFlow("n=after-once", false); f.Preset != "" {
 		t.Errorf("the origin's flow names a preset: %+v", f.Flow.Preset)
 	}
 
@@ -159,8 +159,18 @@ func TestMockPresets(t *testing.T) {
 	if got := get("/graphql", `{"operationName":"Login","query":"mutation Login { a }"}`); !strings.HasPrefix(got, "401") {
 		t.Errorf("login: %q", got)
 	}
-	if f := h.doneFlow("/graphql", false); f.Preset != "login-401" || !f.Mocked {
-		t.Errorf("row: %+v", f.Flow.Preset)
+	// The Login row (events may come after the client has its answer, and
+	// the newest /graphql row may still be Feed's for a moment).
+	var login Summary
+	for deadline := time.Now().Add(10 * time.Second); login.Preset == "" && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		for _, f := range listAll(h.c.Store, 1000) {
+			if f.Operation == "Login" {
+				login = f
+			}
+		}
+	}
+	if login.Preset != "login-401" || !login.Mocked {
+		t.Errorf("Login row: preset %q, mocked %v", login.Preset, login.Mocked)
 	}
 
 	// Time: off after its seconds, also with a count left.
