@@ -287,7 +287,7 @@ and written to a HAR's comment. A body's note counts its messages and their size
 JSON ones (`application/grpc+json`, `connect+json`) are handed out one a line,
 masked as JSON, protobuf ones as below; a Connect stream's last frame (its
 error, its trailers: JSON) as `[end of stream]`, masked as JSON. A Connect
-stream's outcome is in that frame, not in `grpc_status`. Metadata ending in
+stream's outcome is in that frame, not in `grpc_status` (by a test only). Metadata ending in
 `-bin` (binary) shows its size only.
 
 Protobuf bodies (gRPC's messages, and `application/x-protobuf` and the like)
