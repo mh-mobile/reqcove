@@ -57,6 +57,9 @@ var ErrNoControl = errors.New("mitmproxy did not answer about presets (restartin
 // have taken effect.
 var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect; call list_mock_presets to see")
 
+// ErrNoAnswer: a read (the list) went unanswered: nothing changed.
+var ErrNoAnswer = errors.New("mitmproxy did not answer about presets in time (busy?)")
+
 // PresetName is a preset name's form, as the addon checks it: never sent (nor
 // logged) when it is not one.
 var PresetName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
@@ -97,6 +100,9 @@ func (c *Capture) Presets(ctx context.Context) ([]Preset, error) {
 		Presets []Preset `json:"presets"`
 	}
 	err := c.control(ctx, map[string]any{"op": "list"}, &out)
+	if errors.Is(err, ErrUncertain) { // a read: nothing to have taken effect
+		err = ErrNoAnswer
+	}
 	return out.Presets, err
 }
 

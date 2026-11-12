@@ -81,7 +81,7 @@ func localTime(unix float64) string {
 
 // presetErr is a refusal as a tool error the agent reads (not a protocol error).
 func presetErr(err error) error {
-	if errors.Is(err, capture.ErrNoControl) || errors.Is(err, capture.ErrUncertain) {
+	if errors.Is(err, capture.ErrNoControl) || errors.Is(err, capture.ErrUncertain) || errors.Is(err, capture.ErrNoAnswer) {
 		return err
 	}
 	return fmt.Errorf("refused: %w", err)
