@@ -77,6 +77,7 @@ type Body struct {
 type Flow struct {
 	seq         int64       // arrival order; the list cursor
 	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
+	opNamed     bool        // the URL or a header named Operation: the body does not change it
 	ID          string      `json:"id"`
 	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
 	Device      string      `json:"device,omitempty"`
@@ -388,7 +389,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation, f.Mocked = e.MappedURL, e.Rewrites, e.op, e.Mocked
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.op != ""
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
@@ -397,7 +398,9 @@ func (s *Store) Apply(line []byte) {
 			f.Notes = append(f.Notes, "response headers: "+e.Note)
 		}
 	case "body":
-		if e.op != "" {
+		// The URL's or the header's name comes first, and a GET's body names
+		// nothing, as for mocks; a later head corrects a partial one's.
+		if e.Dir == "request" && !f.opNamed && f.Method != "GET" && (e.op != "" || e.Final) {
 			f.Operation = e.op
 		}
 		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}

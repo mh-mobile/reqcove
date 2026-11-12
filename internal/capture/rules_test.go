@@ -344,6 +344,7 @@ func TestRulesRefused(t *testing.T) {
 		"mock both bodies":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body: a, body_file: b}]\n", "mock[0]: body or body_file"},
 		"mock url with a query":       {"mock: [{match: {url: \"http://127.0.0.1/x?s3cret=1\"}}]\n", "mock[0]: url takes no query"},
 		"mock star after the host":    {"mock: [{match: {url: \"http://127.0.0.1*\"}}]\n", "mock[0]: url takes no query"},
+		"mock body_file a device":     {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body_file: /dev/zero}]\n", "mock[0]: body_file must be a plain file"},
 		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -561,6 +562,8 @@ func TestMocks(t *testing.T) {
     status: 204
   - match: {method: HEAD, url: "http://%[1]s/head"}
     body: never sent
+  - match: {url: "http://%[1]s"}
+    status: 418
 modify_headers:
   - "|~s|X-Resp|added"
 `, o)), 0o600)
@@ -568,7 +571,7 @@ modify_headers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:4") {
+	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:5") {
 		t.Errorf("rules loaded: %s", got)
 	}
 	hc := h.client("dev")
@@ -608,6 +611,23 @@ modify_headers:
 			t.Errorf("Feed mock for %s: %q", doc, body)
 		}
 	}
+	// As reqcove's rows name them (the last review): text that only holds the
+	// words is no document; the URL's name comes before the body's; a name
+	// GraphQL does not allow gives way to the document.
+	for _, c := range []struct{ url, body, want string }{
+		{"/graphql", `{"query":"hello query Feed { feed }"}`, "origin /graphql"},
+		{"/graphql", `"query Feed { feed }"`, "origin /graphql"},
+		{"/graphql?operationName=Like", `{"query":"query Feed { feed }"}`, "origin /graphql"},
+		{"/graphql?operationName=Feed", `{"query":"{ feed }"}`, `{"feed":[]}`},
+		{"/graphql", `{"operationName":"Feed-1","query":"query Feed { feed }"}`, `{"feed":[]}`},
+		{"/graphql?query=%7B%22term%22%3A%22x%22%7D", `{"operationName":"Feed"}`, `{"feed":[]}`},    // a ?query= that is no document gives way
+		{"/graphql", `{"query":"fragment F on U { a } query \"x\" Feed { b }"}`, "origin /graphql"}, // no name after query: anonymous, as Go reads it
+		{"/graphql", `{"query":"query Feed"}`, "origin /graphql"},                                   // as gqlStart: no ( { @ after the name
+	} {
+		if _, body := do("POST", "http://"+o+c.url, c.body); body != c.want {
+			t.Errorf("POST %s %s: %q, want %q", c.url, c.body, body, c.want)
+		}
+	}
 	// A gzipped body is read (bounded); a bomb is not read past 1 MiB, and goes on.
 	gz := func(b []byte) *bytes.Buffer {
 		var buf bytes.Buffer
@@ -634,6 +654,14 @@ modify_headers:
 		if string(b) != c.want {
 			t.Errorf("gzip, %d bytes: %q", len(c.body), b)
 		}
+	}
+	if resp, _ := do("GET", "http://"+o+"/", ""); resp.StatusCode != 418 {
+		t.Errorf("a mock url without a path: %d", resp.StatusCode)
+	}
+	// Read once: "}#" after "}#" was quadratic (48 KiB stalled every connection for 37 s).
+	start := time.Now()
+	if _, body := do("POST", "http://"+o+"/graphql", strings.Repeat("}#", 256<<10)); body != "origin /graphql" || time.Since(start) > 5*time.Second {
+		t.Errorf("512 KiB of }#: %q after %v", body, time.Since(start))
 	}
 	// Nesting past Python's limit, and comments after comments: no operation, not a 502, at once.
 	for _, doc := range []string{strings.Repeat("[", 200000), `{"query":"` + strings.Repeat("#", 60) + `"}`} {
@@ -677,7 +705,7 @@ modify_headers:
 	} else if v, _ := h.c.Store.Get(rows[0].ID, false); !slices.Contains(v.Rewrites, "mock: skipped, request body over 1 MiB or of unknown length") {
 		t.Errorf("the chunked Feed's rewrites: %v", v.Rewrites)
 	}
-	for op, n := range map[string]int{"Like": 1} {
+	for op, n := range map[string]int{"Like": 2} { // the GET's, and ?operationName=Like above
 		if rows, _ := h.c.Store.List(Filter{Operation: op, Limit: 20}); len(rows) != n {
 			t.Errorf("%s rows: %+v", op, rows)
 		}

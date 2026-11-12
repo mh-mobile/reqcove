@@ -340,7 +340,7 @@ func maskForm(s string, request bool) string {
 		if !ok {
 			continue
 		}
-		if secretName(formName(name)) {
+		if secretName(formName(name)) || i == 0 && nestedSecret(val, 0) { // maskURLs looks into the fields after an &, not the first; before JSON and documents, which start with { too
 			parts[i] = name + "=[redacted]"
 		} else if m, ok := gqlParam(val, 0); ok { // before JSON: {login(…)} starts with { too; a field not encoded as it should be too
 			parts[i] = name + "=" + m
@@ -348,8 +348,6 @@ func maskForm(s string, request bool) string {
 			if m := maskJSON(v, request, 1); m != v {
 				parts[i] = name + "=" + url.QueryEscape(m)
 			}
-		} else if i == 0 && nestedSecret(val, 0) { // maskURLs looks into the fields after an &, not the first
-			parts[i] = name + "=[redacted]"
 		}
 	}
 	return strings.Join(parts, "&")

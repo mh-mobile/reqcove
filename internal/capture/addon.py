@@ -279,40 +279,159 @@ class Resolve:
 
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
-GQL_IGNORED = r"(?:[\s,\ufeff]|#[^\n\r]*(?![^\n\r]))"  # spaces, commas, byte order marks, comments (each to its line's end: one reading only, or # after # backtracks exponentially)
-GQL_DESC = r'(?:"""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")'  # a description before an operation
-# The first operation: at the start or after a definition's closing brace (a
-# fragment may come first), after a description or not.
-GQL_OP = re.compile(r"(?:^|})" + GQL_IGNORED + "*(?:" + GQL_DESC + GQL_IGNORED + "*)?(?:query|mutation|subscription)" + GQL_IGNORED + r"+([_A-Za-z][_0-9A-Za-z]{0,99})")
+GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
+GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
+GQL_BLOCK = re.compile(r'"""(?:\\"""|[\s\S])*?(?:"""|\Z)')
+GQL_STRING = re.compile(r'"(?:[^"\\\n\r]|\\[\s\S])*(?:"|\Z)')
+# GraphQL tokens, for the first operation: read once, front to back (a pattern
+# searched from every "}" read the rest again from each: quadratic).
+GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
+
+
+def _head(doc, limit=5):
+    """doc's first limit tokens as (kind, text), and whether all of doc fits
+    in fewer; None at a character GraphQL does not allow or a line break in a
+    string, with the tokens before it. As reqcove's Go lexes (gqlLex)."""
+    toks, i, n = [], 0, len(doc)
+    while i < n:
+        c = doc[i]
+        if c in " \t\n\r,\ufeff":
+            i += 1
+            continue
+        if c == "#":
+            while i < n and doc[i] not in "\n\r":
+                i += 1
+            continue
+        if len(toks) == limit:
+            return toks, False
+        if c == "_" or "A" <= c <= "Z" or "a" <= c <= "z":
+            m = GQL_NAME_RUN.match(doc, i)
+            toks.append(("n", m.group()))
+            i = m.end()
+        elif c == "-" or "0" <= c <= "9":
+            i = GQL_NUMBER_RUN.match(doc, i).end()
+            toks.append(("0", ""))
+        elif doc.startswith('"""', i):
+            m = GQL_BLOCK.match(doc, i)
+            toks.append(("b", ""))
+            i = m.end()
+        elif c == '"':
+            m = GQL_STRING.match(doc, i)
+            if m is None:
+                return toks, None
+            toks.append(("s", ""))
+            i = m.end()
+        elif doc.startswith("...", i) or n - i < 3 and "...".startswith(doc[i:]):
+            toks.append((".", ""))
+            i += 3
+        elif c in "!$&():=@[]{|}":
+            toks.append((c, ""))
+            i += 1
+        else:
+            return toks, None
+    return toks, True
+
+
+def _starts(doc):
+    """doc's first tokens start a document, as reqcove's Go decides it
+    (gqlStart): an operation, a fragment, or { then a field with arguments,
+    selections, an alias, another field or a spread, or { name } alone or
+    before another definition. "{count} items" and "query cats" are not."""
+    toks, ok = _head(doc)
+    ended = ok is True and len(toks) < 5
+    if toks and toks[0][0] in "sb":
+        toks = toks[1:]  # a description
+    def is_(k, kind, text=""):
+        return k < len(toks) and toks[k][0] == kind and (not text or toks[k][1] == text)
+    def opens(k):
+        return k < len(toks) and toks[k][0] in "({@"
+    if is_(0, "n", "query") or is_(0, "n", "mutation") or is_(0, "n", "subscription"):
+        return opens(1) or is_(1, "n") and opens(2)
+    if is_(0, "n", "fragment"):
+        return is_(1, "n") and is_(2, "n", "on")
+    if is_(0, "{"):
+        if is_(1, "."):
+            return True
+        if not is_(1, "n"):
+            return False
+        return (opens(2) or is_(2, "n") or is_(2, ".") or is_(2, ":") and is_(3, "n")
+                or is_(2, "}") and (ended and len(toks) == 3 or any(is_(3, "n", w) for w in ("fragment", "query", "mutation", "subscription"))))
+    return False
+
+
+def _first_operation(doc):
+    """The name of doc's first operation (past fragments and descriptions),
+    "" for an anonymous one, None if doc does not start like a document; one
+    pass, as reqcove's Go reads it (gqlDocOperation)."""
+    if not _starts(doc):
+        return None
+    depth, fragment, keyword = 0, False, False
+    for m in GQL_TOKEN.finditer(doc):
+        kind, text = m.lastgroup, m.group()
+        if kind == "skip":
+            continue
+        if keyword:  # the token just after query, mutation or subscription
+            return text if kind == "name" else ""
+        if kind in ("block", "str"):
+            continue
+        if kind == "punct" and text in "{([":
+            if text == "{" and depth == 0:
+                if not fragment:
+                    return ""  # { … } alone: an anonymous query
+                fragment = False
+            depth += 1
+        elif kind == "punct" and text in "})]":
+            depth -= 1
+        elif kind == "name" and depth == 0:
+            keyword = text in ("query", "mutation", "subscription")
+            fragment = fragment or text == "fragment"
+    return ""
+
+
+def _name(n):
+    return n if isinstance(n, str) and GQL_NAME.fullmatch(n) else None
+
+
+def _doc_name(doc):
+    """"" for an anonymous operation (it ends the search), None for no
+    document or a name GraphQL does not allow (the search goes on)."""
+    op = _first_operation(doc) if isinstance(doc, str) else None
+    return op if op == "" else _name(op)
+
+
+def _operations(r):
+    """Where a request names its operation, in the order reqcove's Go reads
+    them (gqlURLOperation, the header, gqlBodyOperation); lazily: the body is
+    decoded only when the URL and header name none."""
+    yield _name(r.query.get("operationName"))
+    yield _doc_name(r.query.get("query"))
+    yield _name(r.headers.get("x-apollo-operation-name"))
+    if r.method == "GET":
+        return
+    try:  # decoded with a bound: a compressed body may be a bomb
+        body = _Decoder(r.headers.get("content-encoding", "").strip().lower()).feed(r.raw_content or b"", MAP_LOCAL_BODY + 1)
+    except Exception:
+        body = b""
+    text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
+    try:
+        d = json.loads(text or "null")
+    except RecursionError:
+        d = None  # nested past Python's limit: no GraphQL request
+    except ValueError:
+        yield _doc_name(text)  # a document as the body (application/graphql)
+        return
+    if isinstance(d, dict):
+        yield _name(d.get("operationName"))
+        yield _doc_name(d.get("query"))
 
 
 def _operation(r):
-    """A request's GraphQL operation, as reqcove names it: operationName (the
-    URL's, Apollo's header, the JSON body's), else the document's first named
-    operation; None if it names none."""
-    name = r.query.get("operationName") or r.headers.get("x-apollo-operation-name")
-    doc = r.query.get("query")
-    if not name and r.method != "GET":
-        try:  # decoded with a bound: a compressed body may be a bomb
-            body = _Decoder(r.headers.get("content-encoding", "").strip().lower()).feed(r.raw_content or b"", MAP_LOCAL_BODY + 1)
-        except Exception:
-            body = b""
-        text = body.decode("utf-8", "replace") if len(body) <= MAP_LOCAL_BODY else ""
-        try:
-            d = json.loads(text or "null")
-        except RecursionError:
-            d = None  # nested past Python's limit: no GraphQL request
-        except ValueError:
-            d = text  # a document as the body (application/graphql)
-        if isinstance(d, dict):
-            name = d.get("operationName") if isinstance(d.get("operationName"), str) else None
-            doc = d.get("query") if isinstance(d.get("query"), str) else None
-        elif isinstance(d, str):
-            doc = d
-    if name:
-        return name if GQL_NAME.fullmatch(name) else None
-    m = GQL_OP.search(doc or "")
-    return m.group(1) if m else None
+    """A request's GraphQL operation, as reqcove names it: the first place
+    that names one; None for none, an anonymous one or a batch."""
+    for op in _operations(r):
+        if op is not None:
+            return op or None
+    return None
 
 
 class Mock:
@@ -345,7 +464,7 @@ class Mock:
             raise RuleError("url takes no query, fragment or user, and a * only after a path (https://host/*)")
         if u.port in (80, 443):
             raise RuleError("leave out the default port")
-        url = f"{u.scheme}://{u.netloc.lower()}{u.path}" + ("*" if url.endswith("*") else "")
+        url = f"{u.scheme}://{u.netloc.lower()}{u.path or '/'}" + ("*" if url.endswith("*") else "")  # a request's path is / at least
         status = spec.get("status", 200)
         if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
             raise RuleError("status must be a number from 100 to 599")
@@ -367,8 +486,11 @@ class Mock:
                 raise RuleError("body_file must be a path")
             try:
                 path = (base / Path(spec["body_file"]).expanduser()).resolve(strict=True)
-                too_big = path.stat().st_size > MOCK_BODY
-                body = b"" if too_big else path.read_bytes()
+                if not path.is_file():  # a FIFO or a device: no size to trust, and a read may never end
+                    raise RuleError("body_file must be a plain file")
+                with path.open("rb") as f:
+                    body = f.read(MOCK_BODY + 1)
+                too_big = len(body) > MOCK_BODY
             except OSError:
                 raise RuleError("body_file cannot be read") from None
         else:
@@ -395,11 +517,12 @@ class Mock:
 
     def answer(self, flow):
         """The first rule matching flow, made into its response: (index, status), or None."""
-        op = None
+        op = False  # not read yet: read once, whatever it gives
         for i in self.candidates(flow):
             want = self.replacements[i][2]
             if want is not None:
-                op = op or _operation(flow.request) or ""
+                if op is False:
+                    op = _operation(flow.request)
                 if op != want:
                     continue
             _, _, _, status, hs, body = self.replacements[i]

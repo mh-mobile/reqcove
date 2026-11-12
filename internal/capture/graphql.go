@@ -298,6 +298,8 @@ func gqlParam(v string, depth int) (string, bool) {
 	}
 	if depth < 2 { // and the URLs and shapes in it (login(next: "https://…?token=…")), as nestedSecret would
 		m = maskTokens(maskURLsAt(maskUserinfo(m), depth+1))
+	} else if strings.ContainsAny(m, "?=@") {
+		return "REDACTED", true // deeper than is looked into, and it could hold parameters: as nestedSecret does
 	}
 	return url.QueryEscape(m), true
 }
@@ -327,7 +329,6 @@ func gqlName(s string) string {
 	return s
 }
 
-// gqlDocOperation names the first operation of document doc.
 // gqlDocOperation names the first operation of document doc, past fragments
 // and descriptions.
 func gqlDocOperation(doc string) string {
@@ -390,6 +391,7 @@ func gqlBodyOperation(head []byte) string {
 	switch {
 	case t[0] == '[' && json.Unmarshal(t, &many) == nil:
 		for _, m := range many {
+			one.OperationName, one.Query = "", "" // a field an element lacks would keep the last one's: its query lexed again, quadratic
 			if json.Unmarshal(m, &one) == nil && (one.OperationName != "" || gqlDocOperation(one.Query) != "") {
 				return gqlBatched
 			}

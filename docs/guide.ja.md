@@ -272,7 +272,7 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 `mock` は、リクエストに書いたとおりの応答をここで返します。リクエストはサーバーに送りません（HTTPS では、証明書を読むために mitmproxy がその前にサーバーへ接続していることがあります）。セッション切れや空の一覧を、アプリがどう扱うかを見るときに使います。
 
 ```yaml
-mock:                           # Reqcove 独自。最初に一致したものが、ほかのルールより先に応答する
+mock:                           # Reqcove 独自。最初に一致したものが、map_remote や map_local より先に応答する
   - match: {method: POST, url: "https://api.example.com/v1/login"}
     status: 401
     headers: {Content-Type: application/json}
@@ -282,7 +282,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 ```
 
 - `url` は、アプリが送った URL のクエリを除いた部分と完全に一致したときに当たります（ホストの大文字と小文字は区別しません）。パスのあとの `*` で終わる `url`（`https://api.example.com/v1/*`）は、それより前の部分で始まる URL すべてに当たります。クエリ、フラグメント、ユーザー名、既定のポートは書けません（決して当たらないので、読み込みで拒否します）。`method` と `operation`（GraphQL の operation。`operationName`、Apollo の `X-APOLLO-OPERATION-NAME` ヘッダー、または文書の最初の名前付き operation）は省略できます。ホストは `--allow-hosts` に入っていて、`--pass-hosts` に入っていない必要があります。
-- `status` は 100〜599 で、省略すると 200 です。ボディは書くかファイルで指定し、1 MiB までです。`HEAD`、204、304 にはボディを付けません。`Cache-Control` を書かなければ `no-store` を付けます。応答に対する `modify_headers` のルールは、モックにも効きます。
+- `status` は 100〜599 で、省略すると 200 です。ボディは書くかファイルで指定し、1 MiB までです。`HEAD`、204、304 にはボディを付けません。`Cache-Control` を書かなければ `no-store` を付けます。リクエストに対する `modify_headers` のルールは一致を調べる前に効き、応答に対するものはモックにも効きます。
 - モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送り、`rewrites` に `mock: skipped, …` と残します。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持し、HTTP/2 で一緒に送られてきたボディは、すべてメモリに保持します。
 - 記録にその旨が残ります。一覧の行に `mocked: true`、`rewrites` にルールの番号とステータス（`mock[0]: 401`）、HAR には注記が入ります。`capture_stats` の `rules_loaded` は、ファイルを最後に読み込んだ時刻です。
 
