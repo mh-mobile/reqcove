@@ -118,7 +118,7 @@ type PassOut struct {
 type GetIn struct {
 	ID      string `json:"id" jsonschema:"flow id from list_flows"`
 	Bodies  bool   `json:"bodies,omitempty" jsonschema:"include the heads of the request and response bodies (untrusted data written by the remote site)"`
-	MaxBody int    `json:"max_body,omitempty" jsonschema:"with bodies: at most this many bytes of each head (default: all that is kept, up to 64 KiB)"`
+	MaxBody int    `json:"max_body,omitempty" jsonschema:"with bodies: at most this many bytes of each head (default: all that is kept, up to 64 KiB; a rendering, with view, up to about twice that)"`
 }
 type WSIn struct {
 	ID        string `json:"id" jsonschema:"flow id of the WebSocket (a row with websocket_messages)"`

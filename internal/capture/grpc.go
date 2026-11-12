@@ -75,8 +75,18 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 	}
 	var lines []string
 	var sizes []string
-	compressed := 0
+	compressed, written := 0, 0
+	connect := strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/connect+")
 	for _, f := range frames {
+		if written > protoMaxOut { // one cap for the whole body, as for one message
+			if len(lines) == 0 || lines[len(lines)-1] != "[more messages not read]" {
+				lines = append(lines, "[more messages not read]")
+			}
+			if f.flag&0x80 == 0 {
+				sizes = append(sizes, fmt.Sprint(f.size))
+			}
+			continue
+		}
 		switch {
 		case f.flag&0x80 != 0:
 			if f.payload != nil {
@@ -87,8 +97,12 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 				}
 			}
 			continue
-		case f.flag&2 != 0 && f.flag&1 == 0 && f.payload != nil: // Connect's end of stream: JSON (its error, its trailers), whatever the codec
+		case f.flag&2 != 0 && f.flag&1 == 0 && f.payload != nil && connect: // Connect's end of stream: JSON (its error, its trailers), whatever the codec
 			lines = append(lines, "[end of stream] "+string(maskBody(f.payload, "application/json", request)))
+			written += len(lines[len(lines)-1])
+			continue
+		case f.flag&2 != 0:
+			lines = append(lines, fmt.Sprintf("[a frame gRPC does not use: %d bytes]", f.size))
 			continue
 		case f.flag&1 != 0:
 			compressed++
@@ -102,6 +116,7 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 			r, view = renderProto(f.payload, ct, path, request, false)
 			lines = append(lines, string(r))
 		}
+		written += len(lines[len(lines)-1])
 		sizes = append(sizes, fmt.Sprint(f.size))
 	}
 	if len(trailers) > 0 {

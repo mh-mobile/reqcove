@@ -79,8 +79,10 @@ again once they have started it. Do not start it yourself.
    the app's when only its timing suggests it.
 4. Then `list_flows` or `search_flows` (filters combine; page with
    `next_cursor`), and `get_flow` for one flow, with `bodies` only when you
-   need them. Bodies are their first 64 KiB (`truncated` says so). A body
-   with `view` is reqcove's rendering of protobuf, not its bytes:
+   need them. Bodies are their first 64 KiB (`truncated` says so; a
+   rendering, with `view`, can run to about twice that). A body
+   with `view` is reqcove's rendering of protobuf or `multipart/form-data`
+   (parts masked, files by their size), not its bytes:
    `string(12)` is a 12-byte string not shown, `bytes(16)` 16 bytes not
    shown; for field names the user restarts `reqcove run` with
    `--proto FILE` (their compiled schema), never `--no-redact`. A gRPC
