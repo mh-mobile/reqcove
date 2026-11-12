@@ -44,6 +44,7 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
+	Preset      string      `json:"preset"`     // request: the preset that answered, turned on by an agent
 	Trailers    [][2]string `json:"trailers"`   // done: the response's trailers (HTTP/2's: gRPC's status)
 	Text        bool        `json:"text"`       // ws: a text message
 	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)
@@ -102,6 +103,7 @@ type Flow struct {
 	Rewrites     []string    `json:"rewrites,omitempty"`
 	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
 	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
+	Preset       string      `json:"preset,omitempty"`    // a mock preset an agent turned on answered it
 	Host         string      `json:"host"`
 	Path         string      `json:"path"`
 	HTTPVersion  string      `json:"http_version"`
@@ -422,7 +424,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.op != ""
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.op != ""
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers

@@ -19,6 +19,7 @@ type Summary struct {
 	URL         string   `json:"url"`
 	Operation   string   `json:"operation,omitempty"` // GraphQL's
 	Mocked      bool     `json:"mocked,omitempty"`    // a mock rule answered it, not the server
+	Preset      string   `json:"preset,omitempty"`    // the mock preset an agent turned on that answered it
 	State       string   `json:"state"`
 	Status      int      `json:"status,omitempty"`
 	ContentType string   `json:"content_type,omitempty"` // of the response
@@ -178,7 +179,7 @@ const maxUAText = 256
 
 // summary: the caller holds s.mu (s.names).
 func (s *Store) summary(f *Flow) Summary {
-	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL, Operation: f.Operation, Mocked: f.Mocked,
+	v := Summary{ID: f.ID, Device: f.Device, DeviceName: s.names[f.Device], Method: f.Method, Host: f.Host, URL: f.URL, Operation: f.Operation, Mocked: f.Mocked, Preset: f.Preset,
 		State: f.State, Status: f.Status, RespSize: f.RespBody.Size, Error: f.Error, WSMessages: f.WSMessages,
 		ContentType: header(f.RespHeaders, "content-type"), UserAgent: cutTo(header(f.ReqHeaders, "user-agent"), maxUAText),
 		Origin: header(f.ReqHeaders, "origin"), Referer: header(f.ReqHeaders, "referer")}

@@ -250,7 +250,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		// would buffer them in mitmproxy anyway. -q equivalent: errors only.
 		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
 		"--set", fmt.Sprintf("reqcove_body_head=%d", cfg.BodyHead),
-		"-s", addon, "--set", "reqcove_socket="+sock,
+		"-s", addon, "--set", "reqcove_socket="+sock, "--set", "reqcove_control="+filepath.Join(cfg.Dir, ControlSock),
 		"--set", "reqcove_secret_file="+secretFile,
 		"--set", "reqcove_allow_hosts="+string(allowJSON))
 	if cfg.Rules != "" {
@@ -453,6 +453,7 @@ func (c *Capture) Stop() {
 	os.Remove(c.ln.Addr().String())
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
+	os.Remove(filepath.Join(c.cfg.Dir, ControlSock))
 	for _, f := range scriptFiles {
 		os.Remove(filepath.Join(c.cfg.Dir, f))
 	}
