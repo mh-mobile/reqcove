@@ -24,13 +24,13 @@ distroless（シェルもパッケージ管理もない）のイメージで、r
 
 ```sh
 NAME=reqcove-staging
-docker run -dt --init --name $NAME --hostname $NAME \
+docker run -d --init --name $NAME --hostname $NAME \
   -v $NAME:/home/nonroot/.reqcove reqcove \
   run --device iphone --allow-hosts api.staging.example.com --hostname $NAME --ui
 docker logs -f $NAME
 ```
 
-- ログに、ログイン用の URL、そのあと QR コードとリンクが出ます（QR コードが出るのは `-t` を付けたときです）。Exit Node の承認は、ホストで動かすときと同じく 1 回です。
+- ログには、残っている手順が出ます。ログイン用の URL とリンクは出ません。`docker exec -it $NAME reqcove links` で、QR コード付きで表示できます（コンテナではまだ試していません）。`-t`（ターミナル）を付けると、`run` はホストと同じようにログにも表示し、`docker logs` に残ります。Exit Node の承認は、ホストで動かすときと同じく 1 回です。
 - `--init` は、終わった mitmproxy のプロセスを片付けます。
 - volume は名前付きのもの（`-v 名前:…`）だけを使ってください。Mac のフォルダをそのままつなぐと、ロックとソケットが VM の境を越えません。
 - volume ごとに CA を作ります。iPhone には、コンテナごとにプロファイルを入れます。
@@ -45,11 +45,7 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 
 `docker exec $NAME reqcove status` と `reqcove har` は、ホストと同じように使えます。
 
-ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker logs` に出ます（[手順](guide.ja.md#ほかのデバイスのエージェントから使う--mcp-http)。Grok Bot で試しました）。イメージには `cat` がないので、ヘッダーの値は、画面に出さずに次で写せます。
-
-```sh
-docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1/p' | tail -1 | tr -d '\n' | pbcopy
-```
+ほかの自分の端末のエージェント（Grok Bot）には、`run` に `--mcp-http` を付けます。ノードはコンテナの中にあるので、ポートを開ける必要はありません。URL とトークンは `docker exec -it $NAME reqcove links` で表示できます（[手順](guide.ja.md#ほかのデバイスのエージェントから使う--mcp-http)。`docker logs` に出ていたころに Grok Bot で試しました。コンテナでの `reqcove links` はまだ試していません）。
 
 記録の時刻は、コンテナのタイムゾーン（既定は UTC）で付きます。
 
@@ -57,7 +53,7 @@ docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1
 
 - `--local-proxy`、シミュレーター、このコンピュータで CA を信頼することは、コンテナではできません。
 - macOS：Mac がスリープすると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
-- `docker logs` には、コンテナを消すまで、ログイン用の URL と、トークン付きの `--ui`／`--web` のリンクが残ります（`--log-opt max-size=10m` で大きさを抑えられます）。トークンは、volume の中のファイルを消すまで有効です。
+- `-t` を付けなければ、`docker logs` にログイン用の URL とトークンは残りません。付けると、コンテナを消すまで残ります。トークンは、volume の中のファイルを消すまで有効です。`--log-opt max-size=10m` でログの大きさを抑えられます。
 - `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。`--proto` も同じです。
 - `run` が表示するコマンド（`claude mcp add … reqcove mcp`、`reqcove status`）は、ホスト向けの形です。上の形に読み替えてください。
 - VM のネットワーク越しでは、tailnet の通信が中継（DERP）になりやすいかもしれません。速さは測っていません。

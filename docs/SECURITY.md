@@ -23,8 +23,10 @@ in the container: a flaw there reaches the container (the records, the CA's key
 in its volume), not the rest of the user's files. The image has no shell or
 package manager and runs as a user of its own, not root. In exchange, whoever
 can use the Docker daemon's socket can read the volume, the CA's key included,
-and `docker logs` keeps the login URL, the `--ui`/`--web` links and the
-`--mcp-http` token until the container is removed. `reqcove mcp` runs with
+and, when the container is given a terminal (`docker run -t`), `docker logs`
+keeps the login URL, the `--ui`/`--web` links and the `--mcp-http` token until
+the container is removed (without one, `run` names `reqcove links` in their
+place). `reqcove mcp` runs with
 `--log-driver none`, so the tools' answers are not logged. Checked by
 `scripts/container-smoke.sh` (the state directory's owner and mode, no
 network needed), not by an attack.
@@ -405,8 +407,8 @@ MCP tools return, masked the same way. Who can read it (each a test):
   shown as it is, not indented (indenting deep nesting takes memory that grows
   with the square of the depth).
 
-The token appears only in `run`'s terminal, as the login URL does: never in the
-MCP tools.
+The token appears only on `run`'s terminal and through `reqcove links`, as the
+login URL does: never in a log line or the MCP tools.
 
 ## mitmweb (`--web`)
 
@@ -453,8 +455,8 @@ own devices on the tailnet only (the same user as reqcove's node, neither
 tagged: checked when a connection opens and on every request), asked by the node's name or address in
 `Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
 state directory (0600; compared in constant time). Requests from a browser page
-of another origin are refused. The token is printed in `run`'s terminal only (in
-a container, `docker logs` keeps it), never by `reqcove status` or the tools:
+of another origin are refused. The token is printed on `run`'s terminal and by `reqcove links` only (in
+a container run with `-t`, `docker logs` keeps it), never in a log line, by `reqcove status` or the tools:
 agents may run those. On a personal tailnet an agent's device joined through
 Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
@@ -591,9 +593,30 @@ What it does not catch:
 ## The login URL
 
 While the node is not logged in, `reqcove run` prints a login URL. Whoever opens it
-first puts this node in their own tailnet, so it is printed in `run`'s terminal
+first puts this node in their own tailnet, so it is printed on `run`'s terminal
 only: the `status` tool, and with it the agent and its model provider, says where
 to find it but does not carry it.
+
+- `run`'s log lines never carry it, nor the `--ui`, `--web`, `--mcp-http` tokens:
+  every line goes through one filter that replaces the tokens and any URL shaped
+  as a control server's login URL (`/a/…`, Headscale's `/register/…`), and the
+  login URL itself once `run` has seen it. Under `--verbose` that covers tsnet's
+  own lines, which print it before `run` learns it (a test reads them from a test
+  control server). The filter knows those shapes only: a control server whose
+  login URL has another shape is masked from `run`'s first poll on (within 3 s).
+- Off a terminal (a service, `docker logs` without `-t`, an agent's shell), `run`
+  prints neither the URL nor the links, only that `reqcove links` prints them.
+- `login-url` (while login is pending) and `links` (the ones with tokens, once
+  `run` is ready) are kept in the state directory, 0600, and removed when `run`
+  starts and stops. 0600 keeps other users out, not a program running as you:
+  an agent with a shell can read them, as it can the node's key, the tokens and
+  the CA's key in the same directory.
+- `reqcove links` refuses when its output is not a terminal: a help against an
+  agent running it, not a guarantee (a program can give it a terminal). The
+  skill and the server's instructions tell agents never to run it.
+- mitmweb's server logs a failed request's URL, `?token=` included, into
+  `mitmproxy.log`: the addon masks the token there first (checked by the
+  mitmweb E2E test).
 
 ## Logs to Tailscale
 

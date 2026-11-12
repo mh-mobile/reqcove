@@ -43,14 +43,17 @@ One name, used four times: the container, its volume, the container's hostname
 
 ```sh
 NAME=reqcove-staging
-docker run -dt --init --name $NAME --hostname $NAME \
+docker run -d --init --name $NAME --hostname $NAME \
   -v $NAME:/home/nonroot/.reqcove reqcove \
   run --device iphone --allow-hosts api.staging.example.com --hostname $NAME --ui
 docker logs -f $NAME
 ```
 
-- The log has the login URL, then the QR codes and links (`-t` is what makes
-  the QR codes show). Approve the exit node once, as on the host.
+- The log says what is left to do. The login URL and the links are not in it:
+  `docker exec -it $NAME reqcove links` prints them, with QR codes (not tried in
+  a container yet). With `-t` (a terminal), `run` prints them in the log as on
+  the host, and `docker logs` keeps them. Approve the exit node once, as on the
+  host.
 - `--init` reaps mitmproxy's processes when they end.
 - Only a named volume (`-v NAME:…`): a folder of the Mac bound in does not
   carry the lock and the socket across the VM's border.
@@ -70,14 +73,10 @@ tools' answers out of Docker's logs.
 `docker exec $NAME reqcove status` and `reqcove har` work as on the host.
 
 An agent on another device of yours (Grok Bot): add `--mcp-http` to `run`.
-The node is in the container, so no port is published; the URL and the token
-are in `docker logs` ([how](guide.md#agents-on-other-devices---mcp-http); tried
-with Grok Bot). The image has no `cat`; to copy the header's value without
-showing it:
-
-```sh
-docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1/p' | tail -1 | tr -d '\n' | pbcopy
-```
+The node is in the container, so no port is published; `docker exec -it $NAME
+reqcove links` prints the URL and the token
+([how](guide.md#agents-on-other-devices---mcp-http); tried with Grok Bot when
+`docker logs` had them, `reqcove links` not tried in a container yet).
 
 Times in the records carry the container's time zone, UTC by default.
 
@@ -86,9 +85,9 @@ Times in the records carry the container's time zone, UTC by default.
 - `--local-proxy`, the Simulator, and trusting the CA on this computer: not in a
   container.
 - macOS: the Mac sleeping stops the VM; keep `caffeinate -i` running while you use it.
-- `docker logs` keeps the login URL and the `--ui`/`--web` links with their
-  tokens, until the container is removed (add `--log-opt max-size=10m` to bound
-  it). A token stays valid until its file in the volume is deleted.
+- Without `-t`, `docker logs` keeps no login URL or token; with it, it keeps
+  them until the container is removed. A token stays valid until its file in
+  the volume is deleted. `--log-opt max-size=10m` bounds the log.
 - `localhost` in `--rules` and `--upstream-proxy` is the container itself; the
   host is `host.docker.internal` on Docker Desktop and OrbStack (not tried). Bind
   a folder for `--rules` (`-v ./rules:/rules:ro`, then `--rules /rules/x.yaml`),

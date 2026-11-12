@@ -27,7 +27,13 @@ func TestWeb(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	port, _ := freePort()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.WebPort, c.WebPassword, c.webMaxFlows = port, "KEPTTOKENABCDEFGHIJKLMNOPQ", 2 })
+	mitmLog, err := os.Create(filepath.Join(t.TempDir(), "mitmproxy.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
+		c.WebPort, c.WebPassword, c.webMaxFlows, c.Log = port, "KEPTTOKENABCDEFGHIJKLMNOPQ", 2, io.MultiWriter(os.Stderr, mitmLog)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +152,10 @@ func TestWeb(t *testing.T) {
 	h.c.Stop()
 	if exists(cfg) {
 		t.Error("the mitmweb password is left in config.yaml after Stop")
+	}
+	// mitmweb prints its URL without the token when web_password is set (12.3.1's webaddons.py).
+	if b, _ := os.ReadFile(mitmLog.Name()); strings.Contains(string(b), token) {
+		t.Errorf("the mitmweb password is in mitmproxy.log:\n%s", b)
 	}
 }
 

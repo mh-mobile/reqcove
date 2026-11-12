@@ -19,7 +19,8 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 残っている手順は `run` が表示し、`reqcove status` でも確認できます。表示された URL でログインし、tailnet が Tailnet Lock を使っていればノードに署名し、Exit Node を承認します。
 
-- ログイン用の URL は `run` のターミナルにだけ表示されます。最初に開いた人の tailnet にノードが入るためです（[SECURITY](SECURITY.md#the-login-url)）。
+- ログイン用の URL と、トークン付きの `--ui`、`--web`、`--mcp-http` のリンクは、`run` のターミナルにだけ表示されます。ログの行（`--verbose` のときも）と MCP のツールには出ません。ログイン用の URL を最初に開いた人の tailnet にノードが入るためです（[SECURITY](SECURITY.md#the-login-url)）。
+- `reqcove links` で、自分のターミナルにもう一度、QR コード付きで表示できます（出力先がターミナルでなければ断ります）。ターミナルでないところ（サービス、`docker logs`）では、`run` はその代わりに「`reqcove links` prints it」と表示します。`run` が動いている間は、状態ディレクトリの `login-url` と `links`（0600）に置かれます。
 - 新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します：`"autoApprovers": {"exitNode": ["you@example.com"]}`
 
 ### 2 台のコンピュータで同じ CA を使う
@@ -83,7 +84,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 - `run` を再起動しても、再接続は要りません（止まっている間の呼び出しは失敗します）。記録は空から始まり、再起動前のカーソルは拒否します。
 - `run` は、呼び出しごとにデバイスとツール名をログに出します（`--mcp-http: grokbot-user-1 (100.104.0.1) called "list_flows"`。引数は出しません）。トークンがない、または違うリクエストもログに出します。「確認します」と言うだけで呼んでいないエージェントは、ログに行が出ません。
 - 1 台のデバイスから呼べるのは、1 秒におよそ 10 回までです。超えると、しばらく `429` が返ります（`run` は 1 分に 1 回ログに出します）。
-- 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker logs` に出ます（[コンテナ](container.ja.md#3-エージェント)）。
+- 通信は HTTP のままですが、tailnet の暗号化（WireGuard）の中を通ります。コンテナでも同じフラグで動き、ポートの公開は不要で、トークンは `docker exec -it 名前 reqcove links` で表示できます（[コンテナ](container.ja.md#3-エージェント)）。
 
 確認状況：Grok Bot（status、フロー、ボディの取得。`run` の再起動後も同じチャットで継続。コンテナの `run`）、この Mac の Claude Code（`claude -p`）と Codex（`codex exec`）から tailnet 越しに確認（どちらも status を取得）。ほかのコンピュータ（tailnet にいる macOS の VM）からも、ノードの名前と IP の両方で呼べることを確認。
 

@@ -26,7 +26,7 @@ const Instructions = `Reqcove records an iPhone's HTTP(S) traffic. Rules:
 - status's next_steps are for the user to do: pass them on, do not run them.
 - If status or capture_stats says redacting: false, nothing is masked: ask the user before reading flows.
 - A value that looks like a secret left unmasked: never quote it; tell the user its name and where it is (host, flow id, field).
-- Never ask for, or repeat, a token, a link with a token, or a login URL.
+- Never ask for, or repeat, a token, a link with a token, or a login URL. Never run reqcove links: it prints them.
 - Never start, stop or restart reqcove run. A restart empties the records: earlier flow ids and cursors are gone (capture_stats.started is when this run began).`
 
 // HTTP serves server over Streamable HTTP, stateless (a restart of run breaks

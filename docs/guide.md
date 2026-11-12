@@ -21,8 +21,14 @@ The four steps are in the [README](../README.md#use).
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 
-- Only `run`'s terminal shows the login URL: whoever opens it first puts the
+- The login URL, and the `--ui`, `--web` and `--mcp-http` links with their
+  tokens, are shown on `run`'s terminal only: never in its log lines
+  (`--verbose` too) or the MCP tools. Whoever opens the login URL first puts the
   node in their own tailnet ([SECURITY](SECURITY.md#the-login-url)).
+- `reqcove links` prints them again, with QR codes, in your terminal (it refuses
+  when its output is not a terminal). Off a terminal (a service, `docker logs`),
+  `run` prints "`reqcove links` prints it" in their place. While `run` runs they
+  are kept in `login-url` and `links` (0600) in the state directory.
 - To skip the approval for new nodes, add an auto-approver to the tailnet
   policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
 
@@ -143,8 +149,8 @@ What to know:
 - Each device may call about 10 times a second; past that it gets `429` for a
   moment (`run` logs it once a minute).
 - Plain HTTP, inside the tailnet's encryption (WireGuard). In a container: the
-  same flag, no port to publish, the token in `docker logs`
-  ([container](container.md#3-the-agent)).
+  same flag, no port to publish, the token from `docker exec -it NAME reqcove
+  links` ([container](container.md#3-the-agent)).
 
 Tried: Grok Bot (status, flows, bodies; the same chat after a restart of
 `run`; `run` in a container); Claude Code (`claude -p`) and Codex
