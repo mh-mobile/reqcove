@@ -111,3 +111,35 @@ func TestMultipartE2E(t *testing.T) {
 		t.Errorf("upload: view %q\n%s", v.ReqBody.View, v.ReqBodyText)
 	}
 }
+
+// TestMultipartReview: the item review (Opus): parts whose disposition does
+// not read, LF-only lines, folded headers, delimiter look-alikes, cookies,
+// encoded parts, and diff.
+func TestMultipartReview(t *testing.T) {
+	S := fuzzSecret
+	for _, body := range []string{
+		mpBody("Content-Disposition: form-data; name=\"f\"; filename=\"my \"draft\".txt\"\r\nContent-Type: text/plain\r\n\r\nfile body " + S),
+		mpBody("Content-Disposition: form-data; name=user[password]\r\n\r\n" + S),
+		mpBody("Content-Disposition: form-data; name=\"password\"\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\n" + S),
+		"--XyZ\nContent-Disposition: form-data; name=\"password\"\n\n" + S + "\n--XyZ\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\n\nline1\r\n\r\nline2\n--XyZ--",
+		mpBody("Content-Disposition: form-data; name=\"x\"\r\nX-Api-Key:\r\n " + S + "\r\n\r\nplain"),
+		mpBody("Content-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nbefore\r\n--XyZabc\r\n\r\n" + S),
+		mpBody("Content-Disposition: form-data; name=\"x\"\r\nCookie: sid=" + S + "\r\n\r\nplain"),
+		mpBody("Content-Disposition: form-data; name=\"x\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(`{"password":"`+S+`"}`))),
+	} {
+		got := string(renderMultipart([]byte(body), "XyZ", true, false))
+		if leak(got, S) != "" || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(`{"password":"`))) {
+			t.Errorf("%q\n->\n%s", body, got)
+		}
+	}
+	// Two uploads whose files differ at the same size are never the same.
+	s := NewStore(10, 1<<20)
+	for _, id := range []string{"a", "b"} {
+		body := mpBody("Content-Disposition: form-data; name=\"f\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\n" + strings.Repeat(strings.ToUpper(id), 8))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":%q,"method":"POST","url":"https://up.example/u","host":"up.example","path":"/u","headers":[["Content-Type","multipart/form-data; boundary=XyZ"]]}`, id)))
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"body","id":%q,"dir":"request","decoded":true,"final":true,"size":%d,"head":%q}`, id, len(body), base64.StdEncoding.EncodeToString([]byte(body)))))
+	}
+	if d, _ := s.DiffFlows("a", "b"); d.RequestBody.Result == "same" {
+		t.Errorf("two uploads with other files: %+v", d.RequestBody)
+	}
+}

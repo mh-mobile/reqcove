@@ -206,8 +206,11 @@ So "delete the directory" above means each of them.
   (`view`), part by part. A part whose name is secret (a lone `code` in a
   request) is masked whole, as are part headers with secret names; a text
   part (no filename, a text or JSON type) is masked as a body is; a file
-  part, and a part that is not text, keeps its headers and its size only,
-  never its bytes. A preamble is not shown. At most 256 parts are read.
+  part, a part that is not text or is encoded (`Content-Transfer-Encoding:
+  base64`), and a part whose `Content-Disposition` does not read (or comes
+  twice) keep their headers and their size only, never their bytes. A body
+  with LF-only lines shows no part. A preamble and an epilogue are not
+  shown. At most 256 parts are read.
   (Tests, and an E2E test with Go's multipart writer.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to

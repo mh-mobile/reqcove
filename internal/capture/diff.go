@@ -90,6 +90,9 @@ func (d *differ) add(x Diff) {
 	d.out.Differences = append(d.out.Differences, x)
 }
 
+// mpHidden: what a multipart rendering shows by size only.
+var mpHidden = regexp.MustCompile(`\[(file|not text|preamble|encoded \([^)]*\)|part): |headers (cut|not read)`)
+
 // masked: v shows a masked value (only while masking is on: with
 // --no-redact, a "[redacted]" in a value is the site's own text).
 func (d *differ) masked(v string) bool {
@@ -175,6 +178,10 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 		return r
 	case d.redact && (!checkable(a, ha) || !checkable(b, hb)):
 		r.Result, r.Note = "not_compared", "not text, so not checked for secrets: not compared (reqcove run --no-redact compares it)"
+		return r
+	case d.redact && (strings.HasPrefix(a.View, "multipart") || strings.HasPrefix(b.View, "multipart")) && string(a.Head) == string(b.Head) &&
+		mpHidden.MatchString(string(a.Head)):
+		r.Result, r.Note = "masked", "multipart: the same as shown, but files and parts shown by their size may differ"
 		return r
 	case d.redact && (strings.HasPrefix(a.View, "protobuf structure") || strings.HasPrefix(b.View, "protobuf structure")):
 		// Strings show their lengths only: the same structure may hold other values.
