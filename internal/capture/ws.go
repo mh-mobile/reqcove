@@ -2,6 +2,7 @@ package capture
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -57,7 +58,8 @@ func (w *wsLog) add(m WSMessage) {
 	w.last = append(w.last, m)
 	if len(w.last) > wsKeepLast {
 		w.bytes -= len(w.last[0].Head) + len(w.last[0].Note)
-		w.last = w.last[1:] // kept() copies out; append reallocates as it grows
+		w.last[0] = WSMessage{} // its head is not held on by the array
+		w.last = w.last[1:]     // kept() copies out; append reallocates as it grows
 	}
 }
 
@@ -84,9 +86,13 @@ func (s *Store) wsHead(e *event) (head, note string) {
 		return string(trimCutRune(b)), ""
 	}
 	t := trimCutRune(b)
-	// A STOMP frame's closing NUL and SignalR's record separators are the
-	// framing, not the text.
-	if !strictText([]byte(strings.ReplaceAll(strings.TrimSuffix(string(t), "\x00"), "\x1e", "\n"))) {
+	// A STOMP frame's closing NUL and SignalR's record separators (only
+	// between JSON objects) are the framing, not the text.
+	text := strings.TrimSuffix(string(t), "\x00")
+	if signalRRecords(text) {
+		text = strings.ReplaceAll(text, "\x1e", "\n")
+	}
+	if !strictText([]byte(text)) {
 		return "", "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
 	}
 	return maskWSMessage(string(t), e.FromClient), ""
@@ -115,13 +121,34 @@ func maskWSRecord(m string, fromClient bool) string {
 		return m
 	}
 	t := strings.TrimSpace(strings.TrimSuffix(m, "\x00"))
-	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
-		t = t[1 : len(t)-1] // one JSON string
-	}
-	if len(t) >= 16 && !strings.ContainsAny(t, " \t\r\n\"'{}[]:,<>\\") && credentialLike(t) && strings.ContainsAny(t, "0123456789") && strings.IndexFunc(t, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+	if bareToken(t) {
 		return strings.Replace(m, t, "[redacted]", 1)
 	}
+	var str string
+	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' && json.Unmarshal([]byte(t), &str) == nil && !strings.Contains(str, "\\") && bareToken(str) {
+		return strings.Replace(m, t, `"[redacted]"`, 1) // one JSON string, its escapes undone (\/ in base64)
+	}
 	return maskSignalR(maskAuthEvent(m))
+}
+
+// bareToken: one word shaped like a credential (letters and digits, at
+// least 16, no spaces or JSON punctuation).
+func bareToken(t string) bool {
+	return len(t) >= 16 && !strings.ContainsAny(t, " \t\r\n\"'{}[]:,<>") && credentialLike(t) && strings.ContainsAny(t, "0123456789") &&
+		strings.IndexFunc(t, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0
+}
+
+// signalRRecords: text split by 0x1e into JSON objects, as SignalR sends.
+func signalRRecords(t string) bool {
+	if !strings.Contains(t, "\x1e") {
+		return false
+	}
+	for _, r := range strings.Split(t, "\x1e") {
+		if r = strings.TrimSpace(r); r != "" && r[0] != '{' {
+			return false
+		}
+	}
+	return true
 }
 
 // wsAuthEvents name events that send a credential as their arguments.

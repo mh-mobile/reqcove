@@ -181,7 +181,14 @@ func (s *Store) Stats() map[string]any {
 	// The window the records cover: older flows were evicted to stay within the limits.
 	var oldest, newest string
 	if len(s.order) > 0 {
-		if t := s.flows[s.order[0]].Start; t > 0 {
+		first := s.flows[s.order[0]]
+		for _, id := range s.order[:min(len(s.order), 17)] { // open sockets passed over at eviction are older than the window
+			if f := s.flows[id]; f.ws == nil || f.WSClose != nil || f.State != "open" {
+				first = f
+				break
+			}
+		}
+		if t := first.Start; t > 0 {
 			oldest = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
 		}
 		if t := s.flows[s.order[len(s.order)-1]].Start; t > 0 {
@@ -201,7 +208,7 @@ func (s *Store) Stats() map[string]any {
 		"state":                       s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
 		"started":              s.started.Format("2006-01-02T15:04:05.000Z07:00"),
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
-		"bad_lines": s.badLines, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
+		"bad_lines": s.badLines, "masking_failed": s.maskFailed, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact.Load(),
 		"tls_failures":   len(s.tlsFailures),
 		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),

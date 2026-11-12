@@ -339,3 +339,30 @@ func FuzzWSMessage(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, m string, fromClient bool) { maskWSMessage(m, fromClient) })
 }
+
+// TestWSReReview: the re-review of the fixes (Fable).
+func TestWSReReview(t *testing.T) {
+	S := fuzzSecret
+	for _, m := range []string{`\` + S + `0`, `"` + S + `\/aa11"`} {
+		if got := maskWSMessage(m, true); leak(got, S) != "" {
+			t.Errorf("%q -> %q", m, got)
+		}
+	}
+	// 0x1e outside SignalR's records is no framing: such text is not handed out.
+	s := NewStore(10, 1<<20)
+	wsFlow(s, "x")
+	wsEvent(s, "x", 1, true, "password\x1e"+S, false)
+	if p, _ := s.WSList("x", WSQuery{}); p.Messages[0].Head != "" {
+		t.Errorf("0x1e not between objects: %q", p.Messages[0].Head)
+	}
+	// capture_stats' window starts after a passed-over socket.
+	s = NewStore(3, 1<<20)
+	wsFlow(s, "sock")
+	wsEvent(s, "sock", 1, true, "hi", false)
+	for i := range 5 {
+		s.Apply([]byte(fmt.Sprintf(`{"v":2,"ev":"request","id":"h%d","method":"GET","url":"https://x.example/%d","host":"x.example","path":"/","headers":[],"ts":%d}`, i, i, 1800000000+i)))
+	}
+	if o := s.Stats()["oldest_flow"]; o != unixTime(1800000003).Format("2006-01-02T15:04:05.000Z07:00") {
+		t.Errorf("oldest_flow %v", o)
+	}
+}

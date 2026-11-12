@@ -166,6 +166,7 @@ type Store struct {
 	passCount     int                     // all seen, evicted included
 	addonDropped  [2]int64                // bodies, events
 	badLines      int64
+	maskFailed    int64 // lines masking panicked on (counted in badLines too)
 	unknownVer    int64
 	orphanUpdates int64
 	evicted       int64
@@ -298,6 +299,7 @@ func (s *Store) Apply(line []byte) {
 		if r := recover(); r != nil {
 			s.mu.Lock()
 			s.badLines++
+			s.maskFailed++ // apart: a bug in masking, not a line the addon garbled
 			s.mu.Unlock()
 		}
 	}()

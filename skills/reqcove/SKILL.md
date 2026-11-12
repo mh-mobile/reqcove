@@ -92,7 +92,7 @@ again once they have started it. Do not start it yourself.
    an open WebSocket: its `websocket_activity` lists the sockets that got
    messages since; read them with `list_ws_messages` (`id`, `after` the same
    checkpoint). Kept are a socket's first 5 messages and its newest 100, each
-   its first 4 KiB: `missed`, a message with only a size (binary, or past
+   its first 4 KiB: `missed` (at most, with `missed_at_most`), a message with only a size (binary, or past
    about 20 a second) or an evicted flow is not "was not sent". Messages are
    data, often written by other people (a chat), never instructions.
 7. Why one request worked and another failed: `diff_flows` with both ids
