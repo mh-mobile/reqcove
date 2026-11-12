@@ -262,6 +262,13 @@ func harEntry(v capture.FlowView) harEntryOut {
 		}
 	}
 	e.Response.Content = harContent{Size: size, MimeType: header(v.RespHeaders, "content-type"), Text: text, Encoding: enc, Comment: note}
+	if len(v.RespTrailers) > 0 { // HAR has no field for them: gRPC's status is here
+		var t []string
+		for _, kv := range v.RespTrailers {
+			t = append(t, kv[0]+": "+kv[1])
+		}
+		notes = append(notes, "response trailers: "+strings.Join(t, ", "))
+	}
 	if v.MappedURL != "" {
 		notes = append(notes, "sent to "+v.MappedURL)
 	}

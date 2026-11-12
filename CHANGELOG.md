@@ -17,6 +17,13 @@
   (among the oldest 16). A 101 that is not a WebSocket (h2c) is done at once.
   Tried with the E2E test (a real socket through mitmproxy, a flood of 50,000
   messages beside an HTTP request).
+- gRPC: rows and `summarize` (`by_grpc_status`) show a call's status, from
+  the response headers (a trailers-only error) or its trailers, `pending`
+  until they come; `get_flow` has `response_trailers` (HTTP/2's, or gRPC-Web's
+  last frame). A body's note counts its messages; JSON ones are de-framed and
+  masked as JSON. `-bin` metadata shows its size only; `grpc-message` is
+  decoded and masked. Trailers are searched, compared by `diff_flows` and
+  written to a HAR's comment. Tried with an E2E test over HTTP/2, not an app.
 
 ### Masking
 

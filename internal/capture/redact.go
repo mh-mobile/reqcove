@@ -553,6 +553,10 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	out := make([][2]string, len(h))
 	for i, kv := range h {
 		out[i] = kv
+		if v, ok := grpcHeaderValue(strings.ToLower(kv[0]), kv[1], func(v string) string { return maskTokens(maskURLs(v)) }); ok && !userName(flatName(kv[0])) && !secretName(kv[0]) {
+			out[i][1] = maskUserValues(v)
+			continue
+		}
 		switch name := strings.ToLower(kv[0]); {
 		case userName(flatName(kv[0])): // the user's names come before every built-in case
 			out[i][1] = "[redacted]"

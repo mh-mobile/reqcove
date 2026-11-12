@@ -100,6 +100,14 @@ func TestHAR(t *testing.T) {
 	if m := h.Log.Entries[0].WSMessages; len(m) != 105 || m[0].Type != "send" || m[0].Opcode != 1 || m[104].Data != `{"n":149}` || m[1].Type != "receive" {
 		t.Errorf("_webSocketMessages: %d, %+v", len(m), m[:min(2, len(m))])
 	}
+	// gRPC's trailers (HAR has no field for them) in the comment.
+	ev(map[string]any{"ev": "request", "id": "g1", "device": "devA", "host": "grpc.example.org", "method": "POST", "ts": 170.0, "url": "https://grpc.example.org/pkg.Svc/M"})
+	ev(map[string]any{"ev": "response", "id": "g1", "status": 200, "headers": [][2]string{{"Content-Type", "application/grpc"}}})
+	ev(map[string]any{"ev": "done", "id": "g1", "ts_end": 170.5, "trailers": [][2]string{{"grpc-status", "0"}}})
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "grpc.example.org"}) })
+	if !strings.Contains(out, "response trailers: grpc-status: 0") {
+		t.Errorf("trailers in the HAR:\n%s", out)
+	}
 	// More than a page of list_flows (500), and a flow still open: all of them,
 	// in order, the open one said to be open.
 	for i := 0; i < 600; i++ {

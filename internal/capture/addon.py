@@ -820,7 +820,7 @@ class Reqcove:
             return
         # Headers and URLs count toward the queue's byte budget too: a site can
         # send large ones.
-        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + len(msg.get("msg") or "") + sum(len(k) + len(v) + 64 for k, v in msg.get("headers") or [])
+        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + len(msg.get("msg") or "") + sum(len(k) + len(v) + 64 for k, v in (msg.get("headers") or []) + (msg.get("trailers") or []))
         with self.lock:
             over = self.queued_bytes + size > 2 * self.queue_limit  # bodies give way first, at the plain limit
         if over:
@@ -1043,7 +1043,10 @@ class Reqcove:
             return
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "response", flow.response)
-        self.put_event({"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end})
+        done = {"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end}
+        if flow.response.trailers:  # HTTP/2's, set before this hook also when streamed: gRPC's status
+            done["trailers"], done["note"] = _headers(flow.response.trailers)
+        self.put_event(done)
 
     def error(self, flow):
         self.flow_rules.pop(flow.id, None)
