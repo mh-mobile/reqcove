@@ -368,10 +368,12 @@ def _first_operation(doc):
     depth, fragment, keyword = 0, False, False
     for m in GQL_TOKEN.finditer(doc):
         kind, text = m.lastgroup, m.group()
-        if kind in ("skip", "block", "str"):
+        if kind == "skip":
             continue
-        if keyword:  # just after query, mutation or subscription
+        if keyword:  # the token just after query, mutation or subscription
             return text if kind == "name" else ""
+        if kind in ("block", "str"):
+            continue
         if kind == "punct" and text in "{([":
             if text == "{" and depth == 0:
                 if not fragment:
