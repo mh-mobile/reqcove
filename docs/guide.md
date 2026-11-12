@@ -57,6 +57,54 @@ reqcove stopped there, or before its first run.
 
 Tried: a restart under a Claude Code session.
 
+### Keep it running (`brew services`)
+
+To have `run` start at login, put its flags, one a line, in a file and let
+`brew services` start it:
+
+```sh
+mkdir -p "$(brew --prefix)/etc/reqcove"
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
+chmod 600 "$(brew --prefix)/etc/reqcove/config"
+brew services start reqcove
+reqcove links        # the login URL, the first time; the --ui link
+reqcove status       # "service: homebrew.mxcl.reqcove"
+```
+
+- `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
+  quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home). The
+  command line's come after them: a flag given once is the command line's, a
+  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload` and
+  `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
+  the command line. The file must be yours and not writable by others.
+- A missing or refused file ends the service once (`brew services` shows an
+  error); it is not started again in a loop. Nothing is read unless named.
+- The log is `$(brew --prefix)/var/log/reqcove.log`, never rotated (by
+  launchd or by reqcove): truncate it now and then. It carries no login URL or
+  token: `reqcove links` prints them, in your terminal.
+- A `run` in your terminal on the same state finds it in use: `brew services
+  stop reqcove` first.
+- While the Mac sleeps, an iPhone on its exit node has no internet: turn the
+  exit node off first. `run` keeps the Mac from idle sleep while it runs
+  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
+  from closing the lid or choosing Sleep.
+
+Linux: a systemd user unit does the same (an example, not tried):
+
+```ini
+# ~/.config/systemd/user/reqcove.service; then: systemctl --user enable --now reqcove; loginctl enable-linger $USER
+[Service]
+ExecStart=%h/.local/bin/reqcove run --config %h/.config/reqcove/config
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=default.target
+```
+
+Tried: the config file's parsing and refusals (unit tests). Not tried yet:
+`brew services` itself (PATH, login, a reboot, sleep), and whether macOS's
+Local Network privacy asks about a `run` not started from a terminal.
+
 ### Undo everything (`reqcove cleanup`)
 
 `reqcove cleanup` lists the steps; with `--delete-state` it deletes the state
@@ -714,6 +762,7 @@ other protocols going straight to their servers.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
+| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--allow-hosts '*'`) |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |

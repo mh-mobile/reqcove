@@ -161,6 +161,9 @@ type StatusOut struct {
 	// did not say which, so none listed means unknown.
 	ActivePresets []PresetOut `json:"active_mock_presets,omitempty"`
 	PresetsError  string      `json:"active_mock_presets_error,omitempty"`
+	// Service names the service that started run (brew services' launchd
+	// label), when one did.
+	Service string `json:"service,omitempty"`
 }
 
 // New returns an MCP server with the read-only tools over st; status, when

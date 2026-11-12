@@ -19,7 +19,21 @@ class Reqcove < Formula
     <<~EOS
       The first `reqcove run` fetches mitmproxy and Python with uv.
       State, including a CA private key, lives in ~/.reqcove.
+
+      To keep it running at login (`brew services start reqcove`), write run's
+      flags, one a line, in #{etc}/reqcove/config (chmod 600), such as:
+        --device iphone
+        --allow-hosts api.example.com
+      `reqcove links` prints the login URL; the log is #{var}/log/reqcove.log.
     EOS
+  end
+
+  # No keep_alive: a missing or refused config ends it once, not in a loop.
+  service do
+    run [opt_bin/"reqcove", "run", "--config", etc/"reqcove/config"]
+    environment_variables PATH: std_service_path_env
+    log_path var/"log/reqcove.log"
+    error_log_path var/"log/reqcove.log"
   end
 
   test do
