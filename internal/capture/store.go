@@ -44,6 +44,10 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
+	Text        bool        `json:"text"`       // ws: a text message
+	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)
+	Code        int         `json:"code"`       // ws_end: the close code
+	ByClient    bool        `json:"by_client"`  // ws_end: the client closed it
 	// hello
 	Mitmproxy    string         `json:"mitmproxy"`
 	Python       string         `json:"python"`
@@ -59,6 +63,8 @@ type event struct {
 	DroppedEvents int64  `json:"dropped_events"`
 	OutOfScope    int64  `json:"out_of_scope"`
 	op            string // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
+	wsHead        string // ws: the message's head, masked before the lock
+	wsNote        string // ws: why it has none
 }
 
 const wireVersion = 2
@@ -77,6 +83,7 @@ type Body struct {
 type Flow struct {
 	seq         int64       // arrival order; the list cursor
 	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
+	ws          *wsLog      // a WebSocket's kept messages
 	opNamed     bool        // the URL or a header named Operation: the body does not change it
 	ID          string      `json:"id"`
 	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
@@ -102,6 +109,7 @@ type Flow struct {
 	RespBody    Body        `json:"response_body"`
 	WSMessages  int         `json:"websocket_messages,omitempty"`
 	WSBytes     int64       `json:"websocket_bytes,omitempty"`
+	WSClose     *WSClose    `json:"websocket_close,omitempty"` // how the socket ended; none while it is open
 	Error       string      `json:"error,omitempty"`
 	Notes       []string    `json:"notes,omitempty"` // reqcove's, about what it left out
 }
@@ -115,6 +123,12 @@ func (f *Flow) bytes() int {
 	}
 	for _, note := range f.Notes {
 		n += len(note) + 16
+	}
+	if f.ws != nil {
+		n += f.ws.bytes + 64*(len(f.ws.first)+len(f.ws.last))
+	}
+	if f.WSClose != nil {
+		n += len(f.WSClose.Reason)
 	}
 	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
 		for _, kv := range h {
@@ -284,11 +298,14 @@ func (s *Store) Apply(line []byte) {
 	headOK := true // false: the flow was not there when its body was masked
 	if err == nil && e.V == wireVersion {
 		s.maskEvent(&e)
-		if e.Ev == "body" {
+		switch e.Ev {
+		case "body":
 			head, headOK = s.maskHead(&e)
 			if e.Dir == "request" && headOK {
 				e.op = gqlBodyOperation(head) // a POST's body names it, a GET's URL
 			}
+		case "ws":
+			e.wsHead, e.wsNote = s.wsHead(&e)
 		}
 	}
 	s.mu.Lock()
@@ -410,7 +427,9 @@ func (s *Store) Apply(line []byte) {
 			f.RespBody = b
 		}
 	case "done":
-		f.End, f.State = e.TSEnd, "done"
+		if f.Status != 101 { // a WebSocket is open until ws_end
+			f.End, f.State = e.TSEnd, "done"
+		}
 		s.answerLocked(f) // a response event dropped by the addon: done answers it too
 	case "error":
 		f.Error, f.State = e.Msg, "error"
@@ -418,6 +437,17 @@ func (s *Store) Apply(line []byte) {
 	case "ws":
 		f.WSMessages++
 		f.WSBytes += e.Size
+		if f.ws == nil {
+			f.ws = &wsLog{}
+		}
+		s.seq++ // messages share the flows' counter, so a checkpoint is a cursor for them too; they wake no wait
+		f.ws.add(WSMessage{Seq: s.seq, N: f.WSMessages, Time: e.TS, FromClient: e.FromClient, Size: e.Size, Text: e.Text,
+			Head: e.wsHead, Truncated: e.Truncated && e.wsHead != "", Note: e.wsNote})
+	case "ws_end":
+		f.WSClose = &WSClose{Time: e.TSEnd, Code: e.Code, ByClient: e.ByClient, Reason: e.Reason}
+		if f.State == "open" {
+			f.End, f.State = e.TSEnd, "done"
+		}
 	}
 	s.heldBytes += f.bytes() - before
 	s.evictLocked()
@@ -436,6 +466,8 @@ func (s *Store) maskEvent(e *event) {
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
 	case "error", "tls_failed":
 		e.Msg = s.maskError(e.Msg)
+	case "ws_end":
+		e.Reason = s.mask(e.Reason)
 	}
 }
 
@@ -471,6 +503,11 @@ func (s *Store) evictLocked() {
 		id := s.order[0]
 		s.order = s.order[1:]
 		f := s.flows[id]
+		if f.ws != nil && !f.ws.bumped && f.WSClose == nil && f.State == "open" {
+			f.ws.bumped = true // an open socket that is talking: moved to the back once, not evicted first
+			s.order = append(s.order, id)
+			continue
+		}
 		mark := f.answered
 		if mark == 0 { // still open: its answer, had it come, would be after any cursor taken so far
 			s.seq++ // its own: a body event hands out none, so s.seq may be a cursor already given

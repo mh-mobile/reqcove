@@ -103,6 +103,7 @@ type FlowView struct {
 	ReqBodyEnc   string `json:"request_body_head_encoding,omitempty"` // "base64" when that head is not text
 	RespBodyText string `json:"response_body_head,omitempty"`
 	RespBodyEnc  string `json:"response_body_head_encoding,omitempty"`
+	WSKept       int    `json:"websocket_messages_kept,omitempty"` // list_ws_messages returns these: the socket's first 5 and its newest 100
 }
 
 func (s *Store) Get(id string, bodies bool) (FlowView, error) {
@@ -113,6 +114,9 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 		return FlowView{}, fmt.Errorf("no flow %q (evicted, or from before reqcove run restarted)", id)
 	}
 	v := FlowView{Flow: *f, DeviceName: s.names[f.Device]} // already masked as it arrived
+	if f.ws != nil {
+		v.WSKept = len(f.ws.first) + len(f.ws.last)
+	}
 	if bodies {
 		v.ReqBodyText, v.ReqBodyEnc = s.bodyOut(f.ReqBody, f.ReqHeaders)
 		v.RespBodyText, v.RespBodyEnc = s.bodyOut(f.RespBody, f.RespHeaders)

@@ -624,8 +624,9 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 |---|---|
 | `list_flows` | flows, newest first; filter by device, host (and subdomains), time (`since: "10m"`), status (`404`, `4xx`, `none`), method, User-Agent (text in it, such as an app's name; the app's bundle id is not in its traffic), GraphQL operation (`operation: "Login"`: its `operationName`, or the document's first operation; rows show it); paged. A host that matches nothing brings `similar_hosts`, recorded hosts that look alike (`acme-shop.com` for `acmeshop.com`) |
 | `search_flows` | text in URLs and headers (and body heads with `bodies`); the same filters and `similar_hosts` |
-| `wait_for_flows` | what an action on the device sent: take `checkpoint` from `list_flows` (or `capture_stats`) before acting, then call with `after: checkpoint`. Returns the flows answered since (a response or an error), oldest answer first, waiting up to `timeout` seconds (default 20, at most 30) for the first. Pass its `after` to the next call: each flow comes once. The same filters |
+| `wait_for_flows` | what an action on the device sent: take `checkpoint` from `list_flows` (or `capture_stats`) before acting, then call with `after: checkpoint`. Returns the flows answered since (a response or an error), oldest answer first, waiting up to `timeout` seconds (default 20, at most 30) for the first. Pass its `after` to the next call: each flow comes once. The same filters. A WebSocket is answered once, when it opens (`101`), and stays `open` until it closes |
 | `get_flow` | one flow; bodies only with `bodies`, cut to `max_body` bytes each if given |
+| `list_ws_messages` | a WebSocket's messages (a row with `websocket_messages`), oldest first, after a cursor (`after`: a checkpoint, or the last page's `after`); filters `direction` (`client`, `server`) and `text`. A text message's first 4 KiB, masked as it arrived as bodies are; a binary one, one past about 20 a second on its socket, or text masking cannot read gives its size only. Kept are the socket's first 5 messages (an auth message is usually one) and its newest 100; `missed` counts the others after the cursor. `open` and `close` (code, who closed) say how the socket stands. Messages wake no `wait_for_flows`, but a timed-out wait lists the sockets that got messages since (`websocket_activity`); `search_flows` with `bodies` looks in the kept ones |
 | `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
 | `summarize` | counts by host, User-Agent, status, method, device, content type, and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
 | `list_devices` | carried devices, their counts and last activity |
@@ -643,9 +644,11 @@ The main ones are in the [README](../README.md#limits). The rest:
   address, not by host: QUIC to hosts outside `--allow-hosts` falls back too
   (and without `--allow-hosts` as well). QUIC on a port other than 443 goes on,
   unrecorded.
-- mitmproxy holds each WebSocket message until it is complete, so one huge
-  message can use a lot of memory. If mitmproxy runs out, reqcove restarts it;
-  when it is down again within a minute after 5 restarts in a row, `run` stops.
+- mitmproxy holds each WebSocket message until it is complete, and inflates a
+  compressed one (permessage-deflate) whole, so one huge message can use a lot
+  of memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
+  mitmproxy runs out, reqcove restarts it; when it is down again within a
+  minute after 5 restarts in a row, `run` stops.
 - Phone calls through the exit node have not been tried.
 - Limits of one feature are in its section: [`--ui`](#on-the-iphone---ui),
   [`--web`](#in-mitmweb---web), [`--local-proxy`](#the-ios-simulator---local-proxy),

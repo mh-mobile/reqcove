@@ -105,7 +105,24 @@ func har(ctx context.Context, args []string) error {
 			}
 			return err
 		}
-		b, err := json.Marshal(harEntry(v))
+		e := harEntry(v)
+		if v.WSMessages > 0 { // its kept messages, masked as they arrived, as Chrome writes them
+			e.WSMessages = []harWSMessage{}
+			for p := (mcpserver.WSIn{ID: v.ID, Limit: 100}); ; {
+				var page capture.WSPage
+				if err := call("list_ws_messages", p, &page); err != nil {
+					break // evicted meanwhile: what came is kept
+				}
+				for _, m := range page.Messages {
+					e.WSMessages = append(e.WSMessages, harWS(m))
+				}
+				if !page.More {
+					break
+				}
+				p.After = page.After
+			}
+		}
+		b, err := json.Marshal(e)
 		if err != nil {
 			return err
 		}
@@ -184,6 +201,26 @@ type harEntryOut struct {
 	Conn     string     `json:"connection,omitempty"`
 	Device   string     `json:"_device,omitempty"`
 	Comment  string     `json:"comment,omitempty"`
+	// Chrome's field for a WebSocket's messages: the kept ones (its first 5 and newest 100).
+	WSMessages []harWSMessage `json:"_webSocketMessages,omitempty"`
+}
+
+type harWSMessage struct {
+	Type   string  `json:"type"` // send (the app's) or receive
+	Time   float64 `json:"time"`
+	Opcode int     `json:"opcode"` // 1 text, 2 binary
+	Data   string  `json:"data"`   // the kept head; empty when none was kept
+}
+
+func harWS(m capture.WSMessage) harWSMessage {
+	h := harWSMessage{Type: "receive", Time: m.Time, Opcode: 2, Data: m.Head}
+	if m.FromClient {
+		h.Type = "send"
+	}
+	if m.Text {
+		h.Opcode = 1
+	}
+	return h
 }
 
 func harEntry(v capture.FlowView) harEntryOut {
@@ -235,7 +272,7 @@ func harEntry(v capture.FlowView) harEntryOut {
 		notes = append(notes, "rule: "+r)
 	}
 	if v.WSMessages > 0 {
-		notes = append(notes, fmt.Sprintf("WebSocket: %d messages, %d bytes (not in the HAR)", v.WSMessages, v.WSBytes))
+		notes = append(notes, fmt.Sprintf("WebSocket: %d messages, %d bytes; _webSocketMessages has the %d kept (the first 5 and the newest 100), their heads only (4 KiB)", v.WSMessages, v.WSBytes, v.WSKept))
 	}
 	notes = append(notes, v.Notes...)
 	e.Comment = strings.Join(notes, "; ")

@@ -85,6 +85,21 @@ func TestHAR(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 1 || h.Log.Entries[0].Response.Content.Size != 11 || h.Log.Entries[0].Response.BodySize != 9 {
 		t.Errorf("a gzipped body's sizes: %v\n%s", err, out)
 	}
+	// A WebSocket: its kept messages, masked, in _webSocketMessages, past one page.
+	ev(map[string]any{"ev": "request", "id": "w1", "device": "devA", "host": "ws.example.com", "method": "GET", "ts": 160.0, "url": "wss://ws.example.com/"})
+	ev(map[string]any{"ev": "response", "id": "w1", "status": 101})
+	ev(map[string]any{"ev": "ws", "id": "w1", "from_client": true, "text": true, "size": 30, "ts": 160.5, "head": b64(`{"authToken":"wsS3cr3tHAR"}`)})
+	for i := range 150 {
+		ev(map[string]any{"ev": "ws", "id": "w1", "from_client": false, "text": true, "size": 8, "ts": 161.0 + float64(i), "head": b64(fmt.Sprintf(`{"n":%d}`, i))})
+	}
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "ws.example.com"}) })
+	h.Log.Entries = nil
+	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 1 || strings.Contains(out, "wsS3cr3tHAR") {
+		t.Fatalf("a WebSocket: %v\n%s", err, out)
+	}
+	if m := h.Log.Entries[0].WSMessages; len(m) != 105 || m[0].Type != "send" || m[0].Opcode != 1 || m[104].Data != `{"n":149}` || m[1].Type != "receive" {
+		t.Errorf("_webSocketMessages: %d, %+v", len(m), m[:min(2, len(m))])
+	}
 	// More than a page of list_flows (500), and a flow still open: all of them,
 	// in order, the open one said to be open.
 	for i := 0; i < 600; i++ {

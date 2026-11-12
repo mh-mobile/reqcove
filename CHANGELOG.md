@@ -2,6 +2,21 @@
 
 ## Unreleased (v0.5.0)
 
+### For agents
+
+- WebSocket messages are recorded: `list_ws_messages` reads a socket's
+  messages, oldest first, after a cursor (a checkpoint), each a text
+  message's first 4 KiB masked as bodies are; binary ones, and those past
+  about 20 a second on one socket, give their size only. Kept are a socket's
+  first 5 messages and its newest 100; `missed` counts the rest. Rows carry
+  `websocket_messages`; a socket stays `open` until it closes, and
+  `get_flow` gives how (`websocket_close`). A timed-out `wait_for_flows`
+  lists the sockets that got messages since (`websocket_activity`);
+  `search_flows` with `bodies` looks in kept messages; a HAR has them in
+  `_webSocketMessages`. An open socket that talks is evicted after the others.
+  Tried with the E2E test (a real socket through mitmproxy, a flood of 50,000
+  messages beside an HTTP request).
+
 ### Masking
 
 - Token shapes (JWTs, keys with known prefixes, `Bearer …`) are found behind
