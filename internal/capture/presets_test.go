@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +41,7 @@ func TestMockPresets(t *testing.T) {
     preset: profile-503
     description: the profile API is down
     status: 503
+    headers: {X-Mark: HDRMARK7}
     body: down
   - match: {url: "http://%[1]s/profile"}
     preset: profile-500
@@ -51,6 +53,12 @@ func TestMockPresets(t *testing.T) {
     preset: login-401
     status: 401
   - match: {url: "http://%[1]s/plain"}
+    status: 418
+  - match: {url: "http://%[1]s/order"}
+    preset: order-503
+    status: 503
+    body: BODYMARK7
+  - match: {url: "http://%[1]s/order*"}
     status: 418
 %[2]s`, o, extra)), 0o600)
 	}
@@ -78,12 +86,9 @@ func TestMockPresets(t *testing.T) {
 		t.Errorf("a preset off answers: %q", got)
 	}
 	ps, err := h.c.Presets(ctx)
-	if err != nil || len(ps) != 4 || ps[0].Name != "profile-503" || ps[0].Description != "the profile API is down" || ps[0].Active || *ps[0].Status != 503 {
+	if err != nil || len(ps) != 5 || ps[0].Name != "profile-503" || ps[0].Description != "the profile API is down" || ps[0].Active || *ps[0].Status != 503 {
 		b, _ := json.Marshal(ps)
 		t.Fatalf("presets: %s %v", b, err)
-	}
-	if b, _ := json.Marshal(ps); strings.Contains(string(b), "down\"") && !strings.Contains(string(b), "is down") {
-		t.Errorf("a body in the list: %s", b)
 	}
 
 	// Once: the next request, then the origin again.
@@ -109,13 +114,36 @@ func TestMockPresets(t *testing.T) {
 	if got := get("/profile", ""); !strings.HasPrefix(got, "500") {
 		t.Errorf("profile-500: %q", got)
 	}
-	// Re-activating replaces the limits (a dropped call made again).
+	// Re-activating replaces the limits (a dropped call made again): 1, then 3.
 	h.c.Activate(ctx, "profile-500", 60, 1)
-	if got := get("/profile", ""); !strings.HasPrefix(got, "500") {
-		t.Errorf("profile-500 again: %q", got)
+	h.c.Activate(ctx, "profile-500", 60, 3)
+	for i := range 3 {
+		if got := get("/profile", ""); !strings.HasPrefix(got, "500") {
+			t.Errorf("profile-500, %d of 3: %q", i+1, got)
+		}
 	}
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("profile-500 used up: %q", got)
+	}
+
+	// A preset on comes before a plain mock that matches too; off, the plain one answers.
+	if got := get("/order", ""); !strings.HasPrefix(got, "418") {
+		t.Errorf("preset off, plain mock: %q", got)
+	}
+	// Concurrent requests use the count exactly: 3 of 10 get the preset.
+	h.c.Activate(ctx, "order-503", 60, 3)
+	results := make(chan string, 10)
+	for range 10 {
+		go func() { results <- get("/order", "") }()
+	}
+	n503 := 0
+	for range 10 {
+		if strings.HasPrefix(<-results, "503") {
+			n503++
+		}
+	}
+	if n503 != 3 {
+		t.Errorf("%d of 10 concurrent requests got the preset, want 3", n503)
 	}
 
 	// Operations on one URL each have their own; an operation that does not
@@ -182,6 +210,10 @@ func TestMockPresets(t *testing.T) {
 	}
 	if got := ask(`{"op":"list"}`); !strings.Contains(got, `"refused"`) {
 		t.Errorf("no secret: %s", got)
+	}
+	// The addon's own list carries no body or header value.
+	if got := ask(fmt.Sprintf(`{"op":"list","secret":%q}`, h.c.SocksSecret)); !strings.Contains(got, "order-503") || strings.Contains(got, "BODYMARK7") || strings.Contains(got, "HDRMARK7") {
+		t.Errorf("list: %s", got)
 	}
 	if got := ask(fmt.Sprintf(`{"op":"activate","name":"profile-503","seconds":301,"secret":%q}`, h.c.SocksSecret)); !strings.Contains(got, "seconds must be from 1 to 300") {
 		t.Errorf("addon's bound: %s", got)
@@ -283,6 +315,9 @@ func TestMockFaults(t *testing.T) {
 	if got, _, reused := get(h2, "/after"); got != "origin /after" || !reused {
 		t.Errorf("after a reset stream: %q (same connection: %v)", got, reused)
 	}
+	if f := h.doneFlow("/close", false); !strings.Contains(f.Error, "closed by a mock (fault: close)") {
+		t.Errorf("HTTP/2 close row: error %q", f.Error)
+	}
 	// HTTP/1: the connection closes.
 	h1 := &http.Client{Transport: h.client("dev").Transport, Timeout: time.Minute}
 	if got, _, _ := get(h1, "/close"); !strings.HasPrefix(got, "error") {
@@ -295,5 +330,41 @@ func TestMockFaults(t *testing.T) {
 	f := h.doneFlow("/close-later", false)
 	if f.Preset != "close-later" || !strings.Contains(f.Error, "closed by a mock (fault: close), preset close-later") {
 		t.Errorf("row: preset %q, error %q", f.Preset, f.Error)
+	}
+}
+
+// TestPresetClocks (REQCOVE_E2E=1, mitmproxy's Python): a preset is off once
+// either clock passes its end: the monotonic clock stops while the computer
+// sleeps, so a day asleep must not leave a "once" waiting.
+func TestPresetClocks(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	dir := t.TempDir()
+	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+		os.WriteFile(filepath.Join(dir, f), b, 0o600)
+	}
+	script := `import sys, time, types
+sys.path.insert(0, sys.argv[1])
+import addon
+from pathlib import Path
+m = addon.Mock()
+m.add({"match": {"url": "https://a.example/x"}, "preset": "p", "status": 503}, Path(sys.argv[1]))
+m.control({"op": "activate", "name": "p", "seconds": 300, "times": 1})
+assert m._on("p")
+real = time.time
+addon.time = types.SimpleNamespace(time=lambda: real() + 86400, monotonic=time.monotonic)  # a day asleep
+assert not m._on("p"), "still on after a day asleep"
+addon.time = time
+m.control({"op": "activate", "name": "p", "seconds": 300})
+mono = time.monotonic
+addon.time = types.SimpleNamespace(time=time.time, monotonic=lambda: mono() + 301)
+assert not m._on("p"), "still on past its monotonic end"
+print("ok")
+`
+	bin, args := PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1", Dir: dir}, "python")
+	out, err := exec.Command(bin, append(args, "-c", script, dir)...).CombinedOutput()
+	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), "ok") {
+		t.Errorf("%v\n%s", err, out)
 	}
 }

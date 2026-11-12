@@ -187,8 +187,12 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return out, nil
 		case !closed(err):
-			if writeTools[req.Params.Name] && strings.Contains(err.Error(), "unknown tool") {
-				return toolError("the running reqcove has no " + req.Params.Name + ": it is an older version; restart `reqcove run` with this one"), nil
+			if presetTools[req.Params.Name] && strings.Contains(err.Error(), "unknown tool") {
+				v := "an older version"
+				if r := cs.InitializeResult(); r != nil && r.ServerInfo != nil {
+					v = "version " + r.ServerInfo.Version
+				}
+				return toolError("the running reqcove (" + v + ") has no " + req.Params.Name + ": restart `reqcove run` with this one (" + Version + ")"), nil
 			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case writeTools[req.Params.Name]:

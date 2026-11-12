@@ -70,8 +70,10 @@ func TestPresetTools(t *testing.T) {
 		t.Errorf("half a minute: %d s", f.seconds.Load())
 	}
 	n := f.activations.Load()
-	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "minutes": 6}); !isErr || !strings.Contains(got, "at most 5") || f.activations.Load() != n {
-		t.Errorf("6 minutes: %s %v", got, isErr)
+	for _, m := range []any{6, 0, -1, 1e30} { // 0 is not "the default": a short time asked for
+		if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "minutes": m}); !isErr || !strings.Contains(got, "at most 5") || f.activations.Load() != n {
+			t.Errorf("%v minutes: %s %v", m, got, isErr)
+		}
 	}
 	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "q"}); !isErr || !strings.Contains(got, "refused: no preset named 'q'") {
 		t.Errorf("unknown: %s %v", got, isErr)
@@ -79,18 +81,35 @@ func TestPresetTools(t *testing.T) {
 	if got, isErr := callText(t, cs, "list_mock_presets", nil); isErr || !strings.Contains(got, `"name":"p"`) {
 		t.Errorf("list: %s %v", got, isErr)
 	}
-	// The server without them (--mcp-http's) has none.
-	ct, st := mcp.NewInMemoryTransports()
-	if _, err := New(storeWith("a"), nil).Connect(context.Background(), st, nil); err != nil {
-		t.Fatal(err)
-	}
-	plain, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for tool, err := range plain.Tools(context.Background(), nil) {
-		if err != nil || writeTools[tool.Name] || tool.Name == "list_mock_presets" {
-			t.Errorf("read-only server has %s (%v)", tool.Name, err)
+}
+
+// run's two servers: the local one has the preset tools, --mcp-http's none.
+func TestServersPresetToolsLocalOnly(t *testing.T) {
+	status := func() StatusOut { return StatusOut{} }
+	local, remote := Servers(storeWith("a"), status, status, &fakePresets{})
+	for _, c := range []struct {
+		s    *mcp.Server
+		want int
+	}{{local, 3}, {remote, 0}} {
+		ct, st := mcp.NewInMemoryTransports()
+		if _, err := c.s.Connect(context.Background(), st, nil); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for tool, err := range cs.Tools(context.Background(), nil) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if presetTools[tool.Name] {
+				n++
+			}
+		}
+		if n != c.want {
+			t.Errorf("%d preset tools, want %d", n, c.want)
 		}
 	}
 }
@@ -101,8 +120,10 @@ func TestPresetToolsOlderRun(t *testing.T) {
 	sock := sockPath(t)
 	cs := agent(t, sock)
 	defer serve(t, sock, New(storeWith("a"), nil))()
-	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p"}); !isErr || !strings.Contains(got, "older version") {
-		t.Errorf("%q %v", got, isErr)
+	for _, tool := range []string{"list_mock_presets", "activate_mock"} {
+		if got, isErr := callText(t, cs, tool, map[string]any{"name": "p"}); !isErr || !strings.Contains(got, "has no "+tool) {
+			t.Errorf("%s: %q %v", tool, got, isErr)
+		}
 	}
 }
 

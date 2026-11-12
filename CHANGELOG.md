@@ -21,8 +21,9 @@
 - Mock presets: a mock in the `--rules` file marked `preset: NAME` (with an
   optional `description:`) answers only while an agent has turned it on, for
   at most 5 minutes and, if it says, 20 requests. Mocks also take `delay_ms`
-  (at most 30000) and `fault: close`. A changed rules file, a restart of
-  mitmproxy or of `run` turns presets off; `run` logs each one turned on.
+  (at most 30000) and `fault: close`. With `--rules-reload` a changed rules
+  file turns presets off, as does a restart of mitmproxy or of `run`; `run`
+  logs each one an agent turns on or off.
 - If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
   allows `activate_mock`: allow the read tools by name instead.
 

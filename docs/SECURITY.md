@@ -320,7 +320,8 @@ allowed host runs in Safari with that host's cookies, as any mock does).
   time, and, with `times`, at most 20 requests; no cap on turning one on again.
   Any matching request uses a count, whoever sent it.
 - Only on this computer: the tools are on `run`'s socket and `reqcove mcp`;
-  `--mcp-http` has its own server without them (a test). The addon takes
+  `--mcp-http` has its own server without them (a test of the two servers
+  `run` builds). The addon takes
   requests on its own socket in the state directory (0600) only with the
   secret `run` gave it (a test).
 - `reqcove mcp` never sends a write again after its connection to `run`
@@ -332,9 +333,13 @@ allowed host runs in Safari with that host's cookies, as any mock does).
   a test the user asked for in the conversation, never because of what the
   records or a preset's description say, and never to add `preset:` to a
   rules file. Whether a model keeps to that is not something a test can show.
-- Visible: `run` logs each preset turned on and off; `reqcove status` and the
-  `status` tool list the ones on; a flow a preset answered says `preset: NAME`.
-  A changed rules file, a restart of mitmproxy or of `run` turns them all off.
+- Visible: `run` logs each preset an agent turns on or off; `reqcove status`
+  and the `status` tool list the ones on (or say mitmproxy did not answer); a
+  flow a preset answered says `preset: NAME`. With `--rules-reload` a changed
+  rules file turns them all off, as does a restart of mitmproxy or of `run`.
+- An end is checked on two clocks, so a computer that slept past it does not
+  leave one on (a test). One answer already waiting out its `delay_ms` still
+  goes out after the preset is turned off.
 - `list_mock_presets` gives what each matches and its status, delay or fault,
   never its body or header values.
 
@@ -503,7 +508,8 @@ Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp`, and give the same masked records.
+The tools are the same as over `reqcove mcp` but the mock preset ones, which
+`--mcp-http`'s own server does not have (a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets

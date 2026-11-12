@@ -225,6 +225,7 @@ func status(ctx context.Context, args []string) error {
 		NextSteps []string              `json:"next_steps"`
 		Capture   map[string]any        `json:"capture"`
 		Active    []mcpserver.PresetOut `json:"active_mock_presets"`
+		ActiveErr string                `json:"active_mock_presets_error"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -253,7 +254,11 @@ func status(ctx context.Context, args []string) error {
 			}
 			on = append(on, s)
 		}
-		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), orDash(strings.Join(on, "; ")))
+		shown := orDash(strings.Join(on, "; "))
+		if out.ActiveErr != "" {
+			shown = "unknown (" + out.ActiveErr + ")"
+		}
+		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), shown)
 	}
 	printCA(*state)
 	if len(out.NextSteps) == 0 {

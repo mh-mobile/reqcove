@@ -556,9 +556,11 @@ class Mock:
         return [m[6] for m in self.replacements if m[6] is not None]
 
     def _on(self, name):
-        """Whether preset name is on now; one past its time is turned off."""
+        """Whether preset name is on now; one past its time is turned off.
+        Both clocks: the monotonic one stops while the computer sleeps (macOS,
+        Linux), the wall clock can be set back; whichever ends first wins."""
         a = self.active.get(name)
-        if a and time.monotonic() >= a[0]:
+        if a and (time.monotonic() >= a[0] or time.time() >= a[2]):
             del self.active[name]
             a = None
         return a is not None

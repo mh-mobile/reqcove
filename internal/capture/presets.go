@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -48,9 +49,17 @@ type Activation struct {
 	TurnedOff []string `json:"turned_off"` // presets for the same match it turned off
 }
 
-// ErrNoControl: the addon did not answer (mitmproxy restarting, or a build
-// without presets).
+// ErrNoControl: the addon could not be reached (mitmproxy restarting):
+// nothing was asked.
 var ErrNoControl = errors.New("mitmproxy did not answer about presets (restarting?)")
+
+// ErrUncertain: the request went to the addon but no answer came back: it may
+// have taken effect.
+var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect; call list_mock_presets to see")
+
+// PresetName is a preset name's form, as the addon checks it: never sent (nor
+// logged) when it is not one.
+var PresetName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 func (c *Capture) control(ctx context.Context, req map[string]any, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -67,11 +76,11 @@ func (c *Capture) control(ctx context.Context, req map[string]any, out any) erro
 	req["secret"] = c.SocksSecret
 	b, _ := json.Marshal(req)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
-		return ErrNoControl
+		return ErrUncertain // part of it may have gone
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
-		return ErrNoControl
+		return ErrUncertain
 	}
 	var e struct {
 		Error string `json:"error"`
@@ -95,6 +104,9 @@ func (c *Capture) Presets(ctx context.Context) ([]Preset, error) {
 // requests; it replaces the limits of a preset already on.
 func (c *Capture) Activate(ctx context.Context, name string, seconds, times int) (Activation, error) {
 	var a Activation
+	if !PresetName.MatchString(name) {
+		return a, errors.New("no preset by that name")
+	}
 	if seconds < 1 || seconds > PresetMaxSeconds {
 		return a, errors.New("at most 5 minutes")
 	}
@@ -113,6 +125,9 @@ func (c *Capture) Activate(ctx context.Context, name string, seconds, times int)
 func (c *Capture) Deactivate(ctx context.Context, name string) (wasActive bool, err error) {
 	var out struct {
 		WasActive bool `json:"was_active"`
+	}
+	if !PresetName.MatchString(name) {
+		return false, errors.New("no preset by that name")
 	}
 	err = c.control(ctx, map[string]any{"op": "deactivate", "name": name}, &out)
 	return out.WasActive, err

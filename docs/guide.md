@@ -120,7 +120,8 @@ cloud computer joins your tailnet through Tailscale's OAuth apps):
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` serves the same tools over HTTP on the node, and prints the URL,
+`run` serves the same tools over HTTP on the node, but the mock preset ones
+(`list_mock_presets`, `activate_mock`, `deactivate_mock`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
 `Authorization: Bearer <token>`.
 
@@ -586,10 +587,12 @@ mock:
   mock closed it.
 - `delay_ms` and `fault: close` work in plain mocks too. `delay_ms` delays a
   mock's answer only (an answer from the server is never delayed).
-- A changed `--rules` file (with `--rules-reload`, also one that does not
-  load), a restart of mitmproxy or of `run` turns every preset off. `run` logs
-  each one turned on and off; `reqcove status` and the `status` tool show which
-  are on.
+- With `--rules-reload`, a changed file (also one that does not load) turns
+  every preset off; so does a restart of mitmproxy or of `run`. `run` logs each
+  one an agent turns on or off (not one that ends by its time or count);
+  `reqcove status` and the `status` tool show which are on.
+- One answer already waiting out its `delay_ms` still goes out after the
+  preset is turned off.
 - Never let an agent add `preset:` to the file: writing a preset is your
   consent that an agent may turn it on.
 

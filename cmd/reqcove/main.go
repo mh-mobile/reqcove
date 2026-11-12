@@ -493,24 +493,26 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
-	tools := mcpserver.New(cap.Store, func() mcpserver.StatusOut {
-		out := statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
+	remoteStatus := func() mcpserver.StatusOut {
+		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
+	}
+	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
+		out := remoteStatus()
 		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
 			if ps, err := cap.Presets(ctx); err == nil {
 				out.ActivePresets = mcpserver.PresetsView(ps, true)
+			} else {
+				out.PresetsError = err.Error()
 			}
 		}
 		return out
-	})
+	}, remoteStatus, cap)
 	var mcpHandler http.Handler
 	if *mcpHTTP { // its own server: read-only, never the preset tools
-		mcpHandler = mcpserver.HTTP(mcpserver.New(cap.Store, func() mcpserver.StatusOut {
-			return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
-		}), mcpToken, exitnode.Caller)
+		mcpHandler = mcpserver.HTTP(remote, mcpToken, exitnode.Caller)
 	}
-	mcpserver.AddPresetTools(tools, cap.Store, cap)
 	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
