@@ -153,7 +153,7 @@ Reqcove が復号できるのは、クライアントが Reqcove を通して送
 | 自分で動かす Web アプリのバックエンド | ほかの API への呼び出し。Remote Proxy 経由（[手順](#web-アプリのバックエンドを記録する)） | Rails のアプリ（Net::HTTP、Faraday） |
 | このコンピュータのアプリ、iOS シミュレーター | `--local-proxy` で対応（[手順](#ios-シミュレーターを記録する--local-proxy)） | この Mac の Chrome、iOS 27 のシミュレーターの Safari |
 | 別の Mac | Exit Node の `--device` として。Tailscale のアプリで（[手順](#別の-mac-を記録する)） | macOS 27 の VM |
-| gRPC のアプリ | 呼び出しとステータス。protobuf のメッセージは構造だけ、`--proto` を渡せば名前付きで（[詳しく](#grpc)） | E2E テストだけ |
+| gRPC のアプリ | 呼び出しとステータス。protobuf のメッセージは構造だけ、`--proto` を渡せば名前付きで（[詳しく](#grpc)） | iPhone の試験用アプリ（URLSession で Connect、gRPC-Web、gRPC）と E2E テスト |
 
 ### 証明書ピンニングをするアプリを通す（`--pass-hosts`）
 
@@ -187,7 +187,7 @@ protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` �
 
 `--proto FILE` に、コンパイルしたスキーマ（`protoc --descriptor_set_out=FILE --include_imports`）を渡すと、型がわかるメッセージは、フィールドの名前付きの JSON として出し、JSON と同じく名前でマスクします。型は、パスが示すメソッド（gRPC、gRPC-Web、Connect、Twirp の `/pkg.Service/Method`。リクエストでは入力、レスポンスでは出力の型）か、Content-Type の `messageType` から決めます。`bytes` のフィールドは長さだけ、スキーマにないフィールドは構造だけを出します。`--no-redact` のときは、protobuf のボディは届いたまま残します。
 
-gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。確かめたのは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。iPhone のアプリでは、まだ試していません。
+gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。gRPC のライブラリに信頼する証明書を指定するアプリも同じで、デバッグ版で Reqcove の CA を信頼させれば読めるはずです（未確認）。確かめたのは2つです。1つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで）。もう1つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
 
 ### Android を記録する
 

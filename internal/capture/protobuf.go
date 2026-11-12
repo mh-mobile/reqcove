@@ -29,6 +29,7 @@ type protoWalk struct {
 	capped  bool // a cap was reached: what follows is not read
 	short   bool // the top level ran out of bytes (a cut head), rather than read wrong
 	held    bool // the top level read a string or a whole sub-message: a cut prefix is then protobuf, not chance
+	strings bool // only length-delimited fields: text read as protobuf must not show its bytes as numbers
 }
 
 func (w *protoWalk) printf(b *strings.Builder, format string, a ...any) {
@@ -100,6 +101,9 @@ func (w *protoWalk) message(b *strings.Builder, msg []byte, depth int) bool {
 		}
 		i += n
 		num, typ := tag>>3, tag&7
+		if w.strings && typ != 2 {
+			return false
+		}
 		switch typ {
 		case 0:
 			v, n := protoVarint(msg[i:])
@@ -217,9 +221,17 @@ func isProtobuf(ct string) bool {
 
 // renderProto renders a protobuf message: with --proto and its type known,
 // as JSON masked by name; else its structure only.
+// A body that is all printable text (a message of one string field whose
+// length is printable is, as "\n(Good, …") is read only if it is whole and
+// holds strings and sub-messages alone: text read as numbers would show its
+// bytes; read as strings, only a few of them (tags and lengths).
 func renderProto(msg []byte, ct, path string, request, cut bool) ([]byte, string) {
 	if len(msg) > 0 && utf8.Valid(trimCutRune(msg)) && strictText(trimCutRune(msg)) {
-		return []byte(protoNotShown), "protobuf structure: none, the body is text" // text under a protobuf type: its bytes would read as numbers
+		w := &protoWalk{request: request, budget: 32*len(msg) + 1024, strings: true}
+		var b strings.Builder
+		if cut || !w.message(&b, msg, 0) || w.capped {
+			return []byte(protoNotShown), "protobuf structure: none, the body is text" // text under a protobuf type: its bytes would read as numbers
+		}
 	}
 	if md := protoMessageType(ct, path, request); md != nil {
 		return []byte(renderProtoJSON(msg, md, request, cut)), "protobuf as " + string(md.FullName()) + " (--proto)"

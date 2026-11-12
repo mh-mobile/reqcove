@@ -282,3 +282,25 @@ func TestProtoReview(t *testing.T) {
 		t.Errorf("two bodies not shown read as the same: %+v", d.RequestBody)
 	}
 }
+
+// TestProtoPrintable: a message of one string field whose length is a
+// printable byte is all printable (seen on an iPhone: Eliza's gRPC answer);
+// it reads as strings, while text that would read as numbers shows nothing.
+func TestProtoPrintable(t *testing.T) {
+	msg := append([]byte{0x0a, 0x28}, "Good, tell me more about these feelings."...)
+	if got, _ := renderProto(msg, "application/grpc", "/x.Y/Z", false, false); string(got) != "1: string(40)\n" {
+		t.Errorf("one printable string field: %q", got)
+	}
+	for _, b := range []string{"a12345678secretkk", "493817", "not protobuf at all", fuzzSecret} {
+		got, _ := renderProto([]byte(b), "application/x-protobuf", "/v1/x", false, false)
+		if string(got) != protoNotShown && leak(string(got), b[:min(len(b), 5)]) != "" {
+			t.Errorf("%q -> %q", b, got)
+		}
+		if strings.ContainsAny(string(got), "0123456789") && !strings.Contains(string(got), "string(") && string(got) != protoNotShown {
+			t.Errorf("%q shows numbers: %q", b, got)
+		}
+	}
+	if got, _ := renderProto(msg[:20], "application/grpc", "/x.Y/Z", false, true); string(got) != protoNotShown {
+		t.Errorf("printable and cut: %q", got)
+	}
+}

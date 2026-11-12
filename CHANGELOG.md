@@ -16,14 +16,17 @@
   `_webSocketMessages`. An open socket that talks is evicted after the others
   (among the oldest 16). A 101 that is not a WebSocket (h2c) is done at once.
   Tried with the E2E test (a real socket through mitmproxy, a flood of 50,000
-  messages beside an HTTP request).
+  messages beside an HTTP request), and on an iPhone (a test app over
+  URLSession: an auth message's token masked both ways, the close).
 - gRPC: rows and `summarize` (`by_grpc_status`) show a call's status, from
   the response headers (a trailers-only error) or its trailers, `pending`
   until they come; `get_flow` has `response_trailers` (HTTP/2's, or gRPC-Web's
   last frame). A body's note counts its messages; JSON ones are de-framed and
   masked as JSON. `-bin` metadata shows its size only; `grpc-message` is
   decoded and masked. Trailers are searched, compared by `diff_flows` and
-  written to a HAR's comment. Tried with an E2E test over HTTP/2, not an app.
+  written to a HAR's comment. Tried with an E2E test over HTTP/2, and on an
+  iPhone (a test app over URLSession: Connect, gRPC-Web and gRPC to
+  Connect's demo server, with `--proto`).
 - Protobuf bodies (gRPC's messages, `application/x-protobuf` and the like) are
   handed out as reqcove's rendering (`view`): without a schema, their
   structure (field numbers, types, lengths, a string's length, numbers in

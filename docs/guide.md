@@ -248,7 +248,7 @@ Reqcove's CA. Who trusts it differs:
 | a web app's backend you run | its calls to other APIs, through the Remote Proxy ([how](#a-web-apps-backend)) | a Rails app (Net::HTTP, Faraday) |
 | this computer's apps, the iOS Simulator | with `--local-proxy` ([how](#the-ios-simulator---local-proxy)) | Chrome on this Mac; Safari on the iOS 27 Simulator |
 | another Mac | as a `--device` on the exit node, with the Tailscale app ([how](#another-mac)) | a macOS 27 VM |
-| gRPC apps | their calls and status; protobuf messages by structure, or by name with `--proto` ([how](#grpc)) | the E2E test only |
+| gRPC apps | their calls and status; protobuf messages by structure, or by name with `--proto` ([how](#grpc)) | an iPhone test app over URLSession (Connect, gRPC-Web, gRPC); the E2E test |
 
 ### Apps that pin certificates (`--pass-hosts`)
 
@@ -314,9 +314,14 @@ came.
 
 Apps built on gRPC-core (Google's SDKs among them) trust their own list of
 CAs, not the ones the iPhone trusts, so their calls show as TLS failures (from
-gRPC's mailing list, not tried). Tried so far: the E2E test, gRPC's shape over
+gRPC's mailing list, not tried); so do apps whose gRPC library is told whose
+certificates to trust, unless a debug build trusts Reqcove's CA (not tried).
+Tried: on an iPhone, a test app calling Connect's demo server through
+URLSession (the system's trust, the CA installed) over Connect, gRPC-Web and
+gRPC, with `--proto` (statuses from the trailers and from gRPC-Web's last
+frame, the messages by their names); and the E2E test, gRPC's shape over
 HTTP/2 through mitmproxy (a body over 64 KiB with its status in the trailers,
-and a trailers-only error), not an app on an iPhone.
+and a trailers-only error).
 
 ### Android
 

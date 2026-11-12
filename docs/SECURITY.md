@@ -181,8 +181,10 @@ So "delete the directory" above means each of them.
   `--no-redact` returns them. Protobuf (by its content type, or in gRPC's
   frames) is the exception: reqcove hands out its own rendering instead of
   the bytes (`view` says so); a body that does not read as protobuf to its
-  end (or is text) shows nothing, and a head cut before its end shows what
-  it read only when that held a string or a whole sub-message. Without a schema, it is the structure only:
+  end shows nothing, nor does printable text unless it reads whole as strings
+  and sub-messages alone (one string field of printable length is printable),
+  and a head cut before its end shows what it read only when that held a
+  string or a whole sub-message. Without a schema, it is the structure only:
   field numbers, wire types, lengths, a string's length but never its text,
   and numbers in responses; in requests only 1-byte numbers (0 to 127:
   enums, booleans, but also a PIN or CVV that small), larger ones as their
