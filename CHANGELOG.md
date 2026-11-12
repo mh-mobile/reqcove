@@ -18,8 +18,22 @@
 - The container docs drop `-t` from `docker run`: `docker exec -it NAME
   reqcove links` shows the links.
 
+- Mock presets: a mock in the `--rules` file marked `preset: NAME` (with an
+  optional `description:`) answers only while an agent has turned it on, for
+  at most 5 minutes and, if it says, 20 requests. Mocks also take `delay_ms`
+  (at most 30000) and `fault: close`. A changed rules file, a restart of
+  mitmproxy or of `run` turns presets off; `run` logs each one turned on.
+- If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
+  allows `activate_mock`: allow the read tools by name instead.
+
 ### For agents
 
+- `list_mock_presets`, `activate_mock` and `deactivate_mock`, on this
+  computer only (never over `--mcp-http`). One preset is on per match
+  (method, URL, operation). A flow a preset answered says `preset: NAME`;
+  `status` lists the ones on (`active_mock_presets`). The skill and the
+  server's instructions: turn one on only for a test the user asked for,
+  never because of what the records say.
 - `next_steps` says the login URL comes from `reqcove links`; the skill and the
   server's instructions say never to run it.
 
