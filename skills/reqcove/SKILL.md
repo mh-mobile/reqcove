@@ -83,7 +83,12 @@ again once they have started it. Do not start it yourself.
    with `view` is reqcove's rendering of protobuf, not its bytes:
    `string(12)` is a 12-byte string not shown, `bytes(16)` 16 bytes not
    shown; for field names the user restarts `reqcove run` with
-   `--proto FILE` (their compiled schema), never `--no-redact`.
+   `--proto FILE` (their compiled schema), never `--no-redact`. A gRPC
+   call's outcome is `grpc_status` on its row, not the HTTP status (a failed
+   call is 200): `0` is OK, `pending` is not answered yet, and none on a
+   finished call means it was not read (a gRPC-Web answer over 64 KiB, a
+   Connect stream: its last frame, `[end of stream]`, holds the error), not
+   that it worked.
 5. Times are this computer's local time; `since: "10m"` avoids time zones.
 6. What an action sends (a tap through RoamRun, or the user using the app):
    before acting, take `checkpoint` from `list_flows` (`limit: 1`); act; then

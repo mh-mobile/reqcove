@@ -26,7 +26,9 @@
   decoded and masked. Trailers are searched, compared by `diff_flows` and
   written to a HAR's comment. Tried with an E2E test over HTTP/2, and on an
   iPhone (a test app over URLSession: Connect, gRPC-Web and gRPC to
-  Connect's demo server, with `--proto`).
+  Connect's demo server, with `--proto`; gRPC's answer showed nothing there:
+  fixed after, by a test). A Connect stream's last frame (flag 2: its error,
+  as JSON) is shown as `[end of stream]`, masked.
 - Protobuf bodies (gRPC's messages, `application/x-protobuf` and the like) are
   handed out as reqcove's rendering (`view`): without a schema, their
   structure (field numbers, types, lengths, a string's length, numbers in

@@ -37,12 +37,13 @@ type grpcFrame struct {
 
 // grpcFrames reads the frames in a head, at most grpcMaxFrames; one cut by
 // the head's end comes last, with no payload. nil if the head is not framed
-// (a flag gRPC does not use: 1 compressed, 0x80 gRPC-Web's trailers). Never
+// (a flag gRPC does not use: 1 compressed, 2 Connect's end of stream, 0x80
+// gRPC-Web's trailers). Never
 // allocates by a length a site declared.
 func grpcFrames(head []byte) []grpcFrame {
 	var out []grpcFrame
 	for i := 0; i+5 <= len(head) && len(out) < grpcMaxFrames; {
-		if head[i]&^0x81 != 0 {
+		if head[i]&^0x83 != 0 {
 			return nil
 		}
 		n := int(binary.BigEndian.Uint32(head[i+1 : i+5]))
@@ -85,6 +86,9 @@ func (s *Store) grpcBody(head []byte, ct, path string, request, redact, cut bool
 					}
 				}
 			}
+			continue
+		case f.flag&2 != 0 && f.flag&1 == 0 && f.payload != nil: // Connect's end of stream: JSON (its error, its trailers), whatever the codec
+			lines = append(lines, "[end of stream] "+string(maskBody(f.payload, "application/json", request)))
 			continue
 		case f.flag&1 != 0:
 			compressed++

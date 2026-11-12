@@ -265,3 +265,18 @@ func TestGRPCItemReview(t *testing.T) {
 		t.Errorf("trailers not searched")
 	}
 }
+
+// TestConnectStream: a Connect stream's answer ends with a frame of flag 2
+// (JSON: its error); the final review found such answers left out whole.
+func TestConnectStream(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	b64 := func(x string) string { return base64.StdEncoding.EncodeToString([]byte(x)) }
+	body := grpcFrame1(0, `{"sentence":"hi"}`) + grpcFrame1(2, `{"error":{"code":"unauthenticated","message":"token GRPCconnect01x expired","details":[]},"metadata":{"x-session-token":["GRPCconnect02x"]}}`)
+	grpcApply(s, map[string]any{"ev": "request", "id": "c", "method": "POST", "url": "https://demo.example/x.Y/Introduce", "host": "demo.example", "path": "/x.Y/Introduce", "headers": [][2]string{{"Content-Type", "application/connect+json"}}})
+	grpcApply(s, map[string]any{"ev": "response", "id": "c", "status": 200, "headers": [][2]string{{"Content-Type", "application/connect+json"}}})
+	grpcApply(s, map[string]any{"ev": "body", "id": "c", "dir": "response", "decoded": true, "final": true, "size": len(body), "head": b64(body)})
+	v, _ := s.Get("c", true)
+	if !strings.Contains(v.RespBodyText, `"sentence":"hi"`) || !strings.Contains(v.RespBodyText, "[end of stream]") || !strings.Contains(v.RespBodyText, "unauthenticated") || strings.Contains(v.RespBodyText, "GRPCconnect02x") {
+		t.Errorf("a Connect stream: %q (%s)", v.RespBodyText, v.RespBodyEnc)
+	}
+}

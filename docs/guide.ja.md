@@ -173,7 +173,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### gRPC
 
-gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。protobuf のメッセージは下のとおりです。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
+gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）で、一覧の行と `summarize` にステータス（`grpc_status`。`0` が成功、`16` が UNAUTHENTICATED など。トレーラーが届くまでは `pending`）が出ます。メッセージのない答え（trailers-only。エラーのときの普通の形）ではレスポンスのヘッダーから、それ以外はトレーラー（HTTP/2 のもの、gRPC-Web では最後のフレーム。ただし残したボディの先頭に入っているときだけで、64 KiB を超えるボディでは読めません）から読みます。`grpc_message` はデコードしてマスクします（`--no-redact` のときは送られたまま）。トレーラーは検索の対象になり、`diff_flows` で比べられ、HAR ではコメントに入ります。ボディの注記には、メッセージの数と大きさが出ます。JSON のメッセージ（`application/grpc+json`、`connect+json`）は 1 行に 1 つずつ、JSON としてマスクして返します。protobuf のメッセージは下のとおりです。Connect のストリームの最後のフレーム（エラーとトレーラー。JSON）は、`[end of stream]` として JSON と同じくマスクして返します。Connect のストリームの結果はこのフレームにあり、`grpc_status` には出ません。`-bin` で終わるメタデータ（バイナリ）は、大きさだけを出します。
 
 protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` など）はテキストではないので、Reqcove は中身のバイト列ではなく、Reqcove が書き起こしたものを返します。ボディの `view` がその印です。スキーマがないときは構造だけです。フィールドの番号、型、長さ、文字列は `string(12)` のように長さだけ（中身は出しません）、レスポンスの数値を出します。リクエストの数値は 128 未満のもの（enum や真偽値など）だけを出し、それより大きいもの（数値で送ったコードなど）はバイト数だけを出します。128 未満なら、PIN などもそのまま出ます。
 
@@ -187,7 +187,7 @@ protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` �
 
 `--proto FILE` に、コンパイルしたスキーマ（`protoc --descriptor_set_out=FILE --include_imports`）を渡すと、型がわかるメッセージは、フィールドの名前付きの JSON として出し、JSON と同じく名前でマスクします。型は、パスが示すメソッド（gRPC、gRPC-Web、Connect、Twirp の `/pkg.Service/Method`。リクエストでは入力、レスポンスでは出力の型）か、Content-Type の `messageType` から決めます。`bytes` のフィールドは長さだけ、スキーマにないフィールドは構造だけを出します。`--no-redact` のときは、protobuf のボディは届いたまま残します。
 
-gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。gRPC のライブラリに信頼する証明書を指定するアプリも同じで、デバッグ版で Reqcove の CA を信頼させれば読めるはずです（未確認）。確かめたのは2つです。1つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで）。もう1つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
+gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによる。未確認）。gRPC のライブラリに信頼する証明書を指定するアプリも同じで、デバッグ版で Reqcove の CA を信頼させれば読めるはずです（未確認）。確かめたのは2つです。1つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで。ただし gRPC のレスポンスは、試したビルドでは出ませんでした。そのあと直し、テストで確かめましたが、iPhone では試し直していません。スキーマなしの表示はテストだけです）。もう1つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
 
 ### Android を記録する
 
@@ -388,7 +388,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 
-iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`。テストのみ：`--mask-values`、`diff_flows`、`max_body`、`--mcp-http` の回数制限。
+iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`、試験用アプリでの `diff_flows`（二重に送ったリクエスト）、`list_ws_messages`、`--proto`。テストのみ：`--mask-values`、`max_body`、`--mcp-http` の回数制限、`multipart/form-data`。
 
 コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
 
@@ -415,7 +415,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 
 - IPv6 は拒否します。アプリはすぐに IPv4 にフォールバックします。
 - QUIC は Apple 宛てを除いてドロップするので、アプリは TCP にフォールバックします。判定はホストではなくアドレスで行うため、`--allow-hosts` にないホストの QUIC も（`--allow-hosts` を指定しないときも）フォールバックします。443 番以外のポートの QUIC はそのまま通し、記録しません。
-- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` が止まります。
+- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します（mitmproxy のコードを読んだもので、圧縮されたメッセージは試していません）。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` が止まります。
 - Exit Node 経由の通話は未確認です。
 - 機能ごとの制限事項はそれぞれの節にあります：[`--ui`](#iphone-で見る--ui)、[`--web`](#mitmweb-で見る--web)、[`--local-proxy`](#ios-シミュレーターを記録する--local-proxy)、[ルール](#ルールを書く--rules)、[上流プロキシ](#上流プロキシに回す--upstream-proxy)。
 
