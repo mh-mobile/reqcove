@@ -44,6 +44,11 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
+	Trailers    [][2]string `json:"trailers"`   // done: the response's trailers (HTTP/2's: gRPC's status)
+	Text        bool        `json:"text"`       // ws: a text message
+	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)
+	Code        int         `json:"code"`       // ws_end: the close code
+	ByClient    bool        `json:"by_client"`  // ws_end: the client closed it
 	// hello
 	Mitmproxy    string         `json:"mitmproxy"`
 	Python       string         `json:"python"`
@@ -55,10 +60,14 @@ type event struct {
 	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
 	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
 	// counters the addon attaches to every line
-	DroppedBodies int64  `json:"dropped_bodies"`
-	DroppedEvents int64  `json:"dropped_events"`
-	OutOfScope    int64  `json:"out_of_scope"`
-	op            string // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
+	DroppedBodies int64       `json:"dropped_bodies"`
+	DroppedEvents int64       `json:"dropped_events"`
+	OutOfScope    int64       `json:"out_of_scope"`
+	op            string      // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
+	grpcTrailers  [][2]string // body: gRPC-Web's trailer frame, masked
+	view          string      // body: what the head was rendered as (Body.View)
+	wsHead        string      // ws: the message's head, masked before the lock
+	wsNote        string      // ws: why it has none
 }
 
 const wireVersion = 2
@@ -72,38 +81,42 @@ type Body struct {
 	Decoded   bool   `json:"decoded"`             // head is decoded (false: wire bytes)
 	Encoding  string `json:"encoding,omitempty"`
 	Note      string `json:"note,omitempty"`
+	View      string `json:"view,omitempty"` // the head is reqcove's rendering, not the bytes: protobuf's structure, or the message type --proto read it as
 }
 
 type Flow struct {
-	seq         int64       // arrival order; the list cursor
-	answered    int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
-	opNamed     bool        // the URL or a header named Operation: the body does not change it
-	ID          string      `json:"id"`
-	Conn        string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
-	Device      string      `json:"device,omitempty"`
-	Client      string      `json:"client,omitempty"`
-	Start       float64     `json:"start"`
-	End         float64     `json:"end,omitempty"`
-	State       string      `json:"state"` // open, done, error
-	Method      string      `json:"method"`
-	URL         string      `json:"url"` // as the app sent it, before --rules
-	MappedURL   string      `json:"mapped_url,omitempty"`
-	Rewrites    []string    `json:"rewrites,omitempty"`
-	Operation   string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
-	Mocked      bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
-	Host        string      `json:"host"`
-	Path        string      `json:"path"`
-	HTTPVersion string      `json:"http_version"`
-	ReqHeaders  [][2]string `json:"request_headers"`
-	ReqBody     Body        `json:"request_body"`
-	Status      int         `json:"status,omitempty"`
-	Reason      string      `json:"reason,omitempty"`
-	RespHeaders [][2]string `json:"response_headers,omitempty"`
-	RespBody    Body        `json:"response_body"`
-	WSMessages  int         `json:"websocket_messages,omitempty"`
-	WSBytes     int64       `json:"websocket_bytes,omitempty"`
-	Error       string      `json:"error,omitempty"`
-	Notes       []string    `json:"notes,omitempty"` // reqcove's, about what it left out
+	seq          int64       // arrival order; the list cursor
+	answered     int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
+	ws           *wsLog      // a WebSocket's kept messages
+	opNamed      bool        // the URL or a header named Operation: the body does not change it
+	ID           string      `json:"id"`
+	Conn         string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
+	Device       string      `json:"device,omitempty"`
+	Client       string      `json:"client,omitempty"`
+	Start        float64     `json:"start"`
+	End          float64     `json:"end,omitempty"`
+	State        string      `json:"state"` // open, done, error
+	Method       string      `json:"method"`
+	URL          string      `json:"url"` // as the app sent it, before --rules
+	MappedURL    string      `json:"mapped_url,omitempty"`
+	Rewrites     []string    `json:"rewrites,omitempty"`
+	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
+	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
+	Host         string      `json:"host"`
+	Path         string      `json:"path"`
+	HTTPVersion  string      `json:"http_version"`
+	ReqHeaders   [][2]string `json:"request_headers"`
+	ReqBody      Body        `json:"request_body"`
+	Status       int         `json:"status,omitempty"`
+	Reason       string      `json:"reason,omitempty"`
+	RespHeaders  [][2]string `json:"response_headers,omitempty"`
+	RespTrailers [][2]string `json:"response_trailers,omitempty"` // HTTP/2's, or gRPC-Web's last frame: gRPC's status
+	RespBody     Body        `json:"response_body"`
+	WSMessages   int         `json:"websocket_messages,omitempty"`
+	WSBytes      int64       `json:"websocket_bytes,omitempty"`
+	WSClose      *WSClose    `json:"websocket_close,omitempty"` // how the socket ended; none while it is open
+	Error        string      `json:"error,omitempty"`
+	Notes        []string    `json:"notes,omitempty"` // reqcove's, about what it left out
 }
 
 // bytes is what a flow holds that a site or an app controls the size of: the
@@ -116,7 +129,13 @@ func (f *Flow) bytes() int {
 	for _, note := range f.Notes {
 		n += len(note) + 16
 	}
-	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders} {
+	if f.ws != nil {
+		n += f.ws.bytes + 64*(len(f.ws.first)+len(f.ws.last))
+	}
+	if f.WSClose != nil {
+		n += len(f.WSClose.Reason)
+	}
+	for _, h := range [][][2]string{f.ReqHeaders, f.RespHeaders, f.RespTrailers} {
 		for _, kv := range h {
 			n += len(kv[0]) + len(kv[1]) + 64 // and the strings' and slot's own overhead
 		}
@@ -152,6 +171,7 @@ type Store struct {
 	passCount     int                     // all seen, evicted included
 	addonDropped  [2]int64                // bodies, events
 	badLines      int64
+	maskFailed    int64 // lines masking panicked on (counted in badLines too)
 	unknownVer    int64
 	orphanUpdates int64
 	evicted       int64
@@ -166,7 +186,7 @@ type Store struct {
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
 	wake          chan struct{} // closed when a flow is answered, for Wait; nil until a waiter asks
 	started       time.Time
-	base          int64  // the first seq is base+1: base is started in unix ms, so a cursor of an earlier run is below it
+	base          int64  // the first seq is base+1: base is started in unix µs, so a cursor of an earlier run is below it
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
@@ -264,11 +284,11 @@ const (
 func NewStore(maxFlows, maxBytes int) *Store {
 	// Permissive until SetScope: capture.Start always sets the real scope.
 	now := time.Now()
-	// ponytail: a run recording over 500 flows a second for its whole life (two
-	// seqs a flow: its arrival and its answer) could hand out seqs above the next
-	// run's base, and then its cursors look current.
+	// ponytail: a run handing out over a million seqs a second for its whole
+	// life (two a flow, its arrival and its answer, and one a WebSocket message)
+	// could pass the next run's base, and then its cursors look current.
 	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, state: "starting",
-		started: now, base: now.UnixMilli(), seq: now.UnixMilli()}
+		started: now, base: now.UnixMicro(), seq: now.UnixMicro()}
 	s.redact.Store(true)
 	return s
 }
@@ -278,17 +298,30 @@ func NewStore(maxFlows, maxBytes int) *Store {
 // masked (6.9 ms for 64 KiB). Lines of one connection are applied in order,
 // by the one goroutine reading it.
 func (s *Store) Apply(line []byte) {
+	// A line a bug in masking cannot read must not take reqcove (the exit
+	// node with it) down: it is counted as a bad line.
+	defer func() {
+		if r := recover(); r != nil {
+			s.mu.Lock()
+			s.badLines++
+			s.maskFailed++ // apart: a bug in masking, not a line the addon garbled
+			s.mu.Unlock()
+		}
+	}()
 	var e event
 	err := json.Unmarshal(line, &e)
 	var head []byte
 	headOK := true // false: the flow was not there when its body was masked
 	if err == nil && e.V == wireVersion {
 		s.maskEvent(&e)
-		if e.Ev == "body" {
+		switch e.Ev {
+		case "body":
 			head, headOK = s.maskHead(&e)
 			if e.Dir == "request" && headOK {
 				e.op = gqlBodyOperation(head) // a POST's body names it, a GET's URL
 			}
+		case "ws":
+			e.wsHead, e.wsNote = s.wsHead(&e)
 		}
 	}
 	s.mu.Lock()
@@ -403,14 +436,25 @@ func (s *Store) Apply(line []byte) {
 		if e.Dir == "request" && !f.opNamed && f.Method != "GET" && (e.op != "" || e.Final) {
 			f.Operation = e.op
 		}
-		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note}
+		if e.Dir == "response" && e.grpcTrailers != nil && f.RespTrailers == nil {
+			f.RespTrailers = e.grpcTrailers
+		}
+		b := Body{head, e.Size, e.Final, e.Truncated, e.Decoded, e.Encoding, e.Note, e.view}
 		if e.Dir == "request" {
 			f.ReqBody = b
 		} else {
 			f.RespBody = b
 		}
 	case "done":
-		f.End, f.State = e.TSEnd, "done"
+		if len(e.Trailers) > 0 {
+			f.RespTrailers = e.Trailers
+		}
+		if e.Note != "" {
+			f.Notes = append(f.Notes, "response trailers: "+e.Note)
+		}
+		if f.Status != 101 || !strings.EqualFold(header(f.RespHeaders, "upgrade"), "websocket") { // a WebSocket is open until ws_end (an h2c or other 101 is not one)
+			f.End, f.State = e.TSEnd, "done"
+		}
 		s.answerLocked(f) // a response event dropped by the addon: done answers it too
 	case "error":
 		f.Error, f.State = e.Msg, "error"
@@ -418,6 +462,17 @@ func (s *Store) Apply(line []byte) {
 	case "ws":
 		f.WSMessages++
 		f.WSBytes += e.Size
+		if f.ws == nil {
+			f.ws = &wsLog{}
+		}
+		s.seq++ // messages share the flows' counter, so a checkpoint is a cursor for them too; they wake no wait
+		f.ws.add(WSMessage{Seq: s.seq, N: f.WSMessages, Time: e.TS, FromClient: e.FromClient, Size: e.Size, Text: e.Text,
+			Head: e.wsHead, Truncated: e.Truncated && e.wsHead != "", Note: e.wsNote})
+	case "ws_end":
+		f.WSClose = &WSClose{Time: e.TSEnd, Code: e.Code, ByClient: e.ByClient, Reason: e.Reason}
+		if f.State == "open" {
+			f.End, f.State = e.TSEnd, "done"
+		}
 	}
 	s.heldBytes += f.bytes() - before
 	s.evictLocked()
@@ -436,6 +491,10 @@ func (s *Store) maskEvent(e *event) {
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
 	case "error", "tls_failed":
 		e.Msg = s.maskError(e.Msg)
+	case "done":
+		e.Trailers = s.maskHeaders(e.Trailers)
+	case "ws_end":
+		e.Reason = s.mask(e.Reason)
 	}
 }
 
@@ -446,29 +505,56 @@ func (s *Store) maskEvent(e *event) {
 // stored only as masked.
 func (s *Store) maskHead(e *event) (head []byte, ok bool) {
 	head, _ = base64.StdEncoding.DecodeString(e.Head)
-	if !s.redact.Load() {
-		return head, true
-	}
+	redact := s.redact.Load()
 	s.mu.Lock()
 	f := s.flows[e.ID]
-	var ct string
+	var ct, path string
 	if f != nil {
 		h := f.RespHeaders
 		if e.Dir == "request" {
 			h = f.ReqHeaders
 		}
-		ct = header(h, "content-type")
+		ct, path = header(h, "content-type"), f.Path
 	}
 	s.mu.Unlock() // f is not used past here
 	if f == nil {
 		return nil, false
+	}
+	if isGRPC(ct) && e.Decoded { // framed: masked message by message, and described
+		var note string
+		head, note, e.grpcTrailers, e.view = s.grpcBody(head, ct, path, e.Dir == "request", redact, e.Truncated || !e.Final)
+		if e.Note == "" {
+			e.Note = note
+		}
+		return head, true
+	}
+	if !redact {
+		return head, true
+	}
+	if boundary, ok := isMultipartForm(ct); ok && e.Decoded { // each part masked, files by size
+		head, e.view = renderMultipart(head, boundary, e.Dir == "request", e.Truncated || !e.Final), "multipart: each part masked, files by their size"
+		return head, true
+	}
+	if isProtobuf(ct) && e.Decoded { // not text: rendered, its strings by length unless --proto names them
+		head, e.view = renderProto(head, ct, path, e.Dir == "request", e.Truncated || !e.Final) // a partial head is cut too
+		return head, true
 	}
 	return maskBody(head, ct, e.Dir == "request"), true
 }
 
 func (s *Store) evictLocked() {
 	for len(s.order) > 0 && (len(s.order) > s.maxFlows || s.heldBytes > s.maxBytes) {
-		id := s.order[0]
+		// An open socket that is talking is passed over for the next flow (among
+		// the oldest few), so s.order stays in seq order (List pages by it).
+		i := 0
+		for k := 0; k < min(len(s.order)-1, 16); k++ {
+			if f := s.flows[s.order[k]]; f.ws == nil || f.WSClose != nil || f.State != "open" {
+				i = k
+				break
+			}
+		}
+		id := s.order[i]
+		copy(s.order[1:i+1], s.order[:i])
 		s.order = s.order[1:]
 		f := s.flows[id]
 		mark := f.answered

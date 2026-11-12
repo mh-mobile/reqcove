@@ -14,7 +14,7 @@ import (
 
 // Diff is one field that differs between two flows.
 type Diff struct {
-	Field string `json:"field"`       // status, method, url, mapped_url, error, request_header:NAME, response_header:NAME, request_body:PATH, response_body:PATH
+	Field string `json:"field"`       // status, method, url, mapped_url, error, request_header:NAME, response_header:NAME, response_trailer:NAME, request_body:PATH, response_body:PATH
 	A     any    `json:"a,omitempty"` // absent on that side when left out
 	B     any    `json:"b,omitempty"`
 }
@@ -70,6 +70,7 @@ func (s *Store) DiffFlows(a, b string) (FlowDiff, error) {
 	d.value("error", fa.Error, fb.Error)
 	d.headers("request_header:", fa.ReqHeaders, fb.ReqHeaders)
 	d.headers("response_header:", fa.RespHeaders, fb.RespHeaders)
+	d.headers("response_trailer:", fa.RespTrailers, fb.RespTrailers)
 	d.out.RequestBody = d.body("request_body:", fa.ReqBody, fb.ReqBody, fa.ReqHeaders, fb.ReqHeaders)
 	d.out.ResponseBody = d.body("response_body:", fa.RespBody, fb.RespBody, fa.RespHeaders, fb.RespHeaders)
 	return d.out, nil
@@ -77,6 +78,7 @@ func (s *Store) DiffFlows(a, b string) (FlowDiff, error) {
 
 type differ struct {
 	redact bool
+	proto  bool // comparing protobuf read with --proto: its lengths-only values hide what may differ
 	out    FlowDiff
 }
 
@@ -88,10 +90,18 @@ func (d *differ) add(x Diff) {
 	d.out.Differences = append(d.out.Differences, x)
 }
 
+// mpHidden: what a multipart rendering shows by size only.
+var mpHidden = regexp.MustCompile(`\[(file|not text|preamble|encoded \([^)]*\)|part): |headers (cut|not read)`)
+
 // masked: v shows a masked value (only while masking is on: with
 // --no-redact, a "[redacted]" in a value is the site's own text).
 func (d *differ) masked(v string) bool {
-	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED"))
+	if d.redact && d.proto && (strings.Contains(v, "bytes(") || strings.Contains(v, "string(") || strings.Contains(v, "varint(") || strings.Contains(v, "fixed32") || strings.Contains(v, "fixed64") ||
+		strings.Contains(v, "[not read]") || strings.Contains(v, "not shown") || strings.Contains(v, "more not read") || strings.Contains(v, "wire type mismatch")) {
+		return true
+	}
+	return d.redact && (strings.Contains(v, "[redacted]") || strings.Contains(v, "REDACTED") ||
+		strings.Contains(v, "[binary ") || strings.Contains(v, "[compressed, ") || strings.Contains(v, "[cut: ")) // gRPC's: the bytes behind them may differ
 }
 
 // value compares two texts: equal and masked goes under Masked, never as
@@ -99,7 +109,7 @@ func (d *differ) masked(v string) bool {
 func (d *differ) value(field, a, b string) (differs, masked bool) {
 	field = cut(field) // JSON keys are the site's: one can be a page long
 	if a == b {
-		if d.masked(a) {
+		if d.masked(a) || d.proto && d.masked(field) { // a --proto map entry it could not read is in the path ([not read])
 			d.out.Masked = append(d.out.Masked, field)
 			return false, true
 		}
@@ -169,7 +179,20 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 	case d.redact && (!checkable(a, ha) || !checkable(b, hb)):
 		r.Result, r.Note = "not_compared", "not text, so not checked for secrets: not compared (reqcove run --no-redact compares it)"
 		return r
+	case d.redact && (strings.HasPrefix(a.View, "multipart") || strings.HasPrefix(b.View, "multipart")) && string(a.Head) == string(b.Head) &&
+		mpHidden.MatchString(string(a.Head)):
+		r.Result, r.Note = "masked", "multipart: the same as shown, but files and parts shown by their size may differ"
+		return r
+	case d.redact && (strings.HasPrefix(a.View, "protobuf structure") || strings.HasPrefix(b.View, "protobuf structure")):
+		// Strings show their lengths only: the same structure may hold other values.
+		r.Result, r.Note = "differs", "protobuf read without a schema: the structures differ"
+		if string(a.Head) == string(b.Head) {
+			r.Result, r.Note = "masked", "protobuf read without a schema: the same structure, but its strings (and a request's numbers) are not shown, so they may differ"
+		}
+		return r
 	}
+	d.proto = strings.HasPrefix(a.View, "protobuf as") || strings.HasPrefix(b.View, "protobuf as")
+	defer func() { d.proto = false }()
 	cutHead := a.Truncated || b.Truncated || !a.Final || !b.Final
 	// JSON on both sides, whole: compared by path.
 	if !cutHead {

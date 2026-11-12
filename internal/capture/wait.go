@@ -36,6 +36,36 @@ type WaitResult struct {
 	// Evicted: flows answered after the cursor given were evicted before they
 	// could be returned (they may or may not have matched).
 	Evicted bool
+	// WSActive: when none came, the matching WebSockets that got messages
+	// after the cursor (messages wake no wait).
+	WSActive []WSActivity
+}
+
+// WSActivity is a WebSocket that got messages after a cursor.
+type WSActivity struct {
+	ID       string `json:"id"`
+	Host     string `json:"host"`
+	URL      string `json:"url"`
+	Messages int    `json:"new_messages"` // kept ones after the cursor
+}
+
+// wsActiveLocked: the caller holds s.mu.
+func (s *Store) wsActiveLocked(q Filter, after int64) []WSActivity {
+	var out []WSActivity
+	for _, id := range s.order {
+		f := s.flows[id]
+		if f.ws == nil || f.ws.lastSeq <= after || !q.match(f, s.names[f.Device]) {
+			continue
+		}
+		n := 0
+		for _, m := range f.ws.kept() {
+			if m.Seq > after {
+				n++
+			}
+		}
+		out = append(out, WSActivity{ID: f.ID, Host: f.Host, URL: f.URL, Messages: n})
+	}
+	return out
 }
 
 // Wait returns the flows matching q (q.Query and q.Before are ignored)
@@ -91,6 +121,9 @@ func (s *Store) Wait(ctx context.Context, q Filter, after int64) WaitResult {
 		s.mu.Unlock()
 		select {
 		case <-ctx.Done():
+			s.mu.Lock()
+			r.WSActive = s.wsActiveLocked(q, after)
+			s.mu.Unlock()
 			return r
 		case <-wake:
 		}

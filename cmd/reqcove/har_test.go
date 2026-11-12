@@ -85,6 +85,36 @@ func TestHAR(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 1 || h.Log.Entries[0].Response.Content.Size != 11 || h.Log.Entries[0].Response.BodySize != 9 {
 		t.Errorf("a gzipped body's sizes: %v\n%s", err, out)
 	}
+	// A WebSocket: its kept messages, masked, in _webSocketMessages, past one page.
+	ev(map[string]any{"ev": "request", "id": "w1", "device": "devA", "host": "ws.example.com", "method": "GET", "ts": 160.0, "url": "wss://ws.example.com/"})
+	ev(map[string]any{"ev": "response", "id": "w1", "status": 101, "headers": [][2]string{{"Upgrade", "websocket"}}})
+	ev(map[string]any{"ev": "ws", "id": "w1", "from_client": true, "text": true, "size": 30, "ts": 160.5, "head": b64(`{"authToken":"wsS3cr3tHAR"}`)})
+	for i := range 150 {
+		ev(map[string]any{"ev": "ws", "id": "w1", "from_client": false, "text": true, "size": 8, "ts": 161.0 + float64(i), "head": b64(fmt.Sprintf(`{"n":%d}`, i))})
+	}
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "ws.example.com"}) })
+	h.Log.Entries = nil
+	if err := json.Unmarshal([]byte(out), &h); err != nil || len(h.Log.Entries) != 1 || strings.Contains(out, "wsS3cr3tHAR") {
+		t.Fatalf("a WebSocket: %v\n%s", err, out)
+	}
+	if m := h.Log.Entries[0].WSMessages; len(m) != 105 || m[0].Type != "send" || m[0].Opcode != 1 || m[104].Data != `{"n":149}` || m[1].Type != "receive" {
+		t.Errorf("_webSocketMessages: %d, %+v", len(m), m[:min(2, len(m))])
+	}
+	// gRPC's trailers (HAR has no field for them) in the comment.
+	ev(map[string]any{"ev": "request", "id": "g1", "device": "devA", "host": "grpc.example.org", "method": "POST", "ts": 170.0, "url": "https://grpc.example.org/pkg.Svc/M"})
+	ev(map[string]any{"ev": "response", "id": "g1", "status": 200, "headers": [][2]string{{"Content-Type", "application/grpc"}}})
+	ev(map[string]any{"ev": "done", "id": "g1", "ts_end": 170.5, "trailers": [][2]string{{"grpc-status", "0"}}})
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "grpc.example.org"}) })
+	if !strings.Contains(out, "response trailers: grpc-status: 0") {
+		t.Errorf("trailers in the HAR:\n%s", out)
+	}
+	// A rendering of protobuf says it is not the bytes.
+	ev(map[string]any{"ev": "request", "id": "pb1", "device": "devA", "host": "grpc.example.org", "method": "POST", "ts": 171.0, "url": "https://grpc.example.org/v1/x", "headers": [][2]string{{"Content-Type", "application/x-protobuf"}}})
+	ev(map[string]any{"ev": "body", "id": "pb1", "dir": "request", "decoded": true, "final": true, "size": 5, "head": b64("\x0a\x03abc")})
+	out = captureStdout(t, func() error { return har(ctx, []string{"--state", dir, "--host", "grpc.example.org"}) })
+	if !strings.Contains(out, "reqcove's rendering, not the body's bytes: protobuf structure") || !strings.Contains(out, "1: string(3)") {
+		t.Errorf("trailers in the HAR:\n%s", out)
+	}
 	// More than a page of list_flows (500), and a flow still open: all of them,
 	// in order, the open one said to be open.
 	for i := 0; i < 600; i++ {

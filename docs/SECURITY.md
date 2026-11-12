@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.4.
+come from reading code rather than from a test say so. It describes v0.5.
 
 ## Trust
 
@@ -119,8 +119,18 @@ So "delete the directory" above means each of them.
   credentials recognisable by their shape are masked: `Bearer`/`Basic`/`Token`
   values that look like credentials (not the next word of a sentence), JWTs,
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
-  Google API keys). `WWW-Authenticate` keeps its challenge (scheme, realm,
-  error), with only such shapes masked.
+  Google API keys), also behind percent-encoding (JSON encoded in a form
+  field or a URL parameter, `Bearer+…`). `WWW-Authenticate` keeps its
+  challenge (scheme, realm, error), with only such shapes masked.
+  A line `name: value` in a text body that is not a GraphQL document, or in a
+  JSON string, whose name is secret (a STOMP frame's `passcode:`, also inside
+  SockJS's JSON; a YAML mapping; headers written into a body) has the rest of
+  the line masked; YAML list items (`- password: …`) and quoted names are not
+  looked at. A URL parameter or form field holding base64 of a JSON object with
+  a secret in it (AppSync's `?header=`) is masked whole, and so is a credential
+  carried in `Sec-WebSocket-Protocol` (after a name such as `access_token`, as
+  AppSync's `header-` base64 JSON, after Kubernetes' bearer prefix, or a long
+  value shaped like one that is not a dotted name). (Tests.)
   A field with a secret name whose value is a list or an object is masked
   whole (`{"password": "[redacted]"}`).
   In a GraphQL document, read by a lexer, an argument, an input object's
@@ -154,10 +164,8 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (protobuf, multipart, XML elements and attributes). A value found by its
-  shape (a JWT, a key with a known prefix, `Bearer …`) is not found inside
-  percent-encoded text: JSON encoded in a form field or a URL parameter,
-  `Bearer+…` (checked). In GraphQL the same
+  (`multipart/mixed`, XML elements and attributes; protobuf and
+  `multipart/form-data` are read as below). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);
@@ -166,10 +174,69 @@ So "delete the directory" above means each of them.
   Personal data, such as e-mail addresses
   and names, is not masked: debugging needs it. A body is handed out and searched
   only if masking could look at it: decoded (not wire bytes of an encoding it
-  could not undo) and text, by its content type (JSON, XML, forms, text, …) or,
-  with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
+  could not undo) and text, by its content type (JSON, XML, forms, text, …;
+  another type naming `json`, such as `application/x-amz-json-1.1`, and Sentry
+  envelopes only with no control characters) or, with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
   included, are neither handed out nor searched while masking is on;
-  `--no-redact` returns them.
+  `--no-redact` returns them. Protobuf (by its content type, or in gRPC's
+  frames) is the exception: reqcove hands out its own rendering instead of
+  the bytes (`view` says so); a body that does not read as protobuf to its
+  end shows nothing, nor does printable text unless it reads whole as strings
+  and sub-messages alone (one string field of printable length is printable),
+  and a head cut before its end shows what it read only when that held a
+  string or a whole sub-message. Without a schema, it is the structure only:
+  field numbers, wire types, lengths, a string's length but never its text,
+  and numbers in responses; in requests only 1-byte numbers (0 to 127:
+  enums, booleans, but also a PIN or CVV that small), larger ones as their
+  byte count, as a lone `code` is masked in requests. A span of printable
+  text is always a string, never read as a message, as its bytes would then
+  show as numbers; random bytes (`bytes` fields) can still read as one: in a
+  response usually all of their bytes then show as numbers (about 1 in 100
+  16-byte values whole, 1 in 1,000 32-byte ones), in a request parts of
+  them (field numbers and 1-byte numbers). Lengths show (a password's
+  length). With `--proto FILE` (your
+  compiled schema), a message whose type is known (a gRPC, Connect or Twirp
+  method by its path, or `messageType` in the content type) is read with
+  its field names (the proto names, never `json_name`) as JSON and masked
+  by name as JSON is; `bytes` show their length, and fields the schema does
+  not have their structure. A schema that is stale or wrong can give a
+  token an innocent name, which then passes; so do values under names the
+  built-in list does not count as secret, as in JSON (a `cookie` entry of a
+  headers map, a `cvv`). (Tests; the fuzz test is of the reading without a
+  schema. The `protoc` command above was run once, with protoc 33.0.)
+- `multipart/form-data` (uploads): handed out as reqcove's rendering
+  (`view`), part by part. A part whose name is secret (a lone `code` in a
+  request) is masked whole, as are part headers with secret names; a text
+  part (no filename, a text or JSON type) is masked as a body is; a file
+  part, a part that is not text or is encoded (`Content-Transfer-Encoding:
+  base64`), and a part whose `Content-Disposition` does not read (or comes
+  twice) keep their headers and their size only, never their bytes. A body
+  with LF-only lines shows no part. A preamble and an epilogue are not
+  shown. At most 256 parts are read.
+  (Tests, and an E2E test with Go's multipart writer.)
+- gRPC: response trailers are masked as headers are; metadata ending in `-bin`
+  (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
+  1 KiB, as other header values are (by shapes and URLs: a free-text
+  `password=…` in it is not caught). Framed JSON messages are masked as JSON;
+  protobuf ones are rendered as above; a body under a gRPC type that is not
+  framed is masked as a body. (Tests, and an E2E test over
+  HTTP/2.)
+- WebSocket messages: a text message's first 4 KiB is masked as it arrives,
+  as a body is (a client's with a request's rules, a lone `code` included),
+  and kept only if masking could read it (text with no control characters but
+  a STOMP frame's closing NUL, and SignalR's 0x1e between JSON objects). From
+  a client, shapes only messages have are masked too: a message that is one token-shaped word (bare or as one
+  JSON string), the strings after an auth event's name in an event array
+  (socket.io's `42["authenticate","…"]`, with a namespace and an ack id too),
+  and a SignalR invocation's arguments when its target is such a name
+  (SignalR's records are read one by one; only the first `target` is read,
+  and strings nested deeper in the arguments, as in socket.io's, are not). Binary messages, and those past about 20 a
+  second on one socket, keep their size only. A socket keeps its first 5
+  messages and its newest 100; they are handed out only by
+  `list_ws_messages` (and `reqcove har`). A close's reason is masked as error
+  text is. (Tests, and the E2E test with a real socket.) Not caught: a
+  credential sent positionally in other ways (an array without such an event
+  name, a custom binary framing), as in bodies.
 - Bodies are returned only when a tool is asked for them (`bodies` in
   `get_flow` and `search_flows`), and by `diff_flows`, which compares them: the
   values and keys that differ, cut to 300 bytes, and bodies that are not text

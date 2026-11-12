@@ -91,7 +91,8 @@ Times in the records carry the container's time zone, UTC by default.
   it). A token stays valid until its file in the volume is deleted.
 - `localhost` in `--rules` and `--upstream-proxy` is the container itself; the
   host is `host.docker.internal` on Docker Desktop and OrbStack (not tried). Bind
-  a folder for `--rules` (`-v ./rules:/rules:ro`, then `--rules /rules/x.yaml`).
+  a folder for `--rules` (`-v ./rules:/rules:ro`, then `--rules /rules/x.yaml`),
+  and the same for `--proto`.
 - The commands `run` prints (`claude mcp add … reqcove mcp`, `reqcove status`)
   are the host's; use the forms above.
 - Over a VM's network the tailnet may relay more (DERP); speed was not measured.

@@ -1,5 +1,79 @@
 # Changelog
 
+## v0.5.0 — 2026-11-12
+
+### For agents
+
+- WebSocket messages are recorded: `list_ws_messages` reads a socket's
+  messages, oldest first, after a cursor (a checkpoint), each a text
+  message's first 4 KiB masked as bodies are; binary ones, and those past
+  about 20 a second on one socket, give their size only. Kept are a socket's
+  first 5 messages and its newest 100; `missed` counts the rest. Rows carry
+  `websocket_messages`; a socket stays `open` until it closes, and
+  `get_flow` gives how (`websocket_close`). A timed-out `wait_for_flows`
+  lists the sockets that got messages since (`websocket_activity`);
+  `search_flows` with `bodies` looks in kept messages; a HAR has them in
+  `_webSocketMessages`. An open socket that talks is evicted after the others
+  (among the oldest 16). A 101 that is not a WebSocket (h2c) is done at once.
+  Tried with the E2E test (a real socket through mitmproxy, a flood of 50,000
+  messages beside an HTTP request), and on an iPhone (a test app over
+  URLSession: an auth message's token masked both ways, the close).
+- gRPC: rows and `summarize` (`by_grpc_status`) show a call's status, from
+  the response headers (a trailers-only error) or its trailers, `pending`
+  until they come; `get_flow` has `response_trailers` (HTTP/2's, or gRPC-Web's
+  last frame). A body's note counts its messages; JSON ones are de-framed and
+  masked as JSON. `-bin` metadata shows its size only; `grpc-message` is
+  decoded and masked. Trailers are searched, compared by `diff_flows` and
+  written to a HAR's comment. Tried with an E2E test over HTTP/2, and on an
+  iPhone (a test app over URLSession: Connect, gRPC-Web and gRPC to
+  Connect's demo server, with `--proto`; gRPC's answer showed nothing there:
+  fixed after, by a test). A Connect stream's last frame (flag 2: its error,
+  as JSON) is shown as `[end of stream]`, masked (by a test only).
+- Protobuf bodies (gRPC's messages, `application/x-protobuf` and the like) are
+  handed out as reqcove's rendering (`view`): without a schema, their
+  structure (field numbers, types, lengths, a string's length, numbers in
+  responses, only small ones in requests); with `--proto FILE` (a compiled
+  schema), as JSON with their field names, masked by name. The type comes
+  from the method in the path (gRPC, gRPC-Web, Connect, Twirp) or
+  `messageType` in the content type. A body that does not read as protobuf
+  to its end shows nothing. `diff_flows` never calls two structures, nor
+  lengths-only values, the same. Tried with tests and a fuzz test (of the
+  reading without a schema).
+- `multipart/form-data` bodies (uploads) are handed out, part by part: a
+  secret-named part masked whole, text parts masked as bodies, files and
+  parts that are not text by their size only. Before, they were left out as
+  "not text". Tried with tests and an E2E test (Go's multipart writer).
+
+### Masking
+
+- Token shapes (JWTs, keys with known prefixes, `Bearer …`) are found behind
+  percent-encoding too: JSON encoded in a form field or a URL parameter,
+  `Bearer+…` (before, the shapes needed a word boundary that `%22` and `+` do
+  not give).
+- A `name: value` line with a secret name, in a text body that is not a
+  GraphQL document or in a JSON string (a STOMP frame's `passcode:`, also in
+  SockJS's JSON; a YAML mapping), has the rest of the line masked.
+- Base64 of a JSON object with a secret in it, as a URL parameter or form field
+  (AppSync realtime's `?header=`), is masked whole; so is a credential carried
+  in `Sec-WebSocket-Protocol` (`access_token, …`, AppSync's `header-…`,
+  Kubernetes' bearer prefix).
+- Bodies of JSON under other content types (`application/x-amz-json-1.1`, as
+  Cognito and Amplify send, any type naming `json`) and Sentry envelopes are
+  handed out when they hold no control characters; before, they were masked
+  but left out as "not text".
+
+### Inside
+
+- Cursors (checkpoints, `next_cursor`, `after`) count in microseconds, so a
+  run handing out many (WebSocket messages take one each) cannot reach the
+  next run's, which would make old cursors look current. A line from the
+  addon that masking fails on is counted as a bad line instead of stopping
+  `reqcove run`.
+- A GraphQL request's operation is read by its keys' exact case, as mocks
+  read it (`OperationName` is not it); in a head cut before its end, only a
+  top-level `operationName` counts, not one nested in variables. Mocks no
+  longer take a no-break space for GraphQL's space, as the row does not.
+
 ## v0.4.0 — 2026-11-12
 
 ### For agents

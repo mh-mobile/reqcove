@@ -58,7 +58,7 @@ docker logs $NAME 2>&1 | sed -n 's/.*Authorization: \(Bearer [A-Za-z0-9]*\).*/\1
 - `--local-proxy`、シミュレーター、このコンピュータで CA を信頼することは、コンテナではできません。
 - macOS：Mac がスリープすると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
 - `docker logs` には、コンテナを消すまで、ログイン用の URL と、トークン付きの `--ui`／`--web` のリンクが残ります（`--log-opt max-size=10m` で大きさを抑えられます）。トークンは、volume の中のファイルを消すまで有効です。
-- `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。
+- `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。`--proto` も同じです。
 - `run` が表示するコマンド（`claude mcp add … reqcove mcp`、`reqcove status`）は、ホスト向けの形です。上の形に読み替えてください。
 - VM のネットワーク越しでは、tailnet の通信が中継（DERP）になりやすいかもしれません。速さは測っていません。
 

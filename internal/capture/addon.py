@@ -52,6 +52,8 @@ except ImportError:
 
 VERSION = 2
 FLUSH_SECONDS = 1.0  # send a partial head this often while a body trickles (SSE)
+WS_HEAD = 4 << 10  # a WebSocket text message's head, as reqcove keeps it
+WS_RATE, WS_BURST = 20.0, 100.0  # message heads a second per socket, and the burst
 
 
 def _brotli_ok():
@@ -285,7 +287,7 @@ GQL_BLOCK = re.compile(r'"""(?:\\"""|[\s\S])*?(?:"""|\Z)')
 GQL_STRING = re.compile(r'"(?:[^"\\\n\r]|\\[\s\S])*(?:"|\Z)')
 # GraphQL tokens, for the first operation: read once, front to back (a pattern
 # searched from every "}" read the rest again from each: quadratic).
-GQL_TOKEN = re.compile(r'''(?P<skip>[\s,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
+GQL_TOKEN = re.compile(r'''(?P<skip>[ \t\n\r,\ufeff]+|#[^\n\r]*)|(?P<block>"""(?:\\"""|[\s\S])*?(?:"""|\Z))|(?P<str>"(?:[^"\\\n]|\\.)*"?)|(?P<name>[_A-Za-z][_0-9A-Za-z]*)|(?P<punct>[\s\S])''')
 
 
 def _head(doc, limit=5):
@@ -818,7 +820,7 @@ class Reqcove:
             return
         # Headers and URLs count toward the queue's byte budget too: a site can
         # send large ones.
-        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + len(msg.get("msg") or "") + sum(len(k) + len(v) + 64 for k, v in msg.get("headers") or [])
+        size = 512 + len(msg.get("url") or "") + len(msg.get("reason") or "") + len(msg.get("msg") or "") + sum(len(k) + len(v) + 64 for k, v in (msg.get("headers") or []) + (msg.get("trailers") or []))
         with self.lock:
             over = self.queued_bytes + size > 2 * self.queue_limit  # bodies give way first, at the plain limit
         if over:
@@ -1041,7 +1043,10 @@ class Reqcove:
             return
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "response", flow.response)
-        self.put_event({"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end})
+        done = {"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end}
+        if flow.response.trailers:  # HTTP/2's, set before this hook also when streamed: gRPC's status
+            done["trailers"], done["note"] = _headers(flow.response.trailers)
+        self.put_event(done)
 
     def error(self, flow):
         self.flow_rules.pop(flow.id, None)
@@ -1057,11 +1062,45 @@ class Reqcove:
             flow.websocket.messages.clear()
             return
         m = flow.websocket.messages[-1]
-        self.put_event({
+        ev = {
             "v": VERSION, "ev": "ws", "id": flow.id, "from_client": m.from_client,
-            "size": len(m.content), "text": m.is_text,
-        })
+            "size": len(m.content), "text": m.is_text, "ts": m.timestamp,
+        }
+        if m.is_text:
+            # A token bucket per socket: past it a message keeps its count, not
+            # its head, so a flood cannot fill the one pipeline into reqcove.
+            tokens, last = flow.metadata.get("reqcove_ws_bucket", (WS_BURST, m.timestamp))
+            tokens = min(WS_BURST, tokens + max(m.timestamp - last, 0) * WS_RATE)
+            if tokens >= 1:
+                tokens -= 1
+                ev["head"] = m.content[:WS_HEAD]  # never m.text: it decodes the whole message
+                ev["truncated"] = len(m.content) > WS_HEAD
+            else:
+                ev["capped"] = True
+            flow.metadata["reqcove_ws_bucket"] = (tokens, m.timestamp)
         flow.websocket.messages.clear()  # mitmproxy would keep every message for the connection's life
+        if "head" not in ev:
+            self.put_event(ev)
+            return
+        size = len(ev["head"]) + 512
+        with self.lock:
+            over = self.queued_bytes + size > self.queue_limit
+        if over or self.q.qsize() > 100000:  # heads give way first, as bodies do: the message still counts
+            del ev["head"], ev["truncated"]
+            ev["capped"] = True
+            self.put_event(ev)
+            return
+        self._put(ev, size)
+
+    def websocket_end(self, flow):
+        if flow.metadata.get("reqcove_skip"):
+            return
+        ws = flow.websocket
+        self.put_event({
+            "v": VERSION, "ev": "ws_end", "id": flow.id, "ts_end": ws.timestamp_end or time.time(),
+            "code": ws.close_code or 0, "by_client": bool(ws.closed_by_client),
+            "reason": (ws.close_reason or "")[:SHORT],  # the peer's text: masked in reqcove
+        })
 
     def tcp_message(self, flow):
         p = flow.metadata.get("reqcove_pass")

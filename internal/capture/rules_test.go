@@ -622,7 +622,9 @@ modify_headers:
 		{"/graphql", `{"operationName":"Feed-1","query":"query Feed { feed }"}`, `{"feed":[]}`},
 		{"/graphql?query=%7B%22term%22%3A%22x%22%7D", `{"operationName":"Feed"}`, `{"feed":[]}`},    // a ?query= that is no document gives way
 		{"/graphql", `{"query":"fragment F on U { a } query \"x\" Feed { b }"}`, "origin /graphql"}, // no name after query: anonymous, as Go reads it
-		{"/graphql", `{"query":"query Feed"}`, "origin /graphql"},                                   // as gqlStart: no ( { @ after the name
+		{"/graphql", `{"query":"query Feed"}`, "origin /graphql"},
+		{"/graphql", `{"query":"fragment F on U { a } query` + "\xc2\xa0" + `Feed { b }"}`, "origin /graphql"}, // a no-break space is no GraphQL space (Go's lexer stops there)
+		{"/graphql", `{"OperationName":"Upper","query":"query Feed { feed }"}`, `{"feed":[]}`},                 // keys by their exact case                                   // as gqlStart: no ( { @ after the name
 	} {
 		if _, body := do("POST", "http://"+o+c.url, c.body); body != c.want {
 			t.Errorf("POST %s %s: %q, want %q", c.url, c.body, body, c.want)
