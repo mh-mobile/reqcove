@@ -317,7 +317,7 @@ reqcove run --allow-hosts api.example.com --local-proxy   # iPhone も記録す�
 - Debian と Ubuntu：`sudo cp ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/reqcove.crt && sudo update-ca-certificates`。Fedora：`/etc/pki/ca-trust/source/anchors/` に置いて `sudo update-ca-trust`。
 - Linux の Chrome と Chromium：`certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n Reqcove -i ~/.reqcove/mitmproxy/mitmproxy-ca-cert.pem`。Node：`NODE_EXTRA_CA_CERTS=` にそのファイルを指定します。Python：更新後のシステムの CA バンドルを指定します（そのファイルだけを指定すると、ほかの CA がすべて使えなくなります）。
 
-確認状況：macOS 27 で確認（信頼させるコマンドと Reqcove による信頼の確認、やめ方の表示、キーチェーンアクセスでの削除、Mac の Chrome で許可したホストが警告なしに開けて記録されること、本物の `networksetup` でシステムの Web プロキシが 127.0.0.1:8082 に向き、Ctrl-C で元に戻ること、起動中のシミュレーターに CA が入ること、iOS 27 のシミュレーターの Safari の通信が `local` として復号・記録されること）。`networksetup` は tailnet の IPv6 の範囲（`fd7a:115c:a1e0::/48`）を例外として受け付け、システムの設定にも入りました（2026-11-13 に試しました）。未確認：プロキシの例外のアドレスの書き方をアプリが守るか、PAC や認証付きプロキシのある環境、Linux。
+確認状況：macOS 27 で確認（信頼させるコマンドと Reqcove による信頼の確認、やめ方の表示、キーチェーンアクセスでの削除、Mac の Chrome で許可したホストが警告なしに開けて記録されること、本物の `networksetup` でシステムの Web プロキシが 127.0.0.1:8082 に向き、Ctrl-C で元に戻ること、起動中のシミュレーターに CA が入ること、iOS 27 のシミュレーターの Safari の通信が `local` として復号・記録されること）。`networksetup` は tailnet の IPv6 の範囲（`fd7a:115c:a1e0::/48`）を例外として受け付け、システムの設定にも入りました（2026-11-13 に試しました）。RoamRun と一緒に使うこと（2026-11-14 に RoamRun 0.12.0 とその PR #253 で試しました）：`--local-proxy` を有効にしたまま、`roamrun doctor` は問題なしで、`roamrun up` は別の Wi-Fi にいる iPhone を tailnet 越しにブリッジし、Ready になりました（`--local-proxy` なしのときと同じ）。未確認：プロキシの例外のアドレスの書き方をアプリが守るか、PAC や認証付きプロキシのある環境、Linux。
 
 ### Web アプリのバックエンドを記録する
 

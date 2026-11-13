@@ -4,6 +4,8 @@
 
 ### For people
 
+- The guide says RoamRun works alongside `--local-proxy` (tried with RoamRun
+  0.12.0 and its PR #253: doctor, and a bridge over the tailnet to Ready).
 - LAN mode prints the CA's SHA-256 as iOS shows it (`ab 90 7e …`) and where:
   Settings, General, VPN & Device Management, the profile, More Details
   (checked on iOS 27.3: it matched). `reqcove status`'s CA line keeps the
