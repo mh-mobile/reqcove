@@ -162,6 +162,14 @@ func TestRuleTools(t *testing.T) {
 	if isErr || f.explained.Load() != "POST https://h.example/graphql " || !strings.Contains(got, `"recorded":{"mapped_to":"https://s.example:8443","mocked":false,"presets":[],"rewrites":["map_remote"]}`) {
 		t.Errorf("flow_id: %s %v (%v)", got, isErr, f.explained.Load())
 	}
+	// An anonymous query's record says so to the addon (no operation mock answers it); a
+	// hello since (a reconnect too) moves rules_loaded: the rules may have changed, not were.
+	st.Apply([]byte(`{"v":2,"ev":"request","id":"f2","host":"h.example","method":"GET","url":"https://h.example/graphql?query=%7Ba%7D","ts":1}`))
+	st.Apply([]byte(`{"v":2,"ev":"hello","rules":{"mock":0}}`))
+	got, isErr = callText(t, cs, "explain_rules", map[string]any{"flow_id": "f2"})
+	if isErr || f.explained.Load() != "GET https://h.example/graphql?query=%7Ba%7D (anonymous)" || !strings.Contains(got, "may have changed since this flow") {
+		t.Errorf("anonymous: %s %v (%v)", got, isErr, f.explained.Load())
+	}
 	if got, isErr := callText(t, cs, "explain_rules", map[string]any{"method": "GET", "url": "https://h.example/", "operation": "Feed"}); isErr || f.explained.Load() != "GET https://h.example/ Feed" {
 		t.Errorf("method and url: %s %v", got, isErr)
 	}

@@ -1057,36 +1057,42 @@ class Reqcove:
         method, url, op = req.get("method"), req.get("url"), req.get("operation")
         if not (isinstance(method, str) and re.fullmatch(r"[A-Za-z]{1,20}", method)):
             raise RuleError("method must be a word such as GET")
-        if op is not None and not (isinstance(op, str) and GQL_NAME.fullmatch(op)):
+        # A record's (anonymous) or (batched): no one operation, so no operation mock answers it.
+        anon = op in ("(anonymous)", "(batched)")
+        if op is not None and not anon and not (isinstance(op, str) and GQL_NAME.fullmatch(op)):
             raise RuleError("operation must be a GraphQL name")
         try:
             if not isinstance(url, str) or len(url) > 16384:
                 raise ValueError
-            r = http.Request.make(method.upper(), url)
+            # With the Host a client sends: after resolve (or keep_host_header) a
+            # real request keeps it, and ~d and ~u read it.
+            r = http.Request.make(method.upper(), url, b"", {"Host": urllib.parse.urlsplit(url).netloc.rpartition("@")[2]})
             port = r.port
         except Exception:
             raise RuleError("url must be an http or https URL") from None
         if r.scheme not in ("http", "https"):
             raise RuleError("url must be an http or https URL")
         host = r.pretty_host.lower().rstrip(".")
+        rules = self.rules
+        out = {"in_scope": False, "loaded": rules is not None, "rules_error": self.rules_error}
         # As requestheaders and next_layer decide it.
         if not check.is_valid_host(r.pretty_host) or not self._allowed(host):
-            return {"in_scope": False, "scope": "not in --allow-hosts: carried but not recorded, and no rule applies to it"}
+            return dict(out, scope="not in --allow-hosts: carried but not recorded, and no rule applies to it")
         if self._passed(host):
-            return {"in_scope": False, "scope": "in --pass-hosts: carried undecrypted (or, on an allowed host's connection, passed on unrecorded), and no rule applies to it"}
+            return dict(out, scope="in --pass-hosts: carried undecrypted (or, on an allowed host's connection, passed on unrecorded), and no rule applies to it")
         if any(re.search(p, f"{host}:{port}") for p in ctx.options.ignore_hosts):
-            return {"in_scope": False, "scope": "mitmproxy passes this host through undecrypted (Apple's, as apple-ignore-hosts.txt lists): not recorded, and no rule applies to it"}
-        rules = self.rules
-        out = {"in_scope": True, "loaded": rules is not None, "rules_error": self.rules_error}
+            return dict(out, scope="mitmproxy passes this host through undecrypted (Apple's, as apple-ignore-hosts.txt lists): not recorded, and no rule applies to it")
+        out["in_scope"] = True
         if not rules:
             return out
-        op = op or _operation(r)  # the URL may name it (operationName)
+        # The URL first, as a real request is read (_operations); then the one given.
+        op = _operation(r) or (None if anon else op)
         from mitmproxy.test import tflow  # mitmproxy's own made flows (12.3.1 ships them)
 
         unknown = set()
 
         def dry(also=None):
-            flow = tflow.tflow(req=http.Request.make(method.upper(), url))  # content-length 0: a small body
+            flow = tflow.tflow(req=r.copy())  # content-length 0: a small body
             d = _dry_rules(rules, unknown, also)
             mocks = d["mock"].candidates(flow)
             try:
@@ -1119,12 +1125,17 @@ class Reqcove:
                     if_on[name] = res["rewrites"] + res.get("response_rewrites", [])
                     said += res["rewrites"]
         out["if_turned_on"] = if_on
-        cannot = sorted(unknown)
-        if op is None:
-            cannot += [f"mock[{i}]: its method and URL match; it answers one GraphQL operation (pass operation)" for i in sorted(seen) if rules["mock"].replacements[i][2] is not None]
+        cannot, conditions = sorted(unknown), []
+        wants_op = [i for i in sorted(seen) if rules["mock"].replacements[i][2] is not None]
+        if anon and wants_op:
+            conditions.append("the request names no one GraphQL operation (anonymous or batched): no mock for an operation answers it")
+        elif op is None:
+            cannot += [f"mock[{i}]: its method and URL match; it answers one GraphQL operation (pass operation)" for i in wants_op]
         out["cannot_tell"] = cannot
         if seen or any(s.startswith(("mock", "map_local")) for s in said):
-            out["conditions"] = ["a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)"]
+            conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)")
+        if conditions:
+            out["conditions"] = conditions
         return out
 
     def load(self, loader):

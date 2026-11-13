@@ -905,8 +905,8 @@ host, a `--pass-hosts` host, a mock preset off and then on (its count unused,
 the server never reached), a GraphQL mock with and without the operation, a
 `~h` filter in `cannot_tell`, a `map_remote` then `resolve` explained as the
 recorded flow got them; without a rules file. Not tried: an iPhone. A
-recorded URL is masked: a masked query value can change what a filter or regex
-sees.
+recorded URL is masked: a value masked in its path or query (`[redacted]`) can change what a filter or regex
+sees, and a GraphQL operation in the URL comes before the one given, as for a real request.
 
 ### An upstream proxy (`--upstream-proxy`)
 

@@ -236,6 +236,8 @@ map_remote:
   - '|x|//e.test/'
 resolve:
   - "a.test=127.0.0.1:9"
+modify_headers:
+  - '|~s & ~d ^a\.test$|X-RespDom|v'
 mock:
   - match: {url: "http://a.test/graphql", operation: Feed}
     preset: feed
@@ -248,8 +250,34 @@ assert a.rules, why
 assert [r["target"] for r in a._list_rules()["rules"] if r["kind"] == "map_remote"] == ["not shown"] * 4, a._list_rules()
 e = a._explain({"method": "GET", "url": "http://a.test/"})
 assert e["rewrites"] == ["resolve: 127.0.0.1:9"], e
+assert e["response_rewrites"] == ["modify_headers response: X-RespDom"], e  # Host kept after resolve, as a real request's
 assert a.resolve_sni == {}, a.resolve_sni
 e = a._explain({"method": "POST", "url": "http://a.test/graphql"})  # a mock preset off, for one operation
 assert [c[:7] for c in e["cannot_tell"]] == ["mock[0]"] and e["if_turned_on"] == {} and e["conditions"], e
+e = a._explain({"method": "GET", "url": "http://evil.test/"})
+assert not e["in_scope"] and e["loaded"], e  # out of scope, the rules loaded all the same
+p.write_text(r'''
+keep_host_header: true
+map_remote:
+  - '|^http://k\.a\.test/|http://k.b.test/'
+resolve:
+  - {rule: "k.b.test=127.0.0.1:10", preset: kb}
+modify_headers:
+  - '|~s & ~d ^k\.a\.test$|X-Kept|v'
+mock:
+  - match: {url: "http://k.a.test/graphql", operation: Feed}
+    status: 500
+''')
+a = addon.Reqcove()
+a.allow = [re.compile(r"^(.+\.)?[ab]\.test$")]
+a.rules, why = a._load_checked(p)
+assert a.rules, why
+e = a._explain({"method": "GET", "url": "http://k.a.test/"})
+assert e["rewrites"] == ["map_remote"] and e["response_rewrites"] == ["modify_headers response: X-Kept"], e  # keep_host_header
+assert e["if_turned_on"] == {"kb": ["map_remote", "resolve preset kb: 127.0.0.1:10", "modify_headers response: X-Kept"]}, e
+e = a._explain({"method": "GET", "url": "http://k.a.test/graphql?operationName=Feed", "operation": "Other"})
+assert e["mocked"], e  # the URL's operation first, as a real request is read
+e = a._explain({"method": "POST", "url": "http://k.a.test/graphql", "operation": "(anonymous)"})
+assert not e["mocked"] and e["cannot_tell"] == [] and "no one GraphQL operation" in e["conditions"][0], e
 print("ok")
 `

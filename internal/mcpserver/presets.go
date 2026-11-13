@@ -183,14 +183,15 @@ func addRuleTools(s *mcp.Server, st *capture.Store, p Presets) {
 					return nil, out, err
 				}
 				method, u, op = v.Method, v.URL, v.Operation
-				if !gqlName.MatchString(op) {
-					op = "" // (anonymous), (batched)
+				if !gqlName.MatchString(op) && op != "(anonymous)" && op != "(batched)" {
+					op = ""
 				}
 				out.FlowID = in.FlowID
 				out.Recorded = &RecordedOut{Rewrites: orEmpty(v.Rewrites), Mocked: v.Mocked, Presets: orEmpty(v.Presets), MappedTo: origin(v.MappedURL)}
-				out.Note = "recorded is what this flow got; the rest is what the rules do now: they differ when a preset was turned on or off, ran out of time or requests, or a filter read what a method and URL cannot tell (cannot_tell). The URL is the one recorded, masked: a masked query value can change what a filter or regex sees."
+				out.Note = "recorded is what this flow got; the rest is what the rules do now: they differ when a preset was turned on or off, ran out of time or requests, or a filter read what a method and URL cannot tell (cannot_tell). The URL is the one recorded, masked: a masked value in its path or query can change what a filter or regex sees."
+				// rules_loaded also moves when mitmproxy says hello again (a reconnect): may, not was.
 				if l := st.RulesLoaded(); l.After(time.Unix(0, int64(v.Start*1e9))) {
-					out.Note += " The rules file was taken again (at " + l.Format("15:04:05") + ") after this flow started."
+					out.Note += " The rules may have changed since this flow: mitmproxy took the file, or reconnected, at " + l.Format("15:04:05") + "."
 				}
 			} else if op != "" && !gqlName.MatchString(op) {
 				return nil, out, errors.New("operation must be a GraphQL name")
