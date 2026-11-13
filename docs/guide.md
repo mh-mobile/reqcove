@@ -28,7 +28,7 @@ the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
   node in their own tailnet ([SECURITY](SECURITY.md#the-login-url)).
 - `reqcove links` prints them again (and mitmweb's link on this computer, the
   CA's), with QR codes, in your terminal (it refuses
-  when its output is not a terminal). Off a terminal (a service, `docker logs`),
+  when its output is not a terminal: Claude Code's `!` gets nothing either, tried). Off a terminal (a service, `docker logs`),
   `run` prints "`reqcove links` prints it" in their place. While `run` runs they
   are kept in `login-url` and `links` (0600) in the state directory.
 - To skip the approval for new nodes, add an auto-approver to the tailnet
@@ -139,7 +139,23 @@ which a client may use to ask less (not checked with any client);
 it has not been allowed. Allow the read tools by name
 (`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
 since v0.6 also allows `activate_mock` (from Claude Code's documentation, not
-tried here). Codex asks before each call
+tried here). For example, in `.claude/settings.json` (the form is from
+Claude Code's documentation; not tried here):
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__reqcove__status", "mcp__reqcove__summarize", "mcp__reqcove__list_flows",
+              "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
+              "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
+              "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
+              "mcp__reqcove__list_mock_presets"],
+    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
+  }
+}
+```
+
+Codex asks before each call
 ([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
 reads without asking, also from a `run` started with `--no-redact`; the skill
 and the server's instructions still tell it to stop and ask then. Allow
@@ -824,7 +840,7 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`) |
+| `status` | whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`; not over `--mcp-http`, which has no preset tools) |
 | `list_mock_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file: what each matches and answers, whether it is on, requests left, when it turns off; never bodies or header values |
 | `activate_mock` | turn a preset on, for at most 5 minutes (`minutes`) and, with `times`, at most 20 requests; returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
 | `deactivate_mock` | turn a preset off. Not over `--mcp-http` |

@@ -95,7 +95,7 @@ func TestGraphQLWhereFound(t *testing.T) {
 	batch := `[{"query":"` + op + `"}` + strings.Repeat(",{}", (64<<10-len(op))/3) + "]"
 	start := time.Now()
 	gqlBodyOperation([]byte(batch))
-	if d := time.Since(start); d > time.Second/2 {
+	if d := time.Since(start); d > 3*time.Second { // about 0.13 s under -race on an M-series Mac, 0.6 s on a busy CI runner; quadratic: far more
 		t.Errorf("a batch of empty elements took %v", d)
 	}
 	// The third review (Fable): a URL inside a GET document, a document in JSON

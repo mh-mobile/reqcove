@@ -682,7 +682,8 @@ to find it but does not carry it.
   URL among them, in a buffer file there (`tsnet/tailscaled.log*.txt`, 0600),
   also without `--verbose` (from reading code).
 - `reqcove links` refuses when its output is not a terminal: a help against an
-  agent running it, not a guarantee (a program can give it a terminal). The
+  agent running it, not a guarantee (a program can give it a terminal). Claude Code's
+  `!` gets nothing (tried 2026-11-13). The
   skill and the server's instructions tell agents never to run it.
 - mitmweb's server logs a failed request's URL, `?token=` included, into
   `mitmproxy.log`: the addon masks the token there first (checked by the

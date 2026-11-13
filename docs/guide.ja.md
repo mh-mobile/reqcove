@@ -20,7 +20,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 残っている手順は `run` が表示し、`reqcove status` でも確認できます。表示された URL でログインし、tailnet が Tailnet Lock を使っていればノードに署名し、Exit Node を承認します。
 
 - ログイン用の URL と、トークン付きの `--ui`、`--web`、`--mcp-http` のリンクは、`run` のターミナルにだけ表示されます。ログの行（`--verbose` のときも。ログイン用の URL は、`run` が知るまではよくある形で見分けます。[SECURITY](SECURITY.md#the-login-url)）と MCP のツールには出ません。ログイン用の URL を最初に開いた人の tailnet にノードが入るためです（[SECURITY](SECURITY.md#the-login-url)）。
-- `reqcove links` で、自分のターミナルにもう一度、QR コード付きで表示できます（このコンピュータで開く mitmweb のリンクと CA も）（出力先がターミナルでなければ断ります）。ターミナルでないところ（サービス、`docker logs`）では、`run` はその代わりに「`reqcove links` prints it」と表示します。`run` が動いている間は、状態ディレクトリの `login-url` と `links`（0600）に置かれます。
+- `reqcove links` で、自分のターミナルにもう一度、QR コード付きで表示できます（このコンピュータで開く mitmweb のリンクと CA も）（出力先がターミナルでなければ断ります。Claude Code の `!` からも表示されません。試しました）。ターミナルでないところ（サービス、`docker logs`）では、`run` はその代わりに「`reqcove links` prints it」と表示します。`run` が動いている間は、状態ディレクトリの `login-url` と `links`（0600）に置かれます。
 - 新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します：`"autoApprovers": {"exitNode": ["you@example.com"]}`
 
 ### 2 台のコンピュータで同じ CA を使う
@@ -76,7 +76,22 @@ WantedBy=default.target
 
 `claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを、1 回につき最長 5 分有効にすることだけです（何度でも有効にし直せます）（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
-ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。`activate_mock` と `deactivate_mock` には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、v0.6 からは `activate_mock` も許可されます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
+ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。`activate_mock` と `deactivate_mock` には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、v0.6 からは `activate_mock` も許可されます（Claude Code のドキュメントによる。ここでは試していません）。たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによる。ここでは試していません）。
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__reqcove__status", "mcp__reqcove__summarize", "mcp__reqcove__list_flows",
+              "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
+              "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
+              "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
+              "mcp__reqcove__list_mock_presets"],
+    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
+  }
+}
+```
+
+Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）
 
@@ -472,7 +487,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
 | `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
-| `status` | セットアップが完了しているか。未完了なら次の手順。有効にしたモックのプリセット（`active_mock_presets`） |
+| `status` | セットアップが完了しているか。未完了なら次の手順。有効にしたモックのプリセット（`active_mock_presets`。`--mcp-http` では出しません。プリセットのツールがないため） |
 | `list_mock_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。それぞれの match と応答、有効か、残りの回数、無効になる時刻。ボディやヘッダーの値は返さない |
 | `activate_mock` | プリセットを有効にする。最長 5 分（`minutes`）、`times` を付けると最大 20 件。`wait_for_flows` 用の `checkpoint` と、同じ match で無効にしたプリセットを返す。`--mcp-http` からは使えない |
 | `deactivate_mock` | プリセットを無効にする。`--mcp-http` からは使えない |
