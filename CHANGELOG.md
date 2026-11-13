@@ -4,6 +4,7 @@
 
 ### For people
 
+- mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
 - `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
   out of the proxy, as its IPv4 range already was.
 - The guide shows which Reqcove tools to allow by name in Claude Code's
