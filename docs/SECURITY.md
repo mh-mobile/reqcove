@@ -463,6 +463,13 @@ a 502 rather than sent on as it was (a test), and a `map_remote` whose replaceme
 cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
+`reqcove mock add` writes a mock into a rules file for you, and runs only when
+its input is a terminal: a help against an agent running it unasked, not a
+guarantee (an agent that can run commands can give it a terminal, or edit the
+file itself). Writing rules stays yours: the skill tells agents never to run
+it. To have `run` check the file first, it reads `run`'s SOCKS5 password from
+the state directory (0600, your user); `run` checks the file it is pointed at
+without taking it (a test).
 A `mock` answers in the site's name: the app, and a web view's page, take it
 as the site's own answer (a script in it runs in that origin, a redirect is
 followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its

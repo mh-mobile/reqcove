@@ -748,6 +748,43 @@ outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
 GraphQL operation of the GitHub app mocked while its others, on the same
 connection, reached GitHub.
 
+#### Add a mock from your terminal (`reqcove mock add`)
+
+`reqcove mock add` writes a mock into the file for you, checked first:
+
+```sh
+reqcove mock add --rules rules.yaml --url https://api.example.com/v1/login \
+  --method POST --status 401 --header 'Content-Type: application/json' \
+  --body '{"error":"expired"}'
+```
+
+- The other flags: `--operation NAME`, `--body-file PATH` (from where you type
+  it; written as a full path), `--delay-ms N`, `--fault close`, `--preset NAME`
+  and `--description TEXT`.
+- It adds the mock as the last of `mock:`'s items and keeps the rest of the
+  file as it was (comments and order too); a file without `mock:` gets one at
+  its end. It refuses a file whose `mock:` is not its last block, or is in flow
+  style (`mock: []`), and says how to fix it. A new file is made `0600`; an
+  existing one keeps its mode, replaced at once (a temp file beside it, renamed).
+- Before writing, the whole file as it would be is checked by the addon's own
+  loader: by the running `reqcove run` (the same `--state`), with its
+  `--allow-hosts` and `--pass-hosts`, or, when none is running, by mitmproxy's
+  Python from the lock (`--uvx PATH`), which leaves the hosts unchecked.
+  Refused, it says why (never a rule's text) and writes nothing.
+- Then it says when the mock takes effect: at once when run has
+  `--rules-reload` (which also turns every preset that is on off), else when
+  you restart run.
+- It runs only when its input is a terminal: a help against an agent running
+  it unasked, not a guarantee (an agent with a shell can give it one, and can
+  edit the file anyway). `--print` shows the mock as YAML without writing or
+  checking anything, in a terminal or not.
+
+Tried with the tests: the YAML for values with quotes, line breaks, `#`, `: `,
+control characters and other scripts, read back as given by the addon's loader;
+the file's text kept (comments, CRLF, no newline at the end); the refusals; the
+check by a real run (hosts in and out of scope, passed) and by mitmproxy's
+Python. Not tried by hand with a running run and a device.
+
 #### Presets an agent can turn on
 
 A mock with `preset: NAME` does nothing until an agent turns it on, for at most
@@ -1025,6 +1062,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
 | `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
 | `reqcove mark` | `[TEXT]` (`-- TEXT` for one starting with `-`): a [marker](#mark-a-moment-reqcove-mark) among the records, as yours (`cli`); only in a terminal |
+| `reqcove mock add` | `--rules FILE --url URL` and the mock's flags: [a mock added to the file](#add-a-mock-from-your-terminal-reqcove-mock-add), checked first; only in a terminal (`--print` shows it, anywhere); `--uvx PATH` |
 | `reqcove mcp` | the MCP server for an agent on this computer |
 | `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
