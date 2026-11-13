@@ -252,9 +252,11 @@ func TestRunLANNoTsnet(t *testing.T) {
 				}
 			}})
 	}()
+	// allowed_at in this computer's local time with milliseconds, as the records' times.
+	at := time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC).Local().Format("2006-01-02T15:04:05.000Z07:00")
 	select {
 	case s := <-statuses:
-		if s.Mode != "lan" || s.LAN == nil || s.LAN.Listen != fmt.Sprintf("127.0.0.1:%d", port) || fmt.Sprint(s.LAN.Allowed) != "[{127.0.0.1 2026-11-13T08:00:00Z} {192.0.2.9 2026-11-13T08:00:00Z}]" || fmt.Sprint(s.IPs) != "[127.0.0.1]" || fmt.Sprint(s.Devices) != "map[lan:127.0.0.1:lan:127.0.0.1]" {
+		if s.Mode != "lan" || s.LAN == nil || s.LAN.Listen != fmt.Sprintf("127.0.0.1:%d", port) || fmt.Sprint(s.LAN.Allowed) != "[{127.0.0.1 "+at+"} {192.0.2.9 "+at+"}]" || fmt.Sprint(s.IPs) != "[127.0.0.1]" || fmt.Sprint(s.Devices) != "map[lan:127.0.0.1:lan:127.0.0.1]" {
 			t.Errorf("status %+v", s)
 		}
 	case err := <-done:

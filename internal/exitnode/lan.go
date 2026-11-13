@@ -38,7 +38,8 @@ type LANStatus struct {
 	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run and not allowed now; up to maxSeen (the list seen is emptied when full)
 }
 
-// LANAllowed is an allowed client address and when it was allowed (RFC 3339).
+// LANAllowed is an allowed client address and when it was allowed: this
+// computer's local time with milliseconds, as the records' times.
 type LANAllowed struct {
 	Addr string `json:"addr"`
 	When string `json:"allowed_at,omitempty"`
@@ -163,7 +164,11 @@ func runLAN(ctx context.Context, cfg Config) error {
 			allowed = cfg.LAN.Allowed()
 		}
 		for _, a := range slices.SortedFunc(maps.Keys(allowed), netip.Addr.Compare) {
-			ls.Allowed = append(ls.Allowed, LANAllowed{a.String(), allowed[a].UTC().Format(time.RFC3339)})
+			when := ""
+			if t := allowed[a]; !t.IsZero() {
+				when = t.Local().Format("2006-01-02T15:04:05.000Z07:00")
+			}
+			ls.Allowed = append(ls.Allowed, LANAllowed{a.String(), when})
 			if a = a.Unmap(); network.Contains(a) {
 				d := Device{ID: "lan:" + a.String(), Name: "lan:" + a.String()}
 				p.devices[a] = d

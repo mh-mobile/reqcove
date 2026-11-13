@@ -21,7 +21,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 - uv：`uvx` の場所を示すか、入れ方を表示します（入れはしません）。
 - デバイスとホスト：`--device` と `--allow-hosts` を引用符付きで、サービスが読むファイルに書きます。`~/.config/reqcove/config`（`reqcove service install` が読むもの）か、Homebrew で入れた場合（このバイナリが `Cellar/reqcove/` の下にあるとき）は Homebrew の `$(brew --prefix)/etc/reqcove/config`（`brew services` が読むもの）です。0600 で、ディレクトリを新しく作るときは 0700 です。ファイルを置き換える前に、`run` と同じ読み方で確かめます。`*` と、`-` で始まる名前は聞き直します。URL を貼り付けた場合はホストだけを書きます。ホストがまだ決まっていなければ、`run` が動き始めてから `reqcove status`（またはエージェントの `summarize`）で iPhone がつないだホストを確認できます。ファイルがすでにあれば表示し、`y` と答えない限りそのまま残します。`y` なら全体を置き換え、元のファイルは `config.old`（0600）として残します（`--rules` などほかのフラグは、そこから書き戻せます）。普通のファイルでないものは触りません。
-- エージェント：`y` と答えれば `reqcove init` と同じように Skill を入れ、`claude mcp add reqcove -- reqcove mcp` を表示します（エージェントのコマンドは実行しません）。
+- エージェント：`y` と答えれば `reqcove init` と同じように Skill を入れ、`claude mcp add reqcove -- reqcove mcp` を表示します（エージェントのコマンドは実行しません）。`PATH` の `reqcove` がこのバイナリでない（ないか、別のもの）ときは、表示するコマンドでこのバイナリをフルパスで書きます（`service install` の表示も同じです）。
 - 起動のしかた：Homebrew で入れた場合は `brew services start reqcove`、それ以外は `reqcove service install`、またはターミナルで `reqcove run --config FILE` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
 - Ctrl-C を押すと、その質問のところで止まります。それまでに書いたものは残ります。
 
@@ -86,7 +86,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 - ファイルは、`--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan` が書いてある、のどれかなら断ります。`--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。ファイルに `--state` があれば、それが状態ディレクトリです（フルパスか `~/` から）。状態ディレクトリは、空か、新しいか、reqcove のものに限ります（`run` と同じ）。
 - `run` が終わると（エラー、断られたファイル、`kill`）、次のログインまで止まったままです。`reqcove service restart` で起動し直せます（`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user restart reqcove` を実行します。試していません）。
 - Homebrew のサービスがあるとき（ファイルがあるか、読み込まれている：`sh.brew.reqcove`、`homebrew.mxcl.reqcove`。Linux では `sh.brew.reqcove.service`、`homebrew.reqcove.service`。Linux の名前は Homebrew のコードを読んだもので、試していません）は断ります。2 つのサービスが同じ状態ディレクトリを取り合うためです。インストール済みなら、起動し直すには `reqcove service restart`。コマンドラインのフラグを変えるときやバイナリを動かしたあとは、`reqcove service uninstall` のあとでもう一度インストールしてください。
-- ログは、macOS では状態ディレクトリの `service.log`（ローテーションしないので、`mitmproxy.log` と同じく、ときどき空にしてください）、Linux では `journalctl --user -u reqcove` です。ログイン用の URL やトークンは入りません。`service install` も表示しません。それらは `reqcove links` が自分のターミナルに表示します。
+- ログは、macOS では状態ディレクトリの `service.log`（ローテーションしないので、`mitmproxy.log` と同じく、ときどき空にしてください。launchd が作ると 0644 になるので、`service install` が先に 0600 で作ります。単体テストだけで、launchd では試していません）、Linux では `journalctl --user -u reqcove` です。ログイン用の URL やトークンは入りません。`service install` も表示しません。それらは `reqcove links` が自分のターミナルに表示します。
 - `PATH` は、インストールしたときの uvx のディレクトリ、`~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、システムのものの順です。ほかの場所にあるなら、ファイルに `--uvx /full/path/uvx` と書いてください。
 - 次のログインまで止めるには、`launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove`。`reqcove status` がどちらかを表示します。
 - Linux：ユーザーユニットはログインしたときに起動します。ログインする前の起動時に動かすには `loginctl enable-linger $USER` が要ります（systemd のドキュメントによる。試していません）。
@@ -362,7 +362,7 @@ reqcove run --lan --allow-hosts api.example.com
 1. `run` が待ち受け先を表示します。デフォルトルートのインターフェイスのアドレス（別のものは `--lan-interface en0` で指定。VPN のトンネルは不可）と、`--proxy-port`（デフォルトは 8080）です。
 2. iPhone で、設定、Wi-Fi、ネットワークの (i)、プロキシを構成、手動の順に開き、そのサーバーとポートを入力します。認証はオフのままにします。
 3. 最初の接続は拒否され、`run` がそのアドレスをログに出します。このコンピュータで許可してください。`run` の質問（`Allow ADDR? [y/N]`。`run` がターミナルのフォアグラウンドのジョブのときに表示）に答えるか、ターミナルで `reqcove lan allow ADDR` を実行します。`reqcove lan list` で許可したアドレスと許可した日時を表示し、`reqcove lan deny ADDR` で許可を取り消します。これらのコマンドはターミナル以外では動きません。エージェントが使うものではありません。
-4. CA：Exit Node のときと同じく、プロキシを設定した状態で `http://mitm.it` を開きます（デバイスごとに 1 回）。平文の HTTP は同じ LAN のほかの人に差し替えられるおそれがあるので、`run` の準備完了の表示には、AirDrop で送るための CA のファイルと、照合するための CA の SHA-256 も出します。未確認：iOS のプロファイルの画面に SHA-256 が表示されるか、そのファイルの AirDrop。
+4. CA：Exit Node のときと同じく、プロキシを設定した状態で `http://mitm.it` を開きます（デバイスごとに 1 回）。平文の HTTP は同じ LAN のほかの人に差し替えられるおそれがあるので、`run` の準備完了の表示には、AirDrop で送るための CA のファイルと、照合するための CA の SHA-256 も出します。SHA-256 は iOS の表示と同じ形（小文字の 2 桁ずつ、空白区切り：`ab 90 7e …`）で、iPhone では設定、一般、VPN とデバイス管理、そのプロファイル、詳細で見られます（iOS 27.3 で確認、2026-11-14：一致しました）。未確認：そのファイルの AirDrop。
 
 記録では、デバイスは `lan:ADDR` という名前になります。ツールの `device` での絞り込みと `reqcove har --device lan:ADDR` はこの名前を受け付け、`list_devices` はこの実行での最初と最後のリクエストの時刻を返します。`reqcove status`（と `status` ツール。`mode: "lan"`）には、待ち受け先、許可したアドレス、この実行で拒否したアドレス（最大 10,000 件。いっぱいになると空にします）が出ます。
 

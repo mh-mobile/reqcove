@@ -36,6 +36,9 @@ skipped (an empty answer); it starts nothing and removes nothing:
   there to copy back). A path that is not a plain file is left alone.
 - The agent: adds the skill as `reqcove init` does, if you answer `y`, and
   prints `claude mcp add reqcove -- reqcove mcp` (it runs no agent command).
+  When `reqcove` on `PATH` is not this binary (none, or another one), the
+  commands it prints name this binary by its full path instead (as `service
+  install`'s do).
 - How to start: `brew services start reqcove` for a brew install, else
   `reqcove service install`; or `reqcove run --config FILE` in a terminal.
   `--lan` is not kept in a file: `reqcove run --lan --allow-hosts HOSTS` in a
@@ -173,7 +176,9 @@ reqcove service uninstall     # stops it and removes the file
   `reqcove service uninstall`, then install again, to change its flags on
   the command line or after moving the binary.
 - The log: `service.log` in the state directory on macOS (not rotated:
-  truncate it now and then, as `mitmproxy.log`), `journalctl --user -u
+  truncate it now and then, as `mitmproxy.log`; `service install` makes it
+  0600 before launchd opens it, which would make it 0644: unit test only, not
+  tried with launchd), `journalctl --user -u
   reqcove` on Linux. It prints no login URL or token, nor does
   `service install`: `reqcove links` does, in your terminal.
 - `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
@@ -685,8 +690,10 @@ reqcove run --lan --allow-hosts api.example.com
 4. The CA: open `http://mitm.it` with the proxy set, once per device, as with
    the exit node. Anyone else on the LAN can swap plain HTTP, so run's ready
    block also names the CA file, to send by AirDrop instead, and prints the
-   CA's SHA-256 to compare. Not checked: whether iOS shows the SHA-256 on the
-   profile screen, and AirDrop of that file.
+   CA's SHA-256 to compare as iOS shows it (lowercase pairs, `ab 90 7e …`):
+   on the iPhone, Settings, General, VPN & Device Management, the profile,
+   More Details (checked on iOS 27.3, 2026-11-14: it matched). Not checked:
+   AirDrop of that file.
 
 The records name the device `lan:ADDR`; the tools' `device` filter and
 `reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and

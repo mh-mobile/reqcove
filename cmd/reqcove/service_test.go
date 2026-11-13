@@ -114,6 +114,9 @@ func TestServiceInstallDarwin(t *testing.T) {
 	if fi, err := os.Stat(state); err != nil || !fi.IsDir() { // launchd makes no directory for the log
 		t.Errorf("state: %v", err)
 	}
+	if fi, err := os.Stat(log); err != nil || fi.Mode().Perm() != 0o600 { // launchd would make it 0644
+		t.Errorf("log: %v %v", fi, err)
+	}
 	uid := strconv.Itoa(os.Getuid())
 	wantCmds := [][]string{
 		{"launchctl", "print", "gui/" + uid + "/sh.brew.reqcove"},
@@ -127,6 +130,19 @@ func TestServiceInstallDarwin(t *testing.T) {
 	if err := serviceInstall("darwin", config, state, true); err == nil || !strings.Contains(err.Error(), "installed already") {
 		t.Errorf("again: %v", err)
 	}
+	// Installed again over a log made 0644 (an earlier install's, by launchd): 0600, kept.
+	os.Remove(file)
+	os.WriteFile(log, []byte("earlier\n"), 0o644)
+	os.Chmod(log, 0o644)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(log); err != nil || string(b) != "earlier\n" {
+		t.Errorf("log: %q %v", b, err)
+	}
+	if fi, err := os.Stat(log); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("log: %v %v", fi, err)
+	}
 	// Without --state, run's default is left to run.
 	os.Remove(file)
 	if err := serviceInstall("darwin", config, defaultState(), false); err != nil {
@@ -134,6 +150,26 @@ func TestServiceInstallDarwin(t *testing.T) {
 	}
 	if s := plistStrings(t, file); slices.Contains(s, "--state") || s[len(s)-1] != filepath.Join(home, ".reqcove/service.log") {
 		t.Errorf("default state: %q", s)
+	}
+}
+
+// The commands install prints name reqcove when PATH finds this binary,
+// else this binary's path (none on PATH, or another file).
+func TestServiceInstallPrintsBinary(t *testing.T) {
+	exe, _ := os.Executable()
+	exe, _ = filepath.EvalSymlinks(exe)
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "reqcove"), []byte("#!/bin/sh\n"), 0o755)
+	for _, c := range []struct {
+		path, self string
+	}{{selfOnPath(t, t.TempDir()), "reqcove"}, {t.TempDir(), shellWord(exe)}, {other, shellWord(exe)}} {
+		_, config := serviceHome(t, "cfg")
+		t.Setenv("PATH", c.path)
+		fakeCtl(t, false, nil)
+		out := captureStdout(t, func() error { return serviceInstall("linux", config, defaultState(), false) })
+		if want := "then: " + c.self + " links (the login URL, the first time, in your terminal); " + c.self + " status; " + c.self + " service restart after it ended; " + c.self + " service uninstall"; !strings.Contains(out, want) {
+			t.Errorf("PATH %s: no %q in\n%s", c.path, want, out)
+		}
 	}
 }
 

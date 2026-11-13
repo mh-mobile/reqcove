@@ -96,7 +96,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		return err
 	}
 	if _, err := os.Stat(file); err == nil {
-		return fmt.Errorf("installed already (%s): reqcove service restart starts it again; to change it, reqcove service uninstall, then install again", file)
+		return fmt.Errorf("installed already (%s): %[2]s service restart starts it again; to change it, %[2]s service uninstall, then install again", file, selfCmd())
 	}
 	if err := brewService(goos); err != nil {
 		return err
@@ -141,6 +141,14 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	var start [][]string
 	uid := strconv.Itoa(os.Getuid())
 	if goos == "darwin" {
+		// launchd would make the log 0644 (its umask): made 0600 here, launchd appends to it.
+		f, err := os.OpenFile(filepath.Join(state, serviceLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err == nil {
+			err = errors.Join(f.Chmod(0o600), f.Close())
+		}
+		if err != nil {
+			return err
+		}
 		body = launchAgent(argv, path, filepath.Join(state, serviceLog))
 		start = [][]string{{"launchctl", "bootstrap", "gui/" + uid, file}}
 	} else {
@@ -172,7 +180,8 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if !uvx {
 		fmt.Println("note: uvx is not on this PATH; give --uvx /full/path/uvx in the config file, or install uv")
 	}
-	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; reqcove service restart after it ended; reqcove service uninstall stops and removes it\n", withState("reqcove links", state), withState("reqcove status", state))
+	rc := selfCmd()
+	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; %[3]s service restart after it ended; %[3]s service uninstall stops and removes it\n", withState(rc+" links", state), withState(rc+" status", state), rc)
 	return nil
 }
 

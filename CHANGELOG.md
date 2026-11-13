@@ -4,6 +4,19 @@
 
 ### For people
 
+- LAN mode prints the CA's SHA-256 as iOS shows it (`ab 90 7e …`) and where:
+  Settings, General, VPN & Device Management, the profile, More Details
+  (checked on iOS 27.3: it matched). `reqcove status`'s CA line keeps the
+  form `security delete-certificate -Z` takes.
+- The proxy's log (LAN mode, the Remote Proxy, `--local-proxy`) gives the same
+  failure again (client address, host, error) at most once a minute, with how
+  many were left out: an app retrying a name that does not resolve no longer
+  fills it.
+- `reqcove setup` and `reqcove service install` print this binary's full path
+  in their commands when `reqcove` on `PATH` is not it.
+- `reqcove service install` (macOS) makes `service.log` 0600 (launchd made it
+  0644). Unit test only.
+
 - `reqcove setup`: the first run, in a terminal only. It checks uv (printing
   how to install it), asks for the device and the hosts to record and writes
   them to the file the service reads, `~/.config/reqcove/config` or, for a
@@ -78,7 +91,8 @@
 - The skill's rules example has a mock preset (`preset:`, `description:`,
   `delay_ms`).
 - `status` has `mode` (`tailnet` or `lan`) and, in LAN mode, `lan` (where it
-  listens, the allowed addresses and when, those refused this run, up to 10,000);
+  listens, the allowed addresses and when, in local time with milliseconds as
+  the other times, those refused this run, up to 10,000);
   `list_devices` has `first_seen`. The skill and the server's instructions:
   never run `reqcove lan`.
 - `list_presets`, `activate_preset`, `deactivate_preset` for presets of every

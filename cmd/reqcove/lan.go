@@ -199,9 +199,14 @@ func (l *lanReady) lines(qr string) string {
 }
 
 // lanCAAdvice is LAN mode's word on getting the CA: http://mitm.it comes
-// over plain HTTP, which others on the LAN can swap.
+// over plain HTTP, which others on the LAN can swap. The SHA-256 (uppercase
+// hex) is written as iOS shows it: lowercase pairs, spaced (iOS 27.3).
 func lanCAAdvice(file, sha256 string) string {
-	return fmt.Sprintf("Plain HTTP on a LAN can be swapped by others on it: AirDrop %s instead, or check that the CA's SHA-256 is %s", shellWord(file), sha256)
+	var pairs []string
+	for s := strings.ToLower(sha256); len(s) >= 2; s = s[2:] {
+		pairs = append(pairs, s[:2])
+	}
+	return fmt.Sprintf("Plain HTTP on a LAN can be swapped by others on it: AirDrop %s instead, or check that the CA's SHA-256 (on the iPhone: Settings, General, VPN & Device Management, the profile, More Details) is %s", shellWord(file), strings.Join(pairs, " "))
 }
 
 // caPEM is the CA file the devices trust, in state.

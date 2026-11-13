@@ -39,9 +39,71 @@ type remoteProxy struct {
 	// close on their own timeout); an LRU if that ever matters.
 	plain  sync.Map // src IP + StableID -> *httputil.ReverseProxy
 	plainN atomic.Int64
+
+	failed failLog // repeated failures, logged once a minute
 }
 
 const maxPlain = 256
+
+// logFailure logs a failed request, the first of its kind at once, then the
+// same again (client address, method, host:port, error) at most once a
+// minute with how many were not logged: an app retrying a name that does not
+// resolve would fill the log.
+func (rp *remoteProxy) logFailure(src netip.AddrPort, method, host string, err error) {
+	msg := err.Error()
+	kind := msg[strings.LastIndex(msg, ": ")+1:] // without the addresses before it (a local port differs each time)
+	if more, ok := rp.failed.note(src.Addr().String()+" "+method+" "+host+" "+kind, time.Now()); ok {
+		logEvent("proxy %v %s %s: %v%s", src, method, host, err, more) // never the path or query: they carry secrets
+	}
+}
+
+// failLog counts failures by kind, for logFailure. At most maxFailKinds kinds:
+// the one logged longest ago goes first.
+type failLog struct {
+	mu sync.Mutex
+	m  map[string]*failKind
+}
+
+type failKind struct {
+	logged  time.Time // the last line logged
+	skipped int       // since
+}
+
+const maxFailKinds = 256
+
+// note says whether to log a failure of kind at now, and the words to add
+// about the ones not logged since the last line.
+func (f *failLog) note(kind string, now time.Time) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := f.m[kind]
+	if k == nil {
+		if f.m == nil {
+			f.m = map[string]*failKind{}
+		}
+		if len(f.m) >= maxFailKinds { // ponytail: a scan, on a full map only
+			var oldest string
+			for s, v := range f.m {
+				if oldest == "" || v.logged.Before(f.m[oldest].logged) {
+					oldest = s
+				}
+			}
+			delete(f.m, oldest)
+		}
+		f.m[kind] = &failKind{logged: now}
+		return "", true
+	}
+	if now.Sub(k.logged) < time.Minute {
+		k.skipped++
+		return "", false
+	}
+	more := ""
+	if k.skipped > 0 {
+		more = fmt.Sprintf(" (%d more since %s)", k.skipped, k.logged.Format("15:04:05"))
+	}
+	k.logged, k.skipped = now, 0
+	return more, true
+}
 
 var (
 	errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
@@ -149,7 +211,7 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 		out, err = rp.open(r.Context(), src, dev, r.Host)
 	}
 	if err != nil {
-		logEvent("proxy %v CONNECT %s: %v", src, r.Host, err)
+		rp.logFailure(src, "CONNECT", r.Host, err)
 		http.Error(w, "reqcove: "+err.Error(), statusFor(err))
 		return
 	}
@@ -198,7 +260,7 @@ func (rp *remoteProxy) reverseProxy(src netip.AddrPort, dev Device) *httputil.Re
 			IdleConnTimeout: 90 * time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			logEvent("proxy %v %s %s: %v", src, r.Method, r.Host, err) // never the path or query: they carry secrets
+			rp.logFailure(src, r.Method, r.Host, err)
 			http.Error(w, "reqcove: "+err.Error(), statusFor(err))
 		},
 	})
