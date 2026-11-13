@@ -74,7 +74,7 @@ WantedBy=default.target
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを最長 5 分有効にすることだけです（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを、1 回につき最長 5 分有効にすることだけです（何度でも有効にし直せます）（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
 ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。`activate_mock` と `deactivate_mock` には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、v0.6 からは `activate_mock` も許可されます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 

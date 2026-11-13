@@ -124,7 +124,8 @@ directory. Remove the CA's profile from the iPhone first
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
 this computer the [MCP tools](#mcp-tools). They read, and secrets are
 masked as they arrive; the one change they can make is to turn on, for at most
-5 minutes, a mock you marked as a [preset](#presets-an-agent-can-turn-on)
+5 minutes each time (no cap on turning it on again), a mock you marked as a
+[preset](#presets-an-agent-can-turn-on)
 (with none, they only read; over `--mcp-http`, never)
 ([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
 `codex mcp add reqcove -- reqcove mcp` (`run` prints both).

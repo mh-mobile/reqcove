@@ -98,7 +98,8 @@ it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
 requests that action sent. With a mock you marked as a preset in the
 `--rules` file, it can also turn that mock on, a few minutes at a time
 (`activate_mock`, [presets](docs/guide.md#presets-an-agent-can-turn-on)) to
-see how the app takes an error; it cannot write or change a rule.
+see how the app takes an error. The tools cannot write or change a rule (an
+agent with file access writes one only when you ask).
 `reqcove cleanup` lists how to undo everything; stopping, restarting and
 updating are in [the guide](docs/guide.md#stop-restart-update).
 
