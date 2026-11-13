@@ -96,10 +96,11 @@ through a `replace` directive.
 The agent reads the records through MCP tools such as `summarize`, `list_flows`,
 `search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)). After
 it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
-requests that action sent. With a mock you marked as a preset in the
-`--rules` file, it can also turn that mock on, a few minutes at a time
-(`activate_mock`, [presets](docs/guide.md#presets-an-agent-can-turn-on)) to
-see how the app takes an error. The tools cannot write or change a rule (an
+requests that action sent. With a rule you marked as a preset in the
+`--rules` file, it can also turn that rule on, a few minutes at a time
+(`activate_preset`, [presets](docs/guide.md#presets-an-agent-can-turn-on)): a
+mock to see how the app takes an error, or since v0.7 a `map_remote` or
+`resolve` rule to send the app to your staging server. The tools cannot write or change a rule (an
 agent with file access writes one only when you ask).
 `reqcove cleanup` lists how to undo everything; stopping, restarting and
 updating are in [the guide](docs/guide.md#stop-restart-update).

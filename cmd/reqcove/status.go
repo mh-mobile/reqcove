@@ -238,7 +238,7 @@ func status(ctx context.Context, args []string) error {
 		Node      exitnode.Status       `json:"node"`
 		NextSteps []string              `json:"next_steps"`
 		Capture   map[string]any        `json:"capture"`
-		Active    []mcpserver.PresetOut `json:"active_mock_presets"`
+		Active    []mcpserver.PresetOut `json:"active_mock_presets"` // every kind since v0.7 (kind says which)
 		ActiveErr string                `json:"active_mock_presets_error"`
 		Service   string                `json:"service"`
 	}
@@ -270,7 +270,11 @@ func status(ctx context.Context, args []string) error {
 	if names, _ := c["mock_presets"].([]any); len(names) > 0 {
 		var on []string
 		for _, p := range out.Active {
-			s := p.Name + " until " + p.ExpiresAt
+			s := p.Name
+			if t := cmp.Or(p.Target, p.Address); t != "" {
+				s += " -> " + t
+			}
+			s += " until " + p.ExpiresAt
 			if p.Remaining != nil {
 				s += fmt.Sprintf(", %d requests left", *p.Remaining)
 			}
@@ -280,7 +284,7 @@ func status(ctx context.Context, args []string) error {
 		if out.ActiveErr != "" {
 			shown = "unknown (" + out.ActiveErr + ")"
 		}
-		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), shown)
+		fmt.Printf("  presets:     %d (%s); on: %s\n", len(names), joinAny(names), shown)
 	}
 	printCA(os.Stdout, *state, out.Mode == "lan")
 	if len(out.NextSteps) == 0 {

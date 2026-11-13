@@ -85,14 +85,14 @@ func TestMockPresets(t *testing.T) {
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("a preset off answers: %q", got)
 	}
-	ps, err := h.c.Presets(ctx)
+	ps, err := h.c.Presets(ctx, "")
 	if err != nil || len(ps) != 5 || ps[0].Name != "profile-503" || ps[0].Description != "the profile API is down" || ps[0].Active || *ps[0].Status != 503 {
 		b, _ := json.Marshal(ps)
 		t.Fatalf("presets: %s %v", b, err)
 	}
 
 	// Once: the next request, then the origin again.
-	if a, err := h.c.Activate(ctx, "profile-503", 60, 1); err != nil || a.ExpiresAt < float64(time.Now().Unix()+50) {
+	if a, err := h.c.Activate(ctx, "profile-503", "", 60, 1); err != nil || a.ExpiresAt < float64(time.Now().Unix()+50) {
 		t.Fatalf("activate: %+v %v", a, err)
 	}
 	if got := get("/profile", ""); got != "503 down" {
@@ -106,8 +106,8 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// One on per match: profile-500 turns profile-503 off.
-	h.c.Activate(ctx, "profile-503", 60, 0)
-	a, err := h.c.Activate(ctx, "profile-500", 60, 2)
+	h.c.Activate(ctx, "profile-503", "", 60, 0)
+	a, err := h.c.Activate(ctx, "profile-500", "", 60, 2)
 	if err != nil || len(a.TurnedOff) != 1 || a.TurnedOff[0] != "profile-503" {
 		t.Errorf("turned off: %+v %v", a, err)
 	}
@@ -115,8 +115,8 @@ func TestMockPresets(t *testing.T) {
 		t.Errorf("profile-500: %q", got)
 	}
 	// Re-activating replaces the limits (a dropped call made again): 1, then 3.
-	h.c.Activate(ctx, "profile-500", 60, 1)
-	h.c.Activate(ctx, "profile-500", 60, 3)
+	h.c.Activate(ctx, "profile-500", "", 60, 1)
+	h.c.Activate(ctx, "profile-500", "", 60, 3)
 	for i := range 3 {
 		if got := get("/profile", ""); !strings.HasPrefix(got, "500") {
 			t.Errorf("profile-500, %d of 3: %q", i+1, got)
@@ -131,7 +131,7 @@ func TestMockPresets(t *testing.T) {
 		t.Errorf("preset off, plain mock: %q", got)
 	}
 	// Concurrent requests use the count exactly: 3 of 10 get the preset.
-	h.c.Activate(ctx, "order-503", 60, 3)
+	h.c.Activate(ctx, "order-503", "", 60, 3)
 	results := make(chan string, 10)
 	for range 10 {
 		go func() { results <- get("/order", "") }()
@@ -148,8 +148,8 @@ func TestMockPresets(t *testing.T) {
 
 	// Operations on one URL each have their own; an operation that does not
 	// match uses no count.
-	h.c.Activate(ctx, "feed-500", 60, 1)
-	h.c.Activate(ctx, "login-401", 60, 1)
+	h.c.Activate(ctx, "feed-500", "", 60, 1)
+	h.c.Activate(ctx, "login-401", "", 60, 1)
 	if got := get("/graphql", `{"operationName":"Other","query":"query Other { a }"}`); got != "200 origin /graphql" {
 		t.Errorf("other operation: %q", got)
 	}
@@ -174,14 +174,14 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// Time: off after its seconds, also with a count left.
-	h.c.Activate(ctx, "profile-503", 1, 5)
+	h.c.Activate(ctx, "profile-503", "", 1, 5)
 	time.Sleep(1200 * time.Millisecond)
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("expired: %q", got)
 	}
 	// Deactivate.
-	h.c.Activate(ctx, "profile-503", 60, 0)
-	if was, err := h.c.Deactivate(ctx, "profile-503"); !was || err != nil {
+	h.c.Activate(ctx, "profile-503", "", 60, 0)
+	if was, err := h.c.Deactivate(ctx, "profile-503", ""); !was || err != nil {
 		t.Errorf("deactivate: %v %v", was, err)
 	}
 	if got := get("/profile", ""); got != "200 origin /profile" {
@@ -203,7 +203,7 @@ func TestMockPresets(t *testing.T) {
 		{"profile-503", 301, 0, "at most 5 minutes"},
 		{"profile-503", 60, 21, "times must be from 1 to 20"},
 	} {
-		if _, err := h.c.Activate(ctx, c.name, c.seconds, c.times); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := h.c.Activate(ctx, c.name, "", c.seconds, c.times); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v", c, err)
 		}
 	}
@@ -233,7 +233,7 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// A changed file turns presets off, also one that does not load.
-	h.c.Activate(ctx, "profile-503", 60, 0)
+	h.c.Activate(ctx, "profile-503", "", 60, 0)
 	write("  - match: {url: \"http://" + o + "/profile\"}\n    status: 200\n") // a plain mock with a preset's match: refused
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(fmt.Sprint(h.stats()["rules_error"]), "same match") {
@@ -306,7 +306,7 @@ func TestMockFaults(t *testing.T) {
 	if got, _, _ := get(h2, "/warm"); got != "origin /warm" { // one connection, then two streams on it
 		t.Fatalf("warm: %q", got)
 	}
-	if _, err := h.c.Activate(ctx, "slow", 60, 0); err != nil {
+	if _, err := h.c.Activate(ctx, "slow", "", 60, 0); err != nil {
 		t.Fatal(err)
 	}
 	slow := make(chan time.Duration)
@@ -333,7 +333,7 @@ func TestMockFaults(t *testing.T) {
 	if got, _, _ := get(h1, "/close"); !strings.HasPrefix(got, "error") {
 		t.Errorf("close over HTTP/1: %q", got)
 	}
-	h.c.Activate(ctx, "close-later", 60, 1)
+	h.c.Activate(ctx, "close-later", "", 60, 1)
 	if got, d, _ := get(h1, "/close-later"); !strings.HasPrefix(got, "error") || d < 300*time.Millisecond {
 		t.Errorf("close after a delay: %q in %v", got, d)
 	}
@@ -360,16 +360,16 @@ import addon
 from pathlib import Path
 m = addon.Mock()
 m.add({"match": {"url": "https://a.example/x"}, "preset": "p", "status": 503}, Path(sys.argv[1]))
-m.control({"op": "activate", "name": "p", "seconds": 300, "times": 1})
-assert m._on("p")
+m.book.control({"op": "activate", "name": "p", "seconds": 300, "times": 1})
+assert m.book.on("p")
 real = time.time
 addon.time = types.SimpleNamespace(time=lambda: real() + 86400, monotonic=time.monotonic)  # a day asleep
-assert not m._on("p"), "still on after a day asleep"
+assert not m.book.on("p"), "still on after a day asleep"
 addon.time = time
-m.control({"op": "activate", "name": "p", "seconds": 300})
+m.book.control({"op": "activate", "name": "p", "seconds": 300})
 mono = time.monotonic
 addon.time = types.SimpleNamespace(time=time.time, monotonic=lambda: mono() + 301)
-assert not m._on("p"), "still on past its monotonic end"
+assert not m.book.on("p"), "still on past its monotonic end"
 print("ok")
 `
 	bin, args := PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1", Dir: dir}, "python")

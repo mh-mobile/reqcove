@@ -34,16 +34,16 @@ func TestPresetsNoAnswer(t *testing.T) {
 	c := &Capture{cfg: Config{Dir: dir}}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := c.Presets(ctx); !errors.Is(err, ErrNoAnswer) {
+	if _, err := c.Presets(ctx, ""); !errors.Is(err, ErrNoAnswer) {
 		t.Errorf("list: %v", err)
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel2()
-	if _, err := c.Activate(ctx2, "p", 60, 0); !errors.Is(err, ErrUncertain) {
+	if _, err := c.Activate(ctx2, "p", "", 60, 0); !errors.Is(err, ErrUncertain) {
 		t.Errorf("activate: %v", err)
 	}
 	ln.Close()
-	if _, err := c.Activate(context.Background(), "p", 60, 0); !errors.Is(err, ErrNoControl) {
+	if _, err := c.Activate(context.Background(), "p", "", 60, 0); !errors.Is(err, ErrNoControl) {
 		t.Errorf("no socket: %v", err)
 	}
 }

@@ -17,13 +17,16 @@ type fakePresets struct {
 	activations atomic.Int32
 	seconds     atomic.Int32
 	onActivate  func()
+	kind        atomic.Value // the kind the last call passed
 }
 
-func (f *fakePresets) Presets(context.Context) ([]capture.Preset, error) {
-	return []capture.Preset{{Name: "p", URL: "https://api.example.com/x"}}, nil
+func (f *fakePresets) Presets(_ context.Context, kind string) ([]capture.Preset, error) {
+	f.kind.Store(kind)
+	return []capture.Preset{{Name: "p", Kind: "mock", URL: "https://api.example.com/x"}}, nil
 }
 
-func (f *fakePresets) Activate(_ context.Context, name string, seconds, times int) (capture.Activation, error) {
+func (f *fakePresets) Activate(_ context.Context, name, kind string, seconds, times int) (capture.Activation, error) {
+	f.kind.Store(kind)
 	f.activations.Add(1)
 	f.seconds.Store(int32(seconds))
 	if f.onActivate != nil {
@@ -35,7 +38,10 @@ func (f *fakePresets) Activate(_ context.Context, name string, seconds, times in
 	return capture.Activation{Name: name, ExpiresAt: 1.7e9}, nil
 }
 
-func (f *fakePresets) Deactivate(context.Context, string) (bool, error) { return true, nil }
+func (f *fakePresets) Deactivate(_ context.Context, _, kind string) (bool, error) {
+	f.kind.Store(kind)
+	return true, nil
+}
 
 func callText(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) (string, bool) {
 	t.Helper()
@@ -90,7 +96,7 @@ func TestServersPresetToolsLocalOnly(t *testing.T) {
 	for _, c := range []struct {
 		s    *mcp.Server
 		want int
-	}{{local, 3}, {remote, 0}} {
+	}{{local, 6}, {remote, 0}} {
 		ct, st := mcp.NewInMemoryTransports()
 		if _, err := c.s.Connect(context.Background(), st, nil); err != nil {
 			t.Fatal(err)
@@ -168,5 +174,36 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 	got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "times": 1})
 	if !isErr || !strings.Contains(got, "may or may not have taken effect") || f.activations.Load() != 1 {
 		t.Errorf("%q %v, %d activations", got, isErr, f.activations.Load())
+	}
+}
+
+// The v0.6 tools are for mocks only: a user who allowed activate_mock did not
+// allow switching where requests go (map_remote, resolve). The *_preset tools
+// take every kind.
+func TestPresetToolKinds(t *testing.T) {
+	f := &fakePresets{}
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := presetServer(f).Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+		kind string
+	}{
+		{"list_mock_presets", nil, "mock"}, {"activate_mock", map[string]any{"name": "p"}, "mock"}, {"deactivate_mock", map[string]any{"name": "p"}, "mock"},
+		{"list_presets", nil, ""}, {"activate_preset", map[string]any{"name": "p"}, ""}, {"deactivate_preset", map[string]any{"name": "p"}, ""},
+	} {
+		f.kind.Store("unset")
+		if got, isErr := callText(t, cs, c.tool, c.args); isErr {
+			t.Errorf("%s: %s", c.tool, got)
+		}
+		if k := f.kind.Load(); k != c.kind {
+			t.Errorf("%s passed kind %q, want %q", c.tool, k, c.kind)
+		}
 	}
 }

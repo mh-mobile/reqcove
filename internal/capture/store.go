@@ -51,16 +51,17 @@ type event struct {
 	Code        int         `json:"code"`       // ws_end: the close code
 	ByClient    bool        `json:"by_client"`  // ws_end: the client closed it
 	// hello
-	Mitmproxy    string         `json:"mitmproxy"`
-	Python       string         `json:"python"`
-	Brotli       string         `json:"brotli"`
-	BrotliDecode bool           `json:"brotli_decode"`
-	ZstdDecode   bool           `json:"zstd_decode"`
-	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
-	RulesError   string         `json:"rules_error"` // why --rules could not be loaded (at start), or reloaded
-	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
-	Presets      []string       `json:"presets"`     // the mock presets' names
-	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
+	Mitmproxy     string            `json:"mitmproxy"`
+	Python        string            `json:"python"`
+	Brotli        string            `json:"brotli"`
+	BrotliDecode  bool              `json:"brotli_decode"`
+	ZstdDecode    bool              `json:"zstd_decode"`
+	Rules         map[string]int    `json:"rules"`          // --rules loaded, by kind
+	RulesError    string            `json:"rules_error"`    // why --rules could not be loaded (at start), or reloaded
+	Resolve       []string          `json:"resolve"`        // resolve rules, "name -> ip:port"
+	Presets       []string          `json:"presets"`        // hello: every preset's name; request: the presets that changed or answered it
+	PresetTargets map[string]string `json:"preset_targets"` // hello: map_remote and resolve presets' targets, by name
+	Upstream      string            `json:"upstream"`       // host:port decrypted requests go on to
 	// counters the addon attaches to every line
 	DroppedBodies int64       `json:"dropped_bodies"`
 	DroppedEvents int64       `json:"dropped_events"`
@@ -105,6 +106,7 @@ type Flow struct {
 	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
 	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
 	Preset       string      `json:"preset,omitempty"`    // a mock preset an agent turned on answered it
+	Presets      []string    `json:"presets,omitempty"`   // every preset an agent turned on that changed or answered it
 	Host         string      `json:"host"`
 	Path         string      `json:"path"`
 	HTTPVersion  string      `json:"http_version"`
@@ -351,7 +353,7 @@ func (s *Store) Apply(line []byte) {
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
-		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.RulesError
+		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.PresetTargets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
@@ -429,7 +431,7 @@ func (s *Store) Apply(line []byte) {
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.op != ""
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.Presets, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.Presets, e.op != ""
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
