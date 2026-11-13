@@ -159,6 +159,12 @@ mock:                                                     # answered here; the r
     body: '{"error":"expired"}'                           # or body_file: (at most 1 MiB)
   - match: {url: "https://api.example.com/graphql", operation: Feed}  # a GraphQL operation
     body_file: feed.json
+  - match: {method: GET, url: "https://api.example.com/v1/profile"}
+    preset: profile-slow                                  # only while an agent turns it on (activate_mock)
+    description: the profile loads slowly
+    status: 200
+    body_file: profile.json
+    delay_ms: 5000                                        # at most 30000; or fault: close (the connection closes, no answer)
 map_remote:
   - "|https://api.example.com/|http://localhost:3000/"   # to a dev server on this computer
 keep_host_header: true                                    # map_remote keeps the app's Host

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### For people
+
+- The guide shows which Reqcove tools to allow by name in Claude Code's
+  settings, with the preset tools under `ask`; says that Claude Code's `!`
+  gets nothing from `reqcove links` (tried), and that `status` over
+  `--mcp-http` has no `active_mock_presets`.
+
+### For agents
+
+- The skill's rules example has a mock preset (`preset:`, `description:`,
+  `delay_ms`).
+
 ## v0.6.0 — 2026-11-13
 
 ### For people
