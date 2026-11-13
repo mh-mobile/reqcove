@@ -4,6 +4,8 @@
 
 ### For people
 
+- `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
+  out of the proxy, as its IPv4 range already was.
 - The guide shows which Reqcove tools to allow by name in Claude Code's
   settings, with the preset tools under `ask`; says that Claude Code's `!`
   gets nothing from `reqcove links` (tried), and that `status` over
