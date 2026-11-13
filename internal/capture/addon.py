@@ -275,8 +275,11 @@ def _map_remote_target(replacement):
         addr = ipaddress.ip_address(host)
     except ValueError:
         addr = None
-    if addr is None and not HOST_NAME.match(host):
+    if addr is None and (not HOST_NAME.match(host) or re.fullmatch(r"\d+|0x[0-9a-f]*", host.rsplit(".", 1)[-1])):
+        # A last label of digits or 0x…: a resolver may read it as an address (2852039166 is 169.254.169.254).
         raise RuleError("a map_remote preset's target must be a host name or an address")
+    if port == 0:
+        raise RuleError("a map_remote preset's target has a bad port")
     if addr is not None and (addr.is_link_local or addr.is_unspecified or addr.is_multicast):
         raise RuleError("a map_remote preset's target cannot be a link-local, unspecified or multicast address")
     if scheme == "http" and not (addr is not None and (addr.is_private or addr.is_loopback) or LOCAL_NAMES.fullmatch(host)):

@@ -87,6 +87,9 @@ refused('map_remote:\n  - {rule: "|a|http://h.example/", preset: x}\n', "plain h
 refused('map_remote:\n  - {rule: "|a|/v2/", preset: x}\n', "starts with http")
 refused('map_remote:\n  - {rule: "|https://api\\\\.example\\\\.com/|https://staging.example.com", preset: x}\n', "starts with http")
 refused('map_remote:\n  - {rule: "|a|http://169.254.169.254/", preset: x}\n', "link-local")
+refused('map_remote:\n  - {rule: "|a|https://2852039166/", preset: x}\n', "host name or an address")
+refused('map_remote:\n  - {rule: "|a|https://0xa9.0xfe.0xa9.0xfe/", preset: x}\n', "host name or an address")
+refused('map_remote:\n  - {rule: "|a|https://h.example:0/", preset: x}\n', "bad port")
 assert addon._origin("https://h.example:443/x") == "https://h.example" and addon._origin("http://h.example:8080/") == "http://h.example:8080"
 refused('modify_headers:\n  - {rule: "/~s/X-A/b", preset: x}\n', "requests only")
 refused('modify_headers:\n  - {rule: "/~q/X-A/b", preset: x}\n  - "/~q/x-a/c"\n', "same match")

@@ -424,7 +424,7 @@ v0.7 から、`map_remote`、`modify_headers`、`resolve` のルールもプリ�
 
 ```yaml
 map_remote:
-  - {rule: "|~d api.example.com|https://api\\.example\\.com/|https://staging.example.com/", preset: staging, description: to staging}
+  - {rule: "|~d api.example.com|^https://api\\.example\\.com/|https://staging.example.com/", preset: staging, description: to staging}
 modify_headers:
   - {rule: "/~q/X-Feature-Flag/new-checkout", preset: new-checkout}   # リクエストだけ
 resolve:
