@@ -15,6 +15,8 @@ come from reading code rather than from a test say so. It describes v0.6.
   your own user's devices, and only while neither it nor Reqcove's node is tagged
   (a tagged node keeps the user ID of whoever tagged it); name other devices by
   machine name, IP or StableID.
+- **In LAN mode (`--lan`), the addresses you allow are trusted to use the
+  proxy**, with no password: an address, not a device ([below](#lan-mode---lan)).
 
 ## In a container
 
@@ -309,7 +311,7 @@ readable by you only (refused otherwise; it may hold `--mask-values` patterns),
 errors name its lines, never a value, and the flags that take masking off,
 show traffic unmasked, record every site or let a file change where requests
 go while running stay on the command line: `--no-redact`, `--web`,
-`--allow-hosts '*'` (also through `@FILE`) and `--rules-reload` are refused in
+`--allow-hosts '*'` (also through `@FILE`), `--rules-reload` and `--lan` (an open proxy on the LAN) are refused in
 it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 
 ## Mock presets
@@ -569,6 +571,54 @@ keep the state directory, and its copies and backups, private, and remove the
 trust when done (`reqcove status` and `cleanup` print how, by its fingerprint).
 Tried with the real `networksetup` (set, and put back at Ctrl-C) and an iOS 27
 Simulator.
+
+## LAN mode (`--lan`)
+
+`run --lan` starts no tailnet node. An HTTP proxy listens on one address of
+this computer, that of one LAN interface (never 0.0.0.0, never a VPN's tunnel),
+on `--proxy-port`. There is no password; who may use it is decided here, by
+address:
+
+- A connection from outside that interface's network is closed as it is
+  accepted, as is one from an address not allowed: nothing is recorded, and
+  each new address is logged once, until the list of addresses seen (10,000)
+  fills and is emptied: then once more, and run asks again (tests). Each
+  request on a kept connection is checked again, so a `reqcove lan deny`
+  refuses new requests within two seconds; an HTTPS tunnel already open goes
+  on until it closes.
+- The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
+  each was allowed). They change through `reqcove lan allow|deny`, or through
+  run's question on its own terminal. The `lan` commands refuse to run unless
+  stdin and stdout are a terminal, as `reqcove links` does: an agent's shell
+  usually has neither (a help, not a guarantee: a script can give it one), and
+  no MCP tool changes the list. The question is asked only while run is the
+  terminal's foreground job, and input typed before it is dropped first, so an
+  earlier Enter or `y` does not answer it (tests through a seam; the terminal
+  calls themselves not tested).
+- An address is not a device: whoever has an allowed address later is allowed
+  too, on this network or on another with the same prefix (a café's
+  192.168.1.0/24 as your home's). The ready block, `reqcove status` and
+  `reqcove lan list` show the list.
+- `--lan` is refused in a `--config` file, so `brew services` never keeps an
+  open proxy running.
+
+What an allowed address reaches through this computer (tests): ports 80 and
+443 only (others refused, before any lookup), on public addresses, from your
+address; private ranges (10/8, 172.16/12, 192.168/16, 100.64/10), those behind
+this computer's VPN included, only by a name written exactly in
+`--allow-hosts` (no `*`). Never, even by an exact name: this computer (loopback,
+its addresses), link-local addresses, the network the proxy is on, this
+computer's other networks numbered from public space, special-purpose ranges,
+IPv6. Names are looked up with this computer's resolver, `/etc/hosts` first.
+`map_remote` and `resolve` targets are dialled by mitmproxy, outside these
+checks: a rule sending an allowed host to a server on this computer serves the
+LAN clients' requests too.
+
+The CA at `http://mitm.it` comes over plain HTTP, which anyone else on the LAN
+can swap. The ready block names the CA file, to send by AirDrop instead, and
+prints its SHA-256. Not checked: whether iOS shows that SHA-256 on the profile
+screen. Use LAN mode on a network you trust, and stop it when done. Not tried
+with an iPhone on a real network.
 
 ## Other processes on this computer
 

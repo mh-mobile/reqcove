@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -243,9 +244,7 @@ func TestRunLANNoTsnet(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{Dir: dir, Hostname: "reqcove-lan-test", ProxyPort: port, ControlURL: "http://127.0.0.1:1", // never reached: no tsnet
-			LAN: &LAN{Interface: loopbackName(t), Allowed: func() []netip.Addr {
-				return []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("192.0.2.9")} // the second off the network
-			}},
+			LAN: &LAN{Interface: loopbackName(t), Allowed: allowedAt("127.0.0.1", "192.0.2.9")}, // the second off the network
 			OnStatus: func(s Status) {
 				select {
 				case statuses <- s:
@@ -255,7 +254,7 @@ func TestRunLANNoTsnet(t *testing.T) {
 	}()
 	select {
 	case s := <-statuses:
-		if s.Backend != "LAN" || fmt.Sprint(s.IPs) != "[127.0.0.1]" || fmt.Sprint(s.Devices) != "map[lan:127.0.0.1:lan:127.0.0.1]" {
+		if s.Mode != "lan" || s.LAN == nil || s.LAN.Listen != fmt.Sprintf("127.0.0.1:%d", port) || fmt.Sprint(s.LAN.Allowed) != "[{127.0.0.1 2026-11-13T08:00:00Z} {192.0.2.9 2026-11-13T08:00:00Z}]" || fmt.Sprint(s.IPs) != "[127.0.0.1]" || fmt.Sprint(s.Devices) != "map[lan:127.0.0.1:lan:127.0.0.1]" {
 			t.Errorf("status %+v", s)
 		}
 	case err := <-done:
@@ -297,10 +296,11 @@ func testRunLANMoves(t *testing.T, next string, listens bool) {
 	lanAddr = func(string) (string, netip.Prefix, error) { return "lo", *at.Load(), nil }
 	lanPoll = 20 * time.Millisecond
 	port := freePort(t)
+	var last atomic.Pointer[Status]
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{ProxyPort: port, LAN: &LAN{Allowed: func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("127.0.0.1")} }}})
+		done <- Run(ctx, Config{ProxyPort: port, LAN: &LAN{Allowed: allowedAt("127.0.0.1")}, OnStatus: func(s Status) { last.Store(&s) }})
 	}()
 	defer func() { cancel(); <-done }()
 	listening := func(ip string) bool {
@@ -323,6 +323,45 @@ func testRunLANMoves(t *testing.T, next string, listens bool) {
 	if listening("127.0.0.1") {
 		t.Error("listening again after the network changed")
 	}
+	if s := last.Load(); s.LAN == nil || s.LAN.Listen != "" || !strings.Contains(s.LAN.Stopped, "another network") {
+		t.Errorf("status after the network changed: %+v", s.LAN)
+	}
+}
+
+// The status lists the addresses refused this run until they are allowed.
+func TestRunLANStatusRefused(t *testing.T) {
+	defer func(poll time.Duration) { lanPoll = poll }(lanPoll)
+	lanPoll = 20 * time.Millisecond
+	var allowed atomic.Pointer[map[netip.Addr]time.Time]
+	none := map[netip.Addr]time.Time{}
+	allowed.Store(&none)
+	var last atomic.Pointer[Status]
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{ProxyPort: port, LAN: &LAN{Interface: loopbackName(t), Allowed: func() map[netip.Addr]time.Time { return *allowed.Load() }},
+			OnStatus: func(s Status) { last.Store(&s) }})
+	}()
+	defer func() { cancel(); <-done }()
+	refused := func() string {
+		if s := last.Load(); s != nil && s.LAN != nil {
+			return fmt.Sprint(s.LAN.Refused)
+		}
+		return ""
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitFor(t, func() bool {
+		c, err := net.Dial("tcp", addr)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	}, "listening (and a connection refused)")
+	waitFor(t, func() bool { return refused() == "[127.0.0.1]" }, "127.0.0.1 listed as refused")
+	now := allowedAt("127.0.0.1")()
+	allowed.Store(&now)
+	waitFor(t, func() bool { return refused() == "[]" }, "127.0.0.1 off the refused list once allowed")
 }
 
 func waitFor(t *testing.T, ok func() bool, what string) {
@@ -334,6 +373,22 @@ func waitFor(t *testing.T, ok func() bool, what string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("not %s", what)
+}
+
+// Each address is logged once, until the list of those seen fills: then it is
+// emptied, and an address seen before counts as new again.
+func TestOnceSetBounded(t *testing.T) {
+	var s onceSet
+	a := netip.MustParseAddr("192.168.1.23")
+	if !s.first(a, "refused") || s.first(a, "refused") {
+		t.Fatal("not once")
+	}
+	for i := range maxSeen {
+		s.first(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), "off")
+	}
+	if len(s.m) > maxSeen || !s.first(a, "refused") {
+		t.Errorf("%d kept; seen again: the list was not emptied", len(s.m))
+	}
 }
 
 // One pool per client, but not without end: on a LAN anyone adds clients.
@@ -348,4 +403,13 @@ func TestRemoteProxyPoolsBounded(t *testing.T) {
 	if n > maxPlain {
 		t.Errorf("%d pools kept, want at most %d", n, maxPlain)
 	}
+}
+
+// allowedAt is a LAN.Allowed of these addresses, allowed at 08:00 UTC on 2026-11-13.
+func allowedAt(addrs ...string) func() map[netip.Addr]time.Time {
+	m := map[netip.Addr]time.Time{}
+	for _, a := range addrs {
+		m[netip.MustParseAddr(a)] = time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
+	}
+	return func() map[netip.Addr]time.Time { return m }
 }

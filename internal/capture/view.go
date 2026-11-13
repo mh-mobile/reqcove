@@ -46,8 +46,9 @@ type DeviceInfo struct {
 	Carried      bool   `json:"carried"` // one of --device now
 	Flows        int    `json:"flows"`
 	TLSFailures  int    `json:"tls_failures"`
-	Passthroughs int    `json:"passthroughs"`        // --pass-hosts connections kept
-	LastSeen     string `json:"last_seen,omitempty"` // newest request start
+	Passthroughs int    `json:"passthroughs"`         // --pass-hosts connections kept
+	FirstSeen    string `json:"first_seen,omitempty"` // its first request or connection this run (kept when its records are not)
+	LastSeen     string `json:"last_seen,omitempty"`  // newest request start
 }
 
 // Devices lists the --device devices and any other device with records.
@@ -86,6 +87,9 @@ func (s *Store) Devices() []DeviceInfo {
 	}
 	out := []DeviceInfo{}
 	for id, d := range byID {
+		if t, ok := s.firstSeen[id]; ok {
+			d.FirstSeen = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
+		}
 		if last[id] > 0 {
 			d.LastSeen = unixTime(last[id]).Format("2006-01-02T15:04:05.000Z07:00")
 		}

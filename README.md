@@ -124,6 +124,17 @@ All of them: [the guide](docs/guide.md#options).
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 
+### Without Tailscale (LAN mode)
+
+On the same network, the iPhone can also use this computer as its Wi-Fi
+proxy, with no Tailscale: `reqcove run --lan --allow-hosts api.example.com`,
+set the iPhone's Wi-Fi proxy (Manual) to the address and port run prints, and
+allow the iPhone's address on this computer (run asks, or
+`reqcove lan allow ADDR`). Wi-Fi only, ports 80 and 443 only, and no password:
+an address you allow can send through this computer. Not tried yet with an
+iPhone on a real network. What it reaches and what blocks it:
+[the guide](docs/guide.md#without-tailscale-lan-mode---lan).
+
 ## What it keeps safe, and what it does not
 
 - Only requests to the hosts in `--allow-hosts` are recorded. A request to
@@ -139,6 +150,9 @@ All of them: [the guide](docs/guide.md#options).
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.
+- LAN mode (`--lan`) has no password: an address you allow on this computer
+  can reach the internet through it from your address (ports 80 and 443), and
+  the private hosts named exactly in `--allow-hosts`.
 
 More in [docs/SECURITY.md](docs/SECURITY.md).
 

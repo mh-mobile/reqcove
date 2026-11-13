@@ -178,12 +178,13 @@ type Store struct {
 	unknownVer    int64
 	orphanUpdates int64
 	evicted       int64
-	names         map[string]string // device StableID -> display name
-	allow         HostRules         // hosts recorded (--allow-hosts)
-	redact        atomic.Bool       // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
-	outOfScope    int64             // requests to hosts outside allow, seen here
-	addonOOS      int64             // the same, seen by the addon
-	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
+	names         map[string]string  // device StableID -> display name
+	firstSeen     map[string]float64 // device StableID -> its first request or connection this run (a few devices: only reqcove names them)
+	allow         HostRules          // hosts recorded (--allow-hosts)
+	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
+	outOfScope    int64              // requests to hosts outside allow, seen here
+	addonOOS      int64              // the same, seen by the addon
+	earlier       [3]int64           // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
 	seq           int64         // last Flow.seq (or Flow.answered) handed out
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
@@ -290,7 +291,7 @@ func NewStore(maxFlows, maxBytes int) *Store {
 	// ponytail: a run handing out over a million seqs a second for its whole
 	// life (two a flow, its arrival and its answer, and one a WebSocket message)
 	// could pass the next run's base, and then its cursors look current.
-	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, state: "starting",
+	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, firstSeen: map[string]float64{}, allow: HostRules{All: true}, state: "starting",
 		started: now, base: now.UnixMicro(), seq: now.UnixMicro()}
 	s.redact.Store(true)
 	return s
@@ -364,6 +365,7 @@ func (s *Store) Apply(line []byte) {
 			return
 		}
 		p := &passthrough{conn: e.Conn, device: e.Device, host: e.SNI, server: e.Server, alpn: e.ALPN, start: e.TS}
+		s.seenLocked(e.Device, e.TS)
 		s.passes = append(s.passes, p)
 		s.passByConn[e.Conn] = p
 		s.passCount++
@@ -391,6 +393,7 @@ func (s *Store) Apply(line []byte) {
 		if s.allow.Passed(host) { // a --pass-hosts host was decrypted after all: say so, it is why it failed
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
+		s.seenLocked(e.Device, e.TS) // a client whose CA is not trusted yet has only these
 		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
@@ -420,6 +423,7 @@ func (s *Store) Apply(line []byte) {
 	switch e.Ev {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
+		s.seenLocked(e.Device, e.TS)
 		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
@@ -585,4 +589,11 @@ func header(h [][2]string, name string) string {
 		}
 	}
 	return ""
+}
+
+// seenLocked keeps when a device was first seen this run.
+func (s *Store) seenLocked(device string, ts float64) {
+	if _, ok := s.firstSeen[device]; !ok && device != "" {
+		s.firstSeen[device] = ts
+	}
 }

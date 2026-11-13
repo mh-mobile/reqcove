@@ -548,6 +548,88 @@ exit node, and names are looked up here.
 Tried on an iPhone: Safari's requests were recorded, and sites outside
 `--allow-hosts` opened as before.
 
+### Without Tailscale: LAN mode (`--lan`)
+
+`reqcove run --lan` starts no tailnet node: Reqcove listens as an HTTP proxy
+on this computer's address on the LAN, and an iPhone on the same network sets
+its Wi-Fi proxy to it. The exit node stays the main way: it carries everything
+the phone sends, over cellular too, and needs nothing from the network it is
+on. LAN mode is for when Tailscale is not an option.
+
+```sh
+reqcove run --lan --allow-hosts api.example.com
+```
+
+1. run prints where it listens: the address of the default route's interface
+   (`--lan-interface en0` picks another; a VPN's tunnel is refused) and
+   `--proxy-port`, 8080 by default.
+2. On the iPhone: Settings, Wi-Fi, (i) by the network, Configure Proxy,
+   Manual: that server and port, Authentication off.
+3. Its first connection is refused, and run logs its address. Allow it on this
+   computer: answer run's question (`Allow ADDR? [y/N]`, asked while run is the
+   terminal's foreground job), or run `reqcove lan allow ADDR` in a terminal.
+   `reqcove lan list` shows the allowed addresses and when each was allowed;
+   `reqcove lan deny ADDR` takes one back. These commands refuse to run off a
+   terminal: they are not for an agent.
+4. The CA: open `http://mitm.it` with the proxy set, once per device, as with
+   the exit node. Anyone else on the LAN can swap plain HTTP, so run's ready
+   block also names the CA file, to send by AirDrop instead, and prints the
+   CA's SHA-256 to compare. Not checked: whether iOS shows the SHA-256 on the
+   profile screen, and AirDrop of that file.
+
+The records name the device `lan:ADDR`; the tools' `device` filter and
+`reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
+last request this run. `reqcove status` (and the `status` tool, as
+`mode: "lan"`) shows where it listens, the allowed addresses and the ones
+refused this run (up to 10,000: the list is emptied when it fills).
+
+There is no password. Who may use the proxy is decided on this computer, by
+address, as in Charles Proxy (its documentation describes an access control
+list, and a dialog for a new address). What that means:
+
+- An allowed entry is an address, not a device: whoever has that address later
+  is allowed too. The list is kept in the state directory (`lan-allowed`), so
+  an address stays allowed on another network with the same prefix (a café's
+  192.168.1.0/24 as your home's). Use `reqcove lan list` and `lan deny` when
+  done. Not checked: whether an iPhone keeps the same private Wi-Fi address
+  on a network over time.
+- Through this computer, an allowed address reaches the internet from your
+  address, on ports 80 and 443 only, and private hosts named exactly in
+  `--allow-hosts` (no `*`), those behind this computer's VPN included. Never
+  this computer, link-local addresses, or the network the proxy is on, even by
+  an exact name. Its requests to the allowed hosts are recorded.
+- `map_remote` and `resolve` targets in `--rules` are dialled by mitmproxy,
+  outside these checks: a rule sending an allowed host to a server on this
+  computer serves the LAN clients' requests there too.
+- `lan deny` refuses new connections within two seconds, but HTTPS tunnels
+  already open go on until they close.
+- Use it on a network you trust, and stop it when done.
+
+Other differences from the exit node:
+
+- Ports 80 and 443 only: a development server on this computer or on the same
+  Wi-Fi (Metro on 8081, say) is refused while the proxy is set. Not checked:
+  whether iOS skips the proxy for local addresses.
+- Names are looked up with this computer's resolver, `/etc/hosts` first: a
+  name it maps to 127.0.0.1 is refused.
+- Apps that ignore the Wi-Fi proxy go straight out, and are not recorded.
+- What blocks it: client isolation on the Wi-Fi (guest networks often have
+  it), VLANs between the iPhone and this computer, an MDM profile, a managed
+  firewall. Not checked: whether the macOS firewall asks to accept connections
+  for `reqcove`.
+- `--lan` is refused in `--config`, so it never runs as a service.
+  `--device`, `--ui`, `--mcp-http`, `--hostname` and `--dns` do not go with it
+  (they are the tailnet node's); `--local-proxy` and `--web` (on this computer
+  only) do.
+- If this computer's address changes on the same network, run listens on the
+  new one. If it moves to another network, run stops listening and says so in
+  its log and `reqcove status`; a restart listens on the new network.
+
+Tried by tests only: the proxy on the loopback interface with real mitmproxy
+(HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
+and the refusals above. Not tried: an iPhone on a real Wi-Fi network, a change
+of network.
+
 ### Another Mac
 
 A Mac named with `--device` that chooses the exit node in the Tailscale app is
@@ -788,7 +870,9 @@ other protocols going straight to their servers.
 | `--upstream-proxy URL` | send decrypted requests on through [an HTTP proxy](#an-upstream-proxy---upstream-proxy) |
 | `--upstream-ca FILE` | that proxy's CA (PEM or DER) |
 | `--local-proxy` | a proxy on `127.0.0.1:8082` for this computer's apps: [the iOS Simulator](#the-ios-simulator---local-proxy) |
-| `--proxy-port N` | the [Remote Proxy](#without-the-exit-node-the-wi-fi-proxy)'s port, 8080 by default; 0 turns it off |
+| `--proxy-port N` | the proxy port: the [Remote Proxy](#without-the-exit-node-the-wi-fi-proxy)'s, or with `--lan` the LAN proxy's; 8080 by default; 0 turns the Remote Proxy off |
+| `--lan` | [LAN mode](#without-tailscale-lan-mode---lan): no tailnet node; a Wi-Fi proxy on this computer's LAN address for the addresses you allow |
+| `--lan-interface NAME` | with `--lan`, the interface to listen on; the default route's by default |
 | `--ui` | [a read-only page of the flows](#on-the-iphone---ui), on the node's port 80 |
 | `--web` | [mitmweb](#in-mitmweb---web) instead of mitmdump: no masking |
 | `--mcp-http` | [the MCP tools over HTTP](#agents-on-other-devices---mcp-http), on the node's port 8090 |
@@ -799,7 +883,7 @@ other protocols going straight to their servers.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--allow-hosts '*'`); the file `chmod 600` |
+| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--allow-hosts '*'`); the file `chmod 600` |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
@@ -811,6 +895,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
 | `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
 | `reqcove mcp` | the MCP server for an agent on this computer |
+| `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
@@ -836,11 +921,11 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_ws_messages` | a WebSocket's messages (a row with `websocket_messages`), oldest first, after a cursor (`after`: a checkpoint, or the last page's `after`); filters `direction` (`client`, `server`) and `text`. A text message's first 4 KiB, masked as it arrived as bodies are; a binary one, one past about 20 a second on its socket, or text masking cannot read gives its size only. Kept are the socket's first 5 messages (an auth message is usually one) and its newest 100; `missed` counts the others after the cursor (`missed_at_most` when the cursor itself falls among them: then some may be from before it). `open` and `close` (code, who closed) say how the socket stands. Messages wake no `wait_for_flows`, but a timed-out wait lists the sockets that got messages since (`websocket_activity`); `search_flows` with `bodies` looks in the kept ones |
 | `diff_flows` | two flows compared (one that worked and one that failed): method, URL, status, error, headers by name, bodies (JSON by path). While masking is on, values masked on both sides are listed under `masked`, never as equal (they may differ), and bodies that are not text are not compared; with `--no-redact` everything is compared |
 | `summarize` | counts by host, User-Agent, status, method, device, content type, gRPC status (`by_grpc_status`), and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
-| `list_devices` | carried devices, their counts and last activity |
+| `list_devices` | carried devices (`lan:ADDR` in LAN mode), their counts, and first and last activity this run |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`; not over `--mcp-http`, which has no preset tools) |
+| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`; not over `--mcp-http`, which has no preset tools) |
 | `list_mock_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file: what each matches and answers, whether it is on, requests left, when it turns off; never bodies or header values |
 | `activate_mock` | turn a preset on, for at most 5 minutes (`minutes`) and, with `times`, at most 20 requests; returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
 | `deactivate_mock` | turn a preset off. Not over `--mcp-http` |
@@ -863,7 +948,7 @@ The main ones are in the [README](../README.md#limits). The rest:
 - Phone calls through the exit node have not been tried.
 - Limits of one feature are in its section: [`--ui`](#on-the-iphone---ui),
   [`--web`](#in-mitmweb---web), [`--local-proxy`](#the-ios-simulator---local-proxy),
-  [rules](#rules---rules), [an upstream proxy](#an-upstream-proxy---upstream-proxy).
+  [LAN mode](#without-tailscale-lan-mode---lan), [rules](#rules---rules), [an upstream proxy](#an-upstream-proxy---upstream-proxy).
 
 ## Security
 

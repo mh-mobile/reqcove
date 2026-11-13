@@ -96,7 +96,11 @@ func proxyServer(rp *remoteProxy) *http.Server {
 // Status is where reqcove's node stands with its tailnet: what `reqcove
 // status` reports, with the next step for the user.
 type Status struct {
-	Backend      string            `json:"backend"`            // NeedsLogin, NeedsMachineAuth, Starting, Running, ...
+	// Mode is "tailnet" (the exit node and the Remote Proxy) or "lan" (run
+	// --lan: no tailnet node, LAN set). The status tool shows both at its top.
+	Mode         string            `json:"-"`
+	LAN          *LANStatus        `json:"-"`
+	Backend      string            `json:"backend,omitempty"`  // NeedsLogin, NeedsMachineAuth, Starting, Running, ...; none in LAN mode
 	AuthURL      string            `json:"auth_url,omitempty"` // to log in
 	Node         string            `json:"node,omitempty"`     // MagicDNS name
 	IPs          []string          `json:"ips,omitempty"`
@@ -359,7 +363,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 }
 
 func nodeStatus(ctx context.Context, lc *local.Client, st *ipnstate.Status) Status {
-	s := Status{Backend: st.BackendState, AuthURL: st.AuthURL, Health: st.Health}
+	s := Status{Mode: "tailnet", Backend: st.BackendState, AuthURL: st.AuthURL, Health: st.Health}
 	for _, ip := range st.TailscaleIPs {
 		s.IPs = append(s.IPs, ip.String())
 	}

@@ -189,9 +189,31 @@ func TestTLSFailuresAndDevices(t *testing.T) {
 	}
 
 	got := fmt.Sprint(st.Devices())
-	want := fmt.Sprintf("[{nPAD ipad true 0 1 0 } {nPHONE iphone true 1 2 0 %s} {nOLD  false 1 0 0 %s}]",
-		unixTime(base+40).Format("2006-01-02T15:04:05.000Z07:00"), unixTime(base+50).Format("2006-01-02T15:04:05.000Z07:00"))
+	at := func(ts float64) string { return unixTime(ts).Format("2006-01-02T15:04:05.000Z07:00") }
+	// first seen: TLS failures count (a client whose CA is not trusted yet has only these), not one outside --allow-hosts
+	want := fmt.Sprintf("[{nPAD ipad true 0 1 0 %s } {nPHONE iphone true 1 2 0 %s %s} {nOLD  false 1 0 0 %s %s}]", at(base+20), at(base), at(base+40), at(base+50), at(base+50))
 	if got != want {
 		t.Errorf("devices:\n got %s\nwant %s", got, want)
+	}
+}
+
+// A LAN mode device (lan:ADDR) is found by the device filter, and its first
+// request this run stays its first seen once that record is evicted.
+func TestLANDeviceFirstSeen(t *testing.T) {
+	st := NewStore(2, 1<<20)
+	allow, _ := ParseAllowHosts([]string{"api.example.com"})
+	st.SetScope(allow, true)
+	st.SetDeviceNames(map[string]string{"lan:192.168.1.23": "lan:192.168.1.23"})
+	base := float64(time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC).Unix())
+	for i := range 3 {
+		st.Apply(line(t, map[string]any{"ev": "request", "id": fmt.Sprint("r", i), "device": "lan:192.168.1.23", "host": "api.example.com", "ts": base + float64(i)}))
+	}
+	if fs, _ := st.List(Filter{Device: "lan:192.168.1.23", Limit: 10}); len(fs) != 2 {
+		t.Errorf("by device: %d flows, want the 2 kept", len(fs))
+	}
+	d := st.Devices()
+	at := func(ts float64) string { return unixTime(ts).Format("2006-01-02T15:04:05.000Z07:00") }
+	if len(d) != 1 || d[0].FirstSeen != at(base) || d[0].LastSeen != at(base+2) {
+		t.Errorf("devices %+v, want first seen %s", d, at(base))
 	}
 }
