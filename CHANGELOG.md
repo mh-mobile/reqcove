@@ -8,16 +8,24 @@
   settings, with the preset tools under `ask`; says that Claude Code's `!`
   gets nothing from `reqcove links` (tried), and that `status` over
   `--mcp-http` has no `active_mock_presets`.
-- `run --lan` (in progress, not in the docs yet): LAN mode without Tailscale,
-  an HTTP proxy on this computer's LAN address for the client addresses you
-  allow (`reqcove lan allow ADDR`, or run's prompt), recorded as `lan:ADDR`;
-  ports 80 and 443 only, private hosts only for exact `--allow-hosts` names,
-  never this computer or its own network. Refused in `--config`.
+- `run --lan`: LAN mode without Tailscale, an HTTP proxy on this computer's
+  LAN address for the client addresses you allow (`reqcove lan allow ADDR`,
+  or run's question), recorded as `lan:ADDR`; ports 80 and 443 only, private
+  hosts only for exact `--allow-hosts` names, never this computer or its own
+  network. Refused in `--config`. The ready block says what to enter on the
+  iPhone, who is allowed, and the CA's file and SHA-256 (plain HTTP on a LAN
+  can be swapped); `reqcove status` shows the allowed and refused addresses.
+  README, the guide and SECURITY have a section. Not tried yet with an iPhone
+  on a real network.
 
 ### For agents
 
 - The skill's rules example has a mock preset (`preset:`, `description:`,
   `delay_ms`).
+- `status` has `mode` (`tailnet` or `lan`) and, in LAN mode, `lan` (where it
+  listens, the allowed addresses and when, those refused this run);
+  `list_devices` has `first_seen`. The skill and the server's instructions:
+  never run `reqcove lan`.
 
 ## v0.6.0 — 2026-11-13
 
