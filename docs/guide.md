@@ -743,10 +743,13 @@ Other differences from the exit node:
   new one. If it moves to another network, run stops listening and says so in
   its log and `reqcove status`; a restart listens on the new network.
 
-Tried by tests only: the proxy on the loopback interface with real mitmproxy
+Tried by tests: the proxy on the loopback interface with real mitmproxy
 (HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
-and the refusals above. Not tried: an iPhone on a real Wi-Fi network, a change
-of network.
+and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
+2026-11-14): its first request refused, allowed at run's question, then
+Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
+`reqcove lan deny` stopped it, `lan allow` again let it through. Not tried: a
+change of network.
 
 ### Another Mac
 

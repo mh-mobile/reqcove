@@ -51,8 +51,8 @@
   network. Refused in `--config`. The ready block says what to enter on the
   iPhone, who is allowed, and the CA's file and SHA-256 (plain HTTP on a LAN
   can be swapped); `reqcove status` shows the allowed and refused addresses.
-  README, the guide and SECURITY have a section. Not tried yet with an iPhone
-  on a real network.
+  README, the guide and SECURITY have a section. Tried with an iPhone on a
+  home Wi-Fi (iOS 27.3): allowed, recorded, denied.
 - Presets of `map_remote`, `modify_headers` (requests only) and `resolve`: a
   rule written as `{rule: "…", preset: NAME}` applies only while an agent turns
   it on, for at most 5 minutes each time, as mock presets. A `map_remote`

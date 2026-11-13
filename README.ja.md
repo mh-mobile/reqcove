@@ -110,7 +110,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 
 ### Tailscale を使わずに（LAN モード）
 
-同じネットワークなら、Tailscale なしで、iPhone がこのコンピュータを Wi-Fi のプロキシとして使うこともできます。`reqcove run --lan --allow-hosts api.example.com` を実行し、iPhone の Wi-Fi のプロキシ設定（手動）に `run` が表示するアドレスとポートを入力して、このコンピュータで iPhone のアドレスを許可します（`run` が質問するか、`reqcove lan allow ADDR`）。Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありません。許可したアドレスはこのコンピュータを通して通信できます。実際のネットワークの iPhone ではまだ試していません。届く先とつながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。
+同じネットワークなら、Tailscale なしで、iPhone がこのコンピュータを Wi-Fi のプロキシとして使うこともできます。`reqcove run --lan --allow-hosts api.example.com` を実行し、iPhone の Wi-Fi のプロキシ設定（手動）に `run` が表示するアドレスとポートを入力して、このコンピュータで iPhone のアドレスを許可します（`run` が質問するか、`reqcove lan allow ADDR`）。Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありません。許可したアドレスはこのコンピュータを通して通信できます。自宅の Wi-Fi の iPhone（iOS 27.3）で試しました。届く先とつながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。
 
 ## セキュリティ
 
