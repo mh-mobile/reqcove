@@ -621,7 +621,10 @@ host without a warning, recorded; the system's web proxies pointed at
 127.0.0.1:8082 by the real `networksetup` and put back at Ctrl-C, the CA added to the booted
 Simulators, and Safari on the iOS 27 Simulator decrypted and recorded as
 `local`. `networksetup` takes the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`) as an
-exception and the system lists it (tried 2026-11-13). Not tried: whether apps skip the proxy for the address forms in the exceptions, PAC and authenticated
+exception and the system lists it (tried 2026-11-13). RoamRun alongside (tried
+2026-11-14, RoamRun 0.12.0 and its PR #253): with `--local-proxy` on, `roamrun
+doctor` passed and `roamrun up` bridged an iPhone on another Wi-Fi over the
+tailnet to Ready, as without it. Not tried: whether apps skip the proxy for the address forms in the exceptions, PAC and authenticated
 proxies, Linux.
 
 ### A web app's backend
