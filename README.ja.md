@@ -71,7 +71,7 @@ go build -o reqcove ./cmd/reqcove
 
    あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
-エージェントは `summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。RoamRun などで iPhone を操作したあとは、その操作で送られたリクエストを `wait_for_flows` で待って受け取れます。`--rules` のファイルでプリセットにしたモックがあれば、エラーをアプリがどう扱うかを見るために、そのモックを一度に数分ずつ有効にすることもできます（`activate_mock`、[プリセット](docs/guide.ja.md#エージェントが有効にできるプリセット)）。ルールを書いたり変えたりはできません。`reqcove cleanup` はすべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
+エージェントは `summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。RoamRun などで iPhone を操作したあとは、その操作で送られたリクエストを `wait_for_flows` で待って受け取れます。`--rules` のファイルでプリセットにしたモックがあれば、エラーをアプリがどう扱うかを見るために、そのモックを一度に数分ずつ有効にすることもできます（`activate_mock`、[プリセット](docs/guide.ja.md#エージェントが有効にできるプリセット)）。ツールでルールを書いたり変えたりはできません（ファイルを書けるエージェントがルールを書くのは、あなたが頼んだときだけです）。`reqcove cleanup` はすべてを元に戻す手順を表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
 
 ### オプション
 

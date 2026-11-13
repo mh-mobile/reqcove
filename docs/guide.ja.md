@@ -45,7 +45,7 @@ printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)
 chmod 600 "$(brew --prefix)/etc/reqcove/config"
 brew services start reqcove
 reqcove links        # 初回はログイン用の URL（1 分ほど待つ：初回は mitmproxy を取得する。tail -f "$(brew --prefix)/var/log/reqcove.log"）
-reqcove status       # 「service: homebrew.mxcl.reqcove」と出る
+reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew では homebrew.mxcl.reqcove）
 ```
 
 - `--config FILE` は、`run` のフラグを 1 行に 1 つずつ読みます（`#` から後ろはコメント。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリ。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます）。コマンドラインのフラグはその後に読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。`--no-redact`、`--web`、`--rules-reload`、`--allow-hosts '*'`（`@FILE` で指定したものも）はファイルでは断り、コマンドラインでだけ使えます。ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。`--config` は 1 つだけです。
@@ -66,7 +66,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 WantedBy=default.target
 ```
 
-確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。`brew services` そのもの（PATH、ログイン、再起動、スリープ）、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
+確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。macOS 27 で formula から `brew services start` と `stop` を試しました（PATH から uv が見つかる、設定ファイルが読まれる、iPhone のリクエストが記録される、ログにトークンやログイン用の URL が入らない、ターミナルでないところでは `reqcove links` が断る、止めたあと `links` と `login-url` が消える）。ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
 
 ### 元に戻す（`reqcove cleanup`）
 
@@ -74,7 +74,7 @@ WantedBy=default.target
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを最長 5 分有効にすることだけです（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを、1 回につき最長 5 分有効にすることだけです（何度でも有効にし直せます）（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
 ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。`activate_mock` と `deactivate_mock` には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、v0.6 からは `activate_mock` も許可されます（Claude Code のドキュメントによる。ここでは試していません）。Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 

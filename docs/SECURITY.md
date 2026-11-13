@@ -296,7 +296,8 @@ request still goes where the connection went). User-Agents in lists and summarie
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools read, with one exception: an agent can turn on, for at most 5
-minutes, a mock you marked as a preset ([Mock presets](#mock-presets)). No tool
+minutes each time (no cap on turning it on again), a mock you marked as a
+preset ([Mock presets](#mock-presets)). No tool
 writes or changes a rule; with no presets, nothing an agent calls changes
 traffic. (`--rules` are yours, from a file, at start.)
 

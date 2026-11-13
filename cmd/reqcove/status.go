@@ -39,7 +39,9 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
 	service := ""
-	if v := os.Getenv("XPC_SERVICE_NAME"); strings.HasPrefix(v, "homebrew.mxcl.reqcove") { // launchd's label, under brew services (not a terminal another brew service started)
+	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
+	// homebrew.mxcl.NAME before; not a terminal another brew service started.
+	if v := os.Getenv("XPC_SERVICE_NAME"); v == "sh.brew.reqcove" || v == "homebrew.mxcl.reqcove" {
 		service = v
 	}
 	hosts := allow.Hosts
