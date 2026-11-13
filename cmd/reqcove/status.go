@@ -41,9 +41,12 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	n.AuthURL = ""
 	service := ""
 	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
-	// homebrew.mxcl.NAME before; not a terminal another brew service started.
-	if v := os.Getenv("XPC_SERVICE_NAME"); v == "sh.brew.reqcove" || v == "homebrew.mxcl.reqcove" {
+	// homebrew.mxcl.NAME before, or reqcove service install's; not a terminal
+	// another brew service started. Under systemd, the unit says (service.go).
+	if v := os.Getenv("XPC_SERVICE_NAME"); slices.Contains(brewLabels, v) || v == serviceLabel {
 		service = v
+	} else if os.Getenv("REQCOVE_SERVICE") == serviceUnit {
+		service = serviceUnit
 	}
 	hosts := allow.Hosts
 	if hosts == nil {
@@ -248,7 +251,7 @@ func status(ctx context.Context, args []string) error {
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
 	if out.Service != "" {
-		fmt.Printf("  service:     %s (brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log)\n", out.Service)
+		fmt.Printf("  service:     %s (%s)\n", out.Service, serviceHint(out.Service, *state))
 	}
 	if out.Mode == "lan" {
 		printLANStatus(os.Stdout, out.LAN)
@@ -500,4 +503,15 @@ func passSuggestion(refused []capture.RefusedHost, passed []string) (hosts, coun
 		counts = append(counts, fmt.Sprintf("%d hosts of %s (%d)", len(g.hosts), key, g.n))
 	}
 	return hosts, counts
+}
+
+// serviceHint says how to stop the service that started run, and where its log is.
+func serviceHint(label, state string) string {
+	switch label {
+	case serviceLabel:
+		return "reqcove service uninstall stops and removes it; launchctl bootout gui/$(id -u)/" + serviceLabel + " stops it until the next login; the log: " + filepath.Join(state, serviceLog)
+	case serviceUnit:
+		return "reqcove service uninstall stops and removes it; systemctl --user stop reqcove stops it until it starts again at login; the log: journalctl --user -u reqcove"
+	}
+	return "brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log"
 }

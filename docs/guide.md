@@ -76,7 +76,7 @@ reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an
   quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home; give
   paths in full or from `~/`, as a service starts in `/`). The
   command line's come after them: a flag given once is the command line's, a
-  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload` and
+  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload`, `--lan` and
   `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
   the command line. The file must be yours and readable by you only (`chmod
   600`): it may hold `--mask-values` patterns. One `--config` only.
@@ -96,17 +96,7 @@ reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an
 
 Linux: Homebrew's `brew services` makes a systemd unit from the same formula
 (from Homebrew's documentation, not tried; `status` names no service there).
-Without Homebrew, a systemd user unit does the same (an example, not tried):
-
-```ini
-# ~/.config/systemd/user/reqcove.service; then: systemctl --user enable --now reqcove; loginctl enable-linger $USER
-[Service]
-ExecStart=%h/.local/bin/reqcove run --config %h/.config/reqcove/config
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-
-[Install]
-WantedBy=default.target
-```
+Without Homebrew, see the next section.
 
 Tried: the config file's parsing and refusals (unit tests); `brew services
 start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
@@ -116,11 +106,68 @@ stop). Not tried yet: a start at login or after a reboot, sleep, whether
 macOS's Local Network privacy asks about a `run` not started from a terminal,
 and whether launchd's default background priority slows it.
 
+### Keep it running without Homebrew (`reqcove service install`)
+
+With the release's binary or one built from source (with Homebrew, use
+`brew services` above), `reqcove service install` does the same: a
+LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
+a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). It
+runs this binary (its full path) with `run --config FILE`, starts it now and
+at each login, and is not started again when it ends (as `brew services`).
+
+```sh
+mkdir -p ~/.config/reqcove
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
+chmod 600 ~/.config/reqcove/config
+reqcove service install       # --config FILE for another file, --state DIR for another state
+reqcove links                 # the login URL, the first time (after a minute)
+reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
+reqcove service restart       # after it ended, or after a change to the file
+reqcove service uninstall     # stops it and removes the file
+```
+
+- The file is `~/.config/reqcove/config` unless `--config` names another,
+  read as for `brew services` (above). Install refuses a missing file (saying
+  how to write one), one that is not yours or that others can read, and
+  `--no-redact`, `--web`, `--rules-reload` or `--lan` in it; `--allow-hosts
+  '*'` there is refused when `run` starts (the service then ends once). A
+  `--state` in the file is the state directory (in full or from `~/`). The
+  state directory must be empty, new or reqcove's (as for `run`).
+- Once `run` ends (an error, a refused file, `kill`), it stays down until the
+  next login: `reqcove service restart` starts it again (`launchctl kickstart
+  -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
+  reqcove`; not tried).
+- Refused while Homebrew's service is there (its file or loaded:
+  `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
+  `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
+  Homebrew's code, not tried): two services would fight over the state
+  directory. Installed already: `reqcove service restart` to start it again;
+  `reqcove service uninstall`, then install again, to change its flags on
+  the command line or after moving the binary.
+- The log: `service.log` in the state directory on macOS (not rotated:
+  truncate it now and then, as `mitmproxy.log`), `journalctl --user -u
+  reqcove` on Linux. It prints no login URL or token, nor does
+  `service install`: `reqcove links` does, in your terminal.
+- `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
+  `/opt/homebrew/bin`, `/usr/local/bin` and the system's; elsewhere, give
+  `--uvx /full/path/uvx` in the file.
+- To stop it until the next login: `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`,
+  or `systemctl --user stop reqcove`; `reqcove status` says which.
+- Linux: a user unit starts at login; at boot, before any login, only after
+  `loginctl enable-linger $USER` (from systemd's documentation, not tried).
+
+Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
+the refusals and the launchctl and systemctl commands it would run (unit
+tests, which never run them). Not tried yet: a real install, start at
+login, restart and uninstall, on macOS or on Linux.
+
 ### Undo everything (`reqcove cleanup`)
 
 `reqcove cleanup` lists the steps; with `--delete-state` it deletes the state
 directory. Remove the CA's profile from the iPhone first
-([SECURITY](SECURITY.md#the-cas-private-key)).
+([SECURITY](SECURITY.md#the-cas-private-key)). A service starts `run` again
+at the next login, which makes the state directory anew: stop it first
+(`brew services stop reqcove`, or `reqcove service uninstall`).
 
 ## Read the traffic with an agent
 

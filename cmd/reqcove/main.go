@@ -83,6 +83,9 @@ Usage:
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
+  reqcove service install [--config FILE] | service restart | service uninstall
+                     start run now and at login without Homebrew (launchd or
+                     systemd), with run's flags in FILE (~/.config/reqcove/config)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
   reqcove init       add the agent skill (how to use reqcove's tools) to the agents in ~
   reqcove version
@@ -132,6 +135,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"links":   links,
 	"lan":     lan,
 	"mark":    mark,
+	"service": service,
 	"mock":    mockCmd,
 }
 
@@ -214,7 +218,7 @@ func run(ctx context.Context, args []string) error {
 	lanMode := fs.Bool("lan", false, "LAN mode, without Tailscale: an HTTP proxy on this computer's LAN address (--proxy-port), for clients on that network you allow (reqcove lan allow ADDR, or run's prompt); ports 80 and 443 only")
 	lanIface := fs.String("lan-interface", "", "with --lan, the interface to listen on (default: the default route's, such as en0)")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
-	fs.String("config", "", "a `FILE` of these flags, one a line (for brew services), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
 	if takeFlags == nil { // the docs test reads no file
 		if path, ok, err := configFile(args); err != nil {
 			return err

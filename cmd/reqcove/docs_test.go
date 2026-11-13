@@ -193,6 +193,12 @@ func parseDocumented(words []string) error {
 		}
 		args = args[n:]
 	}
+	if words[0] == "service" { // service install: its subcommand comes first
+		if len(args) == 0 || !slices.Contains([]string{"install", "restart", "uninstall"}, args[0]) {
+			return fmt.Errorf("service takes install, restart or uninstall, not %q", args)
+		}
+		args = args[1:]
+	}
 	if words[0] == "mock" { // mock add: its subcommand first
 		if len(args) == 0 || args[0] != "add" {
 			return fmt.Errorf("mock takes add, not %q", args)
@@ -279,6 +285,8 @@ func TestParseDocumentedRefuses(t *testing.T) {
 		{"lan", "permit", "1.2.3.4"},
 		{"lan", "allow", "1.2.3.4", "--no-such-flag"},
 		{"mark", "tapping", "--no-such-flag"},
+		{"service", "start"},
+		{"service", "install", "--lan"},
 		{"mock", "remove", "--url", "x"},
 		{"mock", "add", "--no-such-flag"},
 	} {

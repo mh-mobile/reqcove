@@ -353,7 +353,7 @@ traffic. (`--rules` are yours, from a file, at start.)
 
 ## A flags file (`--config`)
 
-`run --config FILE` (for `brew services`) takes run's flags from a file: what
+`run --config FILE` (for `brew services` and `reqcove service install`) takes run's flags from a file: what
 can write that file decides the next start's flags. So it must be yours and
 readable by you only (refused otherwise; it may hold `--mask-values` patterns),
 errors name its lines, never a value, and the flags that take masking off,
@@ -721,8 +721,9 @@ address:
   too, on this network or on another with the same prefix (a café's
   192.168.1.0/24 as your home's). The ready block, `reqcove status` and
   `reqcove lan list` show the list.
-- `--lan` is refused in a `--config` file, so `brew services` never keeps an
-  open proxy running.
+- `--lan` is refused in a `--config` file, so `brew services` and
+  `reqcove service install` (which refuses the file at install too) never
+  keep an open proxy running.
 
 What an allowed address reaches through this computer (tests): ports 80 and
 443 only (others refused, before any lookup), on public addresses, from your

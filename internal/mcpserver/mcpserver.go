@@ -165,8 +165,8 @@ type StatusOut struct {
 	// did not say which, so none listed means unknown.
 	ActivePresets []PresetOut `json:"active_mock_presets,omitempty"`
 	PresetsError  string      `json:"active_mock_presets_error,omitempty"`
-	// Service names the service that started run (brew services' launchd
-	// label), when one did.
+	// Service names the service that started run (brew services' or reqcove
+	// service install's launchd label, or its systemd unit), when one did.
 	Service string `json:"service,omitempty"`
 }
 
