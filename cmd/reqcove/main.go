@@ -312,7 +312,7 @@ func run(ctx context.Context, args []string) error {
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
-	if *web && *proxyPort == exitnode.WebPort {
+	if *web && *proxyPort == exitnode.WebPort && !*lanMode { // LAN mode serves no node port
 		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
 	}
 	if *mcpHTTP && *proxyPort == exitnode.MCPPort {
@@ -350,7 +350,9 @@ func run(ctx context.Context, args []string) error {
 			}
 		}
 		if isTerminal(os.Stdin) {
-			lanCfg.Refused = lanAsker(ctx, os.Stdin, os.Stderr, *state)
+			signal.Ignore(syscall.SIGTTIN) // a read from the background fails instead of stopping run
+			fd := int(os.Stdin.Fd())
+			lanCfg.Refused = lanAsker(ctx, os.Stdin, os.Stderr, *state, lanTTY{foreground: func() bool { return ttyForeground(fd) }, flush: func() { ttyFlushInput(fd) }})
 		}
 	}
 
@@ -594,7 +596,7 @@ func run(ctx context.Context, args []string) error {
 		if page != nil {
 			uiLink = "http://" + ip + "/?k=" + uiToken
 		}
-		if webAddr != "" {
+		if webAddr != "" && !*lanMode { // LAN mode: mitmweb on this computer only
 			webLink = nodeWebLink(cap.WebURL, webAddr, ip)
 		}
 		var mcpURL string

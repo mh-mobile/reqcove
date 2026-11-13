@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // LAN mode's access control (as Charles's): a client address may send through
@@ -118,10 +120,12 @@ func lanAddrs(state string) func() []netip.Addr {
 // lanAsker asks on run's terminal, one address at a time, whether to allow a
 // client refused for the first time. The proxy never waits: an address not
 // answered yet stays refused, and past a few waiting the others are not asked.
-func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string) func(netip.Addr) {
+// It reads stdin only while run is the terminal's foreground job (a
+// background read would stop run), and drops what was typed before each
+// question, so an earlier Enter or y does not answer it.
+func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string, tty lanTTY) func(netip.Addr) {
 	q := make(chan netip.Addr, 8)
 	go func() {
-		sc := bufio.NewScanner(in)
 		for {
 			var a netip.Addr
 			select {
@@ -129,11 +133,18 @@ func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string) fu
 				return
 			case a = <-q:
 			}
+			if !tty.foreground() {
+				log.Printf("LAN client %v not asked: run is not the terminal's foreground job (to allow it: %s %v)", a, withState("reqcove lan allow", state), a)
+				continue
+			}
+			tty.flush()
 			fmt.Fprintf(out, "LAN client %v wants to send through this Mac (its requests to the allowed hosts are recorded). Allow %v? [y/N] ", a, a)
-			if !sc.Scan() {
+			// A new reader each time: nothing read ahead outlives the question.
+			ans, err := bufio.NewReader(in).ReadString('\n')
+			if errors.Is(err, io.EOF) && ans == "" {
 				return // stdin closed: no more questions
 			}
-			if ans := strings.ToLower(strings.TrimSpace(sc.Text())); ans != "y" && ans != "yes" {
+			if ans = strings.ToLower(strings.TrimSpace(ans)); ans != "y" && ans != "yes" {
 				log.Printf("LAN client %v stays refused (later: %s %v)", a, withState("reqcove lan allow", state), a)
 				continue
 			}
@@ -150,6 +161,18 @@ func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string) fu
 		default:
 		}
 	}
+}
+
+// lanTTY is what lanAsker needs of run's terminal (a seam for tests).
+type lanTTY struct {
+	foreground func() bool // run is the terminal's foreground process group
+	flush      func()      // drop the input typed and not read yet
+}
+
+// ttyForeground: run's process group is the terminal's foreground one.
+func ttyForeground(fd int) bool {
+	pg, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+	return err == nil && pg == unix.Getpgrp()
 }
 
 // tailnetOnly are run's flags for the tailnet node, which --lan does not start.

@@ -22,14 +22,14 @@ func TestDecideLAN(t *testing.T) {
 	p := &policy{lan: true, socks: true,
 		network: netip.MustParsePrefix("192.168.1.0/24"),
 		local:   []netip.Addr{netip.MustParseAddr("192.168.1.10"), netip.MustParseAddr("100.101.102.103")},
-		onLink:  []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("10.8.0.0/24")}, // a VPN's network
+		onLink:  []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("10.8.0.0/24"), netip.MustParsePrefix("203.0.113.0/24")}, // a VPN's network; one numbered from public space
 	}
 	for _, c := range []struct {
 		dst   string
 		exact bool
 		want  verdict
 	}{
-		{"203.0.113.5:443", false, socks},
+		{"198.51.100.7:443", false, socks},
 		{"17.253.1.1:443", false, direct}, // Apple's, as on the exit node
 		{"10.1.2.3:443", false, reject},   // private
 		{"10.1.2.3:443", true, socks},     // private, for an exact name
@@ -38,6 +38,8 @@ func TestDecideLAN(t *testing.T) {
 		{"100.64.0.7:443", true, socks},
 		{"10.8.0.5:443", false, reject}, // another network of this Mac (its VPN)
 		{"10.8.0.5:443", true, socks},
+		{"203.0.113.9:443", false, reject}, // a network of this Mac numbered from public space, whatever the name
+		{"203.0.113.9:443", true, reject},
 		{"192.168.1.20:443", true, reject},    // the proxy's own network, even for an exact name
 		{"192.168.1.10:443", true, reject},    // this Mac
 		{"100.101.102.103:443", true, reject}, // this Mac's tailnet address
@@ -184,8 +186,9 @@ func TestLANClients(t *testing.T) {
 	}
 	off := serve("10.0.0.0/8")
 	on := serve("127.0.0.0/8")
-	if accepted(t, on) || accepted(t, on) {
-		t.Error("an address not allowed was served")
+	// Twice: the second connection is refused too, and not asked about again.
+	if first, again := accepted(t, on), accepted(t, on); first || again {
+		t.Errorf("an address not allowed was served (first %v, again %v)", first, again)
 	}
 	mu.Lock()
 	if len(asked) != 1 || asked[0] != me {

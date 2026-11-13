@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +43,11 @@ func TestRunLANRefuses(t *testing.T) {
 	err = run(context.Background(), append(append([]string{}, base...), "--web", "--lan-interface", loopback(t)))
 	if err == nil || !strings.Contains(err.Error(), "uv not found") {
 		t.Errorf("--lan --web: %v", err)
+	}
+	// No node port in LAN mode: --proxy-port 8081 does not clash with --web.
+	err = run(context.Background(), append(append([]string{}, base...), "--web", "--proxy-port", "8081", "--lan-interface", loopback(t)))
+	if err == nil || !strings.Contains(err.Error(), "uv not found") {
+		t.Errorf("--lan --web --proxy-port 8081: %v", err)
 	}
 }
 
@@ -138,7 +145,7 @@ func TestLANAsker(t *testing.T) {
 	defer w.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ask := lanAsker(ctx, r, io.Discard, state)
+	ask := lanAsker(ctx, r, io.Discard, state, lanTTY{foreground: func() bool { return true }, flush: func() {}})
 	a, b := netip.MustParseAddr("192.168.1.23"), netip.MustParseAddr("192.168.1.24")
 	ask(a)
 	ask(b)
@@ -158,6 +165,52 @@ func TestLANAsker(t *testing.T) {
 	}
 	t.Error("y did not allow")
 }
+
+// What was typed before the question is dropped before it is printed.
+func TestLANAskerFlushesFirst(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	note := func(s string) { mu.Lock(); seen = append(seen, s); mu.Unlock() }
+	r, w := io.Pipe()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ask := lanAsker(ctx, r, writerFunc(func(p []byte) (int, error) { note("question"); return len(p), nil }), t.TempDir(),
+		lanTTY{foreground: func() bool { return true }, flush: func() { note("flush") }})
+	ask(netip.MustParseAddr("192.168.1.23"))
+	io.WriteString(w, "n\n") // read once the question is out
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(seen, ",") != "flush,question" {
+		t.Errorf("%q, want the flush before the question", seen)
+	}
+}
+
+// In the background (run &), stdin is never read: a read would stop run.
+func TestLANAskerBackground(t *testing.T) {
+	state := t.TempDir()
+	var reads atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ask := lanAsker(ctx, readerFunc(func([]byte) (int, error) { reads.Add(1); return 0, io.EOF }), io.Discard, state,
+		lanTTY{foreground: func() bool { return false }, flush: func() { reads.Add(100) }})
+	ask(netip.MustParseAddr("192.168.1.23"))
+	time.Sleep(200 * time.Millisecond)
+	if n := reads.Load(); n != 0 {
+		t.Errorf("stdin touched in the background (%d)", n)
+	}
+	if list, _ := readLANAllowed(state); len(list) != 0 {
+		t.Errorf("allowed %v", list)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
 // The ready block waits for LAN mode's status too.
 func TestReadyGateLAN(t *testing.T) {

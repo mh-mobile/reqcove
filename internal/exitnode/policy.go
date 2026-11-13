@@ -52,9 +52,9 @@ var private = []netip.Prefix{
 
 // decideLAN is for LAN mode's proxy, ports 80 and 443 (checked before): never
 // this Mac (loopback, its addresses) nor link-local nor the network the proxy
-// is on, even for an exact name; private ranges, and this Mac's other
-// networks, only for an exact --allow-hosts name (exact). The reason is for
-// the log when it refuses.
+// is on, nor another network of this Mac numbered from public space, even for
+// an exact name; private ranges (a VPN's network among them) only for an
+// exact --allow-hosts name (exact). The reason is for the log when it refuses.
 func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
 	d := dst.Addr().Unmap()
 	switch {
@@ -70,8 +70,10 @@ func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
 		return direct, ""
 	}
 	inPrivate := slices.ContainsFunc(private, func(pfx netip.Prefix) bool { return pfx.Contains(d) })
-	onLink := slices.ContainsFunc(p.onLink, func(pfx netip.Prefix) bool { return pfx.Contains(d) })
-	if (inPrivate || onLink) && !exact {
+	if !inPrivate && slices.ContainsFunc(p.onLink, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
+		return reject, "a network of this Mac" // a LAN numbered from public space is still a LAN
+	}
+	if inPrivate && !exact {
 		return reject, "a private address: only an exact --allow-hosts name (no *) may lead there"
 	}
 	if !inPrivate && slices.ContainsFunc(denied, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
