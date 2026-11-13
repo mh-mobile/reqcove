@@ -4,6 +4,17 @@
 
 ### For people
 
+- `reqcove setup`: the first run, in a terminal only. It checks uv (printing
+  how to install it), asks for the device and the hosts to record and writes
+  them to the file the service reads, `~/.config/reqcove/config` or, for a
+  brew install, Homebrew's `etc/reqcove/config` (0600; an existing file is
+  shown and kept unless you say to replace it, then kept as `config.old`; `*`
+  and refused flags never written), adds the skill as `reqcove init` does if
+  you say so, prints `claude mcp add reqcove -- reqcove mcp`, and says how to
+  start (`brew services`, `reqcove service install`, or `run --config` in a
+  terminal). It starts nothing and prints no login URL; Ctrl-C stops it. README
+  starts with it; the guide's First start has the details. Unit tests, and
+  Ctrl-C in a terminal.
 - mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
 - `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
   Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd

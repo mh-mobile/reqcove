@@ -18,6 +18,34 @@ The four steps are in the [README](../README.md#use).
 
 ### First start
 
+`reqcove setup` walks through the first run, in a terminal only (it refuses
+when its input or output is not one, as from an agent). Each step can be
+skipped (an empty answer); it starts nothing and removes nothing:
+
+- uv: says where `uvx` is, or how to install it (it installs nothing).
+- The device and the hosts: writes `--device` and `--allow-hosts`, quoted, to
+  the file the service reads: `~/.config/reqcove/config` (`reqcove service
+  install`'s), or for a brew install (this binary under `Cellar/reqcove/`)
+  Homebrew's `$(brew --prefix)/etc/reqcove/config` (`brew services`'). 0600,
+  its directory 0700 when new; checked as `run` reads it before it takes the
+  file's place. `*` and a name starting with `-` are asked again; a pasted URL
+  keeps its host only. No hosts yet: once `run` runs, `reqcove status` (or an
+  agent's `summarize`) lists the hosts the iPhone reached. An existing file is
+  shown and kept unless you answer `y`; then it is replaced whole, and the old
+  one kept as `config.old` (0600; its other flags, such as `--rules`, are
+  there to copy back). A path that is not a plain file is left alone.
+- The agent: adds the skill as `reqcove init` does, if you answer `y`, and
+  prints `claude mcp add reqcove -- reqcove mcp` (it runs no agent command).
+- How to start: `brew services start reqcove` for a brew install, else
+  `reqcove service install`; or `reqcove run --config FILE` in a terminal.
+  `--lan` is not kept in a file: `reqcove run --lan --allow-hosts HOSTS` in a
+  terminal. It prints no login URL: `reqcove links` does.
+- Ctrl-C stops it at the question it is on; what was written stays.
+
+Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
+Ctrl-C at the first question in a terminal (it ended at once, nothing written).
+Not tried: `brew services` with the file setup wrote.
+
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 

@@ -62,6 +62,8 @@ func buildVersion(v string, info *debug.BuildInfo) string {
 const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
 
 Usage:
+  reqcove setup      the first run, in your terminal: checks uv, writes the device and
+                     the hosts to the service's config file, adds the skill, says how to start
   reqcove run --device NAME --allow-hosts HOSTS [flags]
                      (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
@@ -131,7 +133,8 @@ var commands = map[string]func(context.Context, []string) error{
 	"status":  status,
 	"har":     har,
 	"cleanup": func(_ context.Context, args []string) error { return cleanup(args) },
-	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
+	"init":    func(_ context.Context, args []string) error { return initSkill(os.Stdout, args) },
+	"setup":   setup,
 	"links":   links,
 	"lan":     lan,
 	"mark":    mark,

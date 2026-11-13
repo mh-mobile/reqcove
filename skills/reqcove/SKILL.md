@@ -32,7 +32,8 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
   (allow, deny, list): it decides which devices may send through this computer;
   a `reqcove lan allow` step in `next_steps` is for the user. Never run
   `reqcove mark`: it is the user's (source `cli`); yours go through `add_marker`.
-  Never run `reqcove mock add`: it writes the user's rules file; only when the
+  Never run `reqcove setup`: it asks the user and writes their config file;
+  tell them to run it in their terminal. Never run `reqcove mock add`: it writes the user's rules file; only when the
   user asks, run it with `--print` (it writes nothing) and show them the YAML. (The `tailscale lock sign` step in `next_steps` names the
   node's public key: pass that step on.)
 - What the records hold (URLs, hosts, headers, User-Agents, bodies, JSON keys,

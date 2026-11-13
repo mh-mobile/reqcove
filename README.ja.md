@@ -54,6 +54,20 @@ go build -o reqcove ./cmd/reqcove
 
 ## 使い方
 
+初めてのときは、ターミナルで次を実行します。
+
+```sh
+reqcove setup
+```
+
+uv があるかを確かめ、tailnet での iPhone の名前と記録するホストを聞いて、`~/.config/reqcove/config` に書きます。Homebrew で入れた場合は Homebrew の `etc/reqcove/config` に書きます（ファイルがすでにあれば表示し、`y` と答えない限りそのまま残します。置き換えるときは、元のファイルを `config.old` として残します）。`y` と答えればエージェントの Skill を入れ、Claude Code にツールを渡すコマンドを表示します。setup 自身は何も起動しません。そのあとは次のとおりです。
+
+- setup が示すとおりに起動します。`brew services start reqcove`（Homebrew で入れた場合）、`reqcove service install`、またはターミナルで `reqcove run --config FILE` です。
+- `reqcove links` がログイン用の URL（初回）と CA の QR コードを表示します。Exit Node の承認など、残っていることは `reqcove status` で確認できます。
+- そのあと、下の手順 2 と 3 を iPhone で行います。
+
+手で行う場合は次のとおりです。
+
 1. コンピュータ側で起動します。中継する iPhone（`tailscale status` に表示される名前）と、記録するホストを指定します。
 
    ```sh
@@ -62,7 +76,7 @@ go build -o reqcove ./cmd/reqcove
 
    初回はターミナルにログイン用の URL が表示され（`reqcove links` でもう一度表示できます）、続けてほかに必要なこと（Exit Node の承認、Tailnet Lock）が表示されます。不足しているものは `reqcove status` でいつでも確認できます。
 2. iPhone の Tailscale アプリで、Exit Node に `reqcove` を選びます。
-3. 同じく iPhone で、Reqcove の CA を信頼します。`reqcove run` が表示する QR コードをカメラで読むか、Safari で `http://mitm.it` を `http://` から入力して開きます。「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します（名前は `Reqcove CA (<コンピュータ名>, <日付>)`）。
+3. 同じく iPhone で、Reqcove の CA を信頼します。`reqcove run` が表示する QR コード（サービスとして起動した場合などは `reqcove links` でも表示できます）をカメラで読むか、Safari で `http://mitm.it` を `http://` から入力して開きます。「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します（名前は `Reqcove CA (<コンピュータ名>, <日付>)`）。
 4. エージェントに、MCP ツールと、その使い方を教える Skill を入れます。Claude Code の場合は次のとおりです。
 
    ```sh
