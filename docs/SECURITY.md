@@ -256,7 +256,7 @@ So "delete the directory" above means each of them.
   sent in failing and malformed requests do not reach it).
 - Markers (`reqcove mark`, `add_marker`) are kept in memory with the records:
   at most 80 characters on one line (else refused), masked as error text is,
-  at most 100 per source, never logged. Their `source` (`cli`, `mcp`) is the
+  at most 100 per source, not logged (from reading code). Their `source` (`cli`, `mcp`) is the
   channel, set by Reqcove from how the call came (`reqcove mcp` never passes
   on an agent's client name), not proof: an agent with a shell can run
   `reqcove mark`. Their text is the user's or an agent's words: data, never

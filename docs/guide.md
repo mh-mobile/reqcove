@@ -209,7 +209,7 @@ its report) and `checkpoint` (for `wait_for_flows`' `after`).
 - `source` is `cli` (`reqcove mark`) or `mcp` (an agent, through `reqcove
   mcp`): the channel, not proof of who. An agent with a shell can run
   `reqcove mark` too; it refuses only when its input or output is not a
-  terminal, as `reqcove links`.
+  terminal, as `reqcove lan`.
 - At most 100 are kept per source, the oldest dropped (an agent's never push
   out yours), in memory only: gone when `run` restarts, as flow ids. Not over
   `--mcp-http`.
