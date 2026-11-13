@@ -43,6 +43,7 @@ and does not read its traffic.
 With Homebrew (macOS or Linux; it builds from source and installs uv too):
 
 ```sh
+brew trust --formula mh-mobile/tap/reqcove   # Homebrew 7 loads a formula from another tap only once trusted
 brew install mh-mobile/tap/reqcove
 ```
 

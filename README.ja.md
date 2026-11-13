@@ -35,6 +35,7 @@ Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデ�
 Homebrew で入れます（macOS と Linux。ソースからビルドし、uv も一緒に入ります）。
 
 ```sh
+brew trust --formula mh-mobile/tap/reqcove   # Homebrew 7 は、公式以外の tap の formula を信頼してから読み込む
 brew install mh-mobile/tap/reqcove
 ```
 
