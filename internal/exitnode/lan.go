@@ -1,0 +1,232 @@
+package exitnode
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"log"
+	"maps"
+	"net"
+	"net/http"
+	"net/netip"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// LAN is LAN mode (run --lan): the proxy listens on one LAN interface's
+// address, for clients on its network whose address the user allowed (as
+// Charles's access control). No tsnet is started.
+type LAN struct {
+	Interface string              // the interface to listen on
+	Allowed   func() []netip.Addr // the client addresses allowed, read again every few seconds
+	Names     []string            // the exact --allow-hosts names (no *): private destinations for them (D4)
+	AllowCmd  string              // the command that allows an address (reqcove lan allow, with --state)
+	// Refused, if set, is called once per client address on the network that
+	// is not allowed (yet), from the proxy's accept loop: it must not block.
+	Refused func(netip.Addr)
+}
+
+// LANAddr is the interface's IPv4 address with its network's prefix length,
+// for LAN mode; name "" is the default route's interface. Tunnels (a VPN's
+// utun), link-local and single-address networks are not a LAN to listen on.
+func LANAddr(name string) (string, netip.Prefix, error) {
+	if name == "" {
+		if name = routeDevice("1.1.1.1"); name == "" {
+			return "", netip.Prefix{}, fmt.Errorf("no default route to listen on: give --lan-interface, such as en0")
+		}
+	}
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return name, netip.Prefix{}, fmt.Errorf("--lan-interface %s: %w", name, err)
+	}
+	if ifi.Flags&net.FlagPointToPoint != 0 {
+		return name, netip.Prefix{}, fmt.Errorf("%s is a tunnel (a VPN's?), not a LAN: give --lan-interface, such as en0", name)
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return name, netip.Prefix{}, err
+	}
+	for _, a := range addrs {
+		p, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			continue
+		}
+		if ip := p.Addr().Unmap(); ip.Is4() && !ip.IsLinkLocalUnicast() && p.Bits() < 32 {
+			return name, netip.PrefixFrom(ip, p.Bits()), nil
+		}
+	}
+	return name, netip.Prefix{}, fmt.Errorf("%s has no IPv4 network address (not connected?)", name)
+}
+
+// lanPoll is how often LAN mode reads the allowed addresses and the
+// interface again (a variable for tests).
+var lanPoll = 2 * time.Second
+
+// lanAddr is LANAddr, swapped by tests.
+var lanAddr = LANAddr
+
+// runLAN serves the LAN proxy until ctx ends. It re-binds when the
+// interface's address changes within its network, and stops listening when
+// the interface moves to another network (a restart binds that one).
+func runLAN(ctx context.Context, cfg Config) error {
+	name, first, err := lanAddr(cfg.LAN.Interface)
+	if err != nil {
+		return err
+	}
+	network := first.Masked()
+	rp := &remoteProxy{policy: current.Load, resolve: resolver(nil), dial: cfg.dial} // the system's resolver: /etc/hosts first
+	seen := &onceSet{}
+	var srv *http.Server
+	var bound netip.Addr
+	unbind := func() {
+		if srv != nil {
+			srv.Close()
+			srv = nil
+		}
+	}
+	defer func() { unbind() }()
+	gone := false
+	lastIDs := ""
+	t := time.NewTicker(lanPoll)
+	defer t.Stop()
+	for {
+		_, now, err := lanAddr(name)
+		switch {
+		case gone:
+		case err == nil && now.Masked() != network:
+			unbind()
+			gone = true
+			log.Printf("LAN proxy stopped: %s is on another network now (%v, was %v); restart run to listen there", name, now.Masked(), network)
+		case err != nil:
+			if srv != nil {
+				unbind()
+				log.Printf("LAN proxy: not listening until %s is back on %v: %v", name, network, err)
+			}
+		case srv == nil || now.Addr() != bound:
+			unbind()
+			addr := netip.AddrPortFrom(now.Addr(), uint16(cfg.ProxyPort)).String()
+			ln, err := net.Listen("tcp4", addr) // that address only, never 0.0.0.0
+			if err != nil {
+				if !bound.IsValid() {
+					return fmt.Errorf("LAN proxy on %s: %w", addr, err)
+				}
+				log.Printf("LAN proxy on %s: %v (trying again)", addr, err)
+				break
+			}
+			srv = proxyServer(rp)
+			go srv.Serve(lanClients{Listener: ln, network: network, policy: current.Load, seen: seen, refused: cfg.LAN.Refused, allowCmd: cfg.LAN.AllowCmd})
+			if bound.IsValid() {
+				log.Printf("LAN proxy: %s's address changed: listening on %s now", name, addr)
+			} else {
+				log.Printf("LAN proxy on %s (%s), for clients on %v that you allow", addr, name, network)
+			}
+			bound = now.Addr()
+		}
+		local, onLink := interfaceAddrs()
+		p := &policy{lan: true, network: network, local: local, onLink: onLink, socks: cfg.SocksAddr != "", devices: map[netip.Addr]Device{}}
+		for _, n := range cfg.LAN.Names {
+			p.exact = append(p.exact, strings.ToLower(strings.TrimSuffix(n, ".")))
+		}
+		names := map[string]string{}
+		if cfg.LocalProxy != nil {
+			names[Local.ID] = Local.Name
+		}
+		if cfg.LAN.Allowed != nil {
+			for _, a := range cfg.LAN.Allowed() {
+				if a = a.Unmap(); network.Contains(a) {
+					d := Device{ID: "lan:" + a.String(), Name: "lan:" + a.String()}
+					p.devices[a] = d
+					names[d.ID] = d.Name
+				}
+			}
+		}
+		current.Store(p)
+		if ids := fmt.Sprint(names); ids != lastIDs {
+			lastIDs = ids
+			log.Printf("carrying traffic from %s", strings.Join(slices.Sorted(maps.Values(names)), ", "))
+			if cfg.OnDevices != nil {
+				cfg.OnDevices(names)
+			}
+		}
+		if cfg.OnStatus != nil {
+			s := Status{Backend: "LAN", Devices: names}
+			if srv != nil {
+				s.IPs = []string{bound.String()}
+			}
+			cfg.OnStatus(s)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+	}
+}
+
+// lanClients closes connections from outside the network and from addresses
+// not allowed (yet) as they are accepted, logging each address once. ServeHTTP
+// checks each request again (deviceAt): an address can be denied meanwhile.
+type lanClients struct {
+	net.Listener
+	network  netip.Prefix
+	policy   func() *policy
+	seen     *onceSet
+	refused  func(netip.Addr)
+	allowCmd string
+}
+
+func (l lanClients) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		ap, err := netip.ParseAddrPort(c.RemoteAddr().String())
+		a := ap.Addr().Unmap()
+		switch {
+		case err != nil:
+		case !l.network.Contains(a):
+			if l.seen.first(a, "off") {
+				log.Printf("LAN client %v refused: not on %v, the network the proxy is on", a, l.network)
+			}
+		default:
+			if _, ok := deviceAt(l.policy(), ap.String()); ok {
+				if l.seen.first(a, "allowed") {
+					log.Printf("LAN client %v: allowed, carried", a)
+				}
+				return c, nil
+			}
+			if l.seen.first(a, "refused") {
+				log.Printf("LAN client %v refused: not allowed (to allow it: %s %v)", a, cmp.Or(l.allowCmd, "reqcove lan allow"), a)
+				if l.refused != nil {
+					l.refused(a)
+				}
+			}
+		}
+		c.Close()
+	}
+}
+
+// onceSet remembers what was logged, so each client address is logged once;
+// anyone on the network adds to it, so it is emptied past maxSeen.
+// ponytail: emptying it logs (and asks about) some addresses twice.
+type onceSet struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+func (s *onceSet) first(a netip.Addr, what string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := a.String() + " " + what
+	if s.m[k] {
+		return false
+	}
+	if s.m == nil || len(s.m) >= maxSeen {
+		s.m = map[string]bool{}
+	}
+	s.m[k] = true
+	return true
+}

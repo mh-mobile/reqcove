@@ -152,7 +152,7 @@ type readyGate struct {
 }
 
 func (g *readyGate) ready(s exitnode.Status) bool {
-	if s.Backend != "Running" {
+	if s.Backend != "Running" && s.Backend != "LAN" {
 		g.seen = false
 		return false
 	}
