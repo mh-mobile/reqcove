@@ -766,6 +766,8 @@ reqcove mock add --rules rules.yaml --url https://api.example.com/v1/login \
   its end. It refuses a file whose `mock:` is not its last block, or is in flow
   style (`mock: []`), and says how to fix it. A new file is made `0600`; an
   existing one keeps its mode, replaced at once (a temp file beside it, renamed).
+  If the file changes while it is checked (your editor saved it), nothing is
+  written: run it again. A header name given twice is refused.
 - Before writing, the whole file as it would be is checked by the addon's own
   loader: by the running `reqcove run` (the same `--state`), with its
   `--allow-hosts` and `--pass-hosts`, or, when none is running, by mitmproxy's
@@ -774,9 +776,9 @@ reqcove mock add --rules rules.yaml --url https://api.example.com/v1/login \
 - Then it says when the mock takes effect: at once when run has
   `--rules-reload` (which also turns every preset that is on off), else when
   you restart run.
-- It runs only when its input is a terminal: a help against an agent running
-  it unasked, not a guarantee (an agent with a shell can give it one, and can
-  edit the file anyway). `--print` shows the mock as YAML without writing or
+- It runs only in a terminal (stdin and stdout, as `reqcove mark`): a help
+  against an agent running it unasked, not a guarantee (an agent with a shell
+  can give it one, and can edit the file anyway). `--print` shows the mock as YAML without writing or
   checking anything, in a terminal or not.
 
 Tried with the tests: the YAML for values with quotes, line breaks, `#`, `: `,

@@ -464,9 +464,9 @@ cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
 `reqcove mock add` writes a mock into a rules file for you, and runs only when
-its input is a terminal: a help against an agent running it unasked, not a
-guarantee (an agent that can run commands can give it a terminal, or edit the
-file itself). Writing rules stays yours: the skill tells agents never to run
+its input and output are a terminal: a help against an agent running it
+unasked, not a guarantee (an agent that can run commands can give it a
+terminal, or edit the file itself). Writing rules stays yours: the skill tells agents never to run
 it. To have `run` check the file first, it reads `run`'s SOCKS5 password from
 the state directory (0600, your user); `run` checks the file it is pointed at
 without taking it (a test).

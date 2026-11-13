@@ -20,8 +20,8 @@ import (
 // YAML library, so the mock is text (each value a JSON-style double-quoted
 // scalar, which YAML reads the same) added after the file's own text, and the
 // whole file is checked by the addon's loader before it is written. Only when
-// stdin is a terminal, as lan and mark: a help against an agent running it
-// unasked, not a guarantee.
+// stdin and stdout are a terminal, as lan and mark: a help against an agent
+// running it unasked, not a guarantee.
 
 const mockUse = "reqcove mock add --rules FILE --url URL [flags]"
 
@@ -72,11 +72,14 @@ func mockCmd(ctx context.Context, args []string) error {
 	return mockIn(ctx, os.Stdin, os.Stdout, *state, *uvx, *rules, item)
 }
 
-func mockIn(ctx context.Context, in *os.File, w io.Writer, state, uvx, path, item string) error {
-	if !isTerminal(in) {
+// terminal is isTerminal (tests stand in for it: go test has no terminal).
+var terminal = isTerminal
+
+func mockIn(ctx context.Context, in, out *os.File, state, uvx, path, item string) error {
+	if !terminal(in) || !terminal(out) {
 		return errors.New("reqcove mock add runs only in a terminal: the --rules file is yours to write. Run it in your own terminal (--print shows the mock without writing it)")
 	}
-	return addMock(ctx, w, state, uvx, path, item)
+	return addMock(ctx, out, state, uvx, path, item)
 }
 
 // mockFields are the flags a mock is made of, in the order written; those
@@ -113,10 +116,16 @@ func mockItem(fls *flag.FlagSet, headers []string) (string, error) {
 			continue
 		case "header":
 			b.WriteString("  headers:\n")
+			seen := map[string]bool{}
 			for _, h := range headers {
 				name, value, ok := strings.Cut(h, ":")
 				if !ok || strings.TrimSpace(name) == "" {
 					return "", errors.New("--header takes 'Name: value'")
+				}
+				if k := strings.ToLower(strings.TrimSpace(name)); seen[k] {
+					return "", errors.New("--header: one value per header name")
+				} else {
+					seen[k] = true
 				}
 				if !utf8.ValidString(h) {
 					return "", errors.New("--header is not UTF-8 text")
@@ -230,6 +239,8 @@ var checkPython = capture.CheckRulesPython
 func addMock(ctx context.Context, w io.Writer, state, uvx, path, item string) error {
 	if p, err := filepath.EvalSymlinks(path); err == nil {
 		path = p // a link stays a link: the file it names gets the mock
+	} else if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a link to a file that is not there: point it at one, or give the file itself", path)
 	}
 	path, err := filepath.Abs(path)
 	if err != nil {
@@ -279,6 +290,10 @@ func addMock(ctx context.Context, w io.Writer, state, uvx, path, item string) er
 	}
 	if why != "" {
 		return fmt.Errorf("%s would not load with this mock (%s): nothing written", path, why)
+	}
+	// A save made while the check ran (seconds, with Python) must not be lost.
+	if now, err := os.ReadFile(path); (err == nil) != (old != nil) || string(now) != string(old) {
+		return fmt.Errorf("%s changed meanwhile: nothing written; run it again", path)
 	}
 	if err := os.Rename(f.Name(), path); err != nil {
 		return err

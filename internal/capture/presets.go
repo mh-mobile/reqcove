@@ -279,7 +279,8 @@ func CheckRulesPython(ctx context.Context, cfg Config, path string) (string, err
 	cfg.Dir = dir
 	bin, args := PyCommand(cfg, "python")
 	cmd := exec.CommandContext(ctx, bin, append(args, "-c", checkScript, dir, path)...)
-	cmd.Dir = dir // python -c imports from the current directory first
+	cmd.Dir = dir               // python -c imports from the current directory first
+	cmd.WaitDelay = time.Second // on Ctrl-C, not held by a child of uv that keeps the pipes
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	b, err := cmd.Output()

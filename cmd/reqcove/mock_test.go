@@ -81,6 +81,9 @@ func TestMockPrint(t *testing.T) {
 	if err := mockCmd(context.Background(), []string{"add", "--print", "--url", "https://a.example/", "--header", "no colon"}); err == nil {
 		t.Error("a header without a colon")
 	}
+	if err := mockCmd(context.Background(), []string{"add", "--print", "--url", "https://a.example/", "--header", "X-A: 1", "--header", "x-a : 2"}); err == nil || !strings.Contains(err.Error(), "one value per header name") {
+		t.Errorf("a header twice: %v", err)
+	}
 	if err := mockCmd(context.Background(), []string{"add", "--print", "--url", "https://a.example/", "--body", "\xff"}); err == nil || !strings.Contains(err.Error(), "UTF-8") {
 		t.Errorf("not UTF-8: %v", err)
 	}
@@ -118,7 +121,7 @@ func TestAppendMock(t *testing.T) {
 
 // fakeRun answers mock.sock's check as a run in state would, after
 // checking what it is asked.
-func fakeRun(t *testing.T, state string, answer string) chan map[string]any {
+func fakeRun(t *testing.T, state string, answer string, during ...func()) chan map[string]any {
 	t.Helper()
 	os.WriteFile(filepath.Join(state, "socks-secret"), []byte("S3CRET"), 0o600)
 	ln, err := net.Listen("unix", filepath.Join(state, capture.ControlSock))
@@ -141,6 +144,9 @@ func fakeRun(t *testing.T, state string, answer string) chan map[string]any {
 				req["text"] = string(b)
 			}
 			asked <- req
+			for _, f := range during {
+				f()
+			}
 			c.Write([]byte(answer + "\n"))
 			c.Close()
 		}
@@ -173,8 +179,14 @@ func TestMockAdd(t *testing.T) {
 	r, w, _ := os.Pipe()
 	defer r.Close()
 	defer w.Close()
-	if err := mockIn(ctx, r, io.Discard, state, "/nonexistent/uvx", path, item); err == nil || !strings.Contains(err.Error(), "only in a terminal") {
+	if err := mockIn(ctx, r, w, state, "/nonexistent/uvx", path, item); err == nil || !strings.Contains(err.Error(), "only in a terminal") {
 		t.Errorf("off a terminal: %v", err)
+	}
+	terminal = func(f *os.File) bool { return f == r } // stdin a terminal, stdout not (a pipe to an agent)
+	err := mockIn(ctx, r, w, state, "/nonexistent/uvx", path, item)
+	terminal = isTerminal
+	if err == nil || !strings.Contains(err.Error(), "only in a terminal") {
+		t.Errorf("stdout off a terminal: %v", err)
 	}
 
 	// Checked by the running run: refused, the file byte-identical.
@@ -227,6 +239,29 @@ func TestMockAddWrites(t *testing.T) {
 	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
 		t.Error("the link was replaced")
 	}
+
+	// A link to nothing: refused, not replaced by a file.
+	dangling := filepath.Join(t.TempDir(), "dangling.yaml")
+	os.Symlink(filepath.Join(dir, "gone.yaml"), dangling)
+	if err := addMock(ctx, &out, state, "/nonexistent/uvx", dangling, item); err == nil || !strings.Contains(err.Error(), "not there") {
+		t.Errorf("dangling link: %v", err)
+	}
+	if fi, _ := os.Lstat(dangling); fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("the dangling link was replaced")
+	}
+
+	// A save while the check runs is kept: refused, nothing written over it.
+	state2, _ := os.MkdirTemp("/tmp", "rcvk-")
+	defer os.RemoveAll(state2)
+	saved := "# the user's save\n"
+	fakeRun(t, state2, `{"check": "", "same": true, "reload": true}`, func() { os.WriteFile(path, []byte(saved), 0o640) })
+	if err := addMock(ctx, &out, state2, "/nonexistent/uvx", path, item); err == nil || !strings.Contains(err.Error(), "changed meanwhile") {
+		t.Errorf("changed meanwhile: %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != saved {
+		t.Errorf("the save was lost: %q", b)
+	}
+	noLeftovers(t, dir, 1)
 }
 
 // Without a run (or with one too old to check), mitmproxy's Python checks:
