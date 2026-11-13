@@ -15,7 +15,8 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
 
 - Never start, stop or restart `reqcove run`, nor run `reqcove cleanup` (it
   can put the system's proxy settings back). The commands you may run:
-  `reqcove status`, `reqcove har`, `reqcove init --print`.
+  `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock
+  add --print` when the user asks.
 - `activate_preset` and `activate_mock` change what the device gets, and a
   `map_remote` preset where its requests and credentials go: see 5, Presets, first.
 - Read the records only through the reqcove MCP tools and those commands. If

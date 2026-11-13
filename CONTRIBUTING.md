@@ -17,7 +17,7 @@ You need Go (the version in `go.mod`) and, for the end-to-end tests,
 ```sh
 go build -o reqcove ./cmd/reqcove
 go vet ./... && go test -race ./...
-REQCOVE_E2E=1 go test -count=1 ./internal/capture/ ./internal/exitnode/   # real mitmproxy, from the lock
+REQCOVE_E2E=1 go test -count=1 ./internal/capture/ ./internal/exitnode/ ./cmd/reqcove/   # real mitmproxy, from the lock
 ```
 
 CI runs these on macOS and Linux, with `gofmt`, `staticcheck` and `govulncheck`,

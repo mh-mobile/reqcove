@@ -220,6 +220,9 @@ func appendMock(text, item string) (string, error) {
 	return text + indent(item, pad, eol), nil
 }
 
+// checkPython checks a rules file without a run (tests stand in for it).
+var checkPython = capture.CheckRulesPython
+
 // addMock appends item to the --rules file at path once the whole file, as it
 // would be, loads: checked by the run in state when one is there (with its
 // hosts), else by mitmproxy's Python. Written at once (a temp file beside it,
@@ -259,16 +262,17 @@ func addMock(ctx context.Context, w io.Writer, state, uvx, path, item string) er
 		return err
 	}
 	run, err := capture.CheckRules(ctx, state, f.Name(), path)
+	up := !errors.Is(err, capture.ErrNoControl) // a run is there, even one that did not check
 	why := ""
 	if err == nil {
 		why = *run.Why
 	} else {
-		if errors.Is(err, capture.ErrNoControl) {
-			fmt.Fprintf(w, "reqcove is not running (%s): checking the file with mitmproxy's Python, without --allow-hosts and --pass-hosts\n", state)
-		} else {
+		if up {
 			fmt.Fprintf(w, "the running reqcove did not check the file (%v): checking it with mitmproxy's Python, without --allow-hosts and --pass-hosts\n", err)
+		} else {
+			fmt.Fprintf(w, "reqcove is not running (%s): checking the file with mitmproxy's Python, without --allow-hosts and --pass-hosts\n", state)
 		}
-		why, err = capture.CheckRulesPython(ctx, capture.Config{Uvx: uvx, Python: defaultPython, MitmSpec: defaultMitmSpec}, f.Name())
+		why, err = checkPython(ctx, capture.Config{Uvx: uvx, Python: defaultPython, MitmSpec: defaultMitmSpec}, f.Name())
 		if err != nil {
 			return fmt.Errorf("the file could not be checked, so nothing was written: %w", err)
 		}
@@ -285,6 +289,8 @@ func addMock(ctx context.Context, w io.Writer, state, uvx, path, item string) er
 		fmt.Fprintln(w, "The running reqcove takes it at once (--rules-reload), which turns every preset that is on off.")
 	case run.Same:
 		fmt.Fprintln(w, "Restart reqcove run for it to take effect: without --rules-reload it reads the file at start only.")
+	case up && run.Why == nil:
+		fmt.Fprintln(w, "If the running reqcove reads this file with --rules-reload, it takes it at once, which turns every preset that is on off; otherwise restart it with --rules "+path+".")
 	default:
 		fmt.Fprintf(w, "It takes effect when reqcove run starts, or restarts, with --rules %s.\n", path)
 	}

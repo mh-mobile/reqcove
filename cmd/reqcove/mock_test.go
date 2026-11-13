@@ -249,6 +249,19 @@ func TestMockAddNoCheck(t *testing.T) {
 		if es, _ := os.ReadDir(dir); len(es) != 0 {
 			t.Errorf("older %v: left %v", older, es)
 		}
+
+		// Checked by Python instead: written, and when it takes effect said
+		// for a run that may take it at once too.
+		checkPython = func(context.Context, capture.Config, string) (string, error) { return "", nil }
+		out.Reset()
+		err = addMock(ctx, &out, state, "/nonexistent/uvx", path, "- match:\n    url: \"https://a.example/\"\n")
+		checkPython = capture.CheckRulesPython
+		if st, _ := os.Stat(path); err != nil || st == nil || st.Mode().Perm() != 0o600 {
+			t.Errorf("older %v: %v %v", older, err, st)
+		}
+		if at := strings.Contains(out.String(), "it takes it at once, which turns every preset that is on off"); at != older {
+			t.Errorf("older %v: %q", older, out.String())
+		}
 	}
 }
 
