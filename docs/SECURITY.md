@@ -170,9 +170,10 @@ So "delete the directory" above means each of them.
   or in formats other than JSON, forms and text
   (`multipart/mixed`; protobuf, `multipart/form-data` and XML are read as
   below). XML is masked by names only: a secret in an element or attribute
-  named otherwise passes; a tag that does not tokenize outside a secret
-  element (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the
-  text masking and a look for secret attributes only; nothing in a DTD
+  named otherwise passes; what does not tokenize outside a secret element
+  (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the text
+  masking only, but a start tag the decoder refuses (`a=b!c`, an unquoted
+  value) is still read as one, by its name and attributes; nothing in a DTD
   (`<!ENTITY p "…">`), and no comment outside a secret element, is masked by
   names; XML carried as text in an element, escaped (`&lt;Password&gt;`) or in
   CDATA outside a secret element, is not read as XML (a test); a WebSocket
@@ -246,10 +247,13 @@ So "delete the directory" above means each of them.
   masked (`<key>access_token</key><string>[redacted]</string>`). As JSON's
   `key` is, an element named `Key` is masked, S3's object names among them. A
   head cut, or that does not tokenize, inside a secret element or attribute
-  value is masked to its end; elsewhere, reading goes on from the next `<`,
-  in bounded time (a test). No DTD is read: no entity is expanded or fetched
-  (a billion-laughs test). The text masking above applies on top: a fuzz test
-  of markup checks that a secret it masks is never left by the XML masking.
+  value is masked to its end; elsewhere, reading goes on past it (after a bad
+  comment's `-->`), in bounded time (a test). No DTD is read: no entity is
+  expanded or fetched (a billion-laughs test). The text masking above applies
+  on top. The XML masking can take away what the text masking keys on (a
+  quote inside a masked element), so it is not checked to mask everything
+  the text masking alone would; a fuzz test of markup checks that it never
+  fails and that a secret element and attribute before any markup stay masked.
   (Tests, the fuzz test, and an E2E test over mitmproxy with a SOAP request.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to

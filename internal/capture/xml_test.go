@@ -60,6 +60,17 @@ func TestMaskXML(t *testing.T) {
 		{"closed by its own end tag only", "text/xml", `<Password>abc</i>S3CRET-39</Password><b>kept</b>`, false, []string{"S3CRET-39"}, []string{"<Password>[redacted]</Password><b>kept</b>"}},
 		{"nested of the same name", "text/xml", `<Password><Password>x</Password>S3CRET-40</Password><b>kept</b>`, false, []string{"S3CRET-40"}, []string{"<Password>[redacted]</Password><b>kept</b>"}},
 		{"attributes with no space between", "text/xml", `<a x="1"password="S3CRET-41"/>`, false, []string{"S3CRET-41"}, []string{`x="1"password="[redacted]"`}},
+		{"a refused start tag that is the secret", "text/xml", `<wsse:Password Type=http://x/y#PasswordText>S3CRET-42</wsse:Password><b>kept</b>`, false,
+			[]string{"S3CRET-42"}, []string{"<b>kept</b>"}},
+		{"a refused start tag, another", "text/xml", `<Password a=b!c>S3CRET-43</Password><Password a=b!c/><b>kept</b>`, false,
+			[]string{"S3CRET-43"}, []string{"<Password a=b!c/><b>kept</b>"}},
+		{"a refused plist dict", "application/xml", `<plist><dict a=b!c><key>password</key><string>S3CRET-44</string></dict></plist>`, false,
+			[]string{"S3CRET-44"}, []string{"<key>password</key>"}},
+		{"an end tag in a bad comment", "application/xml", `<plist><dict><!-- -- </dict> --><key>password</key><string>S3CRET-45</string></dict></plist>`, false,
+			[]string{"S3CRET-45"}, []string{"<key>password</key>"}},
+		{"a value cut after a <", "text/xml", `<a password="S3CRET-46<TAIL46`, false, []string{"S3CRET-46", "TAIL46"}, nil},
+		{"a value with a < in a refused tag", "text/xml", `<a password="S3CRET-47<TAIL47" b=c!d><e>kept</e>`, false, []string{"S3CRET-47", "TAIL47"}, []string{"<e>kept</e>"}},
+		{"a value with a > in a refused tag", "text/xml", `<a b=c!d note="a<b" password="S3CRET-48>TAIL48">`, false, []string{"S3CRET-48", "TAIL48"}, []string{`note="a<b"`}},
 		{"SAML Assertion", "text/xml", `<samlp:Response><saml:Assertion ID="a1"><saml:Subject><saml:NameID>alice</saml:NameID></saml:Subject></saml:Assertion><saml2:EncryptedAssertion><x>S3CRET-26</x></saml2:EncryptedAssertion><samlp:Status>ok</samlp:Status></samlp:Response>`, false,
 			[]string{"alice", "S3CRET-26"}, []string{`<saml:Assertion ID="a1">[redacted]</saml:Assertion>`, "<samlp:Status>ok</samlp:Status>"}},
 		{"plist: the value after a secret key", "application/xml", `<plist><dict><key>access_token</key><string>S3CRET-14</string><key>name</key><string>Bob</string></dict></plist>`, false,
@@ -168,13 +179,14 @@ func TestMaskXMLEntities(t *testing.T) {
 }
 
 // TestMaskXMLBounds: bodies that stop tokenizing over and over stay linear:
-// each restart reads on from where the last stopped, and a broken tag's
-// attributes are looked for up to the next < only. About 10 ms each on an
-// M-series Mac; without that bound, 13 to 31 s.
+// each restart reads on from where the last stopped, a refused tag from
+// its end (a quote left open runs to the end of the head). Under 20 ms
+// each on an M-series Mac.
 func TestMaskXMLBounds(t *testing.T) {
 	for _, in := range []string{
 		strings.Repeat("<a\n", 21000), strings.Repeat("<a x='", 11000), strings.Repeat("1 < 2 ", 11000),
 		strings.Repeat("<!--", 16000), strings.Repeat("<a:b:c/>", 8000), strings.Repeat(`<?xml version="1.1"?>`, 3000),
+		`<a x="` + strings.Repeat("<b", 32000),
 	} {
 		start := time.Now()
 		maskBody([]byte(in[:min(len(in), 65536)]), "text/xml", true)

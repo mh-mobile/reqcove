@@ -16,8 +16,8 @@ const fuzzSecret = "S3crQt7VxLu9Kz"
 const fuzzShapes = 26
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
-// the secret: XML masking never panics on it, and never masks less than the
-// text masking alone.
+// the secret: XML masking never panics on it, and a secret element and
+// attribute before it are masked whatever follows, wherever the head is cut.
 const fuzzMarkup = 25
 
 // secretIn puts a secret under a secret name in one of the shapes masking
@@ -146,13 +146,20 @@ func FuzzMaskBody(f *testing.F) {
 		`<a><Password>#</Password></a></b>`, `password=#</dict>>password=#`, `<Password>abc</i>#</Password>`,
 		`<?xml version="1.1"?><a token='#'/>`, `<a x="1"password="#"/>`, `<plist><dict><key>pin</key><string>#</string>`,
 		`<a>{"secret":"#"}</a>`, `<b>"</b>{"token":"#"}`, `<a>Bearer #</a><!-- -- --><Key>#`,
+		`<Password>"password":"</Password>password=#`, `<Password a=b!c>#</Password>`, `<a password="#<VxLu9Kz`,
+		`<plist><dict><!-- -- </dict> --><key>pin</key><string>#</string>`,
 	} {
 		f.Add(uint8(fuzzMarkup), m, 0)
 		f.Add(uint8(fuzzMarkup), m, len(m)-3)
 	}
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
 		if shape%fuzzShapes == fuzzMarkup {
-			in := strings.ReplaceAll(filler, "#", fuzzSecret)
+			maskBody([]byte(strings.ReplaceAll(filler, "#", fuzzSecret)), "text/xml", true)
+			// The filler may hold pieces of the secret itself: past the
+			// prefix, the output must start with it masked.
+			prefix := `<r><Password>` + fuzzSecret + `</Password><a token="` + fuzzSecret + `"/>`
+			const masked = `<r><Password>[redacted]</Password><a token="[redacted]"/>`
+			in := prefix + filler
 			if cut > 0 && cut < len(in) {
 				in = in[:cut]
 			}
@@ -160,8 +167,8 @@ func FuzzMaskBody(f *testing.F) {
 				return
 			}
 			got := string(maskBody([]byte(in), "text/xml", true))
-			if l := leak(got, fuzzSecret); l != "" && leak(maskText(in, "text/xml", true), fuzzSecret) == "" {
-				t.Errorf("less masked than by the text masking: %q survived:\n%q\n%q", l, in, got)
+			if len(in) < len(prefix) && leak(got, fuzzSecret) != "" || len(in) >= len(prefix) && !strings.HasPrefix(got, masked) {
+				t.Errorf("a secret element or attribute left:\n%q\n%q", in, got)
 			}
 			return
 		}

@@ -46,6 +46,20 @@ func maskXML(s string, request bool) string {
 	content := 0            // where its content starts
 	keyAt, keyText := 0, "" // a plist <key> open: its depth, its text
 	nextSecret := false     // the element after a plist key whose text is secret
+	startElement := func(local string, start, end int) {
+		for _, sp := range secretAttrs(s[start:end], request) {
+			mask(start+sp[0], start+sp[1])
+		}
+		open = append(open, local)
+		plistKey := local == "key" && len(open) > 1 && open[len(open)-2] == "dict"
+		switch {
+		case nextSecret || secretXMLName(local, request) && !plistKey:
+			inSecret, secret, nest, content = true, local, 0, end
+		case plistKey:
+			keyAt, keyText = len(open), ""
+		}
+		nextSecret = false
+	}
 read:
 	for base := 0; base < len(s); {
 		d := xml.NewDecoder(strings.NewReader(s[base:]))
@@ -63,17 +77,31 @@ read:
 				if err == io.EOF {
 					break read
 				}
-				// What does not tokenize (XML 1.1's declaration, 1 < 2, a head
-				// cut in a tag): a secret attribute in it (up to the next <, as
-				// a tag holds none), then on from the next < after it.
-				tag := s[start:]
-				if k := strings.IndexByte(tag[min(1, len(tag)):], '<'); k >= 0 {
-					tag = tag[:k+1]
-				}
-				for _, sp := range secretAttrs(tag, request) {
-					mask(start+sp[0], start+sp[1])
-				}
+				// What does not tokenize: read on past it. Each way on starts
+				// after what was read, so the reading stays linear.
 				next := max(end, start+1, last)
+				switch rest := s[start:]; {
+				case strings.HasPrefix(rest, "<!--"): // a bad comment: after its end
+					next = max(next, closeAfter(s, start+4, "-->"))
+				case len(rest) > 1 && rest[0] == '<' && (rest[1] >= 'A' || rest[1] == ':'):
+					// A start tag the decoder refuses (Type=http://x#y, a=b!c, a
+					// head cut in it): read as one, then on in its content.
+					tagEnd, closed := xmlTagEnd(s, start)
+					name := s[start+1 : tagEnd]
+					if k := strings.IndexAny(name, " \t\r\n/>=<\"'"); k >= 0 {
+						name = name[:k]
+					}
+					if closed && s[tagEnd-2] == '/' { // self-closing
+						for _, sp := range secretAttrs(s[start:tagEnd], request) {
+							mask(start+sp[0], start+sp[1])
+						}
+						nextSecret = false
+					} else {
+						startElement(name[strings.LastIndexByte(name, ':')+1:], start, tagEnd)
+					}
+					base = max(tagEnd, end, last, start+1)
+					continue read
+				}
 				k := strings.IndexByte(s[min(next, len(s)):], '<')
 				if k < 0 {
 					break read
@@ -83,24 +111,14 @@ read:
 			}
 			switch t := tok.(type) {
 			case xml.StartElement:
-				open = append(open, t.Name.Local)
 				if inSecret {
+					open = append(open, t.Name.Local)
 					if t.Name.Local == secret {
 						nest++
 					}
 					continue
 				}
-				for _, sp := range secretAttrs(s[start:end], request) {
-					mask(start+sp[0], start+sp[1])
-				}
-				plistKey := t.Name.Local == "key" && len(open) > 1 && open[len(open)-2] == "dict"
-				switch {
-				case nextSecret || secretXMLName(t.Name.Local, request) && !plistKey:
-					inSecret, secret, nest, content = true, t.Name.Local, 0, end
-				case plistKey:
-					keyAt, keyText = len(open), ""
-				}
-				nextSecret = false
+				startElement(t.Name.Local, start, end)
 			case xml.CharData:
 				if keyAt > 0 {
 					keyText += string(t)
@@ -142,25 +160,39 @@ read:
 // before its name: x="1"password="…" is read too.
 var xmlAttrRE = regexp.MustCompile(`([^\s=/<>"']+)\s*=\s*(?:"([^"]*)"?|'([^']*)'?|([^\s>"']+))`)
 
-// secretAttrs returns the spans of the values of secret attributes in the
-// start tag s begins with, if it does (up to its first > outside quotes).
-func secretAttrs(s string, request bool) [][2]int {
-	if len(s) < 2 || s[0] != '<' || strings.IndexByte("/!?", s[1]) >= 0 {
-		return nil
+// closeAfter returns the index after the first end at or after i in s, or len(s).
+func closeAfter(s string, i int, end string) int {
+	if k := strings.Index(s[i:], end); k >= 0 {
+		return i + k + len(end)
 	}
+	return len(s)
+}
+
+// xmlTagEnd returns where the tag opening at s[i] ends: after its first >
+// outside quotes (closed), or at a < outside quotes or the end of s (a
+// quoted value runs on past < and >, as it may).
+func xmlTagEnd(s string, i int) (int, bool) {
 	var q byte
-	for i := 1; i < len(s); i++ {
-		if c := s[i]; q != 0 {
+	for k := i + 1; k < len(s); k++ {
+		switch c := s[k]; {
+		case q != 0:
 			if c == q {
 				q = 0
 			}
-		} else if c == '"' || c == '\'' {
+		case c == '"' || c == '\'':
 			q = c
-		} else if c == '>' {
-			s = s[:i]
-			break
+		case c == '>':
+			return k + 1, true
+		case c == '<':
+			return k, false
 		}
 	}
+	return len(s), false
+}
+
+// secretAttrs returns the spans of the values of secret attributes in the
+// start tag s, whole or cut.
+func secretAttrs(s string, request bool) [][2]int {
 	var spans [][2]int
 	for _, m := range xmlAttrRE.FindAllStringSubmatchIndex(s, -1) {
 		name := s[m[2]:m[3]]
