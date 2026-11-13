@@ -48,6 +48,18 @@ func TestMaskXML(t *testing.T) {
 		{"broken inside a secret element", "text/xml", `<Password>S3CRET-13 < oops</Password><User>u</User>`, false, []string{"S3CRET-13"}, nil},
 		{"broken: the text masking still applies", "text/xml", `<a><b>1 < 2</b>Bearer S3CRET12abcdefgh</a>`, false, []string{"S3CRET12"}, []string{"<b>1 < 2</b>"}},
 		{"broken in a tag: only that tag's values", "text/xml", `<a><b c="1" <d>a key="x</d><e>kept</e></a>`, false, nil, []string{"<e>kept</e>"}},
+		{"a stray end tag at the top", "text/xml", `<a><Password>S3CRET-30</Password></a></b>`, false, []string{"S3CRET-30"}, []string{"<a><Password>[redacted]</Password></a></b>"}},
+		{"stray end tags keep the start", "text/xml", `<?xml version="1.0"?><html><input name="password" value="v"></form></html></div>`, false,
+			nil, []string{`<?xml version="1.0"?><html><input name="password" value="v"></form></html></div>`}},
+		{"no less than the text masking", "text/xml", `password=S3CRET-32</dict>>password=S3CRET-33`, false, []string{"S3CRET-32", "S3CRET-33"}, nil},
+		{"XML 1.1", "text/xml", `<?xml version="1.1"?><a><Password>S3CRET-34</Password></a>`, false, []string{"S3CRET-34"}, []string{`<?xml version="1.1"?>`}},
+		{"read on after a bad comment", "text/xml", `<a><!-- a -- b --><Password>S3CRET-35</Password></a>`, false, []string{"S3CRET-35"}, nil},
+		{"read on after 1 < 2", "text/xml", `<a>1 < 2<Password>S3CRET-36</Password></a>`, false, []string{"S3CRET-36"}, []string{"1 < 2"}},
+		{"read on after a control character", "text/xml", "<a>\x01<Password>S3CRET-37</Password></a>", false, []string{"S3CRET-37"}, nil},
+		{"read on after a bad name", "text/xml", `<a:b:c/><Password>S3CRET-38</Password>`, false, []string{"S3CRET-38"}, []string{"<a:b:c/>"}},
+		{"closed by its own end tag only", "text/xml", `<Password>abc</i>S3CRET-39</Password><b>kept</b>`, false, []string{"S3CRET-39"}, []string{"<Password>[redacted]</Password><b>kept</b>"}},
+		{"nested of the same name", "text/xml", `<Password><Password>x</Password>S3CRET-40</Password><b>kept</b>`, false, []string{"S3CRET-40"}, []string{"<Password>[redacted]</Password><b>kept</b>"}},
+		{"attributes with no space between", "text/xml", `<a x="1"password="S3CRET-41"/>`, false, []string{"S3CRET-41"}, []string{`x="1"password="[redacted]"`}},
 		{"SAML Assertion", "text/xml", `<samlp:Response><saml:Assertion ID="a1"><saml:Subject><saml:NameID>alice</saml:NameID></saml:Subject></saml:Assertion><saml2:EncryptedAssertion><x>S3CRET-26</x></saml2:EncryptedAssertion><samlp:Status>ok</samlp:Status></samlp:Response>`, false,
 			[]string{"alice", "S3CRET-26"}, []string{`<saml:Assertion ID="a1">[redacted]</saml:Assertion>`, "<samlp:Status>ok</samlp:Status>"}},
 		{"plist: the value after a secret key", "application/xml", `<plist><dict><key>access_token</key><string>S3CRET-14</string><key>name</key><string>Bob</string></dict></plist>`, false,
@@ -152,6 +164,23 @@ func TestMaskXMLEntities(t *testing.T) {
 	// About 0.1 ms and 15 KB on an M-series Mac (3 ms under -race).
 	if alloc := after.TotalAlloc - before.TotalAlloc; elapsed > time.Second || alloc > 8<<20 {
 		t.Errorf("%v, %d bytes", elapsed, alloc)
+	}
+}
+
+// TestMaskXMLBounds: bodies that stop tokenizing over and over stay linear:
+// each restart reads on from where the last stopped, and a broken tag's
+// attributes are looked for up to the next < only. About 10 ms each on an
+// M-series Mac; without that bound, 13 to 31 s.
+func TestMaskXMLBounds(t *testing.T) {
+	for _, in := range []string{
+		strings.Repeat("<a\n", 21000), strings.Repeat("<a x='", 11000), strings.Repeat("1 < 2 ", 11000),
+		strings.Repeat("<!--", 16000), strings.Repeat("<a:b:c/>", 8000), strings.Repeat(`<?xml version="1.1"?>`, 3000),
+	} {
+		start := time.Now()
+		maskBody([]byte(in[:min(len(in), 65536)]), "text/xml", true)
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%q…: %v", in[:8], d)
+		}
 	}
 }
 

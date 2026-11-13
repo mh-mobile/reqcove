@@ -26,9 +26,14 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 		return head
 	}
 	s := string(head)
-	if isXML(contentType, s) { // by names first; the text masking below still applies
+	if isXML(contentType, s) { // by names first; the text masking still applies
 		s = maskXML(s, request)
 	}
+	return []byte(maskText(s, contentType, request))
+}
+
+// maskText is maskBody's masking of any text.
+func maskText(s, contentType string, request bool) string {
 	// A GraphQL document as the body (application/graphql, or shaped like
 	// one); those in JSON strings are found by maskJSON.
 	s, isDoc := maskGraphQLDoc(s, request)
@@ -39,7 +44,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if !isDoc {
 		s = maskLines(s, request)
 	}
-	return []byte(maskTokens(maskURLs(s)))
+	return maskTokens(maskURLs(s))
 }
 
 // trimCutRune drops a UTF-8 character cut at the end of a head, for the check.

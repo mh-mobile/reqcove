@@ -6,13 +6,19 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fuzzSecret: every 5 characters of it hold a capital, and fillers have none,
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 25
+const fuzzShapes = 26
+
+// fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
+// the secret: XML masking never panics on it, and never masks less than the
+// text masking alone.
+const fuzzMarkup = 25
 
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
@@ -102,6 +108,8 @@ func leak(got, secret string) string {
 	return ""
 }
 
+func trimCutRunes(s string) string { return string(trimCutRune([]byte(s))) }
+
 var jsonEscapeRE = regexp.MustCompile(`\\(u[0-9a-fA-F]{4}|.)`)
 
 func jsonUnescapeAll(s string) string {
@@ -134,7 +142,29 @@ func FuzzMaskBody(f *testing.F) {
 		f.Add(shape, "some words, 42", 7)
 		f.Add(shape, strings.Repeat("x", 65530), 65536) // the 64 KiB boundary
 	}
+	for _, m := range []string{
+		`<a><Password>#</Password></a></b>`, `password=#</dict>>password=#`, `<Password>abc</i>#</Password>`,
+		`<?xml version="1.1"?><a token='#'/>`, `<a x="1"password="#"/>`, `<plist><dict><key>pin</key><string>#</string>`,
+		`<a>{"secret":"#"}</a>`, `<b>"</b>{"token":"#"}`, `<a>Bearer #</a><!-- -- --><Key>#`,
+	} {
+		f.Add(uint8(fuzzMarkup), m, 0)
+		f.Add(uint8(fuzzMarkup), m, len(m)-3)
+	}
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
+		if shape%fuzzShapes == fuzzMarkup {
+			in := strings.ReplaceAll(filler, "#", fuzzSecret)
+			if cut > 0 && cut < len(in) {
+				in = in[:cut]
+			}
+			if !utf8.ValidString(trimCutRunes(in)) {
+				return
+			}
+			got := string(maskBody([]byte(in), "text/xml", true))
+			if l := leak(got, fuzzSecret); l != "" && leak(maskText(in, "text/xml", true), fuzzSecret) == "" {
+				t.Errorf("less masked than by the text masking: %q survived:\n%q\n%q", l, in, got)
+			}
+			return
+		}
 		body, ct, at := secretIn(shape, filler, fuzzSecret)
 		check := func(cut int) {
 			head := []byte(body)
