@@ -513,7 +513,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `--mcp-http` | [MCP ツールを HTTP でも提供](#ほかのデバイスのエージェントから使う--mcp-http)。ノードの 8090 番ポート |
 | `--dns SERVERS` | Exit Node が使う上流 DNS（カンマ区切り）。デフォルトは `1.1.1.1:53`（ポートは省略可）。`system` で `/etc/resolv.conf` の最初の nameserver |
 | `--no-redact` | シークレットをマスクせずに記録 |
-| `--mask-names a,b` | 名前がこれと一致するものもマスクする（表記の違いは問わない：`clientRef` は `client_ref`、`Client-Ref` にも一致。`X-Client-Ref` のように名前の一部の場合は一致しない）。ヘッダー、パラメータ、JSON のフィールド、GraphQL の引数が対象。`@FILE` も可 |
+| `--mask-names a,b` | 名前がこれと一致するものもマスクする（表記の違いは問わない：`clientRef` は `client_ref`、`Client-Ref` にも一致。`X-Client-Ref` のように名前の一部の場合は一致しない）。ヘッダー、パラメータ、JSON のフィールド、GraphQL の引数、XML の要素と属性が対象。`@FILE` も可 |
 | `--mask-values RE` | このパターン（RE2）に一致した部分を、どこにあってもマスクする。繰り返し指定するか `@FILE`（1 行に 1 つ）。シークレットそのものを書くなら、`ps` に出ないようファイルで、`\Q…\E` で囲んで |
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
@@ -536,7 +536,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 
-iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`、試験用アプリでの `diff_flows`（二重に送ったリクエスト）、`list_ws_messages`、`--proto`。テストのみ：`--mask-values`、`max_body`、`--mcp-http` の回数制限、`multipart/form-data`。
+iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`、試験用アプリでの `diff_flows`（二重に送ったリクエスト）、`list_ws_messages`、`--proto`。テストのみ：`--mask-values`、`max_body`、`--mcp-http` の回数制限、`multipart/form-data`、XML のボディ（mitmproxy を通した SOAP のリクエストの E2E テストも）。
 
 コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
 

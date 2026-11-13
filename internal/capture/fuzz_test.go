@@ -12,7 +12,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 22
+const fuzzShapes = 25
 
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
@@ -71,6 +71,12 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
 	case 21: // a STOMP frame's header line
 		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
+	case 22: // SOAP: a namespaced element
+		return pre(`<s:Envelope xmlns:s="urn:s"><s:Body><m:Note>`+filler+`</m:Note>`, `<wsse:Password>`+secret+`</wsse:Password></s:Body></s:Envelope>`, "application/soap+xml")
+	case 23: // an XML attribute
+		return pre(`<Login note="`+filler+`" `, `api_key="`+secret+`"/>`, "text/xml")
+	case 24: // a plist: the value after a secret key
+		return pre(`<plist><dict><key>note</key><string>`+filler+`</string>`, `<key>sessionToken</key><string>`+secret+`</string></dict></plist>`, "application/xml")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
