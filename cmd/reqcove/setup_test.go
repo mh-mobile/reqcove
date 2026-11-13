@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // setupHome is a temporary HOME (the real config and skill are never
@@ -20,10 +23,10 @@ func setupHome(t *testing.T) (home, config string) {
 	return home, defaultConfig()
 }
 
-func runSetup(t *testing.T, input, config, brew string) (string, error) {
+func runSetup(t *testing.T, input, config string, brew bool) (string, error) {
 	t.Helper()
 	var out strings.Builder
-	err := setupIn(strings.NewReader(input), &out, config, brew)
+	err := setupIn(context.Background(), strings.NewReader(input), &out, config, brew)
 	return out.String(), err
 }
 
@@ -53,7 +56,7 @@ func TestSetupWrites(t *testing.T) {
 		"*\n" + // refused here
 		"api.example.com,https://*.Example-cdn.com/path?token=secret\n" +
 		"y\n"
-	out, err := runSetup(t, in, config, "")
+	out, err := runSetup(t, in, config, false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -101,25 +104,26 @@ func TestSetupWrites(t *testing.T) {
 }
 
 // An existing file is shown and kept unless the answer is yes; then replaced
-// whole. No hosts: the --allow-hosts line stays a comment.
+// whole, the old one kept as .old. No hosts: the --allow-hosts line stays a
+// comment.
 func TestSetupExisting(t *testing.T) {
 	home, config := setupHome(t)
 	os.MkdirAll(filepath.Dir(config), 0o700)
-	mine := "--device mine\n--allow-hosts mine.example.com\n"
+	mine := "--device mine\n--allow-hosts mine.example.com\n--rules ~/rules.yaml\n"
 	os.WriteFile(config, []byte(mine), 0o600)
 	for _, in := range []string{"\nn\n", "no\nno\n"} { // kept; the skill declined
-		out, err := runSetup(t, in, config, "")
+		out, err := runSetup(t, in, config, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if b, _ := os.ReadFile(config); string(b) != mine || !strings.Contains(out, "| --device mine") || !strings.Contains(out, "kept") {
+		if b, _ := os.ReadFile(config); string(b) != mine || !strings.Contains(out, "| --device mine") || !strings.Contains(out, "kept") || exists(config+".old") {
 			t.Errorf("%q: file %q\n%s", in, b, out)
 		}
 		if exists(filepath.Join(home, ".claude/skills")) {
 			t.Errorf("%q: skill installed when declined", in)
 		}
 	}
-	out, err := runSetup(t, "y\nphone\n\nn\n", config, "")
+	out, err := runSetup(t, "y\nphone\n\nn\n", config, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,50 +134,72 @@ func TestSetupExisting(t *testing.T) {
 	if fi, _ := os.Stat(config); fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", fi.Mode())
 	}
+	// The old one kept beside it, 0600, and said so.
+	if b, _ := os.ReadFile(config + ".old"); string(b) != mine || !strings.Contains(out, "the old one: "+shellWord(config+".old")) {
+		t.Errorf("old: %q\n%s", b, out)
+	}
+	if fi, err := os.Stat(config + ".old"); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("old: %v", err)
+	}
+	// Not a plain file (a FIFO would hang a read): kept, nothing asked about it.
+	_, config = setupHome(t)
+	os.MkdirAll(filepath.Dir(config), 0o700)
+	if err := syscall.Mkfifo(config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runSetup(t, "n\n", config, false)
+	if err != nil || !strings.Contains(out, "not a plain file): kept") || strings.Contains(out, "Device: ") {
+		t.Errorf("fifo: %v\n%s", err, out)
+	}
 }
 
-// Installed with Homebrew: brew services, which reads its own etc, after a link.
+// Installed with Homebrew: the formula's own file, which brew services reads.
 func TestSetupBrew(t *testing.T) {
-	_, config := setupHome(t)
-	out, err := runSetup(t, "phone\na.example.com\nn\n", config, "/opt/homebrew")
+	setupHome(t)
+	prefix := t.TempDir()
+	config := setupConfig(prefix)
+	if config != filepath.Join(prefix, "etc/reqcove/config") || setupConfig("") != defaultConfig() {
+		t.Fatalf("config: %s", config)
+	}
+	out, err := runSetup(t, "phone\na.example.com\nn\n", config, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ln -s " + shellWord(config) + " /opt/homebrew/etc/reqcove/config", "brew services start reqcove"} {
+	if words, _, err := readConfig(config); err != nil || len(words) != 2 {
+		t.Errorf("brew's file: %q, %v", words, err)
+	}
+	for _, want := range []string{"brew services start reqcove", "reqcove run --config " + shellWord(config)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "service install") {
-		t.Errorf("service install under Homebrew:\n%s", out)
-	}
-	// The link brew services reads through: readConfig takes it.
-	link := filepath.Join(t.TempDir(), "config")
-	os.Symlink(config, link)
-	if words, _, err := readConfig(link); err != nil || len(words) != 2 {
-		t.Errorf("through a link: %q, %v", words, err)
-	}
-	// brew's file there already (as the guide wrote it before setup): named,
-	// no link offered; a link to this file: nothing to do but start.
-	brew := t.TempDir()
-	etc := filepath.Join(brew, "etc", "reqcove")
-	os.MkdirAll(etc, 0o700)
-	os.WriteFile(filepath.Join(etc, "config"), []byte("--device x\n"), 0o600)
-	out, _ = runSetup(t, "n\nn\n", config, brew)
-	if !strings.Contains(out, "which is there already") || strings.Contains(out, "ln -s") || !strings.Contains(out, "brew services start reqcove") {
-		t.Errorf("brew's file there:\n%s", out)
-	}
-	os.Remove(filepath.Join(etc, "config"))
-	os.Symlink(config, filepath.Join(etc, "config"))
-	out, _ = runSetup(t, "n\nn\n", config, brew)
-	if strings.Contains(out, "which is there already") || strings.Contains(out, "ln -s") || !strings.Contains(out, "brew services start reqcove") {
-		t.Errorf("linked already:\n%s", out)
+	if strings.Contains(out, "service install") || exists(defaultConfig()) {
+		t.Errorf("service install's file under Homebrew:\n%s", out)
 	}
 	// Skipped: no file, the command line form, nothing else asked about the file.
-	_, config = setupHome(t)
-	out, err = runSetup(t, "\nn\n", config, "/opt/homebrew")
+	config = setupConfig(t.TempDir())
+	out, err = runSetup(t, "\nn\n", config, true)
 	if err != nil || exists(config) || !strings.Contains(out, "reqcove run --device NAME --allow-hosts HOSTS") || strings.Contains(out, "Hosts: ") {
 		t.Errorf("skipped: %v, %v\n%s", err, exists(config), out)
+	}
+}
+
+// Ctrl-C (ctx done) while a question waits: setup stops at once, writing nothing.
+func TestSetupInterrupted(t *testing.T) {
+	_, config := setupHome(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r, w := io.Pipe() // a terminal no one types into
+	defer w.Close()
+	done := make(chan error, 1)
+	go func() { done <- setupIn(ctx, r, io.Discard, config, false) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err != errStopped || exists(config) {
+			t.Errorf("%v, file %v", err, exists(config))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still waiting for an answer after Ctrl-C")
 	}
 }
 
@@ -181,7 +207,7 @@ func TestSetupBrew(t *testing.T) {
 func TestSetupEOF(t *testing.T) {
 	_, config := setupHome(t)
 	for _, in := range []string{"", "phone\n", "phone\n*\n"} {
-		if _, err := runSetup(t, in, config, ""); err != errNoAnswer || exists(config) {
+		if _, err := runSetup(t, in, config, false); err != errNoAnswer || exists(config) {
 			t.Errorf("%q: %v, file %v", in, err, exists(config))
 		}
 	}

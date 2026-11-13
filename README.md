@@ -73,12 +73,19 @@ reqcove setup
 ```
 
 It checks uv, asks for the iPhone's name in your tailnet and the hosts to
-record, and writes them to `~/.config/reqcove/config` (an existing file is shown
-and kept unless you say to replace it). It adds the agent skill if you say yes,
-prints the line that gives Claude Code the tools, and says how to start: `brew
-services`, `reqcove service install`, or `reqcove run --config
-~/.config/reqcove/config` in a terminal. It starts nothing itself; then follow
-steps 2 and 3 below, on the iPhone. The same by hand:
+record, and writes them to `~/.config/reqcove/config`, or to Homebrew's
+`etc/reqcove/config` for a brew install (an existing file is shown and kept
+unless you answer `y`; replaced, the old one is kept as `config.old`). It adds
+the agent skill if you answer `y`, and prints the line that gives Claude Code the
+tools. It starts nothing itself. Then:
+
+- Start it as setup says: `brew services start reqcove` (a brew install),
+  `reqcove service install`, or `reqcove run --config FILE` in a terminal.
+- `reqcove links` prints the login URL (the first time) and the CA's QR code;
+  `reqcove status` says what is left, such as approving the exit node.
+- Then steps 2 and 3 below, on the iPhone.
+
+The same by hand:
 
 1. Start it on the computer, naming the iPhone (as in `tailscale status`) and the
    hosts to record:
@@ -92,7 +99,7 @@ steps 2 and 3 below, on the iPhone. The same by hand:
    Tailnet Lock). `reqcove status` always says what is still missing.
 2. On the iPhone, in the Tailscale app, choose the exit node `reqcove`.
 3. Still on the iPhone, trust Reqcove's CA: scan the QR code `reqcove run`
-   prints with the Camera (or open `http://mitm.it` in Safari, typing the
+   prints (`reqcove links` prints it too, as for a service) with the Camera (or open `http://mitm.it` in Safari, typing the
    `http://`), install the profile (Settings › Profile Downloaded), and trust
    it in Settings › General › About › Certificate Trust Settings (it is named
    `Reqcove CA (<computer>, <date>)`).

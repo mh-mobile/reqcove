@@ -17,10 +17,10 @@ import (
 )
 
 // setup is `reqcove setup`, the first run's guide: it checks uv, writes the
-// --config file at the default path (the device and the hosts only), adds the
+// --config file the service reads (the device and the hosts only), adds the
 // skill, and says how to start. It never starts run, installs anything but the
 // skill, or prints a login URL. Only in a terminal: its questions are the user's.
-func setup(_ context.Context, args []string) error {
+func setup(ctx context.Context, args []string) error {
 	fls := flag.NewFlagSet("setup", flag.ExitOnError)
 	if err := parseFlags(fls, args); err != nil {
 		return err
@@ -28,7 +28,17 @@ func setup(_ context.Context, args []string) error {
 	if !terminal(os.Stdin) || !terminal(os.Stdout) {
 		return errors.New("reqcove setup runs only in a terminal: it asks you questions. Run it in your own terminal (or follow the steps by hand: README, Use)")
 	}
-	return setupIn(os.Stdin, os.Stdout, defaultConfig(), brewPrefix())
+	brew := brewPrefix()
+	return setupIn(ctx, os.Stdin, os.Stdout, setupConfig(brew), brew != "")
+}
+
+// setupConfig is the file the service reads: the formula's under Homebrew
+// (packaging/homebrew), else service install's.
+func setupConfig(brew string) string {
+	if brew != "" {
+		return filepath.Join(brew, "etc", "reqcove", "config")
+	}
+	return defaultConfig()
 }
 
 // brewPrefix is Homebrew's prefix when this binary is its formula's
@@ -44,20 +54,46 @@ func brewPrefix() string {
 	return ""
 }
 
-var errNoAnswer = errors.New("no answer: setup stopped there (run reqcove setup again to go on)")
+var (
+	errNoAnswer = errors.New("no answer: setup stopped there (run reqcove setup again to go on)")
+	errStopped  = errors.New("setup stopped (Ctrl-C): nothing more done")
+)
 
 // setupIn asks through in and answers on out; config is the file to write,
-// brew Homebrew's prefix when installed with it.
-func setupIn(in io.Reader, out io.Writer, config, brew string) error {
-	r := bufio.NewReader(in) // one for the whole run: answers typed ahead stay in it
+// brew whether reqcove is Homebrew's formula. ctx ending (Ctrl-C) stops it at
+// the question it is on.
+func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, brew bool) error {
+	lines := make(chan string)
+	go func() { // one reader for the whole run: answers typed ahead stay in it
+		defer close(lines)
+		r := bufio.NewReader(in)
+		for {
+			line, err := r.ReadString('\n')
+			if line != "" {
+				select {
+				case lines <- line:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	ask := func(q string) (string, error) {
 		fmt.Fprint(out, q)
-		line, err := r.ReadString('\n')
-		if err != nil && line == "" {
+		select {
+		case <-ctx.Done():
 			fmt.Fprintln(out)
-			return "", errNoAnswer
+			return "", errStopped
+		case line, ok := <-lines:
+			if !ok {
+				fmt.Fprintln(out)
+				return "", errNoAnswer
+			}
+			return strings.TrimSpace(line), nil
 		}
-		return strings.TrimSpace(line), nil
 	}
 	yes := func(q string) (bool, error) {
 		a, err := ask(q + " [y/N] ")
@@ -76,20 +112,27 @@ func setupIn(in io.Reader, out io.Writer, config, brew string) error {
 	_, err := os.Lstat(config)
 	have := err == nil
 	write := !have
+	var old []byte // the file replaced, kept as .old
 	if have {
-		fmt.Fprintf(out, "   %s is there already:\n", shown)
-		if b, err := os.ReadFile(config); err != nil {
-			fmt.Fprintf(out, "   (not readable: %v)\n", err)
+		fi, err := os.Stat(config)
+		if err == nil && fi.Mode().IsRegular() {
+			old, err = os.ReadFile(config)
+		} else if err == nil {
+			err = errors.New("not a plain file")
+		}
+		if err != nil {
+			fmt.Fprintf(out, "   %s is there already (%v): kept\n", shown, err)
 		} else {
-			fmt.Fprint(out, indent(string(b), "   | ", "\n"))
-		}
-		if write, err = yes("   Replace it?"); err != nil {
-			return err
-		}
-		if !write {
-			fmt.Fprintln(out, "   kept")
-			if _, err := checkConfig(config); err != nil {
-				fmt.Fprintf(out, "   but: %v\n", err)
+			fmt.Fprintf(out, "   %s is there already:\n", shown)
+			fmt.Fprint(out, indent(string(old), "   | ", "\n"))
+			if write, err = yes(fmt.Sprintf("   Replace it (the old one is kept as %s)?", shellWord(config+".old"))); err != nil {
+				return err
+			}
+			if !write {
+				fmt.Fprintln(out, "   kept")
+				if _, err := checkConfig(config); err != nil {
+					fmt.Fprintf(out, "   but: %v\n", err)
+				}
 			}
 		}
 	}
@@ -130,6 +173,12 @@ func setupIn(in io.Reader, out io.Writer, config, brew string) error {
 	}
 
 	if write {
+		if old != nil {
+			if err := writePrivate(config+".old", old); err != nil {
+				return fmt.Errorf("%s.old: %w (nothing replaced)", config, err)
+			}
+			fmt.Fprintf(out, "   the old one: %s\n", shellWord(config+".old"))
+		}
 		if err := writeSetupConfig(config, device, hosts); err != nil {
 			return err
 		}
@@ -153,27 +202,19 @@ func setupIn(in io.Reader, out io.Writer, config, brew string) error {
 	switch {
 	case !have:
 		fmt.Fprint(out, "   in a terminal: reqcove run --device NAME --allow-hosts HOSTS (or run reqcove setup again for the file)\n")
-	case brew != "":
-		etc := filepath.Join(brew, "etc", "reqcove")
-		brewConfig := filepath.Join(etc, "config")
-		if dst, err := filepath.EvalSymlinks(brewConfig); err == nil {
-			if src, _ := filepath.EvalSymlinks(config); dst != src {
-				fmt.Fprintf(out, "   brew services reads %s, which is there already (not %s: edit that one, or link this one there in its place)\n", shellWord(brewConfig), shown)
-			}
-		} else {
-			fmt.Fprintf(out, "   brew services reads %s: link the file there first:\n     mkdir -p %s && ln -s %s %s\n", shellWord(brewConfig), shellWord(etc), shown, shellWord(brewConfig))
-		}
+	case brew:
 		fmt.Fprintf(out, "   now and at each login: brew services start reqcove\n   or in a terminal: reqcove run --config %s\n", shown)
 	default:
 		fmt.Fprintf(out, "   now and at each login: reqcove service install\n   or in a terminal: reqcove run --config %s\n", shown)
 	}
-	fmt.Fprint(out, "   Then `reqcove links` prints the login URL (the first time, in your terminal), and `reqcove status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there.\n")
+	fmt.Fprint(out, "   Then `reqcove links` prints the login URL (the first time, in your terminal), and `reqcove status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there (`reqcove links` shows its QR code).\n")
 	fmt.Fprint(out, "   LAN mode (no Tailscale): --lan is not kept in a config file; in a terminal: reqcove run --lan --allow-hosts HOSTS\n")
 	return nil
 }
 
 // writeSetupConfig writes the --config file, whole or not at all, 0600 (its
-// directory 0700 when new), and reads it back as run will.
+// directory 0700 when new), read back as run will before it takes the
+// file's place.
 func writeSetupConfig(path, device, hosts string) error {
 	q := func(s string) string { // "…" as configWords reads it
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
@@ -201,18 +242,16 @@ func writeSetupConfig(path, device, hosts string) error {
 		err = cerr
 	}
 	if err == nil {
+		var words []string
+		if words, _, err = readConfig(tmp.Name()); err == nil && !slices.Equal(words, want) {
+			err = fmt.Errorf("%s would not read back as written: nothing replaced", path)
+		}
+	}
+	if err == nil {
 		err = os.Rename(tmp.Name(), path)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
-		return err
 	}
-	words, _, err := readConfig(path)
-	if err != nil {
-		return err
-	}
-	if !slices.Equal(words, want) {
-		return fmt.Errorf("%s does not read back as written: check it by hand", path)
-	}
-	return nil
+	return err
 }

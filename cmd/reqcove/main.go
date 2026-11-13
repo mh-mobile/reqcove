@@ -63,7 +63,7 @@ const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
 
 Usage:
   reqcove setup      the first run, in your terminal: checks uv, writes the device and
-                     the hosts to ~/.config/reqcove/config, adds the skill, says how to start
+                     the hosts to the service's config file, adds the skill, says how to start
   reqcove run --device NAME --allow-hosts HOSTS [flags]
                      (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
