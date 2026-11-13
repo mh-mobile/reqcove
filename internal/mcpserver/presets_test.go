@@ -99,14 +99,14 @@ func TestPresetTools(t *testing.T) {
 	}
 }
 
-// run's two servers: the local one has the preset tools, --mcp-http's none.
+// run's two servers: the local one has the preset (and marker) tools, --mcp-http's none.
 func TestServersPresetToolsLocalOnly(t *testing.T) {
 	status := func() StatusOut { return StatusOut{} }
 	local, remote := Servers(storeWith("a"), status, status, &fakePresets{})
 	for _, c := range []struct {
 		s    *mcp.Server
 		want int
-	}{{local, 8}, {remote, 0}} {
+	}{{local, 10}, {remote, 0}} {
 		ct, st := mcp.NewInMemoryTransports()
 		if _, err := c.s.Connect(context.Background(), st, nil); err != nil {
 			t.Fatal(err)
@@ -200,7 +200,9 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 	sock := sockPath(t)
 	cs := agent(t, sock)
 	f := &fakePresets{}
-	srv := presetServer(f)
+	st := storeWith("a")
+	srv := New(st, nil)
+	AddPresetTools(srv, st, f)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -224,16 +226,32 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 			}()
 		}
 	}()
-	f.onActivate = func() {
+	drop := func() {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, c := range conns {
 			c.Close() // run's side of the connection drops while the call is under way
 		}
 	}
+	f.onActivate = drop
 	got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "times": 1})
 	if !isErr || !strings.Contains(got, "may or may not have taken effect") || f.activations.Load() != 1 {
 		t.Errorf("%q %v, %d activations", got, isErr, f.activations.Load())
+	}
+	// add_marker too: a second would be a second marker.
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && p.Name == "add_marker" {
+				drop()
+			}
+			return res, err
+		}
+	})
+	// The next write reaches run (dialled again), not the dropped session.
+	got, isErr = callText(t, cs, "add_marker", map[string]any{"text": "tap"})
+	if n := len(st.Markers(0)); !isErr || !strings.Contains(got, "call list_markers to see") || n != 1 {
+		t.Errorf("add_marker: %q %v, %d markers", got, isErr, n)
 	}
 }
 

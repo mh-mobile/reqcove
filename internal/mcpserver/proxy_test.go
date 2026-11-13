@@ -115,7 +115,11 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s has an output schema: a run of another version could fail it", tool.Name)
 		}
 		a := tool.Annotations
-		if writeTools[tool.Name] {
+		if tool.Name == "add_marker" { // a write, but only to reqcove's memory
+			if !writeTools[tool.Name] || a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+				t.Errorf("%s: annotations %+v, want a write, not destructive", tool.Name, a)
+			}
+		} else if writeTools[tool.Name] {
 			if a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 				t.Errorf("%s: annotations %+v, want a write a client asks about", tool.Name, a)
 			}
@@ -123,7 +127,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s: annotations %+v, want read-only, not destructive", tool.Name, a)
 		}
 	}
-	if len(names) != 20 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
+	if len(names) != 22 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {

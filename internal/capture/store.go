@@ -196,7 +196,9 @@ type Store struct {
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
-	rulesLoaded   time.Time // when the --rules file was last taken (at start, or a reload)
+	rulesLoaded   time.Time           // when the --rules file was last taken (at start, or a reload)
+	markers       map[string][]Marker // by source, oldest first, at most maxMarkers each
+	markerID      int64
 }
 
 func (s *Store) setState(state, detail string) {

@@ -115,6 +115,18 @@ func (p *proxy) session(ctx context.Context, failed *mcp.ClientSession) (*mcp.Cl
 		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: run both at one version: restart reqcove run with the newer one, then reconnect the agent's MCP server (/mcp in Claude Code).", v, Version)
 	}
 	p.cs = cs
+	// Once the connection ends (run stopped), the next call dials again, so a
+	// write after a restart reaches the new run instead of failing on the dead
+	// session. A write sent right after the drop, before this notices, still
+	// fails as "may or may not have taken effect".
+	go func() {
+		cs.Wait()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.cs == cs {
+			p.cs = nil
+		}
+	}()
 	return cs, nil
 }
 
@@ -196,7 +208,11 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case writeTools[req.Params.Name]:
-			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call list_presets to see"), nil
+			see := "list_presets"
+			if req.Params.Name == "add_marker" {
+				see = "list_markers"
+			}
+			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call " + see + " to see"), nil
 		case try == 1:
 			return p.down(), nil
 		}
