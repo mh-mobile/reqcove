@@ -4,6 +4,7 @@
 
 ### For people
 
+- mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
 - `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
   Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
   user unit (Linux) running `run --config ~/.config/reqcove/config` (or
