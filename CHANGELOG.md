@@ -23,7 +23,7 @@
 - The skill's rules example has a mock preset (`preset:`, `description:`,
   `delay_ms`).
 - `status` has `mode` (`tailnet` or `lan`) and, in LAN mode, `lan` (where it
-  listens, the allowed addresses and when, those refused this run);
+  listens, the allowed addresses and when, those refused this run, up to 10,000);
   `list_devices` has `first_seen`. The skill and the server's instructions:
   never run `reqcove lan`.
 

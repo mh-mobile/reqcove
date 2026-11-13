@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"golang.org/x/term"
 )
@@ -37,6 +38,7 @@ type userLinks struct {
 	state    string
 	cmd      string // `reqcove links` for this state
 	login    string // the login URL shown last
+	lan      bool   // LAN mode: the CA comes through the Wi-Fi proxy
 }
 
 // newUserLinks is run's: the steps (status, the tools) name its links command too.
@@ -78,7 +80,11 @@ func (u *userLinks) web(local string) {
 // ready writes the links file and returns what the ready block shows for the
 // links and the token: themselves on a terminal, else a hint.
 func (u *userLinks) ready(ui, web, webLocal, mcp, mcpToken, ca string) (shownUI, shownWeb, shownToken string) {
-	if err := writePrivate(filepath.Join(u.state, linksFile), formatLinks([]linkLine{{"ui", ui}, {"web", web}, {"web-local", webLocal}, {"mcp", mcp}, {"mcp-token", mcpToken}, {"ca", ca}})); err != nil {
+	caKey := "ca"
+	if u.lan {
+		caKey = "ca-lan"
+	}
+	if err := writePrivate(filepath.Join(u.state, linksFile), formatLinks([]linkLine{{"ui", ui}, {"web", web}, {"web-local", webLocal}, {"mcp", mcp}, {"mcp-token", mcpToken}, {caKey, ca}})); err != nil {
 		log.Printf("WARN: %s: %v", linksFile, err)
 	}
 	if u.terminal {
@@ -180,6 +186,13 @@ func printLinks(w *os.File, state string) error {
 		case "ca":
 			fmt.Fprintf(w, "CA:       %s  (on an iPhone, with the exit node on; once per device)\n", v)
 			codes = append(codes, qrItem{v, "CA (with the exit node on)"})
+		case "ca-lan":
+			advice := ""
+			if ca, err := capture.ReadCA(filepath.Join(state, "mitmproxy")); err == nil {
+				advice = ". " + lanCAAdvice(caPEM(state), ca.SHA256)
+			}
+			fmt.Fprintf(w, "CA:       %s  (on an iPhone, with the Wi-Fi proxy set; once per device%s)\n", v, advice)
+			codes = append(codes, qrItem{v, "CA (with the Wi-Fi proxy set)"})
 		case "mcp":
 			hasMCP = true
 			fmt.Fprintf(w, "--mcp-http: %s\n", v)

@@ -581,7 +581,7 @@ The records name the device `lan:ADDR`; the tools' `device` filter and
 `reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
 last request this run. `reqcove status` (and the `status` tool, as
 `mode: "lan"`) shows where it listens, the allowed addresses and the ones
-refused this run.
+refused this run (up to 10,000: the list is emptied when it fills).
 
 There is no password. Who may use the proxy is decided on this computer, by
 address, as in Charles Proxy (its documentation describes an access control

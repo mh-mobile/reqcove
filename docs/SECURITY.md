@@ -581,9 +581,11 @@ address:
 
 - A connection from outside that interface's network is closed as it is
   accepted, as is one from an address not allowed: nothing is recorded, and
-  each new address is logged once (tests). Each request on a kept connection
-  is checked again, so a `reqcove lan deny` refuses new requests within two
-  seconds; an HTTPS tunnel already open goes on until it closes.
+  each new address is logged once, until the list of addresses seen (10,000)
+  fills and is emptied: then once more, and run asks again (tests). Each
+  request on a kept connection is checked again, so a `reqcove lan deny`
+  refuses new requests within two seconds; an HTTPS tunnel already open goes
+  on until it closes.
 - The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
   each was allowed). They change through `reqcove lan allow|deny`, or through
   run's question on its own terminal. The `lan` commands refuse to run unless

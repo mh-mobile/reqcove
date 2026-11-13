@@ -104,10 +104,11 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	if len(names) == 0 {
-		names = []string{"none allowed yet"}
+	shown := strings.Join(names, ", ")
+	if shown == "" && lan != nil {
+		shown = "none allowed yet"
 	}
-	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
+	fmt.Fprintf(&b, "devices:  %s\n", shown)
 	if uiLink != "" {
 		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only%s; the same at each start, rm %s to change it)\n", uiLink, qr, "-- "+shellWord(filepath.Join(state, "ui-token")))
 	}

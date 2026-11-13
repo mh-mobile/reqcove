@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"golang.org/x/net/publicsuffix"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -281,7 +282,7 @@ func status(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), shown)
 	}
-	printCA(*state)
+	printCA(os.Stdout, *state, out.Mode == "lan")
 	if len(out.NextSteps) == 0 {
 		if out.Mode == "lan" {
 			fmt.Println("ready: set the device's Wi-Fi proxy to the LAN proxy above and use it")
@@ -317,29 +318,37 @@ func offlineStatus(state, uvx string) error {
 	} else {
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
-	printCA(state)
+	printCA(os.Stdout, state, false)
 	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
 	return nil
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.
-func printCA(state string) {
+// In LAN mode (lan) the iPhone gets it through the Wi-Fi proxy, over plain HTTP.
+func printCA(w io.Writer, state string, lan bool) {
 	confdir := filepath.Join(state, "mitmproxy")
 	ca, err := capture.ReadCA(confdir)
 	if err != nil {
 		if isDefaultState(state) {
-			fmt.Println("  CA:          none yet; the first `reqcove run` makes it")
+			fmt.Fprintln(w, "  CA:          none yet; the first `reqcove run` makes it")
 		} else {
-			fmt.Printf("  CA:          none yet; the first `%s` copies %s's, or makes one if it has none\n", withState("reqcove run", state), defaultState())
+			fmt.Fprintf(w, "  CA:          none yet; the first `%s` copies %s's, or makes one if it has none\n", withState("reqcove run", state), defaultState())
 		}
 		return
 	}
-	fmt.Printf("  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
-	fmt.Println("    add on an iPhone:    with the exit node on, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,")
-	fmt.Println("                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
-	fmt.Printf("    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
+	fmt.Fprintf(w, "  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
+	with := "with the exit node on"
+	if lan {
+		with = "with the Wi-Fi proxy set to the LAN proxy"
+	}
+	fmt.Fprintf(w, "    add on an iPhone:    %s, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,\n", with)
+	fmt.Fprintln(w, "                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
+	if lan {
+		fmt.Fprintf(w, "                         %s\n", lanCAAdvice(caPEM(state), ca.SHA256))
+	}
+	fmt.Fprintf(w, "    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
 	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
-		fmt.Printf("    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
+		fmt.Fprintf(w, "    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
 	}
 }
 

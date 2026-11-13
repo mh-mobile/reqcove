@@ -190,7 +190,8 @@ func TestTLSFailuresAndDevices(t *testing.T) {
 
 	got := fmt.Sprint(st.Devices())
 	at := func(ts float64) string { return unixTime(ts).Format("2006-01-02T15:04:05.000Z07:00") }
-	want := fmt.Sprintf("[{nPAD ipad true 0 1 0  } {nPHONE iphone true 1 2 0 %s %s} {nOLD  false 1 0 0 %s %s}]", at(base+40), at(base+40), at(base+50), at(base+50))
+	// first seen: TLS failures count (a client whose CA is not trusted yet has only these), not one outside --allow-hosts
+	want := fmt.Sprintf("[{nPAD ipad true 0 1 0 %s } {nPHONE iphone true 1 2 0 %s %s} {nOLD  false 1 0 0 %s %s}]", at(base+20), at(base), at(base+40), at(base+50), at(base+50))
 	if got != want {
 		t.Errorf("devices:\n got %s\nwant %s", got, want)
 	}

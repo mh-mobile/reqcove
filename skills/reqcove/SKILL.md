@@ -61,7 +61,7 @@ traffic and the tailnet). `allow_hosts` is
 what is recorded; anything else is carried but never recorded. In LAN mode
 (`mode: "lan"`) there is no tailnet node: the steps are about the phone's Wi-Fi
 proxy and allowing its address, and `lan` lists the allowed addresses and those
-refused this run. `pass_hosts`
+refused this run (up to 10,000). `pass_hosts`
 are carried undecrypted: their connections only, in `list_passthrough`.
 
 If a tool answers that reqcove is not running: tell the user, wait, and call

@@ -375,6 +375,22 @@ func waitFor(t *testing.T, ok func() bool, what string) {
 	t.Fatalf("not %s", what)
 }
 
+// Each address is logged once, until the list of those seen fills: then it is
+// emptied, and an address seen before counts as new again.
+func TestOnceSetBounded(t *testing.T) {
+	var s onceSet
+	a := netip.MustParseAddr("192.168.1.23")
+	if !s.first(a, "refused") || s.first(a, "refused") {
+		t.Fatal("not once")
+	}
+	for i := range maxSeen {
+		s.first(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), "off")
+	}
+	if len(s.m) > maxSeen || !s.first(a, "refused") {
+		t.Errorf("%d kept; seen again: the list was not emptied", len(s.m))
+	}
+}
+
 // One pool per client, but not without end: on a LAN anyone adds clients.
 func TestRemoteProxyPoolsBounded(t *testing.T) {
 	rp := &remoteProxy{}

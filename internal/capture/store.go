@@ -393,6 +393,7 @@ func (s *Store) Apply(line []byte) {
 		if s.allow.Passed(host) { // a --pass-hosts host was decrypted after all: say so, it is why it failed
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
+		s.seenLocked(e.Device, e.TS) // a client whose CA is not trusted yet has only these
 		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]

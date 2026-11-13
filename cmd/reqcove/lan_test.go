@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
@@ -271,6 +272,51 @@ func TestReadyBlockLAN(t *testing.T) {
 	}
 	if strings.Contains(got, "exit node") {
 		t.Errorf("tailnet wording in LAN mode:\n%s", got)
+	}
+}
+
+// On the tailnet, no device matched yet: no LAN wording, and no CA line.
+func TestReadyBlockTailnetNoDevices(t *testing.T) {
+	got := readyBlock(map[string]string{}, "", "", "", "", "/s", nil, true, nil, nil)
+	if strings.Contains(got, "allowed") || strings.Contains(got, "mitm.it") || !strings.Contains(got, "devices:  \n") {
+		t.Errorf("tailnet, no devices:\n%s", got)
+	}
+}
+
+// In LAN mode, `reqcove status` and `reqcove links` give the CA as the ready
+// block does: through the Wi-Fi proxy, with the AirDrop and SHA-256 advice.
+func TestCALAN(t *testing.T) {
+	state := t.TempDir()
+	os.MkdirAll(filepath.Join(state, "mitmproxy"), 0o700)
+	os.WriteFile(caPEM(state), testCAPEM(t), 0o600)
+	ca, err := capture.ReadCA(filepath.Join(state, "mitmproxy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := security
+	defer func() { security = old }()
+	security = func(...string) error { return errors.New("not trusted") }
+	for _, lan := range []bool{false, true} {
+		var b strings.Builder
+		printCA(&b, state, lan)
+		got := b.String()
+		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, "AirDrop "+caPEM(state)) || lan != strings.Contains(got, "SHA-256 is "+ca.SHA256) {
+			t.Errorf("status, lan %v:\n%s", lan, got)
+		}
+	}
+	for _, lan := range []bool{false, true} {
+		u := &userLinks{state: state, lan: lan}
+		u.ready("", "", "", "", "", "http://mitm.it")
+		f, _ := os.CreateTemp(t.TempDir(), "out")
+		if err := printLinks(f, state); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		b, _ := os.ReadFile(f.Name())
+		got := string(b)
+		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, "SHA-256 is "+ca.SHA256) {
+			t.Errorf("links, lan %v:\n%s", lan, got)
+		}
 	}
 }
 

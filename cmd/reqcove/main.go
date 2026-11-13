@@ -374,6 +374,7 @@ func run(ctx context.Context, args []string) error {
 	defer unlock()
 	linksCmd := withState("reqcove links", *state)
 	user := newUserLinks(os.Stderr, red, *state, linksCmd)
+	user.lan = *lanMode
 	defer func() { stepLinksCmd = "reqcove links" }()
 	for _, name := range []string{loginURLFile, linksFile} { // a crashed run's, and this one's at the end
 		p := filepath.Join(*state, name)

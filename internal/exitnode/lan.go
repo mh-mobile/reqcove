@@ -35,7 +35,7 @@ type LANStatus struct {
 	Listen    string       `json:"listen,omitempty"`  // ADDR:PORT, the iPhone's Wi-Fi proxy, while listening
 	Stopped   string       `json:"stopped,omitempty"` // why it does not listen
 	Allowed   []LANAllowed `json:"allowed"`
-	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run, not allowed now
+	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run and not allowed now; up to maxSeen (the list seen is emptied when full)
 }
 
 // LANAllowed is an allowed client address and when it was allowed (RFC 3339).

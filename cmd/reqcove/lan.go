@@ -194,9 +194,18 @@ func (l *lanReady) lines(qr string) string {
 		how = "answer run's question here, or " + how
 	}
 	fmt.Fprintf(&b, "allow:    a new address is refused until you allow it: %s, with the address run logs. An address, not a device: whoever has it later is allowed too (`%s ADDR` takes it back)\n", how, withState("reqcove lan deny", l.state))
-	fmt.Fprintf(&b, "CA:       http://mitm.it  (with the Wi-Fi proxy set%s; once per device). Plain HTTP on a LAN can be swapped by others on it: AirDrop %s instead, or check that the CA's SHA-256 is %s\n", strings.Replace(qr, ";", ":", 1), shellWord(l.caFile), l.caSHA256)
+	fmt.Fprintf(&b, "CA:       http://mitm.it  (with the Wi-Fi proxy set%s; once per device). %s\n", strings.Replace(qr, ";", ":", 1), lanCAAdvice(l.caFile, l.caSHA256))
 	return b.String()
 }
+
+// lanCAAdvice is LAN mode's word on getting the CA: http://mitm.it comes
+// over plain HTTP, which others on the LAN can swap.
+func lanCAAdvice(file, sha256 string) string {
+	return fmt.Sprintf("Plain HTTP on a LAN can be swapped by others on it: AirDrop %s instead, or check that the CA's SHA-256 is %s", shellWord(file), sha256)
+}
+
+// caPEM is the CA file the devices trust, in state.
+func caPEM(state string) string { return filepath.Join(state, "mitmproxy", "mitmproxy-ca-cert.pem") }
 
 // printLANStatus is `reqcove status`'s part for LAN mode.
 func printLANStatus(w io.Writer, l *exitnode.LANStatus) {
