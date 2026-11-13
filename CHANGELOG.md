@@ -4,6 +4,15 @@
 
 ### For people
 
+- `reqcove service install` (`service uninstall`): `run` at login without
+  Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
+  user unit (Linux) running `run --config ~/.config/reqcove/config` (or
+  `--config FILE`); the log in the state directory's `service.log` (macOS) or
+  journald. Refused while Homebrew's service is there, and for a config file
+  missing, readable by others, or with `--no-redact`, `--web`,
+  `--rules-reload` or `--lan`. `reqcove status` names it and says how to stop it. The
+  guide has a section. Not tried yet: a real install on macOS or Linux (unit
+  tests only).
 - `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
   out of the proxy, as its IPv4 range already was.
 - The guide shows which Reqcove tools to allow by name in Claude Code's

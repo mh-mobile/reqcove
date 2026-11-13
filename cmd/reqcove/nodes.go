@@ -188,7 +188,8 @@ func openState(dir string) (func(), error) {
 	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
 		switch e.Name() {
 		case ".DS_Store", // Finder leaves it in folders it opened
-			lanAllowedFile: // `reqcove lan allow` before the first run
+			lanAllowedFile, // `reqcove lan allow` before the first run
+			serviceLog:     // launchd makes it before reqcove service install's first run
 			return true
 		case "mitmproxy", caCopies:
 			// ~/.reqcove before its first run: a CA copied from another computer
@@ -222,7 +223,7 @@ func lockState(dir string) (func(), error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or a service: stop it first, such as with brew services stop reqcove)", dir)
+		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or a service: stop it first, such as with brew services stop reqcove or reqcove service uninstall)", dir)
 	}
 	return func() { f.Close() }, nil
 }

@@ -193,6 +193,12 @@ func parseDocumented(words []string) error {
 		}
 		args = args[n:]
 	}
+	if words[0] == "service" { // service install: its subcommand comes first
+		if len(args) == 0 || !slices.Contains([]string{"install", "uninstall"}, args[0]) {
+			return fmt.Errorf("service takes install or uninstall, not %q", args)
+		}
+		args = args[1:]
+	}
 	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
 		_, args = wordsAndFlags(args)
 	}
@@ -273,6 +279,8 @@ func TestParseDocumentedRefuses(t *testing.T) {
 		{"lan", "permit", "1.2.3.4"},
 		{"lan", "allow", "1.2.3.4", "--no-such-flag"},
 		{"mark", "tapping", "--no-such-flag"},
+		{"service", "start"},
+		{"service", "install", "--lan"},
 	} {
 		if err := parseDocumented(words); err == nil {
 			t.Errorf("reqcove %s: no error", strings.Join(words, " "))
