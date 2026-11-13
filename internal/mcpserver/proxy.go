@@ -196,7 +196,7 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case writeTools[req.Params.Name]:
-			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call list_mock_presets to see"), nil
+			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call list_presets to see"), nil
 		case try == 1:
 			return p.down(), nil
 		}

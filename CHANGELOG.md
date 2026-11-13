@@ -17,6 +17,14 @@
   can be swapped); `reqcove status` shows the allowed and refused addresses.
   README, the guide and SECURITY have a section. Not tried yet with an iPhone
   on a real network.
+- Presets of `map_remote`, `modify_headers` (requests only) and `resolve`: a
+  rule written as `{rule: "…", preset: NAME}` applies only while an agent turns
+  it on, for at most 5 minutes each time, as mock presets. A `map_remote`
+  preset sends the app's requests, cookies and tokens to its target: SECURITY
+  has a section on what that allows. Targets are shown in the ready block, the
+  log and `reqcove status`; refused at load: a target that cannot be shown,
+  with a user or password, or plain `http://` beyond this computer and the LAN.
+  Not tried yet with an iPhone.
 
 ### For agents
 
@@ -26,6 +34,12 @@
   listens, the allowed addresses and when, those refused this run, up to 10,000);
   `list_devices` has `first_seen`. The skill and the server's instructions:
   never run `reqcove lan`.
+- `list_presets`, `activate_preset`, `deactivate_preset` for presets of every
+  kind (`kind`); `list_mock_presets`, `activate_mock`, `deactivate_mock` take
+  mocks only. A flow lists the presets that changed or answered it in
+  `presets`; `status`'s `active_mock_presets` has every kind, with `kind`.
+  `list_mock_presets` leaves out fields that do not apply (a method of any:
+  no `method`) instead of `null`.
 
 ## v0.6.0 — 2026-11-13
 

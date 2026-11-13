@@ -124,7 +124,7 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
 	if len(presets) > 0 {
-		fmt.Fprintf(&b, "presets:  %s  (mocks an agent may turn on, at most 5 minutes each time; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
+		fmt.Fprintf(&b, "presets:  %s  (rules an agent may turn on, at most 5 minutes each time; one with -> sends the app's requests, cookies and tokens there while on; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")
@@ -138,17 +138,25 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	return b.String()
 }
 
-// presetsOff is a reload's note when the rules had mocks (presets among them).
-func presetsOff(r map[string]int) string {
-	if r["mock"] > 0 {
-		return " (any mock preset on is off now)"
+// presetsOff is a reload's note when the rules had presets.
+func presetsOff(presets []string) string {
+	if len(presets) > 0 {
+		return " (any preset on is off now)"
 	}
 	return ""
 }
 
-func presetNames(stats map[string]any) []string {
-	names, _ := stats["mock_presets"].([]string)
-	return names
+// presetNames are the presets' names, a map_remote or resolve one's with its
+// target: `staging -> https://staging.example.com`.
+func presetNames(names []string, targets map[string]string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if t := targets[n]; t != "" {
+			n += " -> " + t
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // readyGate says when the node is ready to report: Running at two polls in a
@@ -168,4 +176,10 @@ func (g *readyGate) ready(s exitnode.Status) bool {
 	agreed := g.seen && first == g.first
 	g.seen, g.first = true, first
 	return agreed
+}
+
+// statsPresets are capture_stats' preset names (mock_presets: every kind since v0.7).
+func statsPresets(stats map[string]any) []string {
+	n, _ := stats["mock_presets"].([]string)
+	return n
 }

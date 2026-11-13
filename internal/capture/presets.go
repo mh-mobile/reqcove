@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-// Mock presets: mocks in the --rules file marked preset: NAME answer only
-// while an agent has turned them on (activate_mock), for at most
-// PresetMaxSeconds and, if it says, PresetMaxTimes requests. Their state
+// Presets: rules in the --rules file marked preset: NAME (a mock, map_remote,
+// modify_headers or resolve) apply only while an agent has turned them on
+// (activate_preset), for at most PresetMaxSeconds and, for a mock, if it says,
+// PresetMaxTimes requests. Their state
 // lives in the addon alone (a reload or a restart turns them off); reqcove
 // asks it over ControlSock, one JSON line each way.
 
@@ -25,13 +26,21 @@ const (
 	PresetMaxTimes   = 20
 )
 
-// Preset is one preset as list_mock_presets shows it: never its body or its
-// headers' values.
+// Preset kinds.
+var PresetKinds = []string{"mock", "map_remote", "modify_headers", "resolve"}
+
+// Preset is one preset as list_presets shows it: never a body, a header's
+// value, a filter or a regex.
 type Preset struct {
 	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
 	Description string   `json:"description,omitempty"`
+	Target      string   `json:"target,omitempty"`  // map_remote: scheme and host it sends requests to
+	Header      string   `json:"header,omitempty"`  // modify_headers: the request header's name
+	Host        string   `json:"host,omitempty"`    // resolve: the name
+	Address     string   `json:"address,omitempty"` // resolve: where that name connects
 	Method      *string  `json:"method"`
-	URL         string   `json:"url"`
+	URL         string   `json:"url,omitempty"`
 	Operation   *string  `json:"operation"`
 	Status      *int     `json:"status"`             // none for fault: close
 	DelayMS     int      `json:"delay_ms,omitempty"` // before the answer or the close
@@ -55,7 +64,7 @@ var ErrNoControl = errors.New("mitmproxy did not answer about presets (restartin
 
 // ErrUncertain: the request went to the addon but no answer came back: it may
 // have taken effect.
-var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect; call list_mock_presets to see")
+var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect; call list_presets to see")
 
 // ErrNoAnswer: a read (the list) went unanswered: nothing changed.
 var ErrNoAnswer = errors.New("mitmproxy did not answer about presets in time (busy?)")
@@ -94,21 +103,30 @@ func (c *Capture) control(ctx context.Context, req map[string]any, out any) erro
 	return json.Unmarshal(line, out)
 }
 
-// Presets lists the --rules file's presets and which are on.
-func (c *Capture) Presets(ctx context.Context) ([]Preset, error) {
+// Presets lists the --rules file's presets of kind ("": every kind) and which are on.
+func (c *Capture) Presets(ctx context.Context, kind string) ([]Preset, error) {
 	var out struct {
 		Presets []Preset `json:"presets"`
 	}
-	err := c.control(ctx, map[string]any{"op": "list"}, &out)
+	err := c.control(ctx, withKind(map[string]any{"op": "list"}, kind), &out)
 	if errors.Is(err, ErrUncertain) { // a read: nothing to have taken effect
 		err = ErrNoAnswer
 	}
 	return out.Presets, err
 }
 
-// Activate turns preset name on for seconds and, when times > 0, that many
-// requests; it replaces the limits of a preset already on.
-func (c *Capture) Activate(ctx context.Context, name string, seconds, times int) (Activation, error) {
+// withKind limits req to presets of kind (activate_mock: mocks only).
+func withKind(req map[string]any, kind string) map[string]any {
+	if kind != "" {
+		req["kind"] = kind
+	}
+	return req
+}
+
+// Activate turns preset name (of kind, or "" for any) on for seconds and, for
+// a mock when times > 0, that many requests; it replaces the limits of a
+// preset already on.
+func (c *Capture) Activate(ctx context.Context, name, kind string, seconds, times int) (Activation, error) {
 	var a Activation
 	if !PresetName.MatchString(name) {
 		return a, errors.New("no preset by that name")
@@ -116,7 +134,7 @@ func (c *Capture) Activate(ctx context.Context, name string, seconds, times int)
 	if seconds < 1 || seconds > PresetMaxSeconds {
 		return a, errors.New("at most 5 minutes")
 	}
-	req := map[string]any{"op": "activate", "name": name, "seconds": seconds}
+	req := withKind(map[string]any{"op": "activate", "name": name, "seconds": seconds}, kind)
 	if times != 0 {
 		if times < 1 || times > PresetMaxTimes {
 			return a, errors.New("times must be from 1 to 20")
@@ -127,14 +145,14 @@ func (c *Capture) Activate(ctx context.Context, name string, seconds, times int)
 	return a, err
 }
 
-// Deactivate turns preset name off; wasActive says it was on.
-func (c *Capture) Deactivate(ctx context.Context, name string) (wasActive bool, err error) {
+// Deactivate turns preset name (of kind, or "" for any) off; wasActive says it was on.
+func (c *Capture) Deactivate(ctx context.Context, name, kind string) (wasActive bool, err error) {
 	var out struct {
 		WasActive bool `json:"was_active"`
 	}
 	if !PresetName.MatchString(name) {
 		return false, errors.New("no preset by that name")
 	}
-	err = c.control(ctx, map[string]any{"op": "deactivate", "name": name}, &out)
+	err = c.control(ctx, withKind(map[string]any{"op": "deactivate", "name": name}, kind), &out)
 	return out.WasActive, err
 }

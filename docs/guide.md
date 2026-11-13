@@ -135,11 +135,13 @@ masked as they arrive; the one change they can make is to turn on, for at most
 
 Allowing the tools: the tools that read are marked read-only (`readOnlyHint`),
 which a client may use to ask less (not checked with any client);
-`activate_mock` and `deactivate_mock` are not. Claude Code asks before a tool
+the ones that turn presets on and off (`activate_preset`, `deactivate_preset`,
+`activate_mock`, `deactivate_mock`) are not. Claude Code asks before a tool
 it has not been allowed. Allow the read tools by name
 (`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
-since v0.6 also allows `activate_mock` (from Claude Code's documentation, not
-tried here). For example, in `.claude/settings.json` (the form is from
+also allows those (`activate_mock` since v0.6, `activate_preset`, which can
+send requests to a server you wrote in a preset, since v0.7; from Claude
+Code's documentation, not tried here). For example, in `.claude/settings.json` (the form is from
 Claude Code's documentation; not tried here):
 
 ```json
@@ -149,8 +151,9 @@ Claude Code's documentation; not tried here):
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets"],
-    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
+              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets"],
+    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
+            "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
 ```
@@ -196,8 +199,9 @@ cloud computer joins your tailnet through Tailscale's OAuth apps):
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` serves the same tools over HTTP on the node, but the mock preset ones
-(`list_mock_presets`, `activate_mock`, `deactivate_mock`), and prints the URL,
+`run` serves the same tools over HTTP on the node, but the preset ones
+(`list_presets`, `activate_preset`, `deactivate_preset`, `list_mock_presets`,
+`activate_mock`, `deactivate_mock`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
 `Authorization: Bearer <token>` (`reqcove links` prints them again; off a
 terminal, only it).
@@ -770,6 +774,63 @@ agent turning presets on over MCP): a 503 once, then the app's retry reached
 the server; an 8 s delay; a close, which CFNetwork did not retry by itself (the
 app's own retry was closed too); a 401 on login.
 
+Since v0.7, a `map_remote`, `modify_headers` or `resolve` rule can be a preset
+too: write it as a mapping with `rule:` (the rule as before) and `preset:`. It
+does nothing until an agent turns it on, for at most 5 minutes each time, as a
+mock preset. So an agent can send the app to your staging or dev server for a
+while, or send a feature-flag header, and turn it off again.
+
+```yaml
+map_remote:
+  - {rule: "|~d api.example.com|https://api\\.example\\.com/|https://staging.example.com/", preset: staging, description: to staging}
+modify_headers:
+  - {rule: "/~q/X-Feature-Flag/new-checkout", preset: new-checkout}   # requests only
+resolve:
+  - {rule: "api.example.com=192.168.1.20", preset: api-lan}
+```
+
+- The tools: `list_presets` (every kind, with `kind`), `activate_preset(name,
+  minutes)`, `deactivate_preset(name)`. `list_mock_presets`, `activate_mock`
+  and `deactivate_mock` stay, for mocks only: an agent allowed `activate_mock`
+  in v0.6 cannot turn on these. `times` is for mocks only; the others are on
+  for a time.
+- While on, a `map_remote` preset sends the matching requests, with the app's
+  cookies, tokens and bodies, to its target; `resolve` connects its name to its
+  address (Host, SNI and the TLS check stay the name's). The 5 minutes bound
+  the switch, not its effects: what the app wrote lands on that server, and the
+  app may keep the tokens and caches it got from there
+  ([SECURITY](SECURITY.md#map_remote-modify_headers-and-resolve-presets)).
+- Shown, by `list_presets`, the ready block and `reqcove status`: a
+  `map_remote` preset's target (scheme and host), a `modify_headers` preset's
+  header name (never its value), a `resolve` preset's name and address; never
+  a filter or a regex.
+- Refused at load: a `map_remote` preset whose replacement does not start with
+  `http://` or `https://` and a host (its target could not be shown), has a
+  user or password, takes its host from the request (`\1`), or is plain
+  `http://` to anything but this computer or a LAN address (`localhost`,
+  `*.local`, a private address); a `modify_headers` preset on responses (`~s`);
+  a preset in `map_local`; a plain rule with the same match as a preset
+  (`map_remote`: the same filter and regex; `modify_headers`: the same filter
+  and header).
+- One on per match, per kind: the same filter and regex (`map_remote`), the
+  same filter and header (`modify_headers`), the same name (`resolve`). A
+  `resolve` preset that is on comes before a plain `resolve` rule for its name;
+  presets that are on come before plain rules of their kind.
+- Names are shared across kinds: a mock and a `resolve` preset cannot both be
+  `staging`. The row lists every preset that changed or answered it in
+  `presets` (`preset` stays the mock's that answered).
+- `reqcove status` and the `status` tool's `active_mock_presets` list every kind
+  that is on (with `kind`; the name stays until v1.0).
+
+Tried with the E2E tests (real mitmproxy, plain HTTP): a `map_remote`, a
+`modify_headers` and a `resolve` preset each change requests only while on, the
+row lists them, the header's value is never shown, `activate_mock` and
+`list_mock_presets` leave them alone, `times` refused, a changed file turns
+them off; the refusals at load (mitmproxy's Python). Not tried: HTTPS through a
+`map_remote` or `resolve` preset turned on while the app's connections are open
+(pooled HTTP/1, HTTP/2): the app may keep using a connection opened before;
+an iPhone.
+
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:
 
@@ -925,10 +986,13 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`; not over `--mcp-http`, which has no preset tools) |
-| `list_mock_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file: what each matches and answers, whether it is on, requests left, when it turns off; never bodies or header values |
-| `activate_mock` | turn a preset on, for at most 5 minutes (`minutes`) and, with `times`, at most 20 requests; returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
-| `deactivate_mock` | turn a preset off. Not over `--mcp-http` |
+| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_mock_presets`, with `kind`; not over `--mcp-http`, which has no preset tools) |
+| `list_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file, of every kind (`kind`): a mock's match and answer, a `map_remote` preset's target, a `modify_headers` preset's header name, a `resolve` preset's name and address; whether it is on, when it turns off. Never bodies, header values, filters or regexes. Not over `--mcp-http` |
+| `activate_preset` | turn a preset of any kind on, for at most 5 minutes (`minutes`; `times`, at most 20 requests, for a mock); returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
+| `deactivate_preset` | turn a preset off. Not over `--mcp-http` |
+| `list_mock_presets` | as `list_presets`, mocks only (v0.6). Not over `--mcp-http` |
+| `activate_mock` | as `activate_preset`, mocks only (v0.6): it never turns on a `map_remote`, `modify_headers` or `resolve` preset. Not over `--mcp-http` |
+| `deactivate_mock` | turn a mock preset off (v0.6). Not over `--mcp-http` |
 
 ## Limits
 

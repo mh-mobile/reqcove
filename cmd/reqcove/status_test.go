@@ -587,3 +587,14 @@ func TestReadyRmQuoted(t *testing.T) {
 		t.Errorf("rm not quoted:\n%s", got)
 	}
 }
+
+// A map_remote or resolve preset is shown with where it sends requests while on.
+func TestPresetNames(t *testing.T) {
+	got := strings.Join(presetNames([]string{"mx", "staging", "api"}, map[string]string{"staging": "https://staging.example.com", "api": "203.0.113.5"}), ", ")
+	if got != "mx, staging -> https://staging.example.com, api -> 203.0.113.5" {
+		t.Errorf("presetNames: %q", got)
+	}
+	if presetsOff(nil) != "" || presetsOff([]string{"x"}) == "" {
+		t.Errorf("presetsOff")
+	}
+}

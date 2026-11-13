@@ -492,7 +492,7 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
 		logPresets := func(names []string) {
 			if len(names) > 0 {
-				log.Printf("mock presets (off until an agent turns one on, for at most 5 minutes): %s", strings.Join(names, ", "))
+				log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, cap.Store.PresetTargets()), ", "))
 			}
 		}
 		names, _ := s["mock_presets"].([]string)
@@ -501,10 +501,10 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
 			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
 				if problem != "" {
-					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(r))
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(presets))
 					return
 				}
-				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(r))
+				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(presets))
 				logPresets(presets)
 				if len(resolve) > 0 {
 					log.Printf("resolve: %s", strings.Join(resolve, ", "))
@@ -545,7 +545,7 @@ func run(ctx context.Context, args []string) error {
 		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
-			if ps, err := cap.Presets(ctx); err == nil {
+			if ps, err := cap.Presets(ctx, ""); err == nil {
 				out.ActivePresets = mcpserver.PresetsView(ps, true)
 			} else {
 				out.PresetsError = err.Error()
@@ -623,7 +623,7 @@ func run(ctx context.Context, args []string) error {
 				caSHA256: cap.CA.SHA256, caFile: filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")}
 			caCaption = "CA (with the Wi-Fi proxy set)"
 		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats()), lanR))
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(statsPresets(cap.Store.Stats()), cap.Store.PresetTargets()), lanR))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})

@@ -272,7 +272,7 @@ tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's read tools by name (not `activate_mock`) without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_mock` or `activate_preset`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -317,7 +317,11 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 ## Mock presets
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
-turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
+turns it on with `activate_preset` or `activate_mock` (`list_presets`,
+`deactivate_preset`; the `*_mock` tools take mocks only). Since v0.7 a
+`map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
+[below](#map_remote-modify_headers-and-resolve-presets), it can send requests
+elsewhere.
 Writing a preset is your consent that an agent may turn it on; there is no
 switch at start. The skill and the server's instructions tell an agent to write
 `preset:` only when you ask in the conversation, as any rule, never because of
@@ -330,8 +334,8 @@ What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
 client, or a sandboxed one) can now change what the device gets, at the moment
 it chooses and, by calling again, for as long as it keeps calling. Text a site
 wrote into the records can try to steer it into that. What it can turn on is
-only what you wrote: no new content, target or host, and nothing new leaves
-this computer. The worst case: every preset kept on all the time, each
+only what you wrote. For a mock preset: no new content, target or host, and
+nothing new leaves this computer. The worst case: every preset kept on all the time, each
 answering in the site's name what you wrote (a mock of an HTML page on an
 allowed host runs in Safari with that host's cookies, as any mock does).
 
@@ -362,6 +366,49 @@ allowed host runs in Safari with that host's cookies, as any mock does).
   goes out after the preset is turned off.
 - `list_mock_presets` gives what each matches and its status, delay or fault,
   never its body or header values.
+
+### map_remote, modify_headers and resolve presets
+
+A preset of these kinds changes where the device's requests go, or what they
+carry, while it is on: not only what the app gets.
+
+- A `map_remote` preset sends the matching requests, with the app's cookies,
+  tokens, login bodies and everything else in them, to the target you wrote,
+  from every device recorded (in LAN mode, every address you allowed). An
+  agent cannot choose the target, only when, and for how long by turning it on
+  again. The worst case through text a site wrote into the records: your
+  production credentials sent to the staging or dev server in the preset, again
+  and again. The risk to weigh is a stale target: an old tunnel or staging name
+  someone else holds now.
+- The 5 minutes bound the switch, not its effects: what the app wrote while it
+  was on (orders, edits) is on that server; the app may keep the tokens, cookies
+  and caches it got there, and send them to the usual server once it is off.
+- `resolve` connects a name elsewhere but keeps Host, SNI and the TLS check the
+  name's (from reading code, and the E2E test over plain HTTP): over HTTPS the
+  other server needs a certificate for that name, so it is the safer kind.
+- `modify_headers` presets change requests only: one on responses (`~s`) is
+  refused at load, as it could drop a page's protections (CSP, HSTS) or set
+  cookies on a host Safari shows. Its value is never shown.
+- Refused at load, so the target can be shown and checked: a `map_remote`
+  preset whose replacement is not `http://` or `https://` and a host, has a user
+  or password, or takes its host from the request; plain `http://` to anything
+  but this computer or a LAN address (`localhost`, `*.local`, a private
+  address).
+- Shown: each preset's target (`map_remote`) or address (`resolve`) in `run`'s
+  ready block and log, `reqcove status`, and `list_presets`; never a filter, a
+  regex or a header's value. A flow a preset changed lists it in `presets`; the
+  skill and the server's instructions tell agents never to report such a
+  flow's answer as the usual server's.
+- `activate_mock` takes mocks only (a test): a v0.6 client that allowed it
+  without a prompt does not get these. `activate_preset` is new, not marked
+  read-only, and asked about by clients that ask before such tools; a client
+  that allowed `"mcp__reqcove"` wholesale allows it too.
+- The same bounds and visibility as mock presets: at most 5 minutes each time
+  (no `times` for these kinds), only on this computer, never over
+  `--mcp-http`, off after a reload or a restart, both clocks.
+- Not tried: what an app does with connections it opened before a preset
+  turned on or off (pooled HTTP/1, HTTP/2): it may keep using them, so a
+  switch may not take effect at once, or may last past the end.
 
 ## Rules (`--rules`)
 
