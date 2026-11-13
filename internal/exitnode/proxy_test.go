@@ -6,11 +6,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -158,18 +160,41 @@ func TestRemoteProxyLogsNoURL(t *testing.T) {
 	for len(events) > 0 { // lines from earlier tests
 		<-events
 	}
+	// The line waits in events, or is in the log once a Run's logLoop took it.
+	var mu sync.Mutex
+	var out strings.Builder
+	log.SetOutput(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }))
+	defer log.SetOutput(os.Stderr)
 	if r, err := c.Get("http://nowhere.test/private/path?token=s3cret"); err == nil {
 		r.Body.Close()
 	}
-	select {
-	case line := <-events:
-		if !strings.Contains(line, "nowhere.test") || strings.Contains(line, "s3cret") || strings.Contains(line, "private") {
-			t.Errorf("log line: %q", line)
+	for range 500 {
+		var line string
+		select {
+		case line = <-events:
+		default:
+			mu.Lock()
+			for _, l := range strings.Split(out.String(), "\n") {
+				if strings.Contains(l, "nowhere.test") {
+					line = l
+				}
+			}
+			mu.Unlock()
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no log line")
+		if strings.Contains(line, "nowhere.test") {
+			if strings.Contains(line, "s3cret") || strings.Contains(line, "private") {
+				t.Errorf("log line: %q", line)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatal("no log line")
 }
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // Peers that are not devices are closed as they are accepted, so they cannot
 // hold Remote Proxy connections open; a connection whose device is dropped

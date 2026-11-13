@@ -18,7 +18,7 @@ How to contribute: `CONTRIBUTING.md`.
 ## Tests
 
 - `go test -race ./...`: the usual tests (CI on macOS and Linux).
-- `REQCOVE_E2E=1 go test ./internal/capture/`: real mitmproxy, from the lock (uv; CI too).
+- `REQCOVE_E2E=1 go test ./internal/capture/ ./internal/exitnode/`: real mitmproxy, from the lock (uv; CI too).
 - `REQCOVE_TRIAL2=1` (memory), `REQCOVE_SOAK=4h` (soak), `REQCOVE_UDP_MEASURE=1`
   (UDP): by hand only.
 - After a fix, check that its test fails with the fix taken out.

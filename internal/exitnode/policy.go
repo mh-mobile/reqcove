@@ -34,6 +34,55 @@ type policy struct {
 	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range
 	socks    bool                  // send TCP 80/443 to mitmproxy
 	names    []string              // this node's MagicDNS name and its first label, lower case
+
+	// LAN mode (no tsnet): devices are the allowed client addresses.
+	lan     bool
+	network netip.Prefix // the network the LAN proxy listens on
+	exact   []string     // the exact --allow-hosts names, lower case: private destinations for them (D4)
+}
+
+// private are the ranges an exact --allow-hosts name may lead to in LAN mode
+// (D4): private LANs and CGNAT (the tailnet, some VPNs).
+var private = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+}
+
+// decideLAN is for LAN mode's proxy, ports 80 and 443 (checked before): never
+// this Mac (loopback, its addresses) nor link-local nor the network the proxy
+// is on, nor another network of this Mac numbered from public space, even for
+// an exact name; private ranges (a VPN's network among them) only for an
+// exact --allow-hosts name (exact). The reason is for the log when it refuses.
+func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
+	d := dst.Addr().Unmap()
+	switch {
+	case !d.Is4():
+		return reject, "IPv6 is not carried"
+	case d.IsLoopback(), d.IsUnspecified(), slices.Contains(p.local, d):
+		return reject, "this Mac"
+	case d.IsLinkLocalUnicast():
+		return reject, "a link-local address"
+	case p.network.Contains(d):
+		return reject, "the network the LAN proxy is on"
+	case apple.Contains(d):
+		return direct, ""
+	}
+	inPrivate := slices.ContainsFunc(private, func(pfx netip.Prefix) bool { return pfx.Contains(d) })
+	if !inPrivate && slices.ContainsFunc(p.onLink, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
+		return reject, "a network of this Mac" // a LAN numbered from public space is still a LAN
+	}
+	if inPrivate && !exact {
+		return reject, "a private address: only an exact --allow-hosts name (no *) may lead there"
+	}
+	if !inPrivate && slices.ContainsFunc(denied, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
+		return reject, "a special-purpose address"
+	}
+	if p.socks {
+		return socks, ""
+	}
+	return direct, ""
 }
 
 // Never carried: unspecified, loopback, tailnet, link-local, private LANs,

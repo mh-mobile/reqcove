@@ -24,6 +24,7 @@ var configOnlyOnCommandLine = map[string]string{
 	"no-redact":    "it keeps secrets unmasked",
 	"web":          "mitmweb shows traffic unmasked",
 	"rules-reload": "whatever can write the rules file could then change where requests go",
+	"lan":          "a proxy for the LAN, never always on through a service",
 	"config":       "one file only",
 }
 

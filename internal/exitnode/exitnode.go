@@ -44,7 +44,7 @@ type Config struct {
 	Devices     []string         // --device specs
 	SocksAddr   string           // mitmproxy's SOCKS5 listener; empty: TCP 80/443 goes direct too
 	SocksSecret string           // its password
-	ProxyPort   int              // Remote Proxy port on the tailnet; 0: off
+	ProxyPort   int              // Remote Proxy port on the tailnet (LAN mode: on the LAN); 0: off
 	// SocksReady, if set, returns once mitmproxy is ready to take SOCKS dials
 	// (capture.WaitReady); until then they wait, at most socksHold.
 	SocksReady func(context.Context) error
@@ -73,6 +73,24 @@ type Config struct {
 	OnDevices func(map[string]string)
 	// OnStatus is called every few seconds, from start, with where the node stands.
 	OnStatus func(Status)
+	// LAN, if set, is LAN mode (run --lan): no tsnet; the proxy listens on
+	// ProxyPort of a LAN interface for the clients allowed there.
+	LAN *LAN
+}
+
+// dial dials dst for a device as a flow decided v.
+func (cfg Config) dial(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
+	return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, dst)
+}
+
+// proxyServer serves a proxy entry (the Remote Proxy, the local and the LAN one).
+func proxyServer(rp *remoteProxy) *http.Server {
+	return &http.Server{
+		Handler:           rp,
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          log.New(io.Discard, "", 0),
+	}
 }
 
 // Status is where reqcove's node stands with its tailnet: what `reqcove
@@ -102,7 +120,9 @@ var current atomic.Pointer[policy]
 // looking for the devices instead of failing.
 func Run(ctx context.Context, cfg Config) error {
 	envknob.SetNoLogsNoSupport() // keep tsnet from uploading logs (they carry destination IPs)
-	preflight(cfg.DNS)
+	if cfg.LAN == nil {
+		preflight(cfg.DNS)
+	}
 	s := &tsnet.Server{
 		Dir:         cfg.Dir,
 		Hostname:    cfg.Hostname,
@@ -127,23 +147,19 @@ func Run(ctx context.Context, cfg Config) error {
 		// advice about TS_AUTHKEY): reqcove says what to do itself, in watch.
 		s.UserLogf = func(string, ...any) {}
 	}
-	go logLoop()
+	logOnce.Do(func() { go logLoop() }) // one for every Run in this process
 	if ln := cfg.LocalProxy; ln != nil {
-		srv := &http.Server{
-			Handler: &remoteProxy{
-				local:   true,
-				policy:  current.Load,
-				resolve: localResolve, // this computer's apps: its own lookups (VPNs, split DNS, search domains), as without the proxy
-				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
-					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, dst)
-				},
-			},
-			ReadHeaderTimeout: 30 * time.Second,
-			IdleTimeout:       2 * time.Minute,
-			ErrorLog:          log.New(io.Discard, "", 0),
-		}
+		srv := proxyServer(&remoteProxy{
+			local:   true,
+			policy:  current.Load,
+			resolve: localResolve, // this computer's apps: its own lookups (VPNs, split DNS, search domains), as without the proxy
+			dial:    cfg.dial,
+		})
 		go srv.Serve(ln)
 		defer srv.Close()
+	}
+	if cfg.LAN != nil {
+		return runLAN(ctx, cfg) // no tsnet
 	}
 	// Registered before Start; until current is set, decideTCP rejects everything.
 	s.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (func(net.Conn), bool) {
@@ -195,21 +211,14 @@ func Run(ctx context.Context, cfg Config) error {
 		if cfg.Web != "" {
 			web = webRelay(current.Load, cfg.Web)
 		}
-		srv := &http.Server{
-			Handler: &remoteProxy{
-				ui:      page,
-				web:     web,
-				webAddr: cfg.Web,
-				policy:  current.Load,
-				resolve: resolver(cfg.DNS),
-				dial: func(ctx context.Context, v verdict, device string, dst netip.AddrPort) (net.Conn, error) {
-					return dialVia(ctx, v, device, cfg.SocksAddr, cfg.SocksSecret, cfg.SocksReady, dst)
-				},
-			},
-			ReadHeaderTimeout: 30 * time.Second,
-			IdleTimeout:       2 * time.Minute,
-			ErrorLog:          log.New(io.Discard, "", 0),
-		}
+		srv := proxyServer(&remoteProxy{
+			ui:      page,
+			web:     web,
+			webAddr: cfg.Web,
+			policy:  current.Load,
+			resolve: resolver(cfg.DNS),
+			dial:    cfg.dial,
+		})
 		go srv.Serve(onlyDevices{ln, current.Load})
 		defer srv.Close()
 		log.Printf("Remote Proxy on %v:%d: instead of the exit node, set the iPhone's Wi-Fi HTTP proxy (Manual) to it", ip4, cfg.ProxyPort)
@@ -489,6 +498,8 @@ func logEvent(format string, a ...any) {
 		dropped.Add(1)
 	}
 }
+
+var logOnce sync.Once
 
 func logLoop() {
 	t := time.NewTicker(10 * time.Second)

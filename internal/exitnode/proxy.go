@@ -9,9 +9,11 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -33,11 +35,18 @@ type remoteProxy struct {
 	local   bool         // the local proxy: this computer's own apps, as the device Local
 
 	// One per device: a pooled connection carries one device's SOCKS user.
-	// ponytail: never pruned; bounded by the devices seen in this run.
-	plain sync.Map // src IP + StableID -> *httputil.ReverseProxy
+	// ponytail: emptied whole past maxPlain clients (their idle connections
+	// close on their own timeout); an LRU if that ever matters.
+	plain  sync.Map // src IP + StableID -> *httputil.ReverseProxy
+	plainN atomic.Int64
 }
 
-var errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
+const maxPlain = 256
+
+var (
+	errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
+	errLANRefused = errors.New("refused in LAN mode")
+)
 
 // onlyDevices closes connections from peers that are not devices as soon as
 // they are accepted, so they cannot hold the Remote Proxy's connections open
@@ -176,6 +185,10 @@ func (rp *remoteProxy) reverseProxy(src netip.AddrPort, dev Device) *httputil.Re
 	if v, ok := rp.plain.Load(key); ok {
 		return v.(*httputil.ReverseProxy)
 	}
+	if rp.plainN.Add(1) > maxPlain {
+		rp.plain.Clear()
+		rp.plainN.Store(1)
+	}
 	v, _ := rp.plain.LoadOrStore(key, &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) { pr.Out.Host = pr.In.Host }, // URL is already absolute
 		Transport: &http.Transport{
@@ -203,12 +216,23 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 	if err != nil {
 		return nil, fmt.Errorf("bad port %q", port)
 	}
+	p := rp.policy()
+	lan := !rp.local && p != nil && p.lan
+	if lan && pn != 80 && pn != 443 { // before the lookup: the reason is the port
+		return nil, fmt.Errorf("%s: port %d: LAN mode carries ports 80 and 443 only: %w", host, pn, errLANRefused)
+	}
 	ip, err := rp.resolve(ctx, host)
 	if err != nil {
 		return nil, err
 	}
 	dst := netip.AddrPortFrom(ip, uint16(pn))
-	v := decideTCP(rp.policy(), src, dst)
+	v := decideTCP(p, src, dst)
+	if lan {
+		var why string
+		if v, why = decideLAN(p, dst, slices.Contains(p.exact, strings.ToLower(strings.TrimSuffix(host, ".")))); v == reject {
+			return nil, fmt.Errorf("%s (%v): %s: %w", host, ip, why, errLANRefused)
+		}
+	}
 	if rp.local {
 		// An address the app gave, or a name this computer's /etc/hosts gives, is the app's own choice.
 		_, literal := netip.ParseAddr(host)
@@ -226,7 +250,7 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 }
 
 func statusFor(err error) int {
-	if errors.Is(err, errNotCarried) {
+	if errors.Is(err, errNotCarried) || errors.Is(err, errLANRefused) {
 		return http.StatusForbidden
 	}
 	return http.StatusBadGateway
