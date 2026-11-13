@@ -88,7 +88,7 @@ func TestSystemProxy(t *testing.T) {
 	if err := pointSystemProxy(state); err != nil {
 		t.Fatal(err)
 	}
-	if by := proxies["bypass|Wi-Fi"].Server; !strings.HasPrefix(by, "*.local,169.254/16,localhost,::1,127.0.0.0/8") || !strings.Contains(by, "192.168.0.0/16") || !strings.Contains(by, "100.64.0.0/10") {
+	if by := proxies["bypass|Wi-Fi"].Server; !strings.HasPrefix(by, "*.local,169.254/16,localhost,::1,127.0.0.0/8") || !strings.Contains(by, "192.168.0.0/16") || !strings.Contains(by, "100.64.0.0/10") || !strings.Contains(by, "fd7a:115c:a1e0::/48") {
 		t.Errorf("bypass: %s", by)
 	}
 	ours := webProxy{true, "127.0.0.1", "8082"}

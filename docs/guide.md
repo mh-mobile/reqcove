@@ -469,7 +469,7 @@ reqcove run --allow-hosts api.example.com --local-proxy   # --device too, for an
 - After `kill -9` or a crash, apps that use the system proxy cannot connect
   until the next `run` or `reqcove cleanup` puts it back (or you do, in System
   Settings).
-- This computer, the LAN, the tailnet (`*.ts.net` too) and `*.local` stay
+- This computer, the LAN, the tailnet (IPv4 and IPv6, `*.ts.net` too) and `*.local` stay
   direct, as the proxy's exceptions. Names are looked up as this computer does
   (VPNs, split DNS, search domains), not with `--dns`; one that leads to this
   computer itself or a link-local address is refused unless `/etc/hosts` gives
@@ -498,7 +498,8 @@ stop, deleting the CA in Keychain Access, Chrome on the Mac opening an allowed
 host without a warning, recorded; the system's web proxies pointed at
 127.0.0.1:8082 by the real `networksetup` and put back at Ctrl-C, the CA added to the booted
 Simulators, and Safari on the iOS 27 Simulator decrypted and recorded as
-`local`. Not tried: the address forms in the exceptions, PAC and authenticated
+`local`. `networksetup` takes the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`) as an
+exception and the system lists it (tried 2026-11-13). Not tried: whether apps skip the proxy for the address forms in the exceptions, PAC and authenticated
 proxies, Linux.
 
 ### A web app's backend
