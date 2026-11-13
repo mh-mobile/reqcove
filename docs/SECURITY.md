@@ -168,8 +168,22 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (`multipart/mixed`, XML elements and attributes; protobuf and
-  `multipart/form-data` are read as below). In GraphQL the same
+  (`multipart/mixed`; protobuf, `multipart/form-data` and XML are read as
+  below). XML is masked by names only: a secret in an element or attribute
+  named otherwise passes; what does not tokenize outside a secret element
+  (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the text
+  masking only, but a start tag the decoder refuses (`a=b!c`, an unquoted
+  value) is still read as one, by its name and attributes; nothing in a DTD
+  (`<!ENTITY p "…">`), and no comment outside a secret element, is masked by
+  names; XML carried as text in an element, escaped (`&lt;Password&gt;`) or in
+  CDATA outside a secret element, is not read as XML (a test); a WebSocket
+  message has no content type, so it is read as XML only if it starts with
+  `<?xml` (XMPP's `<auth mechanism='PLAIN'>…</auth>` passes: a test); a
+  declared encoding is not used:
+  a head that is not valid UTF-8 (Latin-1 or Shift_JIS with text beyond
+  ASCII, UTF-16) is not masked, as no such body is, and so is neither handed
+  out nor searched (a test); SAML's POST binding sends the assertion as a base64
+  `SAMLResponse` form field, which is not decoded and passes (a test). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);
@@ -218,6 +232,29 @@ So "delete the directory" above means each of them.
   with LF-only lines shows no part. A preamble and an epilogue are not
   shown. At most 256 parts are read.
   (Tests, and an E2E test with Go's multipart writer.)
+- XML (`text/xml`, `application/xml`, `application/*+xml` such as SOAP's
+  `application/soap+xml`, or a body that starts with `<?xml`) is read token
+  by token: an element whose local name (`wsse:Password` is `Password`) is
+  secret by the rule above, JSON's, has its whole content masked (text,
+  CDATA, child elements, comments: `<wsse:Password>[redacted]</wsse:Password>`)
+  up to an end tag of the same local name (a stray `</i>` inside does not end
+  it), and an attribute whose local name is has its value masked; namespace
+  declarations stay. The rest stays as it came, byte for byte (prefixes,
+  entities, spacing). A SAML `Assertion` or `EncryptedAssertion` is masked
+  whole: it is a bearer credential (whoever holds it can present it until it
+  expires), so its subject and attributes do not show either. In an Apple
+  plist, the value after a `<key>` in a `<dict>` whose text is secret is
+  masked (`<key>access_token</key><string>[redacted]</string>`). As JSON's
+  `key` is, an element named `Key` is masked, S3's object names among them. A
+  head cut, or that does not tokenize, inside a secret element or attribute
+  value is masked to its end; elsewhere, reading goes on past it (after a bad
+  comment's `-->`), in bounded time (a test). No DTD is read: no entity is
+  expanded or fetched (a billion-laughs test). The text masking above applies
+  on top. The XML masking can take away what the text masking keys on (a
+  quote inside a masked element), so it is not checked to mask everything
+  the text masking alone would; a fuzz test of markup checks that it never
+  fails and that a secret element and attribute before any markup stay masked.
+  (Tests, the fuzz test, and an E2E test over mitmproxy with a SOAP request.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text

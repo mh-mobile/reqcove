@@ -1047,7 +1047,7 @@ other protocols going straight to their servers.
 | `--mcp-http` | [the MCP tools over HTTP](#agents-on-other-devices---mcp-http), on the node's port 8090 |
 | `--dns SERVERS` | the exit node's DNS upstreams, comma-separated, `1.1.1.1:53` by default (the port may be left out); `system` for the first nameserver in `/etc/resolv.conf` |
 | `--no-redact` | keep secrets in the records |
-| `--mask-names a,b` | mask whatever has exactly this name too (any spelling: `clientRef` is also `client_ref` and `Client-Ref`, not `X-Client-Ref`): headers, parameters, JSON fields, GraphQL arguments; `@FILE` too |
+| `--mask-names a,b` | mask whatever has exactly this name too (any spelling: `clientRef` is also `client_ref` and `Client-Ref`, not `X-Client-Ref`): headers, parameters, JSON fields, GraphQL arguments, XML elements and attributes; `@FILE` too |
 | `--mask-values RE` | mask what this pattern (RE2) matches, wherever it is; repeat it, or `@FILE` (one a line: keeps a literal secret out of `ps`; write one as `\Q…\E`) |
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
@@ -1075,7 +1075,8 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 Tried on an iPhone: `--mask-names`; `wait_for_flows` after acting through
 RoamRun; with a test app, `diff_flows` (a request sent twice),
 `list_ws_messages` and `--proto`. By tests only: `--mask-values`, `max_body`,
-the `--mcp-http` rate limit, `multipart/form-data`.
+the `--mcp-http` rate limit, `multipart/form-data`, XML bodies (and an E2E test
+with a SOAP request through mitmproxy).
 
 From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 `--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`,

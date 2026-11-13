@@ -30,6 +30,9 @@ func TestMaskNames(t *testing.T) {
 	if b := string(maskBody([]byte(`{"clientRef":"gh78","name":"x"}`), "application/json", false)); strings.Contains(b, "gh78") || !strings.Contains(b, `"x"`) {
 		t.Errorf("JSON: %s", b)
 	}
+	if b := string(maskBody([]byte(`<r><client-ref>ij90</client-ref><a ClientRef="kl12">x</a></r>`), "text/xml", false)); strings.Contains(b, "ij90") || strings.Contains(b, "kl12") || !strings.Contains(b, ">x<") {
+		t.Errorf("XML: %s", b)
+	}
 	if got := policyStats()["mask_names"].(map[string]int64)["clientref"]; got < 3 {
 		t.Errorf("hits: %d", got)
 	}

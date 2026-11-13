@@ -29,6 +29,14 @@
   would send outside its target gets a 502; refused at load: a target that cannot be shown,
   with a user or password, or plain `http://` beyond this computer and the LAN.
   Not tried yet with an iPhone.
+- XML bodies (`text/xml`, `application/xml`, `application/*+xml` such as
+  SOAP) are masked by names: an element or attribute whose local name
+  (`wsse:Password`) is one JSON's keys are masked by, the element's whole
+  content (CDATA and child elements too), a SAML `Assertion` whole (a bearer
+  credential), and in a plist the value after a secret `<key>`. Changed in
+  place, the rest as it came; a head cut inside a secret element is masked to
+  its end; no DTD is read. The text masking still applies on top. SECURITY
+  lists the limits. Tests and an E2E test with a SOAP request.
 - `reqcove mark [TEXT]` puts a marker among the records (a time and a
   checkpoint to read from), in your terminal only; agents put theirs with
   `add_marker`. At most 80 characters on one line, masked; at most 100 per
