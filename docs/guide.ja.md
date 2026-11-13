@@ -419,6 +419,24 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone では、Safari（httpbin.org）への 401 と、GitHub アプリの GraphQL の operation 1 つをモックできることを確認しました（同じ接続のほかの operation は GitHub に届きました）。
 
+#### ターミナルからモックを足す（`reqcove mock add`）
+
+`reqcove mock add` は、モックを確かめてからファイルに書き足します。
+
+```sh
+reqcove mock add --rules rules.yaml --url https://api.example.com/v1/login \
+  --method POST --status 401 --header 'Content-Type: application/json' \
+  --body '{"error":"expired"}'
+```
+
+- ほかのフラグは `--operation NAME`、`--body-file PATH`（入力した場所が基準で、フルパスで書きます）、`--delay-ms N`、`--fault close`、`--preset NAME`、`--description TEXT` です。
+- モックは `mock:` の最後の項目として足し、ファイルのほかの部分（コメントや順序も）はそのまま残します。`mock:` がなければ、ファイルの最後に足します。`mock:` がファイルの最後のブロックでないときや、フロー形式（`mock: []`）のときは断り、直し方を表示します。新しいファイルは `0600` で作ります。既にあるファイルはモードを保ったまま、一度に置き換えます（隣に一時ファイルを書き、名前を変えます）。確かめている間にファイルが変わったとき（エディタで保存したときなど）は何も書かないので、もう一度実行してください。同じ名前のヘッダーを 2 回指定すると断ります。
+- 書く前に、書いたあとのファイル全体を、アドオン自身の読み込み処理で確かめます。`reqcove run` が動いていれば（同じ `--state`）、その `--allow-hosts` と `--pass-hosts` も使って run が確かめます。動いていなければ、ロックファイルの mitmproxy の Python（`--uvx PATH`）で確かめ、このときホストは確かめません。断ったときは理由を表示し（ルールの中身は出しません）、何も書きません。
+- 書いたあと、モックがいつ効くかを表示します。run に `--rules-reload` があればすぐに効き、そのとき有効なプリセットはすべて無効になります。なければ run を起動し直したときです。
+- ターミナルでだけ動きます（`reqcove mark` と同じく、標準入力と標準出力の両方）。頼まれていないエージェントが実行するのを防ぐ助けで、保証ではありません（シェルを使えるエージェントはターミナルを用意でき、どのみちファイルも書き換えられます）。`--print` は、書き込みも確認もせずにモックを YAML で表示します。ターミナルでなくても動きます。
+
+確認状況：テストで確認しました。確認したのは、引用符、改行、`#`、`: `、制御文字、ほかの文字体系を含む値の YAML をアドオンの読み込み処理が元のとおりに読むこと、ファイルの中身が残ること（コメント、CRLF、末尾に改行のないファイル）、断る場合、本物の run による確認（範囲内と範囲外のホスト、`--pass-hosts` のホスト）と mitmproxy の Python による確認です。動いている run とデバイスでの手作業の確認はしていません。
+
 #### エージェントが有効にできるプリセット
 
 `preset: 名前` を付けたモックは、エージェントが有効にするまで何もしません。有効にできるのは 1 回につき最長 5 分で、何度でも有効にし直せます（上限なし。[SECURITY](SECURITY.md#mock-presets)）。プリセットと同じ match（メソッド、URL、operation）の普通のモックは、読み込みで断ります（プリセットの代わりに応答してしまうためです）。エージェントが、ファイルを書き換えずに、503 や遅い応答、切れた接続をアプリがどう扱うかを確かめ、また無効に戻せます。
@@ -557,6 +575,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 | `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
 | `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
 | `reqcove mark` | `[TEXT]`（`-` で始まるものは `-- TEXT`）。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
+| `reqcove mock add` | `--rules FILE --url URL` とモックのフラグ。[ファイルにモックを足す](#ターミナルからモックを足すreqcove-mock-add)（確かめてから）。ターミナルでのみ（`--print` での表示はどこでも）。`--uvx PATH` |
 | `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
 | `reqcove lan` | `allow ADDR`、`deny ADDR`、`list`。[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)で中継するアドレス。ターミナルでのみ |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |

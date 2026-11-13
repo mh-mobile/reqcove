@@ -994,9 +994,10 @@ class Reqcove:
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
-        """reqcove's requests about presets, one JSON line each way, on the
-        event loop as the hooks (so a count never races a request). Each must
-        carry the SOCKS5 secret: the socket is reqcove's alone."""
+        """reqcove's requests about presets and rules, one JSON line each way,
+        on the event loop as the hooks (so a count never races a request). Each
+        must carry the SOCKS5 secret: run's, and `reqcove mock add`'s, which
+        reads it from the state directory (0600) to check a --rules file."""
         async def one(reader, writer):
             try:
                 line = await asyncio.wait_for(reader.readline(), 5)
@@ -1010,6 +1011,8 @@ class Reqcove:
                         out = {"error": str(e)}
                     except Exception as e:  # never mitmproxy's text: it quotes URLs, filters and regexes
                         out = {"error": f"explain_rules failed: {type(e).__name__}"}
+                elif req.get("op") == "check":  # reqcove mock add: the file as it would be, at path (next to target), checked as at start
+                    out = self._check(str(req.get("path", "")), str(req.get("target", "")), ctx.options.reqcove_rules, ctx.options.reqcove_rules_reload)
                 elif not self.rules or not self.rules["mock"].book.entries:
                     out = {"error": "no presets: the --rules file marks no rule with preset:"} if req.get("op") != "list" else {"presets": []}
                 else:
@@ -1202,6 +1205,18 @@ class Reqcove:
             if mark := getattr(e, "problem_mark", None):  # YAML syntax: where, not what
                 why += f" at line {mark.line + 1}"
             return None, why
+
+    def _check(self, path, target, rules, reload):
+        """op check: why the --rules file at path would not load with this
+        run's hosts ("" when it would), and whether this run reads target
+        (same) and takes it again when it changes (reload). Changes nothing.
+        A path, not the text: a control line is at most 64 KiB."""
+        _, why = self._load_checked(path)
+        try:
+            same = bool(rules) and os.path.samefile(rules, target)
+        except OSError:  # target not there yet
+            same = False
+        return {"check": why, "same": same, "reload": same and bool(reload)}
 
     async def _watch_rules(self, path):
         """--rules-reload: once a second, look at the file; take it again when it

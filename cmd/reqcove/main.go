@@ -77,6 +77,9 @@ Usage:
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
+  reqcove mock add --rules FILE --url URL [flags]
+                     add a mock to a --rules file, checked first, in your terminal
+                     only (-h for its flags; --print shows it without writing)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
@@ -133,6 +136,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"lan":     lan,
 	"mark":    mark,
 	"service": service,
+	"mock":    mockCmd,
 }
 
 // noFlags are the commands that take nothing.

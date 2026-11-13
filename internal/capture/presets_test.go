@@ -378,3 +378,49 @@ print("ok")
 		t.Errorf("%v\n%s", err, out)
 	}
 }
+
+// TestCheckRules (REQCOVE_E2E=1): reqcove mock add's check through a running
+// run: the run's hosts decide (in scope, out of it, passed), it says whether
+// it reads the file and takes it again, and nothing it checks is taken.
+func TestCheckRules(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	rules := filepath.Join(dir, "rules.yaml")
+	mock := func(host string) []byte {
+		return []byte(fmt.Sprintf("mock:\n  - match: {url: \"https://%s/\"}\n", host))
+	}
+	os.WriteFile(rules, mock("a.example.com"), 0o600)
+	h, err := tryHarness(t, ctx, []string{"*.example.com"}, func(c *Config) {
+		c.Rules, c.RulesReload = rules, true
+		var err error
+		if c.AllowHosts, err = c.AllowHosts.WithPass([]string{"p.example.com"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := filepath.Join(dir, ".next")
+	for host, want := range map[string]string{
+		"b.example.com": "",
+		"other.org":     "mock[0]: other.org is not in --allow-hosts",
+		"p.example.com": "mock[0]: p.example.com is in --pass-hosts",
+	} {
+		os.WriteFile(next, mock(host), 0o600)
+		c, err := CheckRules(ctx, h.c.cfg.Dir, next, rules)
+		if err != nil || !strings.HasPrefix(*c.Why, want) || (want == "") != (*c.Why == "") || !c.Same || !c.Reload {
+			t.Errorf("%s: %+v %v", host, c, err)
+		}
+	}
+	if c, err := CheckRules(ctx, h.c.cfg.Dir, next, next); err != nil || c.Same || c.Reload {
+		t.Errorf("another file: %+v %v", c, err)
+	}
+	time.Sleep(2500 * time.Millisecond) // the reload's poll, had it taken .next
+	if rs, err := h.c.ListRules(ctx); err != nil || len(rs.Rules) != 1 || rs.Rules[0].URL != "https://a.example.com/" {
+		t.Errorf("the run's rules: %+v %v", rs, err)
+	}
+}

@@ -199,6 +199,12 @@ func parseDocumented(words []string) error {
 		}
 		args = args[1:]
 	}
+	if words[0] == "mock" { // mock add: its subcommand first
+		if len(args) == 0 || args[0] != "add" {
+			return fmt.Errorf("mock takes add, not %q", args)
+		}
+		args = args[1:]
+	}
 	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
 		_, args = wordsAndFlags(args)
 	}
@@ -281,6 +287,8 @@ func TestParseDocumentedRefuses(t *testing.T) {
 		{"mark", "tapping", "--no-such-flag"},
 		{"service", "start"},
 		{"service", "install", "--lan"},
+		{"mock", "remove", "--url", "x"},
+		{"mock", "add", "--no-such-flag"},
 	} {
 		if err := parseDocumented(words); err == nil {
 			t.Errorf("reqcove %s: no error", strings.Join(words, " "))

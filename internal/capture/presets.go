@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -74,10 +78,14 @@ var ErrNoAnswer = errors.New("mitmproxy did not answer about presets in time (bu
 var PresetName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 func (c *Capture) control(ctx context.Context, req map[string]any, out any) error {
+	return control(ctx, c.cfg.Dir, c.SocksSecret, req, out)
+}
+
+func control(ctx context.Context, dir, secret string, req map[string]any, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "unix", filepath.Join(c.cfg.Dir, ControlSock))
+	conn, err := d.DialContext(ctx, "unix", filepath.Join(dir, ControlSock))
 	if err != nil {
 		return ErrNoControl
 	}
@@ -85,7 +93,7 @@ func (c *Capture) control(ctx context.Context, req map[string]any, out any) erro
 	if dl, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(dl)
 	}
-	req["secret"] = c.SocksSecret
+	req["secret"] = secret
 	b, _ := json.Marshal(req)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
 		return ErrUncertain // part of it may have gone
@@ -225,3 +233,73 @@ func (c *Capture) Deactivate(ctx context.Context, name, kind string) (wasActive 
 	err = c.control(ctx, withKind(map[string]any{"op": "deactivate", "name": name}, kind), &out)
 	return out.WasActive, err
 }
+
+// RulesCheck is the addon's word on a --rules file as it would be (reqcove
+// mock add): Why it would not load ("" when it would), never a rule's text.
+type RulesCheck struct {
+	Why    *string `json:"check"`  // none: an older run, without the op
+	Same   bool    `json:"same"`   // the running run reads the file at target
+	Reload bool    `json:"reload"` // and takes it again when it changes (--rules-reload)
+}
+
+// CheckRules asks the run whose state directory is dir to check the rules
+// file at path (beside target, so a relative body_file reads the same) as it
+// checks its own at start, with its --allow-hosts and --pass-hosts. It sends
+// the path, not the text: a control line is at most 64 KiB.
+// ErrNoControl: no run there.
+func CheckRules(ctx context.Context, dir, path, target string) (RulesCheck, error) {
+	var out RulesCheck
+	secret, err := os.ReadFile(filepath.Join(dir, "socks-secret"))
+	if err != nil {
+		return out, ErrNoControl
+	}
+	if err := control(ctx, dir, string(secret), map[string]any{"op": "check", "path": path, "target": target}, &out); err != nil {
+		return out, err
+	}
+	if out.Why == nil {
+		return out, errors.New("the running reqcove has no check (an older build)")
+	}
+	return out, nil
+}
+
+// CheckRulesPython checks the rules file at path with the addon's loader in
+// mitmproxy's Python (cfg's, Dir aside), without a run: no host is out of
+// scope. It says why the file would not load, "" when it would.
+func CheckRulesPython(ctx context.Context, cfg Config, path string) (string, error) {
+	dir, err := os.MkdirTemp("", "reqcove-check-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
+			return "", err
+		}
+	}
+	cfg.Dir = dir
+	bin, args := PyCommand(cfg, "python")
+	cmd := exec.CommandContext(ctx, bin, append(args, "-c", checkScript, dir, path)...)
+	cmd.Dir = dir               // python -c imports from the current directory first
+	cmd.WaitDelay = time.Second // on Ctrl-C, not held by a child of uv that keeps the pipes
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	b, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("%s: %v %s", bin, err, strings.TrimSpace(stderr.String()))
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var out RulesCheck
+	if json.Unmarshal([]byte(lines[len(lines)-1]), &out) != nil || out.Why == nil {
+		return "", fmt.Errorf("mitmproxy's Python gave no answer: %q", b)
+	}
+	return *out.Why, nil
+}
+
+// checkScript: _load_checked as run's, every host in scope.
+const checkScript = `import sys, json
+sys.path.insert(0, sys.argv[1])
+import addon
+r = addon.addons[0]
+r.allow_all = True
+print(json.dumps({"check": r._load_checked(sys.argv[2])[1]}))
+`
