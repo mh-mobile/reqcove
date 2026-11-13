@@ -173,6 +173,10 @@ func TestStatusService(t *testing.T) {
 	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "homebrew.mxcl.reqcove" {
 		t.Errorf("service %q", s)
 	}
+	t.Setenv("XPC_SERVICE_NAME", "sh.brew.reqcove") // Homebrew's label now
+	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "sh.brew.reqcove" {
+		t.Errorf("service %q", s)
+	}
 	t.Setenv("XPC_SERVICE_NAME", "homebrew.mxcl.skhd") // a terminal another brew service started
 	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "" {
 		t.Errorf("under another service: %q", s)

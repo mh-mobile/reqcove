@@ -33,8 +33,9 @@
 - `run --config FILE` reads run's flags, one a line (`--no-redact`, `--web`,
   `--rules-reload` and `--allow-hosts '*'` stay on the command line), and the
   Homebrew formula has a service: `brew services start reqcove` with the
-  flags in `$(brew --prefix)/etc/reqcove/config` (the file by tests;
-  `brew services` itself not tried yet). `reqcove status` names the service.
+  flags in `$(brew --prefix)/etc/reqcove/config` (tried: start, an iPhone
+  recorded, stop; not yet at login or after a reboot). `reqcove status`
+  names the service.
 - If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
   allows `activate_mock`: allow the read tools by name instead.
 

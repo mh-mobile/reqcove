@@ -69,7 +69,7 @@ printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)
 chmod 600 "$(brew --prefix)/etc/reqcove/config"
 brew services start reqcove
 reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
-reqcove status       # "service: homebrew.mxcl.reqcove"
+reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
 ```
 
 - `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
@@ -108,10 +108,13 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 WantedBy=default.target
 ```
 
-Tried: the config file's parsing and refusals (unit tests). Not tried yet:
-`brew services` itself (PATH, login, a reboot, sleep), whether macOS's Local
-Network privacy asks about a `run` not started from a terminal, and whether
-launchd's default background priority slows it.
+Tried: the config file's parsing and refusals (unit tests); `brew services
+start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
+config read; an iPhone's requests recorded; no token or login URL in the log;
+`reqcove links` refused off a terminal; `links` and `login-url` gone after
+stop). Not tried yet: a start at login or after a reboot, sleep, whether
+macOS's Local Network privacy asks about a `run` not started from a terminal,
+and whether launchd's default background priority slows it.
 
 ### Undo everything (`reqcove cleanup`)
 

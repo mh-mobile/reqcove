@@ -45,7 +45,7 @@ printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)
 chmod 600 "$(brew --prefix)/etc/reqcove/config"
 brew services start reqcove
 reqcove links        # 初回はログイン用の URL（1 分ほど待つ：初回は mitmproxy を取得する。tail -f "$(brew --prefix)/var/log/reqcove.log"）
-reqcove status       # 「service: homebrew.mxcl.reqcove」と出る
+reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew では homebrew.mxcl.reqcove）
 ```
 
 - `--config FILE` は、`run` のフラグを 1 行に 1 つずつ読みます（`#` から後ろはコメント。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリ。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます）。コマンドラインのフラグはその後に読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。`--no-redact`、`--web`、`--rules-reload`、`--allow-hosts '*'`（`@FILE` で指定したものも）はファイルでは断り、コマンドラインでだけ使えます。ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。`--config` は 1 つだけです。
@@ -66,7 +66,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 WantedBy=default.target
 ```
 
-確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。`brew services` そのもの（PATH、ログイン、再起動、スリープ）、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
+確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。macOS 27 で formula から `brew services start` と `stop` を試しました（PATH から uv が見つかる、設定ファイルが読まれる、iPhone のリクエストが記録される、ログにトークンやログイン用の URL が入らない、ターミナルでないところでは `reqcove links` が断る、止めたあと `links` と `login-url` が消える）。ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
 
 ### 元に戻す（`reqcove cleanup`）
 
