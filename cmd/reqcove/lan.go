@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"golang.org/x/sys/unix"
 )
 
@@ -97,9 +101,9 @@ func allowLAN(state string, addr netip.Addr) (bool, error) {
 }
 
 // lanAddrs is run's view of the file: on an error, none (refuse all).
-func lanAddrs(state string) func() []netip.Addr {
+func lanAddrs(state string) func() map[netip.Addr]time.Time {
 	var warned string
-	return func() []netip.Addr {
+	return func() map[netip.Addr]time.Time {
 		list, err := readLANAllowed(state)
 		if err != nil {
 			if err.Error() != warned {
@@ -109,9 +113,9 @@ func lanAddrs(state string) func() []netip.Addr {
 			return nil
 		}
 		warned = ""
-		out := make([]netip.Addr, len(list))
-		for i, a := range list {
-			out[i] = a.addr
+		out := make(map[netip.Addr]time.Time, len(list))
+		for _, a := range list {
+			out[a.addr] = a.when
 		}
 		return out
 	}
@@ -161,6 +165,103 @@ func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string, tt
 		default:
 		}
 	}
+}
+
+// lanReady is the ready block's part in LAN mode.
+type lanReady struct {
+	listen   string // ADDR:PORT, what the iPhone's Wi-Fi proxy is set to
+	allowed  []exitnode.LANAllowed
+	state    string
+	prompt   bool // run asks on its terminal
+	caSHA256 string
+	caFile   string
+}
+
+func (l *lanReady) lines(qr string) string {
+	var b strings.Builder
+	server, port, _ := net.SplitHostPort(l.listen)
+	fmt.Fprintf(&b, "Wi-Fi proxy: on the iPhone, Settings, Wi-Fi, (i) by this network, Configure Proxy, Manual: Server %s, Port %s, Authentication off\n", server, port)
+	var allowed []string
+	for _, a := range l.allowed {
+		if t, err := time.Parse(time.RFC3339, a.When); err == nil {
+			a.Addr += " (since " + t.Local().Format("2006-01-02 15:04") + ")"
+		}
+		allowed = append(allowed, a.Addr)
+	}
+	fmt.Fprintf(&b, "allowed:  %s\n", cmp.Or(strings.Join(allowed, ", "), "none yet"))
+	how := "`" + withState("reqcove lan allow", l.state) + " ADDR`"
+	if l.prompt {
+		how = "answer run's question here, or " + how
+	}
+	fmt.Fprintf(&b, "allow:    a new address is refused until you allow it: %s, with the address run logs. An address, not a device: whoever has it later is allowed too (`%s ADDR` takes it back)\n", how, withState("reqcove lan deny", l.state))
+	fmt.Fprintf(&b, "CA:       http://mitm.it  (with the Wi-Fi proxy set%s; once per device). Plain HTTP on a LAN can be swapped by others on it: AirDrop %s instead, or check that the CA's SHA-256 is %s\n", strings.Replace(qr, ";", ":", 1), shellWord(l.caFile), l.caSHA256)
+	return b.String()
+}
+
+// printLANStatus is `reqcove status`'s part for LAN mode.
+func printLANStatus(w io.Writer, l *exitnode.LANStatus) {
+	fmt.Fprintln(w, "  mode:        lan (a Wi-Fi proxy on this computer's LAN address; no tailnet node)")
+	if l == nil {
+		fmt.Fprintln(w, "  LAN proxy:   starting")
+		return
+	}
+	where := l.Listen
+	if where == "" {
+		where = "not listening (" + l.Stopped + ")"
+	}
+	fmt.Fprintf(w, "  LAN proxy:   %s on %s, for clients on %s\n", where, l.Interface, l.Network)
+	var allowed []string
+	for _, a := range l.Allowed {
+		if t, err := time.Parse(time.RFC3339, a.When); err == nil {
+			a.Addr += " (since " + t.Local().Format("2006-01-02 15:04") + ")"
+		}
+		allowed = append(allowed, a.Addr)
+	}
+	fmt.Fprintf(w, "  allowed:     %s\n", cmp.Or(strings.Join(allowed, ", "), "-"))
+	if len(l.Refused) > 0 {
+		fmt.Fprintf(w, "  refused:     %s (not allowed, this run)\n", strings.Join(l.Refused, ", "))
+	}
+}
+
+// lanSteps are LAN mode's next steps: why it does not listen, the addresses
+// refused, how to set the iPhone and allow it, and allowed ones with no traffic.
+func lanSteps(n exitnode.Status, devices []capture.DeviceInfo) []string {
+	if n.Mode != "lan" {
+		return nil
+	}
+	l := n.LAN
+	if l == nil {
+		return []string{"the LAN proxy is starting"}
+	}
+	allowCmd := strings.Replace(stepLinksCmd, "reqcove links", "reqcove lan allow", 1)
+	server, port, _ := net.SplitHostPort(l.Listen)
+	proxy := fmt.Sprintf("Settings, Wi-Fi, (i) by the network, Configure Proxy, Manual: Server %s, Port %s", server, port)
+	var steps []string
+	if l.Stopped != "" {
+		steps = append(steps, "the LAN proxy is not listening: "+l.Stopped)
+	}
+	if len(l.Refused) > 0 {
+		steps = append(steps, fmt.Sprintf("refused by the LAN proxy, not allowed: %s. If one is your device, allow it in your own terminal: %s ADDR (an address, not a device: whoever has it later is allowed too)", strings.Join(l.Refused, ", "), allowCmd))
+	}
+	var idle []string
+	busy := false
+	for _, d := range devices {
+		if strings.HasPrefix(d.ID, "lan:") && d.Carried {
+			if d.Flows+d.TLSFailures+d.Passthroughs > 0 {
+				busy = true
+			} else {
+				idle = append(idle, d.ID)
+			}
+		}
+	}
+	switch {
+	case l.Listen == "" || busy:
+	case len(idle) > 0:
+		steps = append(steps, fmt.Sprintf("no traffic from %s yet: set the iPhone's Wi-Fi proxy (%s)", strings.Join(idle, ", "), proxy))
+	case len(l.Refused) == 0:
+		steps = append(steps, fmt.Sprintf("set the iPhone's Wi-Fi proxy (%s), then allow it on this computer: answer run's question if it asks, or %s ADDR with the address run logs", proxy, allowCmd))
+	}
+	return steps
 }
 
 // lanTTY is what lanAsker needs of run's terminal (a seam for tests).

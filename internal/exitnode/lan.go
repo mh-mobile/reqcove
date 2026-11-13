@@ -19,13 +19,29 @@ import (
 // address, for clients on its network whose address the user allowed (as
 // Charles's access control). No tsnet is started.
 type LAN struct {
-	Interface string              // the interface to listen on
-	Allowed   func() []netip.Addr // the client addresses allowed, read again every few seconds
-	Names     []string            // the exact --allow-hosts names (no *): private destinations for them (D4)
-	AllowCmd  string              // the command that allows an address (reqcove lan allow, with --state)
+	Interface string                          // the interface to listen on
+	Allowed   func() map[netip.Addr]time.Time // the client addresses allowed, and when; read again every few seconds
+	Names     []string                        // the exact --allow-hosts names (no *): private destinations for them (D4)
+	AllowCmd  string                          // the command that allows an address (reqcove lan allow, with --state)
 	// Refused, if set, is called once per client address on the network that
 	// is not allowed (yet), from the proxy's accept loop: it must not block.
 	Refused func(netip.Addr)
+}
+
+// LANStatus is LAN mode's part of the status.
+type LANStatus struct {
+	Interface string       `json:"interface"`
+	Network   string       `json:"network"`           // the clients' network
+	Listen    string       `json:"listen,omitempty"`  // ADDR:PORT, the iPhone's Wi-Fi proxy, while listening
+	Stopped   string       `json:"stopped,omitempty"` // why it does not listen
+	Allowed   []LANAllowed `json:"allowed"`
+	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run, not allowed now
+}
+
+// LANAllowed is an allowed client address and when it was allowed (RFC 3339).
+type LANAllowed struct {
+	Addr string `json:"addr"`
+	When string `json:"allowed_at,omitempty"`
 }
 
 // LANAddr is the interface's IPv4 address with its network's prefix length,
@@ -88,6 +104,7 @@ func runLAN(ctx context.Context, cfg Config) error {
 	}
 	defer func() { unbind() }()
 	gone := false
+	stopped := ""
 	lastIDs := ""
 	t := time.NewTicker(lanPoll)
 	defer t.Stop()
@@ -98,11 +115,13 @@ func runLAN(ctx context.Context, cfg Config) error {
 		case err == nil && now.Masked() != network:
 			unbind()
 			gone = true
-			log.Printf("LAN proxy stopped: %s is on another network now (%v, was %v); restart run to listen there", name, now.Masked(), network)
+			stopped = fmt.Sprintf("%s is on another network now (%v, was %v): restart run to listen there", name, now.Masked(), network)
+			log.Printf("LAN proxy stopped: %s", stopped)
 		case err != nil:
+			stopped = fmt.Sprintf("not listening until %s is back on %v: %v", name, network, err)
 			if srv != nil {
 				unbind()
-				log.Printf("LAN proxy: not listening until %s is back on %v: %v", name, network, err)
+				log.Printf("LAN proxy: %s", stopped)
 			}
 		case srv == nil || now.Addr() != bound:
 			unbind()
@@ -112,9 +131,11 @@ func runLAN(ctx context.Context, cfg Config) error {
 				if !bound.IsValid() {
 					return fmt.Errorf("LAN proxy on %s: %w", addr, err)
 				}
-				log.Printf("LAN proxy on %s: %v (trying again)", addr, err)
+				stopped = fmt.Sprintf("%s: %v (trying again)", addr, err)
+				log.Printf("LAN proxy on %s", stopped)
 				break
 			}
+			stopped = ""
 			srv = proxyServer(rp)
 			go srv.Serve(lanClients{Listener: ln, network: network, policy: current.Load, seen: seen, refused: cfg.LAN.Refused, allowCmd: cfg.LAN.AllowCmd})
 			if bound.IsValid() {
@@ -133,13 +154,25 @@ func runLAN(ctx context.Context, cfg Config) error {
 		if cfg.LocalProxy != nil {
 			names[Local.ID] = Local.Name
 		}
+		ls := &LANStatus{Interface: name, Network: network.String(), Stopped: stopped, Allowed: []LANAllowed{}}
+		if srv != nil {
+			ls.Listen = netip.AddrPortFrom(bound, uint16(cfg.ProxyPort)).String()
+		}
+		var allowed map[netip.Addr]time.Time
 		if cfg.LAN.Allowed != nil {
-			for _, a := range cfg.LAN.Allowed() {
-				if a = a.Unmap(); network.Contains(a) {
-					d := Device{ID: "lan:" + a.String(), Name: "lan:" + a.String()}
-					p.devices[a] = d
-					names[d.ID] = d.Name
-				}
+			allowed = cfg.LAN.Allowed()
+		}
+		for _, a := range slices.SortedFunc(maps.Keys(allowed), netip.Addr.Compare) {
+			ls.Allowed = append(ls.Allowed, LANAllowed{a.String(), allowed[a].UTC().Format(time.RFC3339)})
+			if a = a.Unmap(); network.Contains(a) {
+				d := Device{ID: "lan:" + a.String(), Name: "lan:" + a.String()}
+				p.devices[a] = d
+				names[d.ID] = d.Name
+			}
+		}
+		for _, a := range seen.with("refused") {
+			if _, ok := p.devices[a]; !ok {
+				ls.Refused = append(ls.Refused, a.String())
 			}
 		}
 		current.Store(p)
@@ -151,7 +184,7 @@ func runLAN(ctx context.Context, cfg Config) error {
 			}
 		}
 		if cfg.OnStatus != nil {
-			s := Status{Backend: "LAN", Devices: names}
+			s := Status{Mode: "lan", LAN: ls, Devices: names}
 			if srv != nil {
 				s.IPs = []string{bound.String()}
 			}
@@ -229,4 +262,20 @@ func (s *onceSet) first(a netip.Addr, what string) bool {
 	}
 	s.m[k] = true
 	return true
+}
+
+// with lists the addresses logged as what, sorted.
+func (s *onceSet) with(what string) []netip.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []netip.Addr
+	for k := range s.m {
+		if a, w, _ := strings.Cut(k, " "); w == what {
+			if ip, err := netip.ParseAddr(a); err == nil {
+				out = append(out, ip)
+			}
+		}
+	}
+	slices.SortFunc(out, netip.Addr.Compare)
+	return out
 }

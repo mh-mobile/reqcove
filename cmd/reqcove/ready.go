@@ -87,7 +87,9 @@ func firstIPv4(ips []string) string {
 // and the next steps, numbered, in one place.
 // Off a terminal (terminal false) the callers pass hints in place of the
 // links and the token, and there are no QR codes.
-func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool, presets []string) string {
+// In LAN mode (lan set) it says how to set the iPhone's Wi-Fi proxy and allow
+// it, and how to get the CA without trusting plain HTTP on the LAN.
+func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool, presets []string, lan *lanReady) string {
 	var b strings.Builder
 	qr := "; QR code below"
 	if !terminal {
@@ -102,6 +104,9 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 		names = append(names, n)
 	}
 	slices.Sort(names)
+	if len(names) == 0 {
+		names = []string{"none allowed yet"}
+	}
 	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
 	if uiLink != "" {
 		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only%s; the same at each start, rm %s to change it)\n", uiLink, qr, "-- "+shellWord(filepath.Join(state, "ui-token")))
@@ -112,7 +117,9 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	if mcpURL != "" {
 		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, "-- "+shellWord(filepath.Join(state, "mcp-token")))
 	}
-	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
+	if lan != nil {
+		b.WriteString(lan.lines(qr))
+	} else if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
 	if len(presets) > 0 {
@@ -152,7 +159,7 @@ type readyGate struct {
 }
 
 func (g *readyGate) ready(s exitnode.Status) bool {
-	if s.Backend != "Running" && s.Backend != "LAN" {
+	if s.Backend != "Running" && s.Mode != "lan" {
 		g.seen = false
 		return false
 	}

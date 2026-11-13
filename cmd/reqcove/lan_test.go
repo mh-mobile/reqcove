@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 )
 
@@ -212,10 +213,71 @@ type readerFunc func([]byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
+func lanStatus(listen string, refused []string, devices map[string]string) exitnode.Status {
+	return exitnode.Status{Mode: "lan", Devices: devices, LAN: &exitnode.LANStatus{Interface: "en0", Network: "192.168.1.0/24", Listen: listen, Refused: refused,
+		Allowed: []exitnode.LANAllowed{{Addr: "192.168.1.23", When: "2026-11-13T08:00:00Z"}}}}
+}
+
+// status in LAN mode: its mode and LAN part, and steps for a Wi-Fi proxy, not
+// for an exit node or a tailnet node.
+func TestStatusLAN(t *testing.T) {
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	ready := map[string]any{"state": "ready"}
+	if out := statusOut(exitnode.Status{}, ready, allow, capture.CA{}, nil); out.Mode != "tailnet" || out.LAN != nil {
+		t.Errorf("tailnet: mode %q, lan %v", out.Mode, out.LAN)
+	}
+	s := lanStatus("192.168.1.10:8080", nil, map[string]string{})
+	out := statusOut(s, ready, allow, capture.CA{}, nil)
+	if out.Mode != "lan" || out.LAN == nil {
+		t.Fatalf("lan: mode %q, lan %v", out.Mode, out.LAN)
+	}
+	steps := strings.Join(out.NextSteps, "\n")
+	for _, want := range []string{"Server 192.168.1.10, Port 8080", "reqcove lan allow ADDR"} {
+		if !strings.Contains(steps, want) {
+			t.Errorf("steps lack %q:\n%s", want, steps)
+		}
+	}
+	if strings.Contains(steps, "tailnet") || strings.Contains(steps, "exit node") {
+		t.Errorf("tailnet steps in LAN mode:\n%s", steps)
+	}
+	// Refused addresses are named; an allowed address without traffic gets its own step.
+	s = lanStatus("192.168.1.10:8080", []string{"192.168.1.40"}, map[string]string{"lan:192.168.1.23": "lan:192.168.1.23"})
+	devs := []capture.DeviceInfo{{ID: "lan:192.168.1.23", Carried: true}}
+	steps = strings.Join(statusOut(s, ready, allow, capture.CA{}, devs).NextSteps, "\n")
+	if !strings.Contains(steps, "not allowed: 192.168.1.40") || !strings.Contains(steps, "no traffic from lan:192.168.1.23 yet") {
+		t.Errorf("steps:\n%s", steps)
+	}
+	s.LAN.Listen, s.LAN.Stopped = "", "en0 is on another network now"
+	if steps := strings.Join(statusOut(s, ready, allow, capture.CA{}, devs).NextSteps, "\n"); !strings.Contains(steps, "not listening: en0 is on another network now") {
+		t.Errorf("stopped:\n%s", steps)
+	}
+	var b strings.Builder
+	printLANStatus(&b, lanStatus("192.168.1.10:8080", []string{"192.168.1.40"}, nil).LAN)
+	if got := b.String(); !strings.Contains(got, "192.168.1.10:8080 on en0, for clients on 192.168.1.0/24") || !strings.Contains(got, "allowed:     192.168.1.23 (since") || !strings.Contains(got, "refused:     192.168.1.40") {
+		t.Errorf("reqcove status:\n%s", got)
+	}
+}
+
+// The ready block in LAN mode: what to enter on the iPhone, how to allow it,
+// who is allowed, and the CA with its SHA-256 (plain HTTP on a LAN can be swapped).
+func TestReadyBlockLAN(t *testing.T) {
+	l := &lanReady{listen: "192.168.1.10:8080", allowed: lanStatus("", nil, nil).LAN.Allowed, state: "/s", prompt: true, caSHA256: "AB12CD", caFile: "/s/mitmproxy/mitmproxy-ca-cert.pem"}
+	got := readyBlock(map[string]string{}, "", "", "", "", "/s", nil, true, nil, l)
+	for _, want := range []string{"Server 192.168.1.10, Port 8080", "allowed:  192.168.1.23 (since", "answer run's question here, or `reqcove lan allow --state /s ADDR`",
+		"`reqcove lan deny --state /s ADDR` takes it back", "AirDrop /s/mitmproxy/mitmproxy-ca-cert.pem", "SHA-256 is AB12CD", "devices:  none allowed yet"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "exit node") {
+		t.Errorf("tailnet wording in LAN mode:\n%s", got)
+	}
+}
+
 // The ready block waits for LAN mode's status too.
 func TestReadyGateLAN(t *testing.T) {
 	var g readyGate
-	s := exitnode.Status{Backend: "LAN", IPs: []string{"192.168.1.10"}}
+	s := exitnode.Status{Mode: "lan", IPs: []string{"192.168.1.10"}}
 	if g.ready(s) || !g.ready(s) {
 		t.Error("LAN mode never ready")
 	}

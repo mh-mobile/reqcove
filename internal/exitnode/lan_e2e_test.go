@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -49,7 +48,7 @@ func TestLANEndToEnd(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{SocksAddr: c.SocksAddr, SocksSecret: c.SocksSecret, SocksReady: c.WaitReady, ProxyPort: port,
-			LAN:       &LAN{Interface: loopbackName(t), Allowed: func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("127.0.0.1")} }, Names: []string{"example.org"}},
+			LAN:       &LAN{Interface: loopbackName(t), Allowed: allowedAt("127.0.0.1"), Names: []string{"example.org"}},
 			OnDevices: c.Store.SetDeviceNames})
 	}()
 	defer func() { cancel(); <-done }()

@@ -48,7 +48,11 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
+	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
+	if n.LAN != nil {
+		out.LAN = n.LAN
+	}
+	return out
 }
 
 // pageSteps are the next steps the --ui page shows the device id: built from it
@@ -110,9 +114,10 @@ var stepLinksCmd = "reqcove links"
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
-	if node.Backend == "" {
+	if node.Backend == "" && node.Mode != "lan" {
 		steps = append(steps, "the tailnet node is starting")
 	}
+	steps = append(steps, lanSteps(node, devices)...)
 	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {
 		steps = append(steps, s)
 	}
@@ -227,6 +232,8 @@ func status(ctx context.Context, args []string) error {
 		return nil
 	}
 	var out struct {
+		Mode      string                `json:"mode"`
+		LAN       *exitnode.LANStatus   `json:"lan"`
 		Node      exitnode.Status       `json:"node"`
 		NextSteps []string              `json:"next_steps"`
 		Capture   map[string]any        `json:"capture"`
@@ -242,12 +249,16 @@ func status(ctx context.Context, args []string) error {
 	if out.Service != "" {
 		fmt.Printf("  service:     %s (brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log)\n", out.Service)
 	}
-	fmt.Printf("  node:        %s %s %s\n", orDash(n.Node), strings.Join(n.IPs, " "), n.Backend)
-	fmt.Printf("  exit node:   approved=%v", n.ExitApproved)
-	if n.LockEnabled {
-		fmt.Printf("  tailnet lock: signed=%v", n.LockSigned)
+	if out.Mode == "lan" {
+		printLANStatus(os.Stdout, out.LAN)
+	} else {
+		fmt.Printf("  node:        %s %s %s\n", orDash(n.Node), strings.Join(n.IPs, " "), n.Backend)
+		fmt.Printf("  exit node:   approved=%v", n.ExitApproved)
+		if n.LockEnabled {
+			fmt.Printf("  tailnet lock: signed=%v", n.LockSigned)
+		}
+		fmt.Println()
 	}
-	fmt.Println()
 	var names []string
 	for _, name := range n.Devices {
 		names = append(names, name)
@@ -272,7 +283,11 @@ func status(ctx context.Context, args []string) error {
 	}
 	printCA(*state)
 	if len(out.NextSteps) == 0 {
-		fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
+		if out.Mode == "lan" {
+			fmt.Println("ready: set the device's Wi-Fi proxy to the LAN proxy above and use it")
+		} else {
+			fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
+		}
 		return nil
 	}
 	fmt.Println("next:")

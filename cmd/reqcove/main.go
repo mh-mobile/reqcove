@@ -533,6 +533,9 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
+	if *lanMode {
+		node.set(exitnode.Status{Mode: "lan"}) // before the first status: not a tailnet node starting
+	}
 	remoteStatus := func() mcpserver.StatusOut {
 		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
 	}
@@ -612,7 +615,14 @@ func run(ctx context.Context, args []string) error {
 			ca = "http://mitm.it"
 		}
 		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats())))
+		var lanR *lanReady
+		caCaption := "CA (with the exit node on)"
+		if s.LAN != nil {
+			lanR = &lanReady{listen: s.LAN.Listen, allowed: s.LAN.Allowed, state: *state, prompt: lanCfg.Refused != nil,
+				caSHA256: cap.CA.SHA256, caFile: filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")}
+			caCaption = "CA (with the Wi-Fi proxy set)"
+		}
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats()), lanR))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
@@ -621,7 +631,7 @@ func run(ctx context.Context, args []string) error {
 			codes = append(codes, qrItem{webLink, "--web (mitmweb, unmasked)"})
 		}
 		if len(devices) > 0 || *lanMode {
-			codes = append(codes, qrItem{"http://mitm.it", "CA (with the exit node on)"})
+			codes = append(codes, qrItem{"http://mitm.it", caCaption})
 		}
 		printQRs(os.Stderr, codes...)
 	}
