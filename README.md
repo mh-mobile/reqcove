@@ -153,8 +153,8 @@ proxy, with no Tailscale: `reqcove run --lan --allow-hosts api.example.com`,
 set the iPhone's Wi-Fi proxy (Manual) to the address and port run prints, and
 allow the iPhone's address on this computer (run asks, or
 `reqcove lan allow ADDR`). Wi-Fi only, ports 80 and 443 only, and no password:
-an address you allow can send through this computer. Not tried yet with an
-iPhone on a real network. What it reaches and what blocks it:
+an address you allow can send through this computer. Tried with an iPhone on
+a home Wi-Fi (iOS 27.3). What it reaches and what blocks it:
 [the guide](docs/guide.md#without-tailscale-lan-mode---lan).
 
 ## What it keeps safe, and what it does not

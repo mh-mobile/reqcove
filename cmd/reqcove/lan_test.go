@@ -216,7 +216,7 @@ func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
 func lanStatus(listen string, refused []string, devices map[string]string) exitnode.Status {
 	return exitnode.Status{Mode: "lan", Devices: devices, LAN: &exitnode.LANStatus{Interface: "en0", Network: "192.168.1.0/24", Listen: listen, Refused: refused,
-		Allowed: []exitnode.LANAllowed{{Addr: "192.168.1.23", When: "2026-11-13T08:00:00Z"}}}}
+		Allowed: []exitnode.LANAllowed{{Addr: "192.168.1.23", When: "2026-11-13T17:00:00.000+09:00"}}}}
 }
 
 // status in LAN mode: its mode and LAN part, and steps for a Wi-Fi proxy, not
@@ -262,10 +262,10 @@ func TestStatusLAN(t *testing.T) {
 // The ready block in LAN mode: what to enter on the iPhone, how to allow it,
 // who is allowed, and the CA with its SHA-256 (plain HTTP on a LAN can be swapped).
 func TestReadyBlockLAN(t *testing.T) {
-	l := &lanReady{listen: "192.168.1.10:8080", allowed: lanStatus("", nil, nil).LAN.Allowed, state: "/s", prompt: true, caSHA256: "AB12CD", caFile: "/s/mitmproxy/mitmproxy-ca-cert.pem"}
+	l := &lanReady{listen: "192.168.1.10:8080", allowed: lanStatus("", nil, nil).LAN.Allowed, state: "/s", prompt: true, caSHA256: "AB12CD0F", caFile: "/s/mitmproxy/mitmproxy-ca-cert.pem"}
 	got := readyBlock(map[string]string{}, "", "", "", "", "/s", nil, true, nil, l)
 	for _, want := range []string{"Server 192.168.1.10, Port 8080", "allowed:  192.168.1.23 (since", "answer run's question here, or `reqcove lan allow --state /s ADDR`",
-		"`reqcove lan deny --state /s ADDR` takes it back", "AirDrop /s/mitmproxy/mitmproxy-ca-cert.pem", "SHA-256 is AB12CD", "devices:  none allowed yet"} {
+		"`reqcove lan deny --state /s ADDR` takes it back", "AirDrop /s/mitmproxy/mitmproxy-ca-cert.pem", "SHA-256 (on the iPhone: Settings, General, VPN & Device Management, the profile, More Details) is ab 12 cd 0f\n", "devices:  none allowed yet"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %q:\n%s", want, got)
 		}
@@ -296,11 +296,13 @@ func TestCALAN(t *testing.T) {
 	old := security
 	defer func() { security = old }()
 	security = func(...string) error { return errors.New("not trusted") }
+	// As iOS shows it (More Details): lowercase pairs, spaced. The CA line keeps the form security -Z takes.
+	ios := "More Details) is " + strings.ToLower(ca.SHA256[:2]+" "+ca.SHA256[2:4]+" ")
 	for _, lan := range []bool{false, true} {
 		var b strings.Builder
 		printCA(&b, state, lan)
 		got := b.String()
-		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, "AirDrop "+caPEM(state)) || lan != strings.Contains(got, "SHA-256 is "+ca.SHA256) {
+		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, "AirDrop "+caPEM(state)) || lan != strings.Contains(got, ios) || !strings.Contains(got, "SHA-256 "+ca.SHA256+",") {
 			t.Errorf("status, lan %v:\n%s", lan, got)
 		}
 	}
@@ -314,7 +316,7 @@ func TestCALAN(t *testing.T) {
 		f.Close()
 		b, _ := os.ReadFile(f.Name())
 		got := string(b)
-		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, "SHA-256 is "+ca.SHA256) {
+		if lan != strings.Contains(got, "with the Wi-Fi proxy set") || lan == strings.Contains(got, "exit node") || lan != strings.Contains(got, ios) {
 			t.Errorf("links, lan %v:\n%s", lan, got)
 		}
 	}

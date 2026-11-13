@@ -192,6 +192,80 @@ func TestRemoteProxyLogsNoURL(t *testing.T) {
 	t.Fatal("no log line")
 }
 
+// An app retrying a name that does not resolve: the first failure is logged,
+// the same ones again (another source port each time) are not.
+func TestRemoteProxyLogsRepeatOnce(t *testing.T) {
+	rp := &remoteProxy{policy: func() *policy { return nil }, resolve: func(context.Context, string) (netip.Addr, error) {
+		return netip.Addr{}, &net.DNSError{Err: "no such host", Name: "repeat.test", IsNotFound: true}
+	}}
+	var mu sync.Mutex
+	var out strings.Builder
+	log.SetOutput(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }))
+	defer log.SetOutput(os.Stderr)
+	for len(events) > 0 { // lines from earlier tests
+		<-events
+	}
+	for i := range 5 {
+		w := httptest.NewRecorder()
+		rp.connect(w, &http.Request{Method: http.MethodConnect, Host: "repeat.test:443"}, netip.AddrPortFrom(netip.MustParseAddr("192.168.0.50"), uint16(50000+i)), Device{})
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("status %d", w.Code)
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // a Run's logLoop may take the line
+	n := 0
+	for len(events) > 0 {
+		if strings.Contains(<-events, "CONNECT repeat.test") {
+			n++
+		}
+	}
+	mu.Lock()
+	n += strings.Count(out.String(), "CONNECT repeat.test")
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d lines for 5 identical failures", n)
+	}
+}
+
+// The same failure again: not logged within a minute, then with how many were
+// not; at most maxFailKinds kinds kept, the one logged longest ago dropped.
+func TestFailLog(t *testing.T) {
+	var f failLog
+	t0 := time.Date(2026, 11, 14, 7, 13, 30, 0, time.Local)
+	steps := []struct {
+		kind string
+		at   time.Duration
+		more string
+		ok   bool
+	}{
+		{"a", 0, "", true},
+		{"a", 5 * time.Second, "", false},
+		{"b", 6 * time.Second, "", true}, // another kind: at once
+		{"a", 50 * time.Second, "", false},
+		{"a", 61 * time.Second, " (2 more since 07:13:30)", true},
+		{"a", 2 * time.Minute, "", false},
+		{"a", 3 * time.Minute, " (1 more since 07:14:31)", true},
+		{"a", 5 * time.Minute, "", true}, // none skipped since
+	}
+	for i, s := range steps {
+		if more, ok := f.note(s.kind, t0.Add(s.at)); more != s.more || ok != s.ok {
+			t.Errorf("%d: %q %v, want %q %v", i, more, ok, s.more, s.ok)
+		}
+	}
+	for i := range maxFailKinds + 10 {
+		f.note(fmt.Sprint("k", i), t0.Add(time.Hour+time.Duration(i)*time.Second))
+	}
+	if len(f.m) != maxFailKinds {
+		t.Errorf("%d kinds kept", len(f.m))
+	}
+	if _, ok := f.m["k0"]; ok {
+		t.Error("the oldest kind kept")
+	}
+	if _, ok := f.m[fmt.Sprint("k", maxFailKinds+9)]; !ok {
+		t.Error("the newest kind dropped")
+	}
+}
+
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

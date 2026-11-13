@@ -54,6 +54,24 @@ func brewPrefix() string {
 	return ""
 }
 
+// selfCmd is this binary in the commands setup and service install print:
+// reqcove when that is what PATH finds, else its full path (quoted for a shell).
+func selfCmd() string {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return "reqcove"
+	}
+	if p, err := exec.LookPath("reqcove"); err == nil {
+		if p, err = filepath.EvalSymlinks(p); err == nil && p == exe {
+			return "reqcove"
+		}
+	}
+	return shellWord(exe)
+}
+
 var (
 	errNoAnswer = errors.New("no answer: setup stopped there (run reqcove setup again to go on)")
 	errStopped  = errors.New("setup stopped (Ctrl-C): nothing more done")
@@ -100,6 +118,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 		return strings.EqualFold(a, "y") || strings.EqualFold(a, "yes"), err
 	}
 	shown := shellWord(config)
+	rc := selfCmd()
 
 	fmt.Fprint(out, "Reqcove setup: each step can be skipped; nothing is started or removed.\n\n1. uv (reqcove fetches mitmproxy and Python with it)\n")
 	if uvx, err := exec.LookPath("uvx"); err == nil {
@@ -138,7 +157,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	}
 	var device, hosts string
 	for write && device == "" {
-		fmt.Fprint(out, "   The iPhone's name in your tailnet: in the Tailscale app on it, or `tailscale status`\n   (`reqcove status` lists the devices it sees once run runs). Empty skips this step.\n")
+		fmt.Fprintf(out, "   The iPhone's name in your tailnet: in the Tailscale app on it, or `tailscale status`\n   (`%s status` lists the devices it sees once run runs). Empty skips this step.\n", rc)
 		if device, err = ask("   Device: "); err != nil {
 			return err
 		}
@@ -151,7 +170,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 		}
 	}
 	for write {
-		fmt.Fprint(out, "   Hosts to record, comma-separated (api.example.com,*.example-cdn.com). Empty: none yet;\n   once run runs, `summarize` (for an agent) or `reqcove status` lists the hosts the iPhone reached.\n")
+		fmt.Fprintf(out, "   Hosts to record, comma-separated (api.example.com,*.example-cdn.com). Empty: none yet;\n   once run runs, `summarize` (for an agent) or `%s status` lists the hosts the iPhone reached.\n", rc)
 		a, err := ask("   Hosts: ")
 		if err != nil {
 			return err
@@ -162,7 +181,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 		}
 		allow, err := capture.ParseAllowHosts([]string{strings.Join(hs, ",")})
 		if err == nil && allow.All {
-			err = errors.New("'*' records every site: only on the command line (reqcove run --config FILE --allow-hosts '*')")
+			err = fmt.Errorf("'*' records every site: only on the command line (%s run --config FILE --allow-hosts '*')", rc)
 		}
 		if err != nil {
 			fmt.Fprintf(out, "   %v\n", err)
@@ -196,19 +215,19 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 			fmt.Fprintf(out, "   %v\n", err)
 		}
 	}
-	fmt.Fprint(out, "   Give the agent the tools (Claude Code; other agents: the command reqcove mcp in their MCP settings):\n     claude mcp add reqcove -- reqcove mcp\n")
+	fmt.Fprintf(out, "   Give the agent the tools (Claude Code; other agents: the command %[1]s mcp in their MCP settings):\n     claude mcp add reqcove -- %[1]s mcp\n", rc)
 
 	fmt.Fprintln(out, "\n4. Start it")
 	switch {
 	case !have:
-		fmt.Fprint(out, "   in a terminal: reqcove run --device NAME --allow-hosts HOSTS (or run reqcove setup again for the file)\n")
+		fmt.Fprintf(out, "   in a terminal: %[1]s run --device NAME --allow-hosts HOSTS (or run %[1]s setup again for the file)\n", rc)
 	case brew:
-		fmt.Fprintf(out, "   now and at each login: brew services start reqcove\n   or in a terminal: reqcove run --config %s\n", shown)
+		fmt.Fprintf(out, "   now and at each login: brew services start reqcove\n   or in a terminal: %s run --config %s\n", rc, shown)
 	default:
-		fmt.Fprintf(out, "   now and at each login: reqcove service install\n   or in a terminal: reqcove run --config %s\n", shown)
+		fmt.Fprintf(out, "   now and at each login: %[1]s service install\n   or in a terminal: %[1]s run --config %[2]s\n", rc, shown)
 	}
-	fmt.Fprint(out, "   Then `reqcove links` prints the login URL (the first time, in your terminal), and `reqcove status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there (`reqcove links` shows its QR code).\n")
-	fmt.Fprint(out, "   LAN mode (no Tailscale): --lan is not kept in a config file; in a terminal: reqcove run --lan --allow-hosts HOSTS\n")
+	fmt.Fprintf(out, "   Then `%[1]s links` prints the login URL (the first time, in your terminal), and `%[1]s status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there (`%[1]s links` shows its QR code).\n", rc)
+	fmt.Fprintf(out, "   LAN mode (no Tailscale): --lan is not kept in a config file; in a terminal: %s run --lan --allow-hosts HOSTS\n", rc)
 	return nil
 }
 

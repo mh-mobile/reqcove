@@ -739,9 +739,11 @@ LAN clients' requests too.
 
 The CA at `http://mitm.it` comes over plain HTTP, which anyone else on the LAN
 can swap. The ready block names the CA file, to send by AirDrop instead, and
-prints its SHA-256. Not checked: whether iOS shows that SHA-256 on the profile
-screen. Use LAN mode on a network you trust, and stop it when done. Not tried
-with an iPhone on a real network.
+prints its SHA-256 as iOS shows it in the profile's More Details (checked on
+iOS 27.3, 2026-11-14: it matched). Use LAN mode on a network you trust, and
+stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
+2026-11-14): refused until allowed, then recorded; refused again after
+`reqcove lan deny`.
 
 ## Other processes on this computer
 

@@ -13,14 +13,51 @@ import (
 )
 
 // setupHome is a temporary HOME (the real config and skill are never
-// touched) with ~/.claude (an agent init finds) and no uvx on PATH.
+// touched) with ~/.claude (an agent init finds) and no uvx on PATH; reqcove
+// on PATH is this binary.
 func setupHome(t *testing.T) (home, config string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", selfOnPath(t, t.TempDir()))
 	os.Mkdir(filepath.Join(home, ".claude"), 0o700)
 	return home, defaultConfig()
+}
+
+// selfOnPath links dir/reqcove to this binary, and returns dir.
+func selfOnPath(t *testing.T, dir string) string {
+	t.Helper()
+	exe, _ := os.Executable()
+	if err := os.Symlink(exe, filepath.Join(dir, "reqcove")); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// When reqcove on PATH is not this binary (none, or another file), the
+// commands printed name this one by its path.
+func TestSetupNotOnPath(t *testing.T) {
+	exe, _ := os.Executable()
+	exe, _ = filepath.EvalSymlinks(exe)
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "reqcove"), []byte("#!/bin/sh\n"), 0o755)
+	for _, path := range []string{t.TempDir(), other} {
+		_, config := setupHome(t)
+		t.Setenv("PATH", path)
+		out, err := runSetup(t, "phone\na.example.com\nn\n", config, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		self := shellWord(exe)
+		for _, want := range []string{"the command " + self + " mcp", "claude mcp add reqcove -- " + self + " mcp", self + " service install", self + " run --config", "`" + self + " links`", "`" + self + " status`", self + " run --lan"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("PATH %s: no %q in:\n%s", path, want, out)
+			}
+		}
+		if strings.Contains(out, "-- reqcove mcp") || strings.Contains(out, "`reqcove ") || strings.Contains(out, ": reqcove ") {
+			t.Errorf("PATH %s: reqcove as a command:\n%s", path, out)
+		}
+	}
 }
 
 func runSetup(t *testing.T, input, config string, brew bool) (string, error) {
