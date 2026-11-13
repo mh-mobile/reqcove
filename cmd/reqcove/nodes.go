@@ -178,18 +178,26 @@ func shellWord(s string) string {
 // directory that holds other files and was never reqcove's (no lock file), so
 // that neither its chmod nor `cleanup --delete-state` reaches someone else's files.
 func openState(dir string) (func(), error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := claimState(dir); err != nil {
 		return nil, err
+	}
+	return lockState(dir)
+}
+
+// claimState makes dir (0700) reqcove's state directory with its marker,
+// refusing a directory that holds other files and was never reqcove's.
+func claimState(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
 		switch e.Name() {
 		case ".DS_Store", // Finder leaves it in folders it opened
-			lanAllowedFile, // `reqcove lan allow` before the first run
-			serviceLog:     // launchd makes it before reqcove service install's first run
+			lanAllowedFile: // `reqcove lan allow` before the first run
 			return true
 		case "mitmproxy", caCopies:
 			// ~/.reqcove before its first run: a CA copied from another computer
@@ -199,17 +207,14 @@ func openState(dir string) (func(), error) {
 		return false
 	})
 	if len(ents) > 0 && !isState(dir) {
-		return nil, fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
+		return fmt.Errorf("%s holds other files and is not a reqcove state directory; pick an empty or new --state", dir)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, err
+		return err
 	}
 	// The marker is what makes a directory reqcove's (for this check and for
 	// cleanup), not a file with a name as common as "lock".
-	if err := os.WriteFile(filepath.Join(dir, stateMarker), []byte("reqcove state directory\n"), 0o600); err != nil {
-		return nil, err
-	}
-	return lockState(dir)
+	return os.WriteFile(filepath.Join(dir, stateMarker), []byte("reqcove state directory\n"), 0o600)
 }
 
 const stateMarker = ".reqcove-state"

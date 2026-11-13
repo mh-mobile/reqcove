@@ -122,6 +122,7 @@ chmod 600 ~/.config/reqcove/config
 reqcove service install       # --config FILE for another file, --state DIR for another state
 reqcove links                 # the login URL, the first time (after a minute)
 reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
+reqcove service restart       # after it ended, or after a change to the file
 reqcove service uninstall     # stops it and removes the file
 ```
 
@@ -129,15 +130,23 @@ reqcove service uninstall     # stops it and removes the file
   read as for `brew services` (above). Install refuses a missing file (saying
   how to write one), one that is not yours or that others can read, and
   `--no-redact`, `--web`, `--rules-reload` or `--lan` in it; `--allow-hosts
-  '*'` there is refused when `run` starts (the service then ends once).
+  '*'` there is refused when `run` starts (the service then ends once). A
+  `--state` in the file is the state directory (in full or from `~/`). The
+  state directory must be empty, new or reqcove's (as for `run`).
+- Once `run` ends (an error, a refused file, `kill`), it stays down until the
+  next login: `reqcove service restart` starts it again (`launchctl kickstart
+  -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
+  reqcove`; not tried).
 - Refused while Homebrew's service is there (its file or loaded:
   `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
   `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
   Homebrew's code, not tried): two services would fight over the state
-  directory. Installed already: `reqcove service uninstall`, then
-  install again (also after moving or updating the binary).
-- The log: `service.log` in the state directory on macOS, `journalctl --user
-  -u reqcove` on Linux. It prints no login URL or token, nor does
+  directory. Installed already: `reqcove service restart` to start it again;
+  `reqcove service uninstall`, then install again, to change its flags on
+  the command line or after moving the binary.
+- The log: `service.log` in the state directory on macOS (not rotated:
+  truncate it now and then, as `mitmproxy.log`), `journalctl --user -u
+  reqcove` on Linux. It prints no login URL or token, nor does
   `service install`: `reqcove links` does, in your terminal.
 - `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
   `/opt/homebrew/bin`, `/usr/local/bin` and the system's; elsewhere, give
@@ -150,7 +159,7 @@ reqcove service uninstall     # stops it and removes the file
 Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
 the refusals and the launchctl and systemctl commands it would run (unit
 tests, which never run them). Not tried yet: a real install, start at
-login and uninstall, on macOS or on Linux.
+login, restart and uninstall, on macOS or on Linux.
 
 ### Undo everything (`reqcove cleanup`)
 

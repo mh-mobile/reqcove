@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // `reqcove service install`: run at login without Homebrew, as `brew services`
@@ -50,7 +52,7 @@ func defaultConfig() string {
 }
 
 func service(_ context.Context, args []string) error {
-	const use = "reqcove service install [--config FILE] [--state DIR] | service uninstall"
+	const use = "reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall"
 	fls := flag.NewFlagSet("service", flag.ExitOnError)
 	config := fls.String("config", defaultConfig(), "the `FILE` of run's flags, one a line, yours and readable by you only (chmod 600)")
 	state := fls.String("state", defaultState(), "state directory")
@@ -68,6 +70,8 @@ func service(_ context.Context, args []string) error {
 		return serviceInstall(runtime.GOOS, *config, *state, given)
 	case sub == "uninstall" && fls.NFlag() == 0:
 		return serviceUninstall(runtime.GOOS)
+	case sub == "restart" && fls.NFlag() == 0:
+		return serviceRestart(runtime.GOOS)
 	}
 	return fmt.Errorf("usage: %s", use)
 }
@@ -92,7 +96,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		return err
 	}
 	if _, err := os.Stat(file); err == nil {
-		return fmt.Errorf("installed already (%s): reqcove service uninstall, then install again", file)
+		return fmt.Errorf("installed already (%s): reqcove service restart starts it again; to change it, reqcove service uninstall, then install again", file)
 	}
 	if err := brewService(goos); err != nil {
 		return err
@@ -100,8 +104,15 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if config, err = filepath.Abs(config); err != nil {
 		return err
 	}
-	if err := checkConfig(config); err != nil {
+	fileState, err := checkConfig(config)
+	if err != nil {
 		return err
+	}
+	if !stateGiven && fileState != "" { // run takes it from the file: the log and the hints too
+		if !filepath.IsAbs(fileState) {
+			return fmt.Errorf("--config %s: --state %s: give it in full or from ~/ (a service does not start in this directory)", config, fileState)
+		}
+		state = fileState
 	}
 	if state, err = filepath.Abs(state); err != nil {
 		return err
@@ -118,19 +129,18 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		argv = append(argv, "--state", state)
 	}
 	path, uvx := servicePath()
-	for _, a := range append(argv, path) {
-		if strings.ContainsAny(a, "\n\r") { // would end a unit's line
-			return fmt.Errorf("a path with a line break: %q", a)
-		}
+	if err := serviceArgs(goos, argv, path); err != nil {
+		return err
+	}
+	// Refused as run would refuse it at each start; made reqcove's now, as
+	// launchd opens the log in it (making no directory) before run starts.
+	if err := claimState(state); err != nil {
+		return err
 	}
 	var body string
 	var start [][]string
 	uid := strconv.Itoa(os.Getuid())
 	if goos == "darwin" {
-		// launchd opens the log before run starts, but makes no directory.
-		if err := os.MkdirAll(state, 0o700); err != nil {
-			return err
-		}
 		body = launchAgent(argv, path, filepath.Join(state, serviceLog))
 		start = [][]string{{"launchctl", "bootstrap", "gui/" + uid, file}}
 	} else {
@@ -162,7 +172,23 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if !uvx {
 		fmt.Println("note: uvx is not on this PATH; give --uvx /full/path/uvx in the config file, or install uv")
 	}
-	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; reqcove service uninstall stops and removes it\n", withState("reqcove links", state), withState("reqcove status", state))
+	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; reqcove service restart after it ended; reqcove service uninstall stops and removes it\n", withState("reqcove links", state), withState("reqcove status", state))
+	return nil
+}
+
+// serviceArgs refuses what the files cannot carry: a control character
+// (a line break would end a unit's line) or text that is not UTF-8 (the plist
+// would get U+FFFD in its place), and on Linux a $ in the binary's path
+// (systemd neither expands nor unescapes it there).
+func serviceArgs(goos string, argv []string, path string) error {
+	for _, a := range append(argv, path) {
+		if !utf8.ValidString(a) || strings.ContainsFunc(a, unicode.IsControl) {
+			return fmt.Errorf("a path with a control character, or not UTF-8: %q", a)
+		}
+	}
+	if goos == "linux" && strings.Contains(argv[0], "$") {
+		return fmt.Errorf("systemd cannot run a binary whose path has a $ (%s): move it", argv[0])
+	}
 	return nil
 }
 
@@ -190,21 +216,31 @@ func brewService(goos string) error {
 }
 
 // checkConfig reads the file as run will, and refuses the flags run refuses
-// there, so that the service does not end at its first start.
-func checkConfig(path string) error {
+// there, so that the service does not end at its first start. It returns the
+// file's --state, if any (the last one, as run takes it).
+func checkConfig(path string) (state string, err error) {
 	words, _, err := readConfig(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("no %s: write run's flags in it, one a line, such as --device iphone and --allow-hosts api.example.com; then chmod 600 %s (mkdir -p %s first)", path, shellWord(path), shellWord(filepath.Dir(path)))
+		return "", fmt.Errorf("no %s: write run's flags in it, one a line, such as --device iphone and --allow-hosts api.example.com; then chmod 600 %s (mkdir -p %s first)", path, shellWord(path), shellWord(filepath.Dir(path)))
 	} else if err != nil {
-		return err
+		return "", err
 	}
-	for _, w := range words {
-		name, _, _ := strings.Cut(strings.TrimLeft(w, "-"), "=")
-		if why, ok := configOnlyOnCommandLine[name]; ok && strings.HasPrefix(w, "-") {
-			return fmt.Errorf("--config %s: --%s only on the command line (%s)", path, name, why)
+	for i, w := range words {
+		if !strings.HasPrefix(w, "-") {
+			continue
+		}
+		name, value, hasValue := strings.Cut(strings.TrimLeft(w, "-"), "=")
+		if why, ok := configOnlyOnCommandLine[name]; ok {
+			return "", fmt.Errorf("--config %s: --%s only on the command line (%s)", path, name, why)
+		}
+		if name == "state" {
+			if !hasValue && i+1 < len(words) {
+				value = words[i+1]
+			}
+			state = value
 		}
 	}
-	return nil
+	return state, nil
 }
 
 // servicePath is the PATH the service gets, so that run finds uvx: uvx's
@@ -294,6 +330,11 @@ func serviceUninstall(goos string) error {
 		return err
 	}
 	if _, err := os.Stat(file); err != nil {
+		// Its file removed by hand: launchd may still have it.
+		if goos == "darwin" && serviceCtl("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+serviceLabel) == nil {
+			fmt.Printf("stopped %s (its file %s was gone)\n", serviceLabel, file)
+			return nil
+		}
 		return fmt.Errorf("not installed (no %s)", file)
 	}
 	if goos == "darwin" {
@@ -316,4 +357,19 @@ func serviceUninstall(goos string) error {
 	}
 	fmt.Printf("stopped and removed %s\n", file)
 	return nil
+}
+
+// serviceRestart starts the service again (it is not restarted when it ends).
+func serviceRestart(goos string) error {
+	file, err := serviceFile(goos)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(file); err != nil {
+		return fmt.Errorf("not installed (no %s): reqcove service install", file)
+	}
+	if goos == "darwin" {
+		return serviceCtl("launchctl", "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+serviceLabel)
+	}
+	return serviceCtl("systemctl", "--user", "restart", serviceUnit)
 }

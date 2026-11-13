@@ -69,17 +69,19 @@ chmod 600 ~/.config/reqcove/config
 reqcove service install       # 別のファイルなら --config FILE、別の状態ディレクトリなら --state DIR
 reqcove links                 # 初回はログイン用の URL（1 分ほど待つ）
 reqcove status                # 「service: io.github.mh-mobile.reqcove」と出る（Linux では reqcove.service）
+reqcove service restart       # 終わったあとや、ファイルを変えたあとに起動し直す
 reqcove service uninstall     # 止めて、ファイルを消す
 ```
 
-- ファイルは、`--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan` が書いてある、のどれかなら断ります。`--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。
-- Homebrew のサービスがあるとき（ファイルがあるか、読み込まれている：`sh.brew.reqcove`、`homebrew.mxcl.reqcove`。Linux では `sh.brew.reqcove.service`、`homebrew.reqcove.service`。Linux の名前は Homebrew のコードを読んだもので、試していません）は断ります。2 つのサービスが同じ状態ディレクトリを取り合うためです。インストール済みなら、`reqcove service uninstall` のあとでもう一度インストールしてください（バイナリを動かしたり更新したりしたあとも）。
-- ログは、macOS では状態ディレクトリの `service.log`、Linux では `journalctl --user -u reqcove` です。ログイン用の URL やトークンは入りません。`service install` も表示しません。それらは `reqcove links` が自分のターミナルに表示します。
+- ファイルは、`--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan` が書いてある、のどれかなら断ります。`--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。ファイルに `--state` があれば、それが状態ディレクトリです（フルパスか `~/` から）。状態ディレクトリは、空か、新しいか、reqcove のものに限ります（`run` と同じ）。
+- `run` が終わると（エラー、断られたファイル、`kill`）、次のログインまで止まったままです。`reqcove service restart` で起動し直せます（`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user restart reqcove` を実行します。試していません）。
+- Homebrew のサービスがあるとき（ファイルがあるか、読み込まれている：`sh.brew.reqcove`、`homebrew.mxcl.reqcove`。Linux では `sh.brew.reqcove.service`、`homebrew.reqcove.service`。Linux の名前は Homebrew のコードを読んだもので、試していません）は断ります。2 つのサービスが同じ状態ディレクトリを取り合うためです。インストール済みなら、起動し直すには `reqcove service restart`。コマンドラインのフラグを変えるときやバイナリを動かしたあとは、`reqcove service uninstall` のあとでもう一度インストールしてください。
+- ログは、macOS では状態ディレクトリの `service.log`（ローテーションしないので、`mitmproxy.log` と同じく、ときどき空にしてください）、Linux では `journalctl --user -u reqcove` です。ログイン用の URL やトークンは入りません。`service install` も表示しません。それらは `reqcove links` が自分のターミナルに表示します。
 - `PATH` は、インストールしたときの uvx のディレクトリ、`~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、システムのものの順です。ほかの場所にあるなら、ファイルに `--uvx /full/path/uvx` と書いてください。
 - 次のログインまで止めるには、`launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove`。`reqcove status` がどちらかを表示します。
 - Linux：ユーザーユニットはログインしたときに起動します。ログインする前の起動時に動かすには `loginctl enable-linger $USER` が要ります（systemd のドキュメントによる。試していません）。
 
-確認状況：書き出すファイル（空白、`&`、`<`、`%`、`$`、引用符を含むパス）、断る場合、実行する launchctl と systemctl のコマンドをユニットテストで確認しました（テストでは実行しません）。実際のインストール、ログイン時の起動、アンインストールは、macOS でも Linux でもまだ試していません。
+確認状況：書き出すファイル（空白、`&`、`<`、`%`、`$`、引用符を含むパス）、断る場合、実行する launchctl と systemctl のコマンドをユニットテストで確認しました（テストでは実行しません）。実際のインストール、ログイン時の起動、起動し直し、アンインストールは、macOS でも Linux でもまだ試していません。
 
 ### 元に戻す（`reqcove cleanup`）
 

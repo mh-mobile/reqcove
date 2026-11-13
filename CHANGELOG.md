@@ -4,7 +4,7 @@
 
 ### For people
 
-- `reqcove service install` (`service uninstall`): `run` at login without
+- `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
   Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
   user unit (Linux) running `run --config ~/.config/reqcove/config` (or
   `--config FILE`); the log in the state directory's `service.log` (macOS) or

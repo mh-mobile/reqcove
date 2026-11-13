@@ -20,16 +20,17 @@ func init() {
 	serviceCtl = func(args ...string) error { panic("serviceCtl without fakeCtl: " + strings.Join(args, " ")) }
 }
 
-// fakeCtl records the commands; launchctl print and systemctl is-active say
-// whether Homebrew's service is loaded, bootstrap and enable return start.
-func fakeCtl(t *testing.T, brewLoaded bool, start error) *[][]string {
+// fakeCtl records the commands; launchctl print and bootout and systemctl
+// is-active succeed when loaded (Homebrew's service, or ours without its
+// file), bootstrap and enable return start.
+func fakeCtl(t *testing.T, loaded bool, start error) *[][]string {
 	var got [][]string
 	old := serviceCtl
 	serviceCtl = func(args ...string) error {
 		got = append(got, args)
 		switch {
-		case slices.Contains(args, "print") || slices.Contains(args, "is-active"):
-			if !brewLoaded {
+		case slices.Contains(args, "print") || slices.Contains(args, "is-active") || slices.Contains(args, "bootout"):
+			if !loaded {
 				return errors.New("not loaded")
 			}
 		case slices.Contains(args, "bootstrap") || slices.Contains(args, "enable"):
@@ -218,7 +219,19 @@ func TestServiceInstallRefuses(t *testing.T) {
 		nl := filepath.Join(home, "a\nExecStartPre=x")
 		os.MkdirAll(nl, 0o700)
 		os.WriteFile(filepath.Join(nl, "config"), []byte("--device x\n"), 0o600)
-		check("newline", filepath.Join(nl, "config"), "line break", false, nil)
+		check("newline", filepath.Join(nl, "config"), "control character", false, nil)
+		// A directory with other files, never reqcove's: run would refuse it at each start.
+		proj := filepath.Join(home, "proj")
+		os.MkdirAll(proj, 0o755)
+		os.WriteFile(filepath.Join(proj, "main.go"), nil, 0o644)
+		got := fakeCtl(t, false, nil)
+		if err := serviceInstall(goos, config, proj, true); err == nil || !strings.Contains(err.Error(), "not a reqcove state directory") || len(*got) > 2 {
+			t.Errorf("%s other files: %v %q", goos, err, *got)
+		}
+		// A relative --state in the file: the service starts elsewhere.
+		os.WriteFile(config, []byte("--device x\n--state rel\n"), 0o600)
+		check("relative --state", config, "--state rel: give it in full", false, nil)
+		os.WriteFile(config, []byte("--device x\n"), 0o600)
 		// Starting fails: the file goes, so install can be tried again.
 		check("start fails", config, "no session", false, errors.New("no session"))
 	}
@@ -227,14 +240,34 @@ func TestServiceInstallRefuses(t *testing.T) {
 func TestServiceUninstall(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
 		_, config := serviceHome(t, "cfg")
-		got := fakeCtl(t, false, nil)
+		fakeCtl(t, false, nil)
 		if err := serviceUninstall(goos); err == nil || !strings.Contains(err.Error(), "not installed") {
 			t.Errorf("%s none: %v", goos, err)
 		}
+		if err := serviceRestart(goos); err == nil || !strings.Contains(err.Error(), "not installed") {
+			t.Errorf("%s restart none: %v", goos, err)
+		}
+		// Its file removed by hand, still loaded: launchd's job is stopped.
+		fakeCtl(t, true, nil)
+		if err := serviceUninstall(goos); (err == nil) != (goos == "darwin") {
+			t.Errorf("%s none but loaded: %v", goos, err)
+		}
+		got := fakeCtl(t, false, nil)
 		if err := serviceInstall(goos, config, defaultState(), false); err != nil {
 			t.Fatal(err)
 		}
 		file, _ := serviceFile(goos)
+		*got = nil
+		if err := serviceRestart(goos); err != nil {
+			t.Fatal(err)
+		}
+		restart := []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/" + serviceLabel}
+		if goos == "linux" {
+			restart = []string{"systemctl", "--user", "restart", "reqcove.service"}
+		}
+		if len(*got) != 1 || !slices.Equal((*got)[0], restart) {
+			t.Errorf("%s restart: %q", goos, *got)
+		}
 		*got = nil
 		if err := serviceUninstall(goos); err != nil {
 			t.Fatal(err)
@@ -276,13 +309,50 @@ func TestStatusServiceInstalled(t *testing.T) {
 	}
 }
 
-// launchd makes service.log before the first run: the state is still taken.
-func TestOpenStateServiceLog(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, serviceLog), nil, 0o644)
-	unlock, err := openState(dir)
+// install makes the state reqcove's before launchd puts service.log in it;
+// a directory holding only a service.log is not taken for one.
+func TestServiceState(t *testing.T) {
+	stray := t.TempDir()
+	os.WriteFile(filepath.Join(stray, serviceLog), nil, 0o644)
+	if _, err := openState(stray); err == nil {
+		t.Error("a stray service.log taken for a state")
+	}
+	home, config := serviceHome(t, "cfg")
+	os.WriteFile(config, []byte("--device x\n--state ~/svc\n"), 0o600) // run takes the file's --state
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, defaultState(), false); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "svc")
+	s := plistStrings(t, filepath.Join(home, "Library/LaunchAgents", serviceLabel+".plist"))
+	if slices.Contains(s, "--state") || s[len(s)-1] != filepath.Join(state, serviceLog) {
+		t.Errorf("the file's --state: %q", s)
+	}
+	os.WriteFile(filepath.Join(state, serviceLog), nil, 0o644) // as launchd does
+	unlock, err := openState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
 	unlock()
+}
+
+// What the files cannot carry.
+func TestServiceArgs(t *testing.T) {
+	for _, c := range []struct {
+		goos string
+		argv []string
+		ok   bool
+	}{
+		{"darwin", []string{"/a b/&<x>/reqcove", "run", "--config", "/50% $x"}, true},
+		{"darwin", []string{"/bin/reqcove", "run", "--config", "/a\xffb"}, false},
+		{"darwin", []string{"/bin/reqcove", "run", "--config", "/a\x01b"}, false},
+		{"linux", []string{"/bin/reqcove", "run", "--config", "/a\nExecStartPre=x"}, false},
+		{"linux", []string{"/opt/$x/reqcove", "run"}, false},
+		{"darwin", []string{"/opt/$x/reqcove", "run"}, true},
+		{"linux", []string{"/bin/reqcove", "run", "--config", "/$x"}, true},
+	} {
+		if err := serviceArgs(c.goos, c.argv, "/usr/bin"); (err == nil) != c.ok {
+			t.Errorf("%s %q: %v", c.goos, c.argv, err)
+		}
+	}
 }

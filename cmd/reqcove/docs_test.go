@@ -194,8 +194,8 @@ func parseDocumented(words []string) error {
 		args = args[n:]
 	}
 	if words[0] == "service" { // service install: its subcommand comes first
-		if len(args) == 0 || !slices.Contains([]string{"install", "uninstall"}, args[0]) {
-			return fmt.Errorf("service takes install or uninstall, not %q", args)
+		if len(args) == 0 || !slices.Contains([]string{"install", "restart", "uninstall"}, args[0]) {
+			return fmt.Errorf("service takes install, restart or uninstall, not %q", args)
 		}
 		args = args[1:]
 	}
