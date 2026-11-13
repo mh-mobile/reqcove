@@ -275,6 +275,9 @@ func harEntry(v capture.FlowView) harEntryOut {
 	if v.Mocked {
 		notes = append(notes, "answered by a reqcove mock rule, not the server")
 	}
+	if v.Preset != "" {
+		notes = append(notes, "the mock preset "+v.Preset+", turned on by an agent")
+	}
 	for _, r := range v.Rewrites {
 		notes = append(notes, "rule: "+r)
 	}

@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.5.
+come from reading code rather than from a test say so. It describes v0.6.
 
 ## Trust
 
@@ -23,8 +23,10 @@ in the container: a flaw there reaches the container (the records, the CA's key
 in its volume), not the rest of the user's files. The image has no shell or
 package manager and runs as a user of its own, not root. In exchange, whoever
 can use the Docker daemon's socket can read the volume, the CA's key included,
-and `docker logs` keeps the login URL, the `--ui`/`--web` links and the
-`--mcp-http` token until the container is removed. `reqcove mcp` runs with
+and, when the container is given a terminal (`docker run -t`), `docker logs`
+keeps the login URL, the `--ui`/`--web` links and the `--mcp-http` token until
+the container is removed (without one, `run` names `reqcove links` in their
+place). `reqcove mcp` runs with
 `--log-driver none`, so the tools' answers are not logged. Checked by
 `scripts/container-smoke.sh` (the state directory's owner and mode, no
 network needed), not by an attack.
@@ -262,12 +264,13 @@ login (from reading code).
 
 ## Prompt injection
 
-Reqcove's tools only read, but an agent that reads them may also hold other
+Reqcove's tools read (the one exception, [mock presets](#mock-presets), turns
+on only what you wrote), but an agent that reads them may also hold other
 tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's tools without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_mock`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -292,8 +295,71 @@ host it can name another allowed one, and the record shows that one (the
 request still goes where the connection went). User-Agents in lists and summaries
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
-The MCP tools only read; nothing an agent calls changes traffic. (`--rules` are
-yours, from a file, at start.)
+The MCP tools read, with one exception: an agent can turn on, for at most 5
+minutes each time (no cap on turning it on again), a mock you marked as a
+preset ([Mock presets](#mock-presets)). No tool
+writes or changes a rule; with no presets, nothing an agent calls changes
+traffic. (`--rules` are yours, from a file, at start.)
+
+## A flags file (`--config`)
+
+`run --config FILE` (for `brew services`) takes run's flags from a file: what
+can write that file decides the next start's flags. So it must be yours and
+readable by you only (refused otherwise; it may hold `--mask-values` patterns),
+errors name its lines, never a value, and the flags that take masking off,
+show traffic unmasked, record every site or let a file change where requests
+go while running stay on the command line: `--no-redact`, `--web`,
+`--allow-hosts '*'` (also through `@FILE`) and `--rules-reload` are refused in
+it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+
+## Mock presets
+
+A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
+turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
+Writing a preset is your consent that an agent may turn it on; there is no
+switch at start. The skill and the server's instructions tell an agent to write
+`preset:` only when you ask in the conversation, as any rule, never because of
+what the records say. An agent that writes a preset when asked (with
+`--rules-reload`) can turn it on at once: the request in the conversation is
+the consent then. Whether a model keeps to that is not something a test can
+show.
+
+What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
+client, or a sandboxed one) can now change what the device gets, at the moment
+it chooses and, by calling again, for as long as it keeps calling. Text a site
+wrote into the records can try to steer it into that. What it can turn on is
+only what you wrote: no new content, target or host, and nothing new leaves
+this computer. The worst case: every preset kept on all the time, each
+answering in the site's name what you wrote (a mock of an HTML page on an
+allowed host runs in Safari with that host's cookies, as any mock does).
+
+- Bounds, in Reqcove and again in mitmproxy's addon: at most 5 minutes each
+  time, and, with `times`, at most 20 requests; no cap on turning one on again.
+  Any matching request uses a count, whoever sent it.
+- Only on this computer: the tools are on `run`'s socket and `reqcove mcp`;
+  `--mcp-http` has its own server without them (a test of the two servers
+  `run` builds). The addon takes
+  requests on its own socket in the state directory (0600) only with the
+  secret `run` gave it (a test).
+- `reqcove mcp` never sends a write again after its connection to `run`
+  dropped mid-call (a test): it says it may or may not have taken effect.
+- The write tools are not marked read-only, so a client that asks before
+  other tools asks before them. A v0.5 user who allowed `"mcp__reqcove"`
+  wholesale gets them allowed without a prompt: allow the read tools by name.
+- The skill and the server's instructions tell agents to turn one on only for
+  a test the user asked for in the conversation, never because of what the
+  records or a preset's description say, and to add `preset:` to a rules file
+  only when the user asks. Whether a model keeps to that is not something a
+  test can show.
+- Visible: `run` logs each preset an agent turns on or off; `reqcove status`
+  and the `status` tool list the ones on (or say mitmproxy did not answer); a
+  flow a preset answered says `preset: NAME`. With `--rules-reload` a changed
+  rules file turns them all off, as does a restart of mitmproxy or of `run`.
+- An end is checked on two clocks, so a computer that slept past it does not
+  leave one on (a test). One answer already waiting out its `delay_ms` still
+  goes out after the preset is turned off.
+- `list_mock_presets` gives what each matches and its status, delay or fault,
+  never its body or header values.
 
 ## Rules (`--rules`)
 
@@ -405,8 +471,8 @@ MCP tools return, masked the same way. Who can read it (each a test):
   shown as it is, not indented (indenting deep nesting takes memory that grows
   with the square of the depth).
 
-The token appears only in `run`'s terminal, as the login URL does: never in the
-MCP tools.
+The token appears only on `run`'s terminal and through `reqcove links`, as the
+login URL does: never in a log line or the MCP tools.
 
 ## mitmweb (`--web`)
 
@@ -416,9 +482,10 @@ again) and passed through a 0600 file, never the command line. A link with it
 (`?token=`) opened by a browser through the node is answered, once mitmweb
 accepts it, with a redirect to the same URL without it (a test, with a stand-in
 for mitmweb), so the password does not stay in the address bar; whether
-Safari's history keeps the first URL is not checked. `run` prints the links with
-the tokens on its standard error: in the terminal's scrollback, and in a file if
-you send it there, they stay valid until the token files are deleted. mitmweb's
+Safari's history keeps the first URL is not checked. On a terminal `run` prints
+the links with the tokens (they stay in its scrollback, valid until the token
+files are deleted); off one it prints none. `reqcove links` prints them again,
+from `links` (0600) in the state directory. mitmweb's
 cookie does not outlast its restart (it signs it with a key made at each start,
 from reading its code), so after one the link is needed again. The node also relays
 its port 8081 to it for your own devices on the tailnet (the same user, untagged:
@@ -426,7 +493,7 @@ not a `--device` device of another user, nor anyone else; checked when a
 connection opens and on every request, by the node's name or address in `Host`).
 The password still guards it, and it gives what it gives on this computer: with
 it, mitmweb's options can be changed (scripts included), which runs code on this
-computer. The link with the password is printed in `run`'s terminal only. A phone on the
+computer. The link with the password is printed on `run`'s terminal and by `reqcove links` only. A phone on the
 Remote Proxy reaches it the same way (its requests and WebSocket tunnels to the
 node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
 open stays open if the device stops counting as yours. Tried from an iPhone on
@@ -453,14 +520,15 @@ own devices on the tailnet only (the same user as reqcove's node, neither
 tagged: checked when a connection opens and on every request), asked by the node's name or address in
 `Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
 state directory (0600; compared in constant time). Requests from a browser page
-of another origin are refused. The token is printed in `run`'s terminal only (in
-a container, `docker logs` keeps it), never by `reqcove status` or the tools:
+of another origin are refused. The token is printed on `run`'s terminal and by `reqcove links` only (in
+a container run with `-t`, `docker logs` keeps it), never in a log line, by `reqcove status` or the tools:
 agents may run those. On a personal tailnet an agent's device joined through
 Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp`, and give the same masked records.
+The tools are the same as over `reqcove mcp` but the mock preset ones, which
+`--mcp-http`'s own server does not have (a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets
@@ -591,9 +659,34 @@ What it does not catch:
 ## The login URL
 
 While the node is not logged in, `reqcove run` prints a login URL. Whoever opens it
-first puts this node in their own tailnet, so it is printed in `run`'s terminal
+first puts this node in their own tailnet, so it is printed on `run`'s terminal
 only: the `status` tool, and with it the agent and its model provider, says where
 to find it but does not carry it.
+
+- `run`'s log lines do not carry it, nor the `--ui`, `--web`, `--mcp-http` tokens:
+  every line `run` logs (and the error it exits with) goes through one filter that replaces the tokens and any URL shaped
+  as a control server's login URL (Tailscale's `/a/<hex>`, Headscale's
+  `/register/…` and `/register?key=…`), and the
+  login URL itself once `run` has seen it. Under `--verbose` that covers tsnet's
+  own lines, which print it before `run` learns it (a test reads them from a test
+  control server). The filter knows those shapes only: a control server whose
+  login URL has another shape is masked from `run`'s first poll on (within 3 s).
+- Off a terminal (a service, `docker logs` without `-t`, an agent's shell), `run`
+  prints neither the URL nor the links, only that `reqcove links` prints them.
+- `login-url` (while login is pending) and `links` (the ones with tokens, once
+  `run` is ready) are kept in the state directory, 0600, and removed when `run`
+  starts and when it stops (after a crash, until the next start: `reqcove links`
+  does not check that `run` is up). 0600 keeps other users out, not a program running as you:
+  an agent with a shell can read them, as it can the node's key, the tokens and
+  the CA's key in the same directory. tsnet also keeps its own lines, the login
+  URL among them, in a buffer file there (`tsnet/tailscaled.log*.txt`, 0600),
+  also without `--verbose` (from reading code).
+- `reqcove links` refuses when its output is not a terminal: a help against an
+  agent running it, not a guarantee (a program can give it a terminal). The
+  skill and the server's instructions tell agents never to run it.
+- mitmweb's server logs a failed request's URL, `?token=` included, into
+  `mitmproxy.log`: the addon masks the token there first (checked by the
+  mitmweb E2E test).
 
 ## Logs to Tailscale
 

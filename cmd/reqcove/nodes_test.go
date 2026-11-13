@@ -283,7 +283,7 @@ func TestCommandsCarryState(t *testing.T) {
 	if got := withState("reqcove status", defaultState()); got != "reqcove status" {
 		t.Errorf("default: %q", got)
 	}
-	if got := readyBlock(map[string]string{"n1": "iphone"}, "", "", "", "", "/x/.reqcove-b", nil); !strings.Contains(got, "`reqcove status --state /x/.reqcove-b` says") {
+	if got := readyBlock(map[string]string{"n1": "iphone"}, "", "", "", "", "/x/.reqcove-b", nil, true, nil); !strings.Contains(got, "`reqcove status --state /x/.reqcove-b` says") {
 		t.Errorf("ready block:\n%s", got)
 	}
 	other := filepath.Join(t.TempDir(), ".reqcove-b")

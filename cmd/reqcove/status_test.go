@@ -50,7 +50,7 @@ func TestNextSteps(t *testing.T) {
 		want    []string // substrings, in order; none: no steps
 	}{
 		{"all set", ok, ready, allow, nil, nil},
-		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"log in: open https://login.example/a/1"}},
+		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"`reqcove links` prints it"}},
 		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
 		// Just after start the key looks unsigned until the netmap is checked: no step yet.
 		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
@@ -293,7 +293,7 @@ func TestStatusOutHidesLoginURL(t *testing.T) {
 	if strings.Contains(string(b), "S3CRET") || strings.Contains(string(b), "login.tailscale.com") {
 		t.Errorf("login URL in the status tool: %s", b)
 	}
-	if !strings.Contains(strings.Join(out.NextSteps, "\n"), "prints in its terminal") {
+	if !strings.Contains(strings.Join(out.NextSteps, "\n"), "`reqcove links`") {
 		t.Errorf("steps do not say where to log in: %v", out.NextSteps)
 	}
 }
@@ -326,13 +326,13 @@ func TestReadyBlock(t *testing.T) {
 	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
 	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
 	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
-	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps)
+	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps, true, nil)
 	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm -- /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in:\n%s", w, got)
 		}
 	}
-	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil); strings.Contains(only, "mitm.it") {
+	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil, true, nil); strings.Contains(only, "mitm.it") {
 		t.Errorf("the CA's link with the local proxy alone (the Simulator gets it by itself):\n%s", only)
 	}
 	if strings.Contains(got, "--web:") {
@@ -341,7 +341,7 @@ func TestReadyBlock(t *testing.T) {
 	if strings.Contains(got, "--mcp-http") {
 		t.Errorf("MCP over HTTP without --mcp-http:\n%s", got)
 	}
-	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil)
+	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil, true, nil)
 	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm -- /s/mcp-token") {
 		t.Errorf("the MCP line:\n%s", withMCP)
 	}
@@ -582,7 +582,7 @@ func TestPassSuggestionKeepsRecorded(t *testing.T) {
 // TestReadyRmQuoted: the rm a ready block suggests quotes the state path: a
 // path with shell syntax in it is a path, not a command, when pasted.
 func TestReadyRmQuoted(t *testing.T) {
-	got := readyBlock(map[string]string{"local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/tmp/r-$(id) x", nil)
+	got := readyBlock(map[string]string{"local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/tmp/r-$(id) x", nil, true, nil)
 	if !strings.Contains(got, "rm -- '/tmp/r-$(id) x/ui-token'") {
 		t.Errorf("rm not quoted:\n%s", got)
 	}

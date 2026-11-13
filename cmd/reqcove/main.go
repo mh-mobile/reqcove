@@ -67,6 +67,8 @@ Usage:
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
   reqcove status     what reqcove is doing, and the next steps
+  reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
+                     terminal only (never for an agent)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
@@ -116,6 +118,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"har":     har,
 	"cleanup": func(_ context.Context, args []string) error { return cleanup(args) },
 	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
+	"links":   links,
 }
 
 // noFlags are the commands that take nothing.
@@ -146,6 +149,10 @@ func defaultState() string {
 }
 
 func run(ctx context.Context, args []string) error {
+	// Tokens and login URLs never in a log line: kept after run returns, so
+	// main's log.Fatal goes through it too.
+	red := &exitnode.Redactor{W: log.Writer()}
+	log.SetOutput(red)
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
 	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
@@ -185,12 +192,22 @@ func run(ctx context.Context, args []string) error {
 	python := fs.String("python", defaultPython, "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx (uv beside it runs the default mitmproxy from its lock, hashes checked)")
 	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
-	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token run prints", exitnode.MCPPort, exitnode.MCPPort))
+	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token reqcove links prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
+	fs.String("config", "", "a `FILE` of these flags, one a line (for brew services), read before the command line's; --no-redact, --web, --rules-reload and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	if takeFlags == nil { // the docs test reads no file
+		if path, ok, err := configFile(args); err != nil {
+			return err
+		} else if ok {
+			if err := parseConfig(fs, path, &allowSpecs); err != nil {
+				return err
+			}
+		}
+	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -325,6 +342,14 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
+	linksCmd := withState("reqcove links", *state)
+	user := newUserLinks(os.Stderr, red, *state, linksCmd)
+	defer func() { stepLinksCmd = "reqcove links" }()
+	for _, name := range []string{loginURLFile, linksFile} { // a crashed run's, and this one's at the end
+		p := filepath.Join(*state, name)
+		os.Remove(p)
+		defer os.Remove(p)
+	}
 	if err := keepNodeName(*state, hostname); err != nil {
 		return err
 	}
@@ -401,6 +426,7 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("a new token in %s", filepath.Join(*state, t.name))
 		}
 	}
+	red.Add(uiToken, webToken, mcpToken)
 	cap, err := capture.Start(ctx, capture.Config{
 		Dir: *state, Confdir: filepath.Join(*state, "mitmproxy"),
 		Uvx: *uvx, Python: *python, MitmSpec: *mitmSpec,
@@ -415,6 +441,7 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name())
 	}
 	defer cap.Stop()
+	red.Add(cap.SocksSecret)
 	s := cap.Store.Stats()
 	log.Printf("mitmproxy %v ready (Python %v, brotli %v)", s["mitmproxy"], s["python"], s["brotli"])
 	if ca := cap.CA; ca.Name != "" {
@@ -432,14 +459,22 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *rules != "" {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
+		logPresets := func(names []string) {
+			if len(names) > 0 {
+				log.Printf("mock presets (off until an agent turns one on, for at most 5 minutes): %s", strings.Join(names, ", "))
+			}
+		}
+		names, _ := s["mock_presets"].([]string)
+		logPresets(names)
 		if *rulesReload {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
-			cap.Store.SetRulesLog(func(r map[string]int, resolve []string, problem string) {
+			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
 				if problem != "" {
-					log.Printf("--rules: %s does not load (%s); the rules before it still apply", *rules, problem)
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(r))
 					return
 				}
-				log.Printf("rules from %s, again: %v", *rules, r)
+				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(r))
+				logPresets(presets)
 				if len(resolve) > 0 {
 					log.Printf("resolve: %s", strings.Join(resolve, ", "))
 				}
@@ -450,7 +485,7 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	if *web {
-		log.Printf("mitmweb on %s", cap.WebURL)
+		user.web(cap.WebURL)
 		if webLocal != exitnode.WebPort {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
@@ -468,12 +503,25 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
-	tools := mcpserver.New(cap.Store, func() mcpserver.StatusOut {
+	remoteStatus := func() mcpserver.StatusOut {
 		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
-	})
+	}
+	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
+		out := remoteStatus()
+		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
+			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
+			defer cancel()
+			if ps, err := cap.Presets(ctx); err == nil {
+				out.ActivePresets = mcpserver.PresetsView(ps, true)
+			} else {
+				out.PresetsError = err.Error()
+			}
+		}
+		return out
+	}, remoteStatus, cap)
 	var mcpHandler http.Handler
-	if *mcpHTTP {
-		mcpHandler = mcpserver.HTTP(tools, mcpToken, exitnode.Caller)
+	if *mcpHTTP { // its own server: read-only, never the preset tools
+		mcpHandler = mcpserver.HTTP(remote, mcpToken, exitnode.Caller)
 	}
 	if err := mcpserver.Serve(ctx, mcpSock, tools); err != nil {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
@@ -506,6 +554,7 @@ func run(ctx context.Context, args []string) error {
 	var gate readyGate
 	onStatus := func(s exitnode.Status) {
 		node.set(s)
+		user.status(s)
 		ip := firstIPv4(s.IPs)
 		if shown || ip == "" || !gate.ready(s) {
 			return
@@ -528,7 +577,12 @@ func run(ctx context.Context, args []string) error {
 			}
 			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
 		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, uiLink, webLink, mcpURL, mcpToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps))
+		var ca string
+		if len(devices) > 0 {
+			ca = "http://mitm.it"
+		}
+		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats())))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
@@ -578,6 +632,7 @@ func run(ctx context.Context, args []string) error {
 			MCP:        mcpHandler,
 			LocalProxy: localLn,
 			StatusCmd:  withState("reqcove status", *state),
+			LinksCmd:   linksCmd,
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})
@@ -683,7 +738,7 @@ func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 
 // notRunningMsg is what the agent's tools answer while run is not running.
 func notRunningMsg(state string) string {
-	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal and leaves it running (if it is restarting, wait a few seconds). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
+	return fmt.Sprintf("reqcove is not running (%s). Do not start it yourself: the user starts `%s` in a terminal, or its service (brew services start reqcove), and leaves it running (if it is restarting or fetching mitmproxy the first time, wait). Then call again; the records start empty after a restart.", state, withState("reqcove run …", state))
 }
 
 // tailscaleStatus is `tailscale status --json` from the Tailscale CLI, if any

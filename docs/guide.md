@@ -21,8 +21,16 @@ The four steps are in the [README](../README.md#use).
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 
-- Only `run`'s terminal shows the login URL: whoever opens it first puts the
+- The login URL, and the `--ui`, `--web` and `--mcp-http` links with their
+  tokens, are shown on `run`'s terminal only, not in its log lines (`--verbose`
+  too; the login URL by its usual shapes until `run` learns it,
+  [SECURITY](SECURITY.md#the-login-url)) or the MCP tools. Whoever opens the login URL first puts the
   node in their own tailnet ([SECURITY](SECURITY.md#the-login-url)).
+- `reqcove links` prints them again (and mitmweb's link on this computer, the
+  CA's), with QR codes, in your terminal (it refuses
+  when its output is not a terminal). Off a terminal (a service, `docker logs`),
+  `run` prints "`reqcove links` prints it" in their place. While `run` runs they
+  are kept in `login-url` and `links` (0600) in the state directory.
 - To skip the approval for new nodes, add an auto-approver to the tailnet
   policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
 
@@ -49,6 +57,65 @@ reqcove stopped there, or before its first run.
 
 Tried: a restart under a Claude Code session.
 
+### Keep it running (`brew services`)
+
+To have `run` start at login, put its flags, one a line, in a file and let
+`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
+node has no internet; turn the exit node off before it sleeps.
+
+```sh
+mkdir -p "$(brew --prefix)/etc/reqcove"
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
+chmod 600 "$(brew --prefix)/etc/reqcove/config"
+brew services start reqcove
+reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
+reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
+```
+
+- `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
+  quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home; give
+  paths in full or from `~/`, as a service starts in `/`). The
+  command line's come after them: a flag given once is the command line's, a
+  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload` and
+  `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
+  the command line. The file must be yours and readable by you only (`chmod
+  600`): it may hold `--mask-values` patterns. One `--config` only.
+- A missing or refused file ends the service once (`brew services` shows an
+  error); it is not started again in a loop. Nor is it after any other end:
+  `brew services restart reqcove` (also after `brew upgrade reqcove`).
+  Nothing is read unless named.
+- The log is `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in the
+  state directory grows too; neither is rotated (by launchd or by reqcove):
+  truncate them now and then. Neither carries a login URL or a token: `reqcove
+  links` prints them, in your terminal.
+- A `run` in your terminal on the same state finds it in use: `brew services
+  stop reqcove` first.
+- `run` keeps the Mac from idle sleep while it runs
+  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
+  from closing the lid or choosing Sleep.
+
+Linux: Homebrew's `brew services` makes a systemd unit from the same formula
+(from Homebrew's documentation, not tried; `status` names no service there).
+Without Homebrew, a systemd user unit does the same (an example, not tried):
+
+```ini
+# ~/.config/systemd/user/reqcove.service; then: systemctl --user enable --now reqcove; loginctl enable-linger $USER
+[Service]
+ExecStart=%h/.local/bin/reqcove run --config %h/.config/reqcove/config
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=default.target
+```
+
+Tried: the config file's parsing and refusals (unit tests); `brew services
+start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
+config read; an iPhone's requests recorded; no token or login URL in the log;
+`reqcove links` refused off a terminal; `links` and `login-url` gone after
+stop). Not tried yet: a start at login or after a reboot, sleep, whether
+macOS's Local Network privacy asks about a `run` not started from a terminal,
+and whether launchd's default background priority slows it.
+
 ### Undo everything (`reqcove cleanup`)
 
 `reqcove cleanup` lists the steps; with `--delete-state` it deletes the state
@@ -58,15 +125,20 @@ directory. Remove the CA's profile from the iPhone first
 ## Read the traffic with an agent
 
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
-this computer the [MCP tools](#mcp-tools). They only read, and secrets are
-masked as they arrive
+this computer the [MCP tools](#mcp-tools). They read, and secrets are
+masked as they arrive; the one change they can make is to turn on, for at most
+5 minutes each time (no cap on turning it on again), a mock you marked as a
+[preset](#presets-an-agent-can-turn-on)
+(with none, they only read; over `--mcp-http`, never)
 ([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
 `codex mcp add reqcove -- reqcove mcp` (`run` prints both).
 
-Allowing the tools: every tool is marked read-only (`readOnlyHint`), which a
-client may use to ask less (not checked with any client). Claude Code asks
-before a tool it has not been allowed; `"mcp__reqcove"` in `permissions.allow`
-of its settings allows all of Reqcove's (from Claude Code's documentation, not
+Allowing the tools: the tools that read are marked read-only (`readOnlyHint`),
+which a client may use to ask less (not checked with any client);
+`activate_mock` and `deactivate_mock` are not. Claude Code asks before a tool
+it has not been allowed. Allow the read tools by name
+(`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
+since v0.6 also allows `activate_mock` (from Claude Code's documentation, not
 tried here). Codex asks before each call
 ([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
 reads without asking, also from a `run` started with `--no-redact`; the skill
@@ -108,9 +180,11 @@ cloud computer joins your tailnet through Tailscale's OAuth apps):
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` serves the same tools over HTTP on the node, and prints the URL,
+`run` serves the same tools over HTTP on the node, but the mock preset ones
+(`list_mock_presets`, `activate_mock`, `deactivate_mock`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
-`Authorization: Bearer <token>`.
+`Authorization: Bearer <token>` (`reqcove links` prints them again; off a
+terminal, only it).
 
 - **Grok Bot**: Connect apps › Tailscale, to join your tailnet (under Tailnet
   Lock, sign its device). Then Connect apps › Add a custom connector: type
@@ -143,8 +217,8 @@ What to know:
 - Each device may call about 10 times a second; past that it gets `429` for a
   moment (`run` logs it once a minute).
 - Plain HTTP, inside the tailnet's encryption (WireGuard). In a container: the
-  same flag, no port to publish, the token in `docker logs`
-  ([container](container.md#3-the-agent)).
+  same flag, no port to publish, the token from `docker exec -it NAME reqcove
+  links` ([container](container.md#3-the-agent)).
 
 Tried: Grok Bot (status, flows, bodies; the same chat after a restart of
 `run`; `run` in a container); Claude Code (`claude -p`) and Codex
@@ -163,7 +237,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 ```
 
 `run` serves a read-only page on the node's port 80 and prints its link with a
-QR code. Scan it with the iPhone's camera: Safari opens the list, which follows
+QR code (`reqcove links` prints them again; off a terminal, only it). Scan it with the iPhone's camera: Safari opens the list, which follows
 new flows every second (split view puts it beside the app). Tap a flow for its
 headers and bodies, masked as the MCP tools return them.
 
@@ -220,7 +294,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --web
 mitmweb runs instead of mitmdump, on `http://127.0.0.1:8081` (8091-8099 while
 another run has 8081: [two addresses](several-exit-nodes.md#ports)) and, for
 your own devices on the tailnet, on the node's port 8081, with the link and QR
-code `run` prints.
+code `run` (or `reqcove links`) prints.
 
 - Nothing is masked ([SECURITY](SECURITY.md#mitmweb---web)). It shows bodies
   up to 2 MB each, and keeps the newest 10,000 flows and 256 MB of bodies.
@@ -540,6 +614,64 @@ outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
 GraphQL operation of the GitHub app mocked while its others, on the same
 connection, reached GitHub.
 
+#### Presets an agent can turn on
+
+A mock with `preset: NAME` does nothing until an agent turns it on, for at most
+5 minutes each time; it can turn it on again, with no cap
+([SECURITY](SECURITY.md#mock-presets)). So an agent can check how the app takes
+a 503, a slow answer or a dropped connection, and turn it off again, without
+editing the file. A plain mock with the same match (method, URL, operation) as
+a preset is refused at load: it would answer in its place.
+
+```yaml
+mock:
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-503             # letters, digits, . _ -; at most 64
+    description: the profile API is down   # optional, one line, at most 200 characters
+    status: 503
+  - match: {url: "https://api.example.com/v1/profile"}
+    preset: profile-slow
+    delay_ms: 8000                  # at most 30000 (URLSession's default timeout is 60 s)
+    body: '{"name":"slow"}'
+  - match: {url: "https://api.example.com/v1/feed"}
+    preset: feed-drop
+    fault: close                    # no answer: HTTP/1 closes the connection, HTTP/2 resets the stream
+```
+
+- The tools: `list_mock_presets`, `activate_mock(name, minutes, times)` (at
+  most 5 minutes, 5 if left out; with `times`, at most 20 requests, then off),
+  `deactivate_mock(name)`. Only an agent on this computer has them (`reqcove
+  mcp` and `run`'s socket); never over `--mcp-http`.
+- A preset that is on answers before other mocks; one that is off is no mock at
+  all. One preset is on per match (method, URL and operation): turning on
+  another for the same match turns the first off. Turning on one already on
+  replaces its limits.
+- Any matching request uses a count, whoever sent it (Safari, another device,
+  an app's retry). The row says `preset: NAME`; a closed one's error says a
+  mock closed it.
+- `delay_ms` and `fault: close` work in plain mocks too. `delay_ms` delays a
+  mock's answer only (an answer from the server is never delayed).
+- With `--rules-reload`, a changed file (also one that does not load) turns
+  every preset off; so does a restart of mitmproxy or of `run`. `run` logs each
+  one an agent turns on or off (not one that ends by its time or count);
+  `reqcove status` and the `status` tool show which are on.
+- One answer already waiting out its `delay_ms` still goes out after the
+  preset is turned off.
+- A preset in the file is your consent that an agent may turn it on. An
+  agent writes one only when you ask it to in the conversation (the skill and
+  the server's instructions say so), never because of what the records say;
+  with `--rules-reload` it can then turn it on at once.
+
+Tried with the E2E tests (real mitmproxy): on and off, by time and by count,
+one per match (also two GraphQL operations on one URL, each its own), a change
+of the file turning them off, refusals (an unknown name, over 5 minutes or 20
+requests, the socket without reqcove's secret), a delay on one HTTP/2 stream
+while another on the same connection is answered at once, and close over
+HTTP/1 and HTTP/2. On an iPhone (iOS 27.3, a test app over URLSession, an
+agent turning presets on over MCP): a 503 once, then the app's retry reached
+the server; an 8 s delay; a close, which CFNetwork did not retry by itself (the
+app's own retry was closed too); a 401 on login.
+
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:
 
@@ -651,6 +783,7 @@ other protocols going straight to their servers.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
+| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--allow-hosts '*'`); the file `chmod 600` |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
@@ -660,6 +793,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | | |
 |---|---|
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
+| `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
 | `reqcove mcp` | the MCP server for an agent on this computer |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
@@ -690,7 +824,10 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | whether everything is set up, and the next steps if not |
+| `status` | whether everything is set up, and the next steps if not; the mock presets turned on (`active_mock_presets`) |
+| `list_mock_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file: what each matches and answers, whether it is on, requests left, when it turns off; never bodies or header values |
+| `activate_mock` | turn a preset on, for at most 5 minutes (`minutes`) and, with `times`, at most 20 requests; returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
+| `deactivate_mock` | turn a preset off. Not over `--mcp-http` |
 
 ## Limits
 

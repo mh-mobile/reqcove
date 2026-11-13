@@ -38,11 +38,17 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 // puts this node in their own tailnet. The steps point at run's terminal instead.
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
+	service := ""
+	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
+	// homebrew.mxcl.NAME before; not a terminal another brew service started.
+	if v := os.Getenv("XPC_SERVICE_NAME"); v == "sh.brew.reqcove" || v == "homebrew.mxcl.reqcove" {
+		service = v
+	}
 	hosts := allow.Hosts
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts}
+	return mcpserver.StatusOut{Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
 }
 
 // pageSteps are the next steps the --ui page shows the device id: built from it
@@ -97,13 +103,17 @@ func localStep() string {
 	return "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password):\n" + macTrustCommand(localCA)
 }
 
+// stepLinksCmd is the `reqcove links` the steps name: run sets it to its own
+// node's (with --state).
+var stepLinksCmd = "reqcove links"
+
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
 	if node.Backend == "" {
 		steps = append(steps, "the tailnet node is starting")
 	}
-	if s := exitnode.FirstStep(node); s != "" {
+	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {
 		steps = append(steps, s)
 	}
 	if node.Backend == "Running" {
@@ -217,15 +227,21 @@ func status(ctx context.Context, args []string) error {
 		return nil
 	}
 	var out struct {
-		Node      exitnode.Status `json:"node"`
-		NextSteps []string        `json:"next_steps"`
-		Capture   map[string]any  `json:"capture"`
+		Node      exitnode.Status       `json:"node"`
+		NextSteps []string              `json:"next_steps"`
+		Capture   map[string]any        `json:"capture"`
+		Active    []mcpserver.PresetOut `json:"active_mock_presets"`
+		ActiveErr string                `json:"active_mock_presets_error"`
+		Service   string                `json:"service"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
+	if out.Service != "" {
+		fmt.Printf("  service:     %s (brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log)\n", out.Service)
+	}
 	fmt.Printf("  node:        %s %s %s\n", orDash(n.Node), strings.Join(n.IPs, " "), n.Backend)
 	fmt.Printf("  exit node:   approved=%v", n.ExitApproved)
 	if n.LockEnabled {
@@ -239,6 +255,21 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
+	if names, _ := c["mock_presets"].([]any); len(names) > 0 {
+		var on []string
+		for _, p := range out.Active {
+			s := p.Name + " until " + p.ExpiresAt
+			if p.Remaining != nil {
+				s += fmt.Sprintf(", %d requests left", *p.Remaining)
+			}
+			on = append(on, s)
+		}
+		shown := orDash(strings.Join(on, "; "))
+		if out.ActiveErr != "" {
+			shown = "unknown (" + out.ActiveErr + ")"
+		}
+		fmt.Printf("  mock presets: %d (%s); on: %s\n", len(names), joinAny(names), shown)
+	}
 	printCA(*state)
 	if len(out.NextSteps) == 0 {
 		fmt.Println("ready: turn on the exit node on the device (or set its Wi-Fi proxy) and use it")
@@ -249,6 +280,14 @@ func status(ctx context.Context, args []string) error {
 		fmt.Println("  - " + strings.ReplaceAll(s, "\n", "\n    ")) // a command on a line of its own
 	}
 	return nil
+}
+
+func joinAny(v []any) string {
+	s := make([]string, len(v))
+	for i, x := range v {
+		s[i] = fmt.Sprint(x)
+	}
+	return strings.Join(s, ", ")
 }
 
 func offlineStatus(state, uvx string) error {
