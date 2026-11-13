@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -90,7 +91,7 @@ func hash(b []byte) string {
 
 // initSkill is `reqcove init`: the skill this binary carries, into the agents'
 // skills directories.
-func initSkill(args []string) error {
+func initSkill(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	var clients []string
 	var known []string
@@ -113,7 +114,7 @@ func initSkill(args []string) error {
 		return errors.New("--print and --uninstall: one or the other")
 	}
 	if *printOnly {
-		_, err := os.Stdout.Write(skills.Reqcove)
+		_, err := w.Write(skills.Reqcove)
 		return err
 	}
 	home, err := os.UserHomeDir()
@@ -139,22 +140,22 @@ func initSkill(args []string) error {
 		state, why := stateOf(dir)
 		switch {
 		case state == skillForeign:
-			fmt.Printf("left %s alone: %s\n", shown, why)
+			fmt.Fprintf(w, "left %s alone: %s\n", shown, why)
 		case *uninstall && state == skillAbsent:
-			fmt.Printf("%s: not installed\n", shown)
+			fmt.Fprintf(w, "%s: not installed\n", shown)
 		case *uninstall:
 			os.Remove(filepath.Join(dir, "SKILL.md"))
 			os.Remove(filepath.Join(dir, skillMark))
 			os.Remove(dir) // only if empty
-			fmt.Printf("removed %s\n", shown)
+			fmt.Fprintf(w, "removed %s\n", shown)
 		case state == skillCurrent:
-			fmt.Printf("%s: up to date\n", shown)
+			fmt.Fprintf(w, "%s: up to date\n", shown)
 		default:
 			if err := writeSkill(dir); err != nil {
 				failed = append(failed, fmt.Sprintf("%s: %v", shown, err))
 				continue
 			}
-			fmt.Printf("installed %s/SKILL.md\n", shown)
+			fmt.Fprintf(w, "installed %s/SKILL.md\n", shown)
 		}
 	}
 	if len(failed) > 0 {

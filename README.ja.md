@@ -54,6 +54,14 @@ go build -o reqcove ./cmd/reqcove
 
 ## 使い方
 
+初めてのときは、ターミナルで次を実行します。
+
+```sh
+reqcove setup
+```
+
+uv があるかを確かめ、tailnet での iPhone の名前と記録するホストを聞いて、`~/.config/reqcove/config` に書きます（ファイルがすでにあれば表示し、置き換えると答えない限りそのまま残します）。「はい」と答えればエージェントの Skill を入れ、Claude Code にツールを渡すコマンドを表示し、起動のしかたを示します（`brew services`、`reqcove service install`、またはターミナルで `reqcove run --config ~/.config/reqcove/config`）。setup 自身は何も起動しません。そのあと、下の手順 2 と 3 を iPhone で行います。手で行う場合は次のとおりです。
+
 1. コンピュータ側で起動します。中継する iPhone（`tailscale status` に表示される名前）と、記録するホストを指定します。
 
    ```sh

@@ -17,6 +17,15 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 ### 初回の起動：ログインと承認
 
+`reqcove setup` が初回の手順を順に案内します。ターミナルでだけ動きます（入力か出力がターミナルでなければ、エージェントからの実行などとして断ります）。どの手順も空の答えで飛ばせます。何も起動せず、何も消しません。
+
+- uv：`uvx` の場所を示すか、入れ方を表示します（入れはしません）。
+- デバイスとホスト：`--device` と `--allow-hosts` を引用符付きで `~/.config/reqcove/config` に書き（0600。ディレクトリを新しく作るときは 0700。`reqcove service install` がデフォルトで読むファイルです）、`run` と同じ読み方で読み直して確かめます。`*` と、`-` で始まる名前は聞き直します。URL を貼り付けた場合はホストだけを書きます。ホストがまだ決まっていなければ、`run` が動き始めてから `reqcove status`（またはエージェントの `summarize`）で iPhone がつないだホストを確認できます。ファイルがすでにあれば表示し、`y` と答えない限りそのまま残します。`y` なら全体を置き換えます。
+- エージェント：`y` と答えれば `reqcove init` と同じように Skill を入れ、`claude mcp add reqcove -- reqcove mcp` を表示します（エージェントのコマンドは実行しません）。
+- 起動のしかた：Homebrew の formula で入れた場合は `brew services start reqcove` です。これは `$(brew --prefix)/etc/reqcove/config` を読むので、ファイルをそこに置く `ln -s` も表示します（リンク経由の起動は試していません。`readConfig` がリンクを読めることは単体テストで確かめています）。それ以外は `reqcove service install`、またはターミナルで `reqcove run --config ~/.config/reqcove/config` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
+
+試したこと：単体テストだけです（答えを流し込み、一時的なホームディレクトリで実行）。
+
 残っている手順は `run` が表示し、`reqcove status` でも確認できます。表示された URL でログインし、tailnet が Tailnet Lock を使っていればノードに署名し、Exit Node を承認します。
 
 - ログイン用の URL と、トークン付きの `--ui`、`--web`、`--mcp-http` のリンクは、`run` のターミナルにだけ表示されます。ログの行（`--verbose` のときも。ログイン用の URL は、`run` が知るまではよくある形で見分けます。[SECURITY](SECURITY.md#the-login-url)）と MCP のツールには出ません。ログイン用の URL を最初に開いた人の tailnet にノードが入るためです（[SECURITY](SECURITY.md#the-login-url)）。

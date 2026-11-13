@@ -66,6 +66,20 @@ through a `replace` directive.
 
 ## Use
 
+The first time, in a terminal:
+
+```sh
+reqcove setup
+```
+
+It checks uv, asks for the iPhone's name in your tailnet and the hosts to
+record, and writes them to `~/.config/reqcove/config` (an existing file is shown
+and kept unless you say to replace it). It adds the agent skill if you say yes,
+prints the line that gives Claude Code the tools, and says how to start: `brew
+services`, `reqcove service install`, or `reqcove run --config
+~/.config/reqcove/config` in a terminal. It starts nothing itself; then follow
+steps 2 and 3 below, on the iPhone. The same by hand:
+
 1. Start it on the computer, naming the iPhone (as in `tailscale status`) and the
    hosts to record:
 

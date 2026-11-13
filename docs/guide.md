@@ -18,6 +18,30 @@ The four steps are in the [README](../README.md#use).
 
 ### First start
 
+`reqcove setup` walks through the first run, in a terminal only (it refuses
+when its input or output is not one, as from an agent). Each step can be
+skipped (an empty answer); it starts nothing and removes nothing:
+
+- uv: says where `uvx` is, or how to install it (it installs nothing).
+- The device and the hosts: writes `--device` and `--allow-hosts`, quoted, to
+  `~/.config/reqcove/config` (0600, its directory 0700 when new; the file
+  `reqcove service install` reads by default), and reads it back as `run`
+  does. `*` and a name starting with `-` are asked again; a pasted URL keeps
+  its host only. No hosts yet: once `run` runs, `reqcove status` (or an agent's
+  `summarize`) lists the hosts the iPhone reached. An existing file is shown
+  and kept unless you answer `y`; then it is replaced whole.
+- The agent: adds the skill as `reqcove init` does, if you answer `y`, and
+  prints `claude mcp add reqcove -- reqcove mcp` (it runs no agent command).
+- How to start: with Homebrew's formula, `brew services start reqcove`, which
+  reads `$(brew --prefix)/etc/reqcove/config`, so it prints the `ln -s` that
+  puts the file there (not tried through a link: `readConfig` taking a link is
+  a unit test); else `reqcove service install`; or `reqcove run --config
+  ~/.config/reqcove/config` in a terminal. `--lan` is not kept in a file:
+  `reqcove run --lan --allow-hosts HOSTS` in a terminal. It prints no login
+  URL: `reqcove links` does.
+
+Tried: unit tests only (answers fed in, a temporary home).
+
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 
