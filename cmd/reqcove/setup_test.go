@@ -30,7 +30,7 @@ func runSetup(t *testing.T, input, config, brew string) (string, error) {
 // Off a terminal (an agent's shell, a pipe): refused before anything is asked or written.
 func TestSetupOffTerminal(t *testing.T) {
 	_, config := setupHome(t)
-	for _, term := range []func(*os.File) bool{isTerminal, func(f *os.File) bool { return f == os.Stdin }} {
+	for _, term := range []func(*os.File) bool{func(*os.File) bool { return false }, func(f *os.File) bool { return f == os.Stdin }} {
 		terminal = term
 		err := setup(context.Background(), nil)
 		terminal = isTerminal
@@ -152,6 +152,22 @@ func TestSetupBrew(t *testing.T) {
 	os.Symlink(config, link)
 	if words, _, err := readConfig(link); err != nil || len(words) != 2 {
 		t.Errorf("through a link: %q, %v", words, err)
+	}
+	// brew's file there already (as the guide wrote it before setup): named,
+	// no link offered; a link to this file: nothing to do but start.
+	brew := t.TempDir()
+	etc := filepath.Join(brew, "etc", "reqcove")
+	os.MkdirAll(etc, 0o700)
+	os.WriteFile(filepath.Join(etc, "config"), []byte("--device x\n"), 0o600)
+	out, _ = runSetup(t, "n\nn\n", config, brew)
+	if !strings.Contains(out, "which is there already") || strings.Contains(out, "ln -s") || !strings.Contains(out, "brew services start reqcove") {
+		t.Errorf("brew's file there:\n%s", out)
+	}
+	os.Remove(filepath.Join(etc, "config"))
+	os.Symlink(config, filepath.Join(etc, "config"))
+	out, _ = runSetup(t, "n\nn\n", config, brew)
+	if strings.Contains(out, "which is there already") || strings.Contains(out, "ln -s") || !strings.Contains(out, "brew services start reqcove") {
+		t.Errorf("linked already:\n%s", out)
 	}
 	// Skipped: no file, the command line form, nothing else asked about the file.
 	_, config = setupHome(t)

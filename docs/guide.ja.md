@@ -22,7 +22,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - uv：`uvx` の場所を示すか、入れ方を表示します（入れはしません）。
 - デバイスとホスト：`--device` と `--allow-hosts` を引用符付きで `~/.config/reqcove/config` に書き（0600。ディレクトリを新しく作るときは 0700。`reqcove service install` がデフォルトで読むファイルです）、`run` と同じ読み方で読み直して確かめます。`*` と、`-` で始まる名前は聞き直します。URL を貼り付けた場合はホストだけを書きます。ホストがまだ決まっていなければ、`run` が動き始めてから `reqcove status`（またはエージェントの `summarize`）で iPhone がつないだホストを確認できます。ファイルがすでにあれば表示し、`y` と答えない限りそのまま残します。`y` なら全体を置き換えます。
 - エージェント：`y` と答えれば `reqcove init` と同じように Skill を入れ、`claude mcp add reqcove -- reqcove mcp` を表示します（エージェントのコマンドは実行しません）。
-- 起動のしかた：Homebrew の formula で入れた場合は `brew services start reqcove` です。これは `$(brew --prefix)/etc/reqcove/config` を読むので、ファイルをそこに置く `ln -s` も表示します（リンク経由の起動は試していません。`readConfig` がリンクを読めることは単体テストで確かめています）。それ以外は `reqcove service install`、またはターミナルで `reqcove run --config ~/.config/reqcove/config` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
+- 起動のしかた：Homebrew の formula で入れた場合は `brew services start reqcove` です。これは `$(brew --prefix)/etc/reqcove/config` を読むので、ファイルをそこに置く `ln -s` も表示します。そのファイルがすでにあれば、そう伝えます（リンク経由の起動は試していません。`readConfig` がリンクを読めることは単体テストで確かめています）。それ以外は `reqcove service install`、またはターミナルで `reqcove run --config ~/.config/reqcove/config` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
 
 試したこと：単体テストだけです（答えを流し込み、一時的なホームディレクトリで実行）。
 

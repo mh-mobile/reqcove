@@ -34,7 +34,7 @@ skipped (an empty answer); it starts nothing and removes nothing:
   prints `claude mcp add reqcove -- reqcove mcp` (it runs no agent command).
 - How to start: with Homebrew's formula, `brew services start reqcove`, which
   reads `$(brew --prefix)/etc/reqcove/config`, so it prints the `ln -s` that
-  puts the file there (not tried through a link: `readConfig` taking a link is
+  puts the file there, or says that file is there already (not tried through a link: `readConfig` taking a link is
   a unit test); else `reqcove service install`; or `reqcove run --config
   ~/.config/reqcove/config` in a terminal. `--lan` is not kept in a file:
   `reqcove run --lan --allow-hosts HOSTS` in a terminal. It prints no login

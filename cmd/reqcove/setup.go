@@ -155,8 +155,15 @@ func setupIn(in io.Reader, out io.Writer, config, brew string) error {
 		fmt.Fprint(out, "   in a terminal: reqcove run --device NAME --allow-hosts HOSTS (or run reqcove setup again for the file)\n")
 	case brew != "":
 		etc := filepath.Join(brew, "etc", "reqcove")
-		fmt.Fprintf(out, "   brew services reads %s: link the file there, then start it:\n     mkdir -p %s && ln -s %s %s\n     brew services start reqcove\n   or in a terminal: reqcove run --config %s\n",
-			shellWord(filepath.Join(etc, "config")), shellWord(etc), shown, shellWord(filepath.Join(etc, "config")), shown)
+		brewConfig := filepath.Join(etc, "config")
+		if dst, err := filepath.EvalSymlinks(brewConfig); err == nil {
+			if src, _ := filepath.EvalSymlinks(config); dst != src {
+				fmt.Fprintf(out, "   brew services reads %s, which is there already (not %s: edit that one, or link this one there in its place)\n", shellWord(brewConfig), shown)
+			}
+		} else {
+			fmt.Fprintf(out, "   brew services reads %s: link the file there first:\n     mkdir -p %s && ln -s %s %s\n", shellWord(brewConfig), shellWord(etc), shown, shellWord(brewConfig))
+		}
+		fmt.Fprintf(out, "   now and at each login: brew services start reqcove\n   or in a terminal: reqcove run --config %s\n", shown)
 	default:
 		fmt.Fprintf(out, "   now and at each login: reqcove service install\n   or in a terminal: reqcove run --config %s\n", shown)
 	}
