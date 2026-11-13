@@ -64,9 +64,10 @@ func TestMultipart(t *testing.T) {
 		t.Errorf("a secret found by search")
 	}
 	// Bounds: at most 256 parts; a huge part; no boundary at all.
-	many := strings.Repeat("--XyZ\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n", 2000)
+	many := strings.Repeat("--XyZ\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n", 20000)
 	start := time.Now()
-	if got := string(renderMultipart([]byte(many), "XyZ", true, true)); !strings.Contains(got, "[more parts not read") || time.Since(start) > 100*time.Millisecond {
+	// About 13 ms under -race on an M-series Mac; without the cap, 1.5 s.
+	if got := string(renderMultipart([]byte(many), "XyZ", true, true)); !strings.Contains(got, "[more parts not read") || time.Since(start) > time.Second {
 		t.Errorf("many parts: %v %q", time.Since(start), got[len(got)-80:])
 	}
 	if got := string(renderMultipart([]byte("no boundary here "+S), "XyZ", true, false)); leak(got, S) != "" {
