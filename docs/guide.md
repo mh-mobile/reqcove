@@ -46,8 +46,10 @@ skipped (an empty answer); it starts nothing and removes nothing:
 - Ctrl-C stops it at the question it is on; what was written stays.
 
 Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
-Ctrl-C at the first question in a terminal (it ended at once, nothing written).
-Not tried: `brew services` with the file setup wrote.
+Ctrl-C at the first question in a terminal (it ended at once, nothing written);
+on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
+installed the skill, printed the commands, and `service install` ran with that
+file. Not tried: `brew services` with the file setup wrote; Linux.
 
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
@@ -191,8 +193,11 @@ reqcove service uninstall     # stops it and removes the file
 
 Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
 the refusals and the launchctl and systemctl commands it would run (unit
-tests, which never run them). Not tried yet: a real install, start at
-login, restart and uninstall, on macOS or on Linux.
+tests, which never run them). On macOS (2026-11-14): `service install` wrote
+the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
+node recorded; no login URL or token in `service.log`), `reqcove status` named
+the service, `service uninstall` stopped it and removed the file. Not tried
+yet: a start at login or after a reboot, `service restart`; Linux.
 
 ### Undo everything (`reqcove cleanup`)
 
@@ -298,7 +303,9 @@ its report) and `checkpoint` (for `wait_for_flows`' `after`).
 - `add_marker` is a write (not marked read-only) but changes nothing on the
   device; `reqcove mcp` never sends it again after a dropped connection.
 
-By tests only; not tried with an iPhone or an agent's own use yet.
+Tried: `add_marker` from Claude Code during an iPhone sitting (iOS 27.3,
+2026-11-14): it worked. The rest by tests only (`reqcove mark` not tried by
+hand).
 
 ### Agents on other devices (`--mcp-http`)
 
@@ -987,8 +994,12 @@ row lists them, the header's value is never shown, `activate_mock` and
 `list_mock_presets` leave them alone, `times` refused, a changed file turns
 them off; the refusals at load (mitmproxy's Python). Not tried: HTTPS through a
 `map_remote` or `resolve` preset turned on while the app's connections are open
-(pooled HTTP/1, HTTP/2): the app may keep using a connection opened before;
-an iPhone. From reading code: rules apply when a request starts, so a
+(pooled HTTP/1, HTTP/2): the app may keep using a connection opened before.
+Tried on an iPhone in LAN mode (iOS 27.3, 2026-11-14): a `map_remote` preset
+to a dev server on this Mac, turned on over MCP (Safari got the dev server's
+answer, the row listed it; off: the server's own), and a mock preset with
+`times: 1` (a 503 once, then the server's answer). Not tried on an iPhone: a
+`resolve` or a `modify_headers` preset. From reading code: rules apply when a request starts, so a
 WebSocket, a stream or a long upload begun while a `map_remote` or `resolve`
 preset was on stays with its target after the preset is off.
 
@@ -1057,7 +1068,9 @@ header value, body or path in `list_rules` (marker strings); an out-of-scope
 host, a `--pass-hosts` host, a mock preset off and then on (its count unused,
 the server never reached), a GraphQL mock with and without the operation, a
 `~h` filter in `cannot_tell`, a `map_remote` then `resolve` explained as the
-recorded flow got them; without a rules file. Not tried: an iPhone. A
+recorded flow got them; without a rules file. Tried: `list_rules` and
+`explain_rules` from Claude Code during an iPhone sitting (iOS 27.3,
+2026-11-14): they worked. A
 recorded URL is masked: a value masked in its path or query (`[redacted]`) can change what a filter or regex
 sees, and a GraphQL operation in the URL comes before the one given, as for a real request.
 

@@ -26,8 +26,8 @@
   you say so, prints `claude mcp add reqcove -- reqcove mcp`, and says how to
   start (`brew services`, `reqcove service install`, or `run --config` in a
   terminal). It starts nothing and prints no login URL; Ctrl-C stops it. README
-  starts with it; the guide's First start has the details. Unit tests, and
-  Ctrl-C in a terminal.
+  starts with it; the guide's First start has the details. Unit tests,
+  Ctrl-C in a terminal, and a run on macOS. Not tried on Linux.
 - mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
 - `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
   Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
@@ -36,8 +36,9 @@
   journald. Refused while Homebrew's service is there, and for a config file
   missing, readable by others, or with `--no-redact`, `--web`,
   `--rules-reload` or `--lan`. `reqcove status` names it and says how to stop it. The
-  guide has a section. Not tried yet: a real install on macOS or Linux (unit
-  tests only).
+  guide has a section. Tried on macOS: install (an iPhone recorded) and
+  uninstall. Not tried yet: a start at login or after a reboot, `service
+  restart`, Linux.
 - `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
   out of the proxy, as its IPv4 range already was.
 - The guide shows which Reqcove tools to allow by name in Claude Code's
@@ -61,7 +62,8 @@
   log, `list_presets` and (the ones on) `reqcove status`; a request a preset
   would send outside its target gets a 502; refused at load: a target that cannot be shown,
   with a user or password, or plain `http://` beyond this computer and the LAN.
-  Not tried yet with an iPhone.
+  Tried on an iPhone (LAN mode): a `map_remote` preset to a dev server on this
+  Mac. Not tried on an iPhone: `resolve` and `modify_headers` presets.
 - XML bodies (`text/xml`, `application/xml`, `application/*+xml` such as
   SOAP) are masked by names: an element or attribute whose local name
   (`wsse:Password`) is one JSON's keys are masked by, the element's whole
@@ -74,7 +76,8 @@
   checkpoint to read from), in your terminal only; agents put theirs with
   `add_marker`. At most 80 characters on one line, masked; at most 100 per
   source (`cli`, `mcp`: the channel, not proof); in memory only. The guide has
-  a section. Not tried yet with an iPhone.
+  a section. `add_marker` used from Claude Code during an iPhone sitting;
+  `reqcove mark` not tried by hand.
 - `reqcove mock add --rules FILE --url URL …` adds a mock to a rules file,
   keeping the file's text, comments and order; refused when `mock:` is not the
   last block or is in flow style. The whole file is checked first by the
@@ -110,7 +113,7 @@
   each preset that is off would do, the rules whose filter a method and URL
   cannot tell, and what a recorded flow got. It uses no preset's count. The
   skill: call it when a flow lacks the `mocked`, `rewrites` or `presets`
-  expected. Not tried yet with an iPhone.
+  expected. Used from Claude Code during an iPhone sitting: they worked.
 - `add_marker(text)` (a write with no effect on the device: not read-only,
   never sent again by `reqcove mcp`) and `list_markers(since)` (read-only),
   local socket and `reqcove mcp` only. `add_marker` returns `id`, `time` (for
