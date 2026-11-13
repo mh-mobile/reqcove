@@ -187,7 +187,8 @@ func openState(dir string) (func(), error) {
 	}
 	ents = slices.DeleteFunc(ents, func(e os.DirEntry) bool {
 		switch e.Name() {
-		case ".DS_Store": // Finder leaves it in folders it opened
+		case ".DS_Store", // Finder leaves it in folders it opened
+			lanAllowedFile: // `reqcove lan allow` before the first run
 			return true
 		case "mitmproxy", caCopies:
 			// ~/.reqcove before its first run: a CA copied from another computer

@@ -185,19 +185,30 @@ func lanFlags(fs *flag.FlagSet, on bool, proxyPort int) error {
 // not an agent's to run (a help, not a guarantee, as links).
 func lan(_ context.Context, args []string) error {
 	const use = "reqcove lan allow ADDR | lan deny ADDR | lan list  [--state DIR]"
-	var sub, arg string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
-	}
-	if (sub == "allow" || sub == "deny") && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		arg, args = args[0], args[1:]
+	// The words anywhere among the flags: run's hints write `lan allow --state DIR ADDR`.
+	var words, flags []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			words = append(words, a)
+			continue
+		}
+		flags = append(flags, a)
+		if name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "="); name == "state" && !hasValue && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
 	}
 	fls := flag.NewFlagSet("lan", flag.ExitOnError)
 	state := fls.String("state", defaultState(), "state directory")
-	if err := parseFlags(fls, args); err != nil {
+	if err := parseFlags(fls, flags); err != nil {
 		return err
 	}
-	return lanIn(os.Stdin, os.Stdout, *state, sub, arg, use)
+	words = append(words, "", "")
+	if words[2] != "" {
+		return fmt.Errorf("unexpected argument %q (usage: %s)", words[2], use)
+	}
+	return lanIn(os.Stdin, os.Stdout, *state, words[0], words[1], use)
 }
 
 func lanIn(in, out *os.File, state, sub, arg, use string) error {

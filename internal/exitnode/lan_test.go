@@ -239,7 +239,7 @@ func TestRunLANNoTsnet(t *testing.T) {
 	statuses := make(chan Status, 100)
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{Dir: dir, Hostname: "reqcove-lan-test", ProxyPort: port,
+		done <- Run(ctx, Config{Dir: dir, Hostname: "reqcove-lan-test", ProxyPort: port, ControlURL: "http://127.0.0.1:1", // never reached: no tsnet
 			LAN: &LAN{Interface: loopbackName(t), Allowed: func() []netip.Addr {
 				return []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("192.0.2.9")} // the second off the network
 			}},

@@ -79,6 +79,38 @@ func TestLANNotATerminal(t *testing.T) {
 	}
 }
 
+// The commands run's hints write parse, --state before or after the address.
+func TestLANHintsParse(t *testing.T) {
+	state := t.TempDir()
+	for _, hint := range []string{
+		withState("reqcove lan allow", state) + " 192.168.1.23",
+		withState("reqcove lan deny", state) + " 192.168.1.23",
+		withState("reqcove lan list", state),
+		"reqcove lan --state " + state + " allow 192.168.1.23",
+	} {
+		err := lan(context.Background(), strings.Fields(hint)[2:])
+		if err == nil || !strings.Contains(err.Error(), "only in a terminal") { // parsed: refused off a terminal
+			t.Errorf("%s: %v", hint, err)
+		}
+	}
+	if err := lan(context.Background(), []string{"allow", "192.168.1.23", "x"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("a word too many: %v", err)
+	}
+}
+
+// `lan allow` before the first run leaves a state directory run still takes.
+func TestLANAllowBeforeRun(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	if _, err := allowLAN(state, netip.MustParseAddr("192.168.1.23")); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := openState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+}
+
 func TestLANAllowedFile(t *testing.T) {
 	state := t.TempDir()
 	a, b := netip.MustParseAddr("192.168.1.23"), netip.MustParseAddr("192.168.1.24")
