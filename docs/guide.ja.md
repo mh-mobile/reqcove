@@ -116,8 +116,8 @@ reqcove init --client codex     # または、名前を挙げたものだけ（-
 iPhone で何かをタップする前に、ターミナルで `reqcove mark "tap Pay"` とすると、記録の中にマーカーを置けます。エージェントは `list_markers` で読みます（古い順、`since` で絞れます）。エージェントは、操作する前や、あなたが「いまから X をタップする」と言ったときに、`add_marker` で自分のマーカーを置きます。`add_marker` は `id`、`time`（`list_flows` などの `since` と、報告に使う）、`checkpoint`（`wait_for_flows` の `after` に使う）を返します。
 
 - テキストは 1 行で 80 文字まで。長いものや、改行などの制御文字を含むものは、切り詰めずに断ります。エラーの文と同じくマスクします（トークンは `[redacted]` になります）。
-- `source` は `cli`（`reqcove mark`）か `mcp`（`reqcove mcp` を通したエージェント）です。経路を示すだけで、誰が置いたかの証拠ではありません。シェルを使えるエージェントは `reqcove mark` も実行できます。`reqcove lan` と同じく、断るのは入力か出力がターミナルでないときだけです。
-- 置いた経路ごとに 100 個まで残し、古いものから消します（エージェントのマーカーが、あなたのものを押し出すことはありません）。メモリにだけ置くので、フローの id と同じく、`run` を再起動すると消えます。`--mcp-http` からは使えません。
+- `source` は `cli`（`reqcove mark`）か `mcp`（`reqcove mcp` を通したエージェント）です。経路を示すだけで、誰が置いたかの証拠ではありません。このコンピュータでコマンドを実行できるエージェントは、`cli` を名乗れます。`reqcove mark` を実行する（`reqcove lan` と同じく、断るのは入力か出力がターミナルでないときだけです）か、`run` のソケットに自分でつなぐかです。
+- 置いた経路ごとに 100 個まで残し、古いものから消します。メモリにだけ置くので、フローの id と同じく、`run` を再起動すると消えます。`reqcove mcp` を通したエージェントは `mcp` になり、あなたのマーカーを押し出せません。上のように `cli` を名乗るエージェントは押し出せます。`--mcp-http` からは使えません。
 - `add_marker` は書き込みのツールです（読み取り専用の印はありません）が、デバイスには何も変えません。`reqcove mcp` は、接続が切れたあとに送り直しません。
 
 確認状況：テストのみ。iPhone や、エージェントが実際に使う場面では、まだ試していません。
@@ -541,7 +541,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 |---|---|
 | `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
 | `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
-| `reqcove mark` | `[TEXT]`。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
+| `reqcove mark` | `[TEXT]`（`-` で始まるものは `-- TEXT`）。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
 | `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
 | `reqcove lan` | `allow ADDR`、`deny ADDR`、`list`。[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)で中継するアドレス。ターミナルでのみ |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |

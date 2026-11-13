@@ -43,6 +43,11 @@ func TestMark(t *testing.T) {
 		t.Errorf("too long: %v", err)
 	}
 
+	// A text starting with -, after --.
+	if words, flags := wordsAndFlags([]string{"--state", dir, "--", "-5%", "coupon"}); strings.Join(words, " ") != "-5% coupon" || strings.Join(flags, " ") != "--state "+dir {
+		t.Errorf("--: words %q, flags %q", words, flags)
+	}
+
 	older, _ := os.MkdirTemp("/tmp", "rcvm-")
 	defer os.RemoveAll(older)
 	if err := mcpserver.Serve(ctx, filepath.Join(older, "mcp.sock"), mcpserver.New(st, nil)); err != nil {

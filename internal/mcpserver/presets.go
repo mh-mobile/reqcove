@@ -172,7 +172,7 @@ type MarkersOut struct {
 }
 
 func addMarkerTools(s *mcp.Server, st *capture.Store) {
-	mcp.AddTool(s, &mcp.Tool{Name: "add_marker", Annotations: marks, Description: "Put a marker among the records before acting (or when the user says \"now I tap X\"): text, at most 80 characters on one line, masked as error text is. Returns id, time (for since in list_flows and the others, and for reporting) and checkpoint (for wait_for_flows' after). It changes nothing on the device. Kept in memory, at most 100 of agents' (the oldest dropped; the user's reqcove mark keeps its own 100), gone when reqcove run restarts."},
+	mcp.AddTool(s, &mcp.Tool{Name: "add_marker", Annotations: marks, Description: "Put a marker among the records before acting (or when the user says \"now I tap X\"): text, at most 80 characters on one line, masked as error text is. Returns id, time (for since in list_flows and the others, and for reporting) and checkpoint (for wait_for_flows' after). It changes nothing on the device. Kept in memory, at most 100 with source mcp (the oldest dropped; the user's reqcove mark has its own 100, source cli), gone when reqcove run restarts."},
 		func(_ context.Context, req *mcp.CallToolRequest, in MarkIn) (*mcp.CallToolResult, MarkOut, error) {
 			source := "mcp"
 			if p := req.Session.InitializeParams(); p != nil && p.ClientInfo != nil && p.ClientInfo.Name == MarkClient {

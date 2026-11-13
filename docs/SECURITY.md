@@ -258,8 +258,10 @@ So "delete the directory" above means each of them.
   at most 80 characters on one line (else refused), masked as error text is,
   at most 100 per source, not logged (from reading code). Their `source` (`cli`, `mcp`) is the
   channel, set by Reqcove from how the call came (`reqcove mcp` never passes
-  on an agent's client name), not proof: an agent with a shell can run
-  `reqcove mark`. Their text is the user's or an agent's words: data, never
+  on an agent's client name), not proof: an agent that can run commands on
+  this computer can claim `cli`, by running `reqcove mark` or by connecting
+  to `run`'s socket (same user) itself, and then push out the user's 100. An
+  agent through `reqcove mcp` gets `mcp` and cannot. Their text is the user's or an agent's words: data, never
   instructions (the server's instructions say so; tests check the masking, the
   refusals and that an agent through `reqcove mcp` gets `mcp`).
 

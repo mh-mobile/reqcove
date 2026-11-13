@@ -334,9 +334,13 @@ func lan(_ context.Context, args []string) error {
 
 // wordsAndFlags splits args into words and flags (--state takes the next
 // argument), for the commands whose words may come anywhere among their flags.
+// After --, all are words (reqcove mark -- -5% coupon).
 func wordsAndFlags(args []string) (words, flags []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" {
+			return append(words, args[i+1:]...), flags
+		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
 			words = append(words, a)
 			continue

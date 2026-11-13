@@ -207,11 +207,13 @@ its report) and `checkpoint` (for `wait_for_flows`' `after`).
   line break or another control character, is refused, not cut. It is masked
   as error text is (a token in it becomes `[redacted]`).
 - `source` is `cli` (`reqcove mark`) or `mcp` (an agent, through `reqcove
-  mcp`): the channel, not proof of who. An agent with a shell can run
-  `reqcove mark` too; it refuses only when its input or output is not a
-  terminal, as `reqcove lan`.
-- At most 100 are kept per source, the oldest dropped (an agent's never push
-  out yours), in memory only: gone when `run` restarts, as flow ids. Not over
+  mcp`): the channel, not proof of who. An agent that can run commands on
+  this computer can claim `cli`: by running `reqcove mark` (it refuses only
+  when its input or output is not a terminal, as `reqcove lan`), or by
+  connecting to `run`'s socket itself.
+- At most 100 are kept per source, the oldest dropped, in memory only: gone
+  when `run` restarts, as flow ids. An agent through `reqcove mcp` gets `mcp`
+  and cannot push out yours; one that claims `cli` (above) can. Not over
   `--mcp-http`.
 - `add_marker` is a write (not marked read-only) but changes nothing on the
   device; `reqcove mcp` never sends it again after a dropped connection.
@@ -1022,7 +1024,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 |---|---|
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
 | `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
-| `reqcove mark` | `[TEXT]`: a [marker](#mark-a-moment-reqcove-mark) among the records, as yours (`cli`); only in a terminal |
+| `reqcove mark` | `[TEXT]` (`-- TEXT` for one starting with `-`): a [marker](#mark-a-moment-reqcove-mark) among the records, as yours (`cli`); only in a terminal |
 | `reqcove mcp` | the MCP server for an agent on this computer |
 | `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |

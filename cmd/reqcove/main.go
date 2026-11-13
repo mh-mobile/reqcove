@@ -75,8 +75,9 @@ Usage:
   reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
                      terminal only (never for an agent)
   reqcove mark [TEXT]
-                     a marker among the records (now I tap Pay), in your terminal only
-  reqcove mcp       the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
+                     a marker among the records (now I tap Pay), in your terminal only;
+                     reqcove mark -- TEXT for a text starting with -
+  reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)

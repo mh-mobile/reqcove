@@ -21,7 +21,7 @@ type Marker struct {
 }
 
 const (
-	maxMarkers    = 100 // per source: an agent's cannot push out the user's
+	maxMarkers    = 100 // per source: an agent through reqcove mcp (mcp) cannot push out cli ones
 	MaxMarkerText = 80  // characters
 )
 
