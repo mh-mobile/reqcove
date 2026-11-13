@@ -129,14 +129,16 @@ this computer the [MCP tools](#mcp-tools). They read, and secrets are
 masked as they arrive; the one change they can make is to turn on, for at most
 5 minutes each time (no cap on turning it on again), a mock you marked as a
 [preset](#presets-an-agent-can-turn-on)
-(with none, they only read; over `--mcp-http`, never)
+(with none, they only read; over `--mcp-http`, never), and they can put a
+[marker](#mark-a-moment-reqcove-mark), which changes nothing on the device
 ([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
 `codex mcp add reqcove -- reqcove mcp` (`run` prints both).
 
 Allowing the tools: the tools that read are marked read-only (`readOnlyHint`),
 which a client may use to ask less (not checked with any client);
 the ones that turn presets on and off (`activate_preset`, `deactivate_preset`,
-`activate_mock`, `deactivate_mock`) are not. Claude Code asks before a tool
+`activate_mock`, `deactivate_mock`) are not, nor is `add_marker` (a write to
+Reqcove's memory only). Claude Code asks before a tool
 it has not been allowed. Allow the read tools by name
 (`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
 also allows those (`activate_mock` since v0.6, `activate_preset`, which can
@@ -152,7 +154,8 @@ Claude Code's documentation; not tried here):
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules"],
+              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
     "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
             "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
@@ -191,6 +194,30 @@ connects, Reqcove not named. Devin too: it loaded the skill from
 Cursor too: it used the skill and read the server's instructions, then the
 tools only. Not tried: Gemini CLI, Copilot CLI.
 
+### Mark a moment (`reqcove mark`)
+
+Before you tap something on the iPhone, `reqcove mark "tap Pay"` in your
+terminal puts a marker among the records; an agent reads them with
+`list_markers` (oldest first, `since` to narrow). An agent puts its own with
+`add_marker` before it acts, or when you say "now I tap X". `add_marker`
+returns `id`, `time` (for `since` in `list_flows` and the other tools, and for
+its report) and `checkpoint` (for `wait_for_flows`' `after`).
+
+- A text has at most 80 characters, on one line: a longer one, or one with a
+  line break or another control character, is refused, not cut. It is masked
+  as error text is (a token in it becomes `[redacted]`).
+- `source` is `cli` (`reqcove mark`) or `mcp` (an agent, through `reqcove
+  mcp`): the channel, not proof of who. An agent with a shell can run
+  `reqcove mark` too; it refuses only when its input or output is not a
+  terminal, as `reqcove links`.
+- At most 100 are kept per source, the oldest dropped (an agent's never push
+  out yours), in memory only: gone when `run` restarts, as flow ids. Not over
+  `--mcp-http`.
+- `add_marker` is a write (not marked read-only) but changes nothing on the
+  device; `reqcove mcp` never sends it again after a dropped connection.
+
+By tests only; not tried with an iPhone or an agent's own use yet.
+
 ### Agents on other devices (`--mcp-http`)
 
 For an agent elsewhere on your tailnet, such as Grok Bot (xAI's agent: its
@@ -202,8 +229,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` serves the same tools over HTTP on the node, but the preset ones
 (`list_presets`, `activate_preset`, `deactivate_preset`, `list_mock_presets`,
-`activate_mock`, `deactivate_mock`) and the rule ones (`list_rules`,
-`explain_rules`), and prints the URL,
+`activate_mock`, `deactivate_mock`), the rule ones (`list_rules`,
+`explain_rules`) and the marker ones (`add_marker`, `list_markers`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
 `Authorization: Bearer <token>` (`reqcove links` prints them again; off a
 terminal, only it).
@@ -995,6 +1022,7 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 |---|---|
 | `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
 | `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
+| `reqcove mark` | `[TEXT]`: a [marker](#mark-a-moment-reqcove-mark) among the records, as yours (`cli`); only in a terminal |
 | `reqcove mcp` | the MCP server for an agent on this computer |
 | `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
@@ -1035,6 +1063,8 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `deactivate_mock` | turn a mock preset off (v0.6). Not over `--mcp-http` |
 | `list_rules` | the `--rules` file's [rules](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) by kind and number, with their presets and what is derived from them (a mock's match and answer, a `map_remote` target, a `modify_headers` header name and direction, a `resolve` name and address); never filters, regexes, header values, bodies or paths. Not over `--mcp-http` |
 | `explain_rules` | why a flow (`flow_id`), or a method and URL, got or would get which rules: the scope, then the rewrites, a mock, the presets on and what one off would do; rules whose filter reads more than a method and URL in `cannot_tell`. Sends nothing, uses no preset's count. Not over `--mcp-http` |
+| `add_marker` | a [marker](#mark-a-moment-reqcove-mark) (`text`, at most 80 characters, one line, masked); returns `id`, `time` (for `since`) and `checkpoint` (for `wait_for_flows`' `after`). Changes nothing on the device. Not over `--mcp-http` |
+| `list_markers` | the markers, oldest first (`since`), with `source`: `cli` (`reqcove mark`) or `mcp` (an agent). Not over `--mcp-http` |
 
 ## Limits
 

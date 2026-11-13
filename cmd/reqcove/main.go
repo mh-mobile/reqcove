@@ -74,7 +74,9 @@ Usage:
                      the client addresses LAN mode carries, in your terminal only
   reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
                      terminal only (never for an agent)
-  reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
+  reqcove mark [TEXT]
+                     a marker among the records (now I tap Pay), in your terminal only
+  reqcove mcp       the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
@@ -125,6 +127,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
 	"links":   links,
 	"lan":     lan,
+	"mark":    mark,
 }
 
 // noFlags are the commands that take nothing.

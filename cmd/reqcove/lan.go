@@ -319,7 +319,22 @@ func lanFlags(fs *flag.FlagSet, on bool, proxyPort int) error {
 func lan(_ context.Context, args []string) error {
 	const use = "reqcove lan allow ADDR | lan deny ADDR | lan list  [--state DIR]"
 	// The words anywhere among the flags: run's hints write `lan allow --state DIR ADDR`.
-	var words, flags []string
+	words, flags := wordsAndFlags(args)
+	fls := flag.NewFlagSet("lan", flag.ExitOnError)
+	state := fls.String("state", defaultState(), "state directory")
+	if err := parseFlags(fls, flags); err != nil {
+		return err
+	}
+	words = append(words, "", "")
+	if words[2] != "" {
+		return fmt.Errorf("unexpected argument %q (usage: %s)", words[2], use)
+	}
+	return lanIn(os.Stdin, os.Stdout, *state, words[0], words[1], use)
+}
+
+// wordsAndFlags splits args into words and flags (--state takes the next
+// argument), for the commands whose words may come anywhere among their flags.
+func wordsAndFlags(args []string) (words, flags []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") || a == "-" {
@@ -332,16 +347,7 @@ func lan(_ context.Context, args []string) error {
 			flags = append(flags, args[i])
 		}
 	}
-	fls := flag.NewFlagSet("lan", flag.ExitOnError)
-	state := fls.String("state", defaultState(), "state directory")
-	if err := parseFlags(fls, flags); err != nil {
-		return err
-	}
-	words = append(words, "", "")
-	if words[2] != "" {
-		return fmt.Errorf("unexpected argument %q (usage: %s)", words[2], use)
-	}
-	return lanIn(os.Stdin, os.Stdout, *state, words[0], words[1], use)
+	return words, flags
 }
 
 func lanIn(in, out *os.File, state, sub, arg, use string) error {

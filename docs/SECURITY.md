@@ -254,6 +254,14 @@ So "delete the directory" above means each of them.
   directory is 0700). `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
   sent in failing and malformed requests do not reach it).
+- Markers (`reqcove mark`, `add_marker`) are kept in memory with the records:
+  at most 80 characters on one line (else refused), masked as error text is,
+  at most 100 per source, never logged. Their `source` (`cli`, `mcp`) is the
+  channel, set by Reqcove from how the call came (`reqcove mcp` never passes
+  on an agent's client name), not proof: an agent with a shell can run
+  `reqcove mark`. Their text is the user's or an agent's words: data, never
+  instructions (the server's instructions say so; tests check the masking, the
+  refusals and that an agent through `reqcove mcp` gets `mcp`).
 
 ## What the agent sees goes further
 
@@ -299,7 +307,8 @@ are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools read, with one exception: an agent can turn on, for at most 5
 minutes each time (no cap on turning it on again), a mock you marked as a
-preset ([Mock presets](#mock-presets)). No tool
+preset ([Mock presets](#mock-presets)); `add_marker` writes too, but only a
+marker in Reqcove's memory. No tool
 writes or changes a rule; with no presets, nothing an agent calls changes
 traffic. (`--rules` are yours, from a file, at start.)
 

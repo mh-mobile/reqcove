@@ -74,9 +74,9 @@ WantedBy=default.target
 
 ## エージェントに通信を読ませる
 
-`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを、1 回につき最長 5 分有効にすることだけです（何度でも有効にし直せます）（プリセットがなければ読むだけで、`--mcp-http` からはできません）。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
+`claude mcp add reqcove -- reqcove mcp`（README の手順 4）で、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。ツールは記録を読み、シークレットは届いた時点でマスクされます（[マスクで見つけられないもの](SECURITY.md#what-is-recorded)）。ツールにできる変更は、あなたが[プリセット](#エージェントが有効にできるプリセット)にしたモックを、1 回につき最長 5 分有効にすることだけです（何度でも有効にし直せます）（プリセットがなければ読むだけで、`--mcp-http` からはできません）。ほかに[マーカー](#マーカーを置くreqcove-mark)を置けますが、デバイスには何も変えません。Codex なら `codex mcp add reqcove -- reqcove mcp` です（`run` が両方を表示します）。
 
-ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。プリセットを有効・無効にするもの（`activate_preset`、`deactivate_preset`、`activate_mock`、`deactivate_mock`）には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、それらも許可されます（v0.6 からは `activate_mock`、v0.7 からはプリセットに書いたサーバーへリクエストを送れる `activate_preset`。Claude Code のドキュメントによる。ここでは試していません）。たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによる。ここでは試していません）。
+ツールの許可：読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。プリセットを有効・無効にするもの（`activate_preset`、`deactivate_preset`、`activate_mock`、`deactivate_mock`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）には付けていません。Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、それらも許可されます（v0.6 からは `activate_mock`、v0.7 からはプリセットに書いたサーバーへリクエストを送れる `activate_preset`。Claude Code のドキュメントによる。ここでは試していません）。たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによる。ここでは試していません）。
 
 ```json
 {
@@ -86,7 +86,8 @@ WantedBy=default.target
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules"],
+              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
     "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
             "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
@@ -110,9 +111,20 @@ reqcove init --client codex     # または、名前を挙げたものだけ（-
 
 確認状況：Claude Code と Codex で確認（Reqcove の名前を出さずにアプリの通信先を尋ねると、どちらも Skill を読み込みました）。Devin でも確認（`~/.agents/skills` の Skill を読み込み、MCP サーバーがないときは登録を頼んで止まりました）。Cursor でも確認（Skill を使い、MCP サーバーの使い方の注意も読み、そのあとはツールだけで調べました）。未確認：Gemini CLI、Copilot CLI。
 
+### マーカーを置く（`reqcove mark`）
+
+iPhone で何かをタップする前に、ターミナルで `reqcove mark "tap Pay"` とすると、記録の中にマーカーを置けます。エージェントは `list_markers` で読みます（古い順、`since` で絞れます）。エージェントは、操作する前や、あなたが「いまから X をタップする」と言ったときに、`add_marker` で自分のマーカーを置きます。`add_marker` は `id`、`time`（`list_flows` などの `since` と、報告に使う）、`checkpoint`（`wait_for_flows` の `after` に使う）を返します。
+
+- テキストは 1 行で 80 文字まで。長いものや、改行などの制御文字を含むものは、切り詰めずに断ります。エラーの文と同じくマスクします（トークンは `[redacted]` になります）。
+- `source` は `cli`（`reqcove mark`）か `mcp`（`reqcove mcp` を通したエージェント）です。経路を示すだけで、誰が置いたかの証拠ではありません。シェルを使えるエージェントは `reqcove mark` も実行できます。`reqcove links` と同じく、断るのは入力か出力がターミナルでないときだけです。
+- 置いた経路ごとに 100 個まで残し、古いものから消します（エージェントのマーカーが、あなたのものを押し出すことはありません）。メモリにだけ置くので、フローの id と同じく、`run` を再起動すると消えます。`--mcp-http` からは使えません。
+- `add_marker` は書き込みのツールです（読み取り専用の印はありません）が、デバイスには何も変えません。`reqcove mcp` は、接続が切れたあとに送り直しません。
+
+確認状況：テストのみ。iPhone や、エージェントが実際に使う場面では、まだ試していません。
+
 ### ほかのデバイスのエージェントから使う（`--mcp-http`）
 
-tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、プリセットのツール（`list_presets`、`activate_preset`、`deactivate_preset`、`list_mock_presets`、`activate_mock`、`deactivate_mock`）とルールのツール（`list_rules`、`explain_rules`）を除いた同じツールを、ノードから HTTP で提供します。
+tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、プリセットのツール（`list_presets`、`activate_preset`、`deactivate_preset`、`list_mock_presets`、`activate_mock`、`deactivate_mock`）、ルールのツール（`list_rules`、`explain_rules`）、マーカーのツール（`add_marker`、`list_markers`）を除いた同じツールを、ノードから HTTP で提供します。
 
 ```sh
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
@@ -529,6 +541,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' \
 |---|---|
 | `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
 | `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
+| `reqcove mark` | `[TEXT]`。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
 | `reqcove mcp` | このコンピュータのエージェント用の MCP サーバー |
 | `reqcove lan` | `allow ADDR`、`deny ADDR`、`list`。[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)で中継するアドレス。ターミナルでのみ |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
@@ -564,6 +577,8 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `deactivate_mock` | モックのプリセットを無効にする（v0.6）。`--mcp-http` からは使えない |
 | `list_rules` | `--rules` のファイルの[ルール](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules)を種類と番号で。プリセットと、ルールから導いたもの（モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名と向き、`resolve` の名前とアドレス）。フィルター、正規表現、ヘッダーの値、ボディ、パスは返さない。`--mcp-http` からは使えない |
 | `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
+| `add_marker` | [マーカー](#マーカーを置くreqcove-mark)を置く（`text` は 1 行で 80 文字まで、マスクする）。`id`、`time`（`since` 用）、`checkpoint`（`wait_for_flows` の `after` 用）を返す。デバイスには何も変えない。`--mcp-http` からは使えない |
+| `list_markers` | マーカーを古い順に（`since`）。`source` は `cli`（`reqcove mark`）か `mcp`（エージェント）。`--mcp-http` からは使えない |
 
 ## 制限事項
 
