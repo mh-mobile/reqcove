@@ -34,8 +34,18 @@
   `add_marker`. At most 80 characters on one line, masked; at most 100 per
   source (`cli`, `mcp`: the channel, not proof); in memory only. The guide has
   a section. Not tried yet with an iPhone.
+- `reqcove mock add --rules FILE --url URL …` adds a mock to a rules file,
+  keeping the file's text, comments and order; refused when `mock:` is not the
+  last block or is in flow style. The whole file is checked first by the
+  addon's loader (by the running `run`, with its hosts, else by mitmproxy's
+  Python, hosts unchecked) and written at once, its mode kept. In your
+  terminal only (a help, not a guarantee); `--print` shows the mock without
+  writing. The guide has a section. Tried with the tests, not by hand.
 
 ### For agents
+
+- The skill: never run `reqcove mock add`; with `--print`, only when the user
+  asks.
 
 - The skill's rules example has a mock preset (`preset:`, `description:`,
   `delay_ms`).
