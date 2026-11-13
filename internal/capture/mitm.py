@@ -2,8 +2,8 @@
 # requires-python = ">=3.14"
 # dependencies = ["mitmproxy==12.3.1"]
 # [tool.uv]
-# exclude-newer = "2026-11-08T00:00:00Z"
-# override-dependencies = ["tornado>=6.6"]  # mitmproxy 12.3.1 caps it at 6.5.10, which has CVE-2026-116577 and -115927 (mitmweb)
+# exclude-newer = "2026-11-14T00:00:00Z"
+# override-dependencies = ["tornado>=6.6.1"]  # mitmproxy 12.3.1 caps it at 6.5.10, which has CVE-2026-116577 and -115927 (mitmweb); 6.6 has CVE-2026-126347
 # ///
 """Reqcove's launcher for mitmproxy, from mitm.py.lock: `uv run --locked
 --script` installs exactly the files the lock names, their hashes checked.
