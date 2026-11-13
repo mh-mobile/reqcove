@@ -193,6 +193,9 @@ func parseDocumented(words []string) error {
 		}
 		args = args[n:]
 	}
+	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
+		_, args = wordsAndFlags(args)
+	}
 	for i := 1; i < len(args); i++ { // NAME, N: a placeholder, valid for its flag
 		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(args[i]) && isInt(fs, args[i-1]) {
 			args[i] = "1"
@@ -269,6 +272,7 @@ func TestParseDocumentedRefuses(t *testing.T) {
 		{"version", "--json"},
 		{"lan", "permit", "1.2.3.4"},
 		{"lan", "allow", "1.2.3.4", "--no-such-flag"},
+		{"mark", "tapping", "--no-such-flag"},
 	} {
 		if err := parseDocumented(words); err == nil {
 			t.Errorf("reqcove %s: no error", strings.Join(words, " "))
