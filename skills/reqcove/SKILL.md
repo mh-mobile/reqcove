@@ -1,6 +1,6 @@
 ---
 name: reqcove
-description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, wait_for_flows, get_flow, list_ws_messages, diff_flows, list_tls_failures, list_passthrough, list_devices, capture_stats, list_presets, activate_preset, deactivate_preset, list_mock_presets, activate_mock, deactivate_mock) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, to turn on a preset the user wrote, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
+description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, wait_for_flows, get_flow, list_ws_messages, diff_flows, list_tls_failures, list_passthrough, list_devices, capture_stats, list_presets, activate_preset, deactivate_preset, list_mock_presets, activate_mock, deactivate_mock, list_rules, explain_rules) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, to turn on a preset the user wrote, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
 ---
 
 # Reqcove
@@ -187,6 +187,16 @@ what the app sent, `mapped_url` where it went, `rewrites` the rules applied
 (`mock[0]: 401`). A row with `mocked: true` was answered by a mock: the
 request was not sent to the server. `capture_stats.rules_loaded` says when the file was
 last taken (with `--rules-reload`, about a second or two after a save).
+
+When a flow lacks the `mocked`, `rewrites` or `presets` you or the user
+expected, call `explain_rules` with its `flow_id` before telling the user why:
+it says whether the host is in scope, what the rules do to that method and URL
+now (`rewrites`, `mocked`, `presets`), what each preset that is off would do
+(`if_turned_on`), which rules it cannot tell from a method and URL
+(`cannot_tell`: a filter on headers, a body or the response) and what the flow
+got (`recorded`; the rules or presets may have changed since). It sends
+nothing. `list_rules` lists the rules by kind and number, without their
+filters, regexes or values. Neither is there over `--mcp-http`.
 
 ### Presets (`activate_preset`)
 

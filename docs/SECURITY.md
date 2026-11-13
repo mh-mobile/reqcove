@@ -461,6 +461,18 @@ answer is held whole until its body is in (the operation is in it): at most
 1 MiB when it says its length; a GET without one can carry more over HTTP/2,
 kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
+`list_rules` and `explain_rules` (read-only, since v0.7) show each rule by kind
+and number with its preset, and only what is derived from it: a mock's method,
+URL, operation, status, delay and fault, a `map_remote` target's scheme and host
+(or "path only", or "not shown" when the rule does not write it out), a
+`modify_headers` header name and direction, a `resolve` name and address; never
+a filter, a regex, a header value, a body or a file's path (an E2E test with
+marker strings; a `map_local` rule shows its number only). `explain_rules` runs
+the request path's own code on a request it makes up, never sent, with a copy of
+the presets' state, so it uses no preset's count and turns none on or off
+(tests). Like the preset tools they are on `run`'s local socket and `reqcove
+mcp` only, never over `--mcp-http`: the targets say where the devices' requests
+can be sent.
 
 ## An upstream proxy (`--upstream-proxy`)
 
@@ -583,8 +595,9 @@ Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp` but the mock preset ones, which
-`--mcp-http`'s own server does not have (a test), and give the same masked records.
+The tools are the same as over `reqcove mcp` but the preset ones and
+`list_rules` and `explain_rules`, which `--mcp-http`'s own server does not have
+(a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets

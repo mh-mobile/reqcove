@@ -7,6 +7,7 @@ import (
 	"maps"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -260,6 +261,13 @@ func isText(b []byte) bool {
 
 // PresetTargets are the map_remote and resolve presets' targets, by name, for
 // run's terminal (not capture_stats: a remote agent reads that).
+// RulesLoaded is when the --rules file was last taken (zero: never).
+func (s *Store) RulesLoaded() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rulesLoaded
+}
+
 func (s *Store) PresetTargets() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

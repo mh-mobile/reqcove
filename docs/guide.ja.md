@@ -85,7 +85,8 @@ WantedBy=default.target
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets"],
+              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
+              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules"],
     "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
             "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
@@ -111,7 +112,7 @@ reqcove init --client codex     # または、名前を挙げたものだけ（-
 
 ### ほかのデバイスのエージェントから使う（`--mcp-http`）
 
-tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、プリセットのツール（`list_presets`、`activate_preset`、`deactivate_preset`、`list_mock_presets`、`activate_mock`、`deactivate_mock`）を除いた同じツールを、ノードから HTTP で提供します。
+tailnet のほかの場所にいるエージェント、たとえば Grok Bot（xAI のエージェント。クラウドのコンピュータが、Tailscale の OAuth apps で tailnet に入ります）には、プリセットのツール（`list_presets`、`activate_preset`、`deactivate_preset`、`list_mock_presets`、`activate_mock`、`deactivate_mock`）とルールのツール（`list_rules`、`explain_rules`）を除いた同じツールを、ノードから HTTP で提供します。
 
 ```sh
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
@@ -462,6 +463,14 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
 
 コードから：変更は 2 秒ほどで読み直される。
 
+#### ルールが当たった理由、当たらなかった理由（`list_rules`、`explain_rules`）
+
+このコンピュータのエージェントは、ファイルを読まずにルールを確かめられます。`list_rules` は、ルールを種類と番号（`rewrites` と同じ `mock[0]`）で、プリセットと有効かどうか、ルールから導いたものだけと一緒に返します。モックの match と応答、`map_remote` の送り先のスキームとホスト（置き換えがパスなら `path only`、ホストを書いていなければ `not shown`）、`modify_headers` のヘッダー名と向き（`~q` なら `request`、`~s` なら `response`、ほかは `both`）、`resolve` の名前とアドレスです。`map_local` は番号だけです。フィルター、正規表現、ヘッダーの値、ボディ、ファイルのパスは返しません。
+
+`explain_rules` は、リクエストがどのルールを受けたか（受けるか）と、その理由を返します。フローの id か、メソッドと URL（と GraphQL のオペレーション）を渡します。まず範囲を答え（`--allow-hosts` にないホストと `--pass-hosts` のホストには、どのルールも当たりません）、次に、作ったリクエストに本物のリクエストと同じコードを通します。送りはしません。返すのは、記録と同じ書き方の `rewrites`、`mocked`、`mapped_to`、いま有効で当たるプリセット、無効なプリセットを有効にしたらどうなるか（`if_turned_on`）です。ヘッダー、ボディ、レスポンスを読むフィルター（`~h`、`~b`、`~t`、`~c` など）は、メソッドと URL だけでは決められません。そのルールは当たらないものとして扱い、`cannot_tell` に入れます。フローの id を渡すと、そのフローが実際に受けたものを `recorded` に入れます。そのあとにルールやプリセットの状態が変わっていることもあります。プリセットの回数は使わず、有効・無効も変えません。
+
+確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`list_rules` がフィルター、正規表現、ヘッダーの値、ボディ、パスを返さないこと（目印の文字列で）、範囲外のホスト、`--pass-hosts` のホスト、モックのプリセットの無効と有効（回数を使わず、サーバーにも届かない）、オペレーションの有無での GraphQL のモック、`cannot_tell` に入る `~h` のフィルター、`map_remote` のあとの `resolve` を記録されたフローと同じに説明すること、ルールのファイルがないときです。未確認：iPhone。記録される URL はマスク済みなので、パスやクエリでマスクした値（`[redacted]`）で、フィルターや正規表現の結果が変わることがあります。本物のリクエストと同じく、URL の GraphQL のオペレーションが、渡したものより先です。
+
 ### 上流プロキシに回す（`--upstream-proxy`）
 
 Reqcove で記録しながら、同じリクエストを Burp Suite（や ZAP、Charles など）でも見たいときに使います。
@@ -553,6 +562,8 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `list_mock_presets` | `list_presets` のモックだけ（v0.6）。`--mcp-http` からは使えない |
 | `activate_mock` | `activate_preset` のモックだけ（v0.6）。`map_remote`、`modify_headers`、`resolve` のプリセットは有効にしない。`--mcp-http` からは使えない |
 | `deactivate_mock` | モックのプリセットを無効にする（v0.6）。`--mcp-http` からは使えない |
+| `list_rules` | `--rules` のファイルの[ルール](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules)を種類と番号で。プリセットと、ルールから導いたもの（モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名と向き、`resolve` の名前とアドレス）。フィルター、正規表現、ヘッダーの値、ボディ、パスは返さない。`--mcp-http` からは使えない |
+| `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
 
 ## 制限事項
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +22,8 @@ type Presets interface {
 	Presets(ctx context.Context, kind string) ([]capture.Preset, error)
 	Activate(ctx context.Context, name, kind string, seconds, times int) (capture.Activation, error)
 	Deactivate(ctx context.Context, name, kind string) (bool, error)
+	ListRules(ctx context.Context) (capture.Rules, error)
+	Explain(ctx context.Context, method, url, operation string) (capture.Explanation, error)
 }
 
 // writeTools are the tools that change something: never sent again by the
@@ -30,8 +34,11 @@ var writeTools = map[string]bool{"activate_mock": true, "deactivate_mock": true,
 // a call that is not read-only ask here).
 var changes = &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(true), OpenWorldHint: new(false)}
 
-// presetTools: an older `run` has none of them (v0.5), or only the *_mock ones (v0.6).
-var presetTools = map[string]bool{"list_mock_presets": true, "activate_mock": true, "deactivate_mock": true, "list_presets": true, "activate_preset": true, "deactivate_preset": true}
+// presetTools are the local socket's and stdio's alone (AddPresetTools): an
+// older `run` has none of them (v0.5), only the *_mock ones (v0.6), or no
+// list_rules and explain_rules (before v0.7).
+var presetTools = map[string]bool{"list_mock_presets": true, "activate_mock": true, "deactivate_mock": true, "list_presets": true, "activate_preset": true, "deactivate_preset": true,
+	"list_rules": true, "explain_rules": true}
 
 type PresetOut struct {
 	Name        string  `json:"name"`
@@ -124,6 +131,94 @@ func Servers(st *capture.Store, status func() StatusOut, remoteStatus func() Sta
 func AddPresetTools(s *mcp.Server, st *capture.Store, p Presets) {
 	addPresetTools(s, st, p, allPresets)
 	addPresetTools(s, st, p, mockPresets)
+	addRuleTools(s, st, p)
+}
+
+type ExplainIn struct {
+	FlowID    string `json:"flow_id,omitempty" jsonschema:"a recorded flow's id: its method, its URL as the app sent it and its GraphQL operation are explained; or give method and url instead"`
+	Method    string `json:"method,omitempty" jsonschema:"with url: the request's method, such as GET"`
+	URL       string `json:"url,omitempty" jsonschema:"with method: the URL as the app sends it, before any rule"`
+	Operation string `json:"operation,omitempty" jsonschema:"with method and url: the GraphQL operation's name, for a mock that matches one"`
+}
+
+// RecordedOut is what a recorded flow got, as its record shows it.
+type RecordedOut struct {
+	Rewrites []string `json:"rewrites"`
+	Mocked   bool     `json:"mocked"`
+	Presets  []string `json:"presets"`
+	MappedTo string   `json:"mapped_to,omitempty"` // map_remote's scheme and host
+}
+
+type ExplainOut struct {
+	capture.Explanation
+	FlowID   string       `json:"flow_id,omitempty"`
+	Recorded *RecordedOut `json:"recorded,omitempty"` // with flow_id: what that flow got
+	Note     string       `json:"note,omitempty"`
+}
+
+var gqlName = regexp.MustCompile(`^[_A-Za-z][_0-9A-Za-z]{0,99}$`)
+
+// addRuleTools adds list_rules and explain_rules (read-only): they show what
+// the rules send where (target hosts), so they are local only, as the preset tools.
+func addRuleTools(s *mcp.Server, st *capture.Store, p Presets) {
+	mcp.AddTool(s, &mcp.Tool{Name: "list_rules", Annotations: readOnly, Description: "The rules in the --rules file, by kind (mock, map_remote, map_local, modify_headers, resolve) and index (its place among that kind's rules in the file, as rewrites and errors name them: mock[0]), with its preset and whether it is on (active), and only what can be shown: a mock's method, url, operation, status, delay_ms and fault; map_remote's target (scheme and host, \"path only\", or \"not shown\" when it cannot be read from the rule); modify_headers' header name and direction (request, response or both); resolve's host and address; map_local's index alone; keep_host_header. Never a filter, a regex, a header value, a body or a file's path. loaded false: no rules file in effect. rules_error: why the file, or its last change, did not load (with --rules-reload the rules before it stay in effect)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, capture.Rules, error) {
+			r, err := p.ListRules(ctx)
+			if err != nil {
+				return nil, capture.Rules{}, err
+			}
+			r.Rules = orEmpty(r.Rules)
+			return nil, r, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "explain_rules", Annotations: readOnly, Description: "Why a request got, or would get, which --rules rules, without sending anything or changing a preset (no count used). Give flow_id (a recorded flow), or method and url (and operation for a GraphQL mock). in_scope false: the host is not in --allow-hosts, or is in --pass-hosts, and gets no rule (scope says why). Otherwise, through the request path's own code: rewrites as a record names them, in the order they apply (request modify_headers, a mock, map_local, map_remote presets then plain rules, resolve by the host map_remote gave), response_rewrites, mocked, mapped_to, and presets: those on now that apply. if_turned_on: each preset that is off now and what it would do turned on. cannot_tell: rules whose filter reads headers, a body or the response (~h, ~b, ~t, ~c…), counted here as not matching, and mocks that need operation. conditions: what a method and URL cannot tell (a mock or map_local answers only bodies known to be at most 1 MiB). With flow_id, recorded is what that flow got. Call it when a flow lacks the mocked, rewrites or presets you expected, before telling the user."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in ExplainIn) (*mcp.CallToolResult, ExplainOut, error) {
+			var out ExplainOut
+			method, u, op := in.Method, in.URL, in.Operation
+			if (in.FlowID == "") == (u == "") || in.FlowID != "" && (method != "" || op != "") || u != "" && method == "" {
+				return nil, out, errors.New("give flow_id, or method and url (and operation)")
+			}
+			if in.FlowID != "" {
+				v, err := st.Get(in.FlowID, false)
+				if err != nil {
+					return nil, out, err
+				}
+				method, u, op = v.Method, v.URL, v.Operation
+				if !gqlName.MatchString(op) && op != "(anonymous)" && op != "(batched)" {
+					op = ""
+				}
+				out.FlowID = in.FlowID
+				out.Recorded = &RecordedOut{Rewrites: orEmpty(v.Rewrites), Mocked: v.Mocked, Presets: orEmpty(v.Presets), MappedTo: origin(v.MappedURL)}
+				out.Note = "recorded is what this flow got; the rest is what the rules do now: they differ when a preset was turned on or off, ran out of time or requests, or a filter read what a method and URL cannot tell (cannot_tell). The URL is the one recorded, masked: a masked value in its path or query can change what a filter or regex sees."
+				// rules_loaded also moves when mitmproxy says hello again (a reconnect): may, not was.
+				if l := st.RulesLoaded(); l.After(time.Unix(0, int64(v.Start*1e9))) {
+					out.Note += " The rules may have changed since this flow: mitmproxy took the file, or reconnected, at " + l.Format("15:04:05") + "."
+				}
+			} else if op != "" && !gqlName.MatchString(op) {
+				return nil, out, errors.New("operation must be a GraphQL name")
+			}
+			if len(u) > 16<<10 {
+				return nil, out, errors.New("url: at most 16 KiB")
+			}
+			e, err := p.Explain(ctx, method, u, op)
+			if err != nil {
+				return nil, ExplainOut{}, presetErr(err)
+			}
+			out.Explanation = e
+			out.Rewrites, out.Presets, out.CannotTell = orEmpty(e.Rewrites), orEmpty(e.Presets), orEmpty(e.CannotTell)
+			if out.IfTurnedOn == nil {
+				out.IfTurnedOn = map[string][]string{}
+			}
+			return nil, out, nil
+		})
+}
+
+// origin is u's scheme and host (and port), "" for none.
+func origin(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || p.Host == "" {
+		return ""
+	}
+	return p.Scheme + "://" + p.Host
 }
 
 func addPresetTools(s *mcp.Server, st *capture.Store, p Presets, t presetTexts) {
@@ -217,4 +312,10 @@ func (noPresets) Activate(context.Context, string, string, int, int) (capture.Ac
 }
 func (noPresets) Deactivate(context.Context, string, string) (bool, error) {
 	return false, capture.ErrNoControl
+}
+func (noPresets) ListRules(context.Context) (capture.Rules, error) {
+	return capture.Rules{}, capture.ErrNoControl
+}
+func (noPresets) Explain(context.Context, string, string, string) (capture.Explanation, error) {
+	return capture.Explanation{}, capture.ErrNoControl
 }
