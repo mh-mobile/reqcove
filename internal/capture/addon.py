@@ -249,10 +249,9 @@ def _spec_parts(spec):
     return (parts[0], parts[1]) if len(parts) == 3 else ("", parts[0] if parts else "")
 
 
-# A map_remote preset's target, written whole: https://host[:port] then / or
-# the end. Plain http only to this computer or a LAN address: the app's cookies
+# A map_remote preset's target, written whole: https://host[:port] then /. Plain http only to this computer or a LAN address: the app's cookies
 # and tokens would cross the internet in clear.
-PRESET_TARGET = re.compile(r"(https?)://([^/?#]*)(?:[/?#]|$)")
+PRESET_TARGET = re.compile(r"(https?)://([^/?#]*)/")
 LOCAL_NAMES = re.compile(r"(?:localhost|[a-z0-9_.-]+\.local)")
 
 
@@ -261,11 +260,11 @@ def _map_remote_target(replacement):
     RuleError when it cannot be shown or checked."""
     m = PRESET_TARGET.match(replacement)
     if not m:
-        raise RuleError("a map_remote preset's replacement starts with http:// or https:// and a host, so its target can be shown")
+        raise RuleError("a map_remote preset's replacement starts with http:// or https://, a host and /, so its target can be shown")
     scheme, netloc = m.groups()
     if "@" in netloc:
         raise RuleError("a map_remote preset's target takes no user or password")
-    if "\\" in netloc or "$" in netloc or "{" in netloc:
+    if "\\" in netloc or "$" in netloc or "{" in netloc or any(c.isspace() for c in netloc):
         raise RuleError("a map_remote preset's target host is written out, not taken from the request (no \\1)")
     u = urllib.parse.urlsplit(f"{scheme}://{netloc}")
     try:
@@ -278,9 +277,21 @@ def _map_remote_target(replacement):
         addr = None
     if addr is None and not HOST_NAME.match(host):
         raise RuleError("a map_remote preset's target must be a host name or an address")
+    if addr is not None and (addr.is_link_local or addr.is_unspecified or addr.is_multicast):
+        raise RuleError("a map_remote preset's target cannot be a link-local, unspecified or multicast address")
     if scheme == "http" and not (addr is not None and (addr.is_private or addr.is_loopback) or LOCAL_NAMES.fullmatch(host)):
         raise RuleError("a map_remote preset over plain http only to this computer or a LAN address (localhost, *.local, a private address); use https")
-    return f"{scheme}://{host}" + (f":{port}" if port else "")
+    return _origin(f"{scheme}://{netloc}/")
+
+
+def _origin(url):
+    """scheme://host[:port] of url, the port left out when it is the scheme's."""
+    u = urllib.parse.urlsplit(url)
+    host = (u.hostname or "").rstrip(".")
+    if ":" in host:
+        host = f"[{host}]"
+    port = u.port
+    return f"{u.scheme}://{host}" + (f":{port}" if port is not None and (u.scheme, port) not in (("http", 80), ("https", 443)) else "")
 
 
 class RuleError(ValueError):
@@ -308,6 +319,7 @@ class Resolve:
     def __init__(self):
         self.replacements = {}  # name -> (ip, port or None)
         self.presets = []  # (preset, name, ip, port or None): only while an agent has it on
+        self.order = []  # each rule's name, in the file's order (for errors)
 
     def target(self, name, book):
         """Where name goes now: a preset that is on for it first, then a plain rule.
@@ -351,6 +363,7 @@ class Resolve:
             self.replacements[name] = (str(addr), port)
         else:
             self.presets.append((preset, name, str(addr), port))
+        self.order.append(name)
         return name, str(addr), port
 
 
@@ -970,7 +983,7 @@ class Reqcove:
             if self.upstream and rules["resolve"].names():
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
-            for i, name in enumerate(rules["resolve"].names()):
+            for i, name in enumerate(rules["resolve"].order):
                 if self._passed(name):  # never decrypted, so no rule applies to it
                     raise ValueError(f"resolve[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
                 if not self._in_scope(name):  # would never apply: a typo
@@ -1017,8 +1030,7 @@ class Reqcove:
         rules = self.rules  # once: the writer thread asks too, for the hello on a reconnect
         return {
             "rules": dict({k: len(a.replacements) for k, a in rules.items()}, keep_host_header=int(rules["map_remote"].keep_host_header)) if rules else None,
-            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in rules["resolve"].replacements.items()]
-            + [f"{n} -> {ip}:{port or 'as asked'} (preset {p}, while on)" for p, n, ip, port in rules["resolve"].presets] if rules else None,
+            "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in rules["resolve"].replacements.items()] if rules else None,
             "rules_error": self.rules_error,
             "presets": rules["mock"].book.names() if rules else [],
             "preset_targets": {n: info.get("target") or info.get("address") for n, (_, _, info) in rules["mock"].book.entries.items() if info.get("target") or info.get("address")} if rules else {},
@@ -1230,6 +1242,10 @@ class Reqcove:
                 url = r.pretty_url
                 new = re.sub(spec.subject, spec.replacement, url)
                 if new != url:
+                    if _origin(new) != book.entries[preset][2]["target"]:
+                        # Its regex matched elsewhere than the URL's start: never
+                        # somewhere other than the target shown to the user and the agent.
+                        raise RuleError("a map_remote preset made a URL outside its target")
                     r.url = new
                     flow.metadata.setdefault("reqcove_presets", []).append(preset)
                     done.append(f"map_remote preset {preset}")
@@ -1271,8 +1287,9 @@ class Reqcove:
     @staticmethod
     def _modify_headers(flow, headers, direction, rules):
         mh = rules["modify_headers"]
-        names = []
-        if direction == "request":  # presets change requests only (checked at load)
+        names = [s.subject.decode(errors="replace") for s in mh.replacements if s.matches(flow)]
+        mh.run(flow, headers)
+        if direction == "request":  # presets change requests only (checked at load); after the plain rules, so one that is on wins
             book = rules["mock"].book
             on = [(p, s) for p, s in book.specs["modify_headers"] if book.on(p) and s.matches(flow)]
             if on:
@@ -1281,8 +1298,6 @@ class Reqcove:
                 pre.run(flow, headers)
                 names += [f"{s.subject.decode(errors='replace')} (preset {p})" for p, s in on]
                 flow.metadata.setdefault("reqcove_presets", []).extend(p for p, _ in on)
-        names += [s.subject.decode(errors="replace") for s in mh.replacements if s.matches(flow)]
-        mh.run(flow, headers)
         # An @file is read again for each flow: one changed since it was
         # checked must not put a line break into the headers either.
         if any(BAD_IN_VALUE.search(v) for _, v in headers.fields):

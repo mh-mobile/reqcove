@@ -805,17 +805,20 @@ resolve:
   header name (never its value), a `resolve` preset's name and address; never
   a filter or a regex.
 - Refused at load: a `map_remote` preset whose replacement does not start with
-  `http://` or `https://` and a host (its target could not be shown), has a
-  user or password, takes its host from the request (`\1`), or is plain
-  `http://` to anything but this computer or a LAN address (`localhost`,
-  `*.local`, a private address); a `modify_headers` preset on responses (`~s`);
+  `http://` or `https://`, a host and `/` (its target could not be shown), has
+  a user or password, takes its host from the request (`\1`), goes to a
+  link-local address, or is plain `http://` to anything but this computer or a
+  LAN address (`localhost`, `*.local`, a private address); a request whose
+  rewritten URL would be outside the target shown (a regex that matched inside
+  the URL) gets a 502 instead; a `modify_headers` preset on responses (`~s`);
   a preset in `map_local`; a plain rule with the same match as a preset
   (`map_remote`: the same filter and regex; `modify_headers`: the same filter
   and header).
 - One on per match, per kind: the same filter and regex (`map_remote`), the
   same filter and header (`modify_headers`), the same name (`resolve`). A
   `resolve` preset that is on comes before a plain `resolve` rule for its name;
-  presets that are on come before plain rules of their kind.
+  a `map_remote` preset that is on applies before the plain rules; a
+  `modify_headers` preset after them, so its header wins.
 - Names are shared across kinds: a mock and a `resolve` preset cannot both be
   `staging`. The row lists every preset that changed or answered it in
   `presets` (`preset` stays the mock's that answered).
@@ -829,7 +832,9 @@ row lists them, the header's value is never shown, `activate_mock` and
 them off; the refusals at load (mitmproxy's Python). Not tried: HTTPS through a
 `map_remote` or `resolve` preset turned on while the app's connections are open
 (pooled HTTP/1, HTTP/2): the app may keep using a connection opened before;
-an iPhone.
+an iPhone. From reading code: rules apply when a request starts, so a
+WebSocket, a stream or a long upload begun while a `map_remote` or `resolve`
+preset was on stays with its target after the preset is off.
 
 `resolve` connects elsewhere and leaves the request as it is, for a staging
 server or a new load balancer:

@@ -390,12 +390,16 @@ carry, while it is on: not only what the app gets.
   refused at load, as it could drop a page's protections (CSP, HSTS) or set
   cookies on a host Safari shows. Its value is never shown.
 - Refused at load, so the target can be shown and checked: a `map_remote`
-  preset whose replacement is not `http://` or `https://` and a host, has a user
-  or password, or takes its host from the request; plain `http://` to anything
-  but this computer or a LAN address (`localhost`, `*.local`, a private
-  address).
+  preset whose replacement is not `http://` or `https://`, a host and `/`, has
+  a user or password, takes its host from the request, or goes to a link-local
+  address; plain `http://` to anything but this computer or a LAN address
+  (`localhost`, `*.local`, a private address). On each request the rewritten
+  URL's scheme, host and port are checked against the target shown: a regex
+  that matched inside the URL gets a 502, never a request elsewhere (a test).
+- A `modify_headers` preset that is on applies after the plain rules, so its
+  header is the one sent (a test).
 - Shown: each preset's target (`map_remote`) or address (`resolve`) in `run`'s
-  ready block and log, `reqcove status`, and `list_presets`; never a filter, a
+  ready block and log and `list_presets`, the ones on in `reqcove status`; never a filter, a
   regex or a header's value. A flow a preset changed lists it in `presets`; the
   skill and the server's instructions tell agents never to report such a
   flow's answer as the usual server's.
@@ -408,7 +412,10 @@ carry, while it is on: not only what the app gets.
   `--mcp-http`, off after a reload or a restart, both clocks.
 - Not tried: what an app does with connections it opened before a preset
   turned on or off (pooled HTTP/1, HTTP/2): it may keep using them, so a
-  switch may not take effect at once, or may last past the end.
+  switch may not take effect at once, or may last past the end. From reading
+  code: rules apply when a request starts, so a WebSocket, a stream or a long
+  upload begun while a `map_remote` or `resolve` preset was on stays with its
+  target after the preset is off, past the 5 minutes.
 
 ## Rules (`--rules`)
 

@@ -22,7 +22,8 @@
   it on, for at most 5 minutes each time, as mock presets. A `map_remote`
   preset sends the app's requests, cookies and tokens to its target: SECURITY
   has a section on what that allows. Targets are shown in the ready block, the
-  log and `reqcove status`; refused at load: a target that cannot be shown,
+  log, `list_presets` and (the ones on) `reqcove status`; a request a preset
+  would send outside its target gets a 502; refused at load: a target that cannot be shown,
   with a user or password, or plain `http://` beyond this computer and the LAN.
   Not tried yet with an iPhone.
 

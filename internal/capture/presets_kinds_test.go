@@ -85,6 +85,9 @@ refused('map_remote:\n  - {rule: "|a|https://u:p@h.example/", preset: x}\n', "no
 refused('map_remote:\n  - {rule: "|(a)|https://\\\\1.example/", preset: x}\n', "written out")
 refused('map_remote:\n  - {rule: "|a|http://h.example/", preset: x}\n', "plain http only")
 refused('map_remote:\n  - {rule: "|a|/v2/", preset: x}\n', "starts with http")
+refused('map_remote:\n  - {rule: "|https://api\\\\.example\\\\.com/|https://staging.example.com", preset: x}\n', "starts with http")
+refused('map_remote:\n  - {rule: "|a|http://169.254.169.254/", preset: x}\n', "link-local")
+assert addon._origin("https://h.example:443/x") == "https://h.example" and addon._origin("http://h.example:8080/") == "http://h.example:8080"
 refused('modify_headers:\n  - {rule: "/~s/X-A/b", preset: x}\n', "requests only")
 refused('modify_headers:\n  - {rule: "/~q/X-A/b", preset: x}\n  - "/~q/x-a/c"\n', "same match")
 refused('map_remote:\n  - "|a|https://p.example/"\n  - {rule: "|a|https://q.example/", preset: x}\n', "same match")
@@ -122,7 +125,9 @@ func TestPresetKinds(t *testing.T) {
 	write := func(extra string) {
 		os.WriteFile(rules, []byte(fmt.Sprintf(`map_remote:
   - {rule: "|http://%[1]s/|http://%[2]s/", preset: staging, description: to staging}
+  - {rule: "|/mid/|http://%[2]s/mid/", preset: mid}
 modify_headers:
+  - "|~q ~u plainflag|X-Flag|plain"
   - {rule: "|~q|X-Flag|VALUEMARK3", preset: flag}
 resolve:
   - {rule: "api.test=127.0.0.1:%[3]s", preset: api-local}
@@ -149,7 +154,7 @@ resolve:
 		return fmt.Sprintf("%d %s", resp.StatusCode, b)
 	}
 	ps, err := h.c.Presets(ctx, "")
-	if err != nil || len(ps) != 3 {
+	if err != nil || len(ps) != 4 {
 		t.Fatalf("presets: %+v %v", ps, err)
 	}
 	for _, x := range ps {
@@ -188,6 +193,18 @@ resolve:
 	if s := strings.Join(f.Rewrites, "; "); !strings.Contains(s, "map_remote preset staging") || !strings.Contains(s, "X-Flag (preset flag)") || strings.Contains(s, "VALUEMARK3") {
 		t.Errorf("rewrites: %s", s)
 	}
+	// A plain rule for the same header: the preset that is on wins, as the row says.
+	if got := get("http://" + p + "/a?n=plainflag"); got != "200 staging /a flag=VALUEMARK3" {
+		t.Errorf("a plain header rule beat the preset: %q", got)
+	}
+	// A regex that matches inside the URL would make one outside the target: 502, never sent.
+	h.c.Deactivate(ctx, "staging", "")
+	h.c.Activate(ctx, "mid", "", 60, 0)
+	if got := get("http://" + p + "/x/mid/y"); !strings.HasPrefix(got, "502") {
+		t.Errorf("a URL outside the target: %q", got)
+	}
+	h.c.Deactivate(ctx, "mid", "")
+	h.c.Activate(ctx, "staging", "", 60, 0)
 	if got := get("http://"+p+"/r?n=on", "api.test"); !strings.HasPrefix(got, "200 staging /r") {
 		t.Errorf("resolve on: %q", got)
 	}

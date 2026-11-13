@@ -58,7 +58,7 @@ type PresetsOut struct {
 }
 
 type ActivateIn struct {
-	Name    string   `json:"name" jsonschema:"the preset's name, from list_mock_presets"`
+	Name    string   `json:"name" jsonschema:"the preset's name, from list_presets"`
 	Minutes *float64 `json:"minutes,omitempty" jsonschema:"how long it stays on, in minutes: more than 0, at most 5 (5 if left out)"`
 	Times   int      `json:"times,omitempty" jsonschema:"a mock only: how many matching requests it answers before it turns off, at most 20; leave out for no count within the time"`
 }

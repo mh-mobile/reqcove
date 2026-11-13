@@ -434,12 +434,12 @@ resolve:
 - ツールは `list_presets`（すべての種類。`kind` 付き）、`activate_preset(name, minutes)`、`deactivate_preset(name)` です。`list_mock_presets`、`activate_mock`、`deactivate_mock` は残し、モック専用にしました。v0.6 で `activate_mock` を許可したエージェントは、これらを有効にできません。`times` はモック専用で、ほかの種類は時間だけで無効になります。
 - 有効な間、`map_remote` のプリセットは、一致したリクエストをアプリの Cookie、トークン、ボディごと送り先へ送ります。`resolve` はその名前の接続先を指定のアドレスにします（Host、SNI、TLS の検証は名前のまま）。5 分で終わるのは切り替えで、その影響ではありません。アプリが書いたものはそのサーバーに残り、アプリはそこで得たトークンやキャッシュを持ち続けることがあります（[SECURITY](SECURITY.md#map_remote-modify_headers-and-resolve-presets)）。
 - `list_presets`、起動時の表示、`reqcove status` に出すのは、`map_remote` の送り先（スキームとホスト）、`modify_headers` のヘッダー名（値は出しません）、`resolve` の名前とアドレスです。フィルターや正規表現は出しません。
-- 読み込みで断るもの：置き換えが `http://` か `https://` とホストで始まらない `map_remote` のプリセット（送り先を表示できないため）、送り先にユーザーやパスワードがあるもの、ホストをリクエストから取るもの（`\1`）、このコンピュータや LAN のアドレス（`localhost`、`*.local`、プライベートアドレス）以外への平文の `http://`。レスポンスを変える `modify_headers` のプリセット（`~s`）。`map_local` のプリセット。プリセットと同じ一致条件の普通のルール（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー）。
-- 同じ一致条件で有効にできるのは、種類ごとに 1 つです（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー、`resolve` は同じ名前）。有効な `resolve` のプリセットは、同じ名前の普通の `resolve` より先に使います。有効なプリセットは、同じ種類の普通のルールより先に当てます。
+- 読み込みで断るもの：置き換えが `http://` か `https://`、ホスト、`/` で始まらない `map_remote` のプリセット（送り先を表示できないため）、送り先にユーザーやパスワードがあるもの、ホストをリクエストから取るもの（`\1`）、リンクローカルのアドレスへのもの、このコンピュータや LAN のアドレス（`localhost`、`*.local`、プライベートアドレス）以外への平文の `http://`。書き換えた URL が表示している送り先の外になるリクエスト（正規表現が URL の途中に一致したもの）は、送らずに 502 を返します。レスポンスを変える `modify_headers` のプリセット（`~s`）。`map_local` のプリセット。プリセットと同じ一致条件の普通のルール（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー）。
+- 同じ一致条件で有効にできるのは、種類ごとに 1 つです（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー、`resolve` は同じ名前）。有効な `resolve` のプリセットは、同じ名前の普通の `resolve` より先に使います。有効な `map_remote` のプリセットは普通のルールより先に、`modify_headers` のプリセットは普通のルールのあとに当てます（プリセットのヘッダーが残ります）。
 - 名前は種類をまたいで共通です（モックと `resolve` のプリセットの両方を `staging` にはできません）。一覧の行の `presets` には、そのリクエストを変えたか応答したプリセットがすべて入ります（`preset` は、応答したモックのものとして残します）。
 - `reqcove status` と `status` ツールの `active_mock_presets` には、有効なものがすべての種類で入ります（`kind` 付き。名前は v1.0 まで変えません）。
 
-確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`activate_mock` と `list_mock_presets` がこれらに触れないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）、iPhone。
+確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`activate_mock` と `list_mock_presets` がこれらに触れないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）、iPhone。コードから：ルールはリクエストの始まりで当てるので、`map_remote` や `resolve` のプリセットが有効な間に始まった WebSocket、ストリーム、長いアップロードは、プリセットが無効になったあとも、その送り先のままです。
 
 `resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
 
