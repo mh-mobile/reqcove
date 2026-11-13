@@ -19,6 +19,7 @@ first; header, done and error events are kept so flows are never orphaned.
 import asyncio
 import collections
 import base64
+import copy
 import os
 import hmac
 import ipaddress
@@ -36,7 +37,7 @@ from pathlib import Path
 
 import brotli
 import ruamel.yaml  # mitmproxy's own dependency
-from mitmproxy import connection, ctx, http
+from mitmproxy import connection, ctx, flowfilter, http
 from mitmproxy import version as mitmproxy_version
 from mitmproxy.addons import maplocal, mapremote, modifyheaders
 
@@ -255,9 +256,9 @@ PRESET_TARGET = re.compile(r"(https?)://([^/?#]*)/")
 LOCAL_NAMES = re.compile(r"(?:localhost|[a-z0-9_.-]+\.local)")
 
 
-def _map_remote_target(replacement):
-    """The scheme and host a map_remote preset sends requests to, as shown;
-    RuleError when it cannot be shown or checked."""
+def _map_remote_target(replacement, plain=False):
+    """The scheme and host a map_remote preset (or, plain, a plain rule) sends
+    requests to, as shown; RuleError when it cannot be shown or checked."""
     m = PRESET_TARGET.match(replacement)
     if not m:
         raise RuleError("a map_remote preset's replacement starts with http:// or https://, a host and /, so its target can be shown")
@@ -282,9 +283,51 @@ def _map_remote_target(replacement):
         raise RuleError("a map_remote preset's target has a bad port")
     if addr is not None and (addr.is_link_local or addr.is_unspecified or addr.is_multicast):
         raise RuleError("a map_remote preset's target cannot be a link-local, unspecified or multicast address")
-    if scheme == "http" and not (addr is not None and (addr.is_private or addr.is_loopback) or LOCAL_NAMES.fullmatch(host)):
+    if scheme == "http" and not plain and not (addr is not None and (addr.is_private or addr.is_loopback) or LOCAL_NAMES.fullmatch(host)):
         raise RuleError("a map_remote preset over plain http only to this computer or a LAN address (localhost, *.local, a private address); use https")
     return _origin(f"{scheme}://{netloc}/")
+
+
+def _shown_target(replacement):
+    """A plain map_remote rule's target as list_rules shows it: its scheme and
+    host when written out, "path only", or "not shown" (taken from the request,
+    with a user, …); never the regex or the rest of the replacement."""
+    if re.match(r"/(?!/)", replacement):
+        return "path only"
+    if re.fullmatch(r"https?://[^/?#]*", replacement):
+        replacement += "/"  # https://staging.example.com, the path left as it was
+    try:
+        return _map_remote_target(replacement, plain=True)
+    except ValueError:  # RuleError, or urllib's on a bad address
+        return "not shown"
+
+
+# Filter parts a method and URL tell (and whether a response is in yet); any
+# other (~h, ~b, ~t, ~c, ~src, ~comment…) reads what explain_rules has not got.
+URL_ONLY = (flowfilter.FMethod, flowfilter.FDomain, flowfilter.FUrl, flowfilter.FReq, flowfilter.FResp, flowfilter.FHTTP, flowfilter.FAll)
+
+
+def _decide(f, flow):
+    """mitmproxy's filter f on flow, its own parts deciding: True, False, or
+    None when what decides it reads more than the method and URL."""
+    if isinstance(f, flowfilter.FNot):
+        v = _decide(f.itm, flow)
+        return None if v is None else not v
+    if isinstance(f, (flowfilter.FAnd, flowfilter.FOr)):
+        vs = {_decide(x, flow) for x in f.lst}
+        win = isinstance(f, flowfilter.FOr)  # any True decides an or, any False an and
+        return win if win in vs else None if None in vs else not win
+    return bool(f(flow)) if isinstance(f, URL_ONLY) else None
+
+
+def _direction(f):
+    """A modify_headers rule's direction as list_rules shows it: request (~q)
+    or response (~s) when its filter requires one, else both."""
+    parts = f.lst if isinstance(f, flowfilter.FAnd) else [f]
+    for cls, d in ((flowfilter.FReq, "request"), (flowfilter.FResp, "response")):
+        if any(isinstance(x, cls) for x in parts):
+            return d
+    return "both"
 
 
 def _origin(url):
@@ -540,6 +583,9 @@ class Presets:
     def __init__(self):
         self.entries = {}  # name -> (kind, match key, what list shows)
         self.specs = {"map_remote": [], "modify_headers": []}  # kind -> [(name, mitmproxy's rule)]
+        # Every rule in the file's order, for list_rules and explain_rules:
+        # (kind, index, preset or None, what list_rules shows, mitmproxy's rule or None).
+        self.rules = []
         # name -> [deadline (time.monotonic()), requests left or None, expires_at (time.time())]
         self.active = {}
 
@@ -605,12 +651,19 @@ class Presets:
             raise ValueError("times is for mocks only: a preset of this kind is on for a time")
         if times is not None and (not isinstance(times, int) or isinstance(times, bool) or not 1 <= times <= PRESET_TIMES):
             raise ValueError(f"times must be from 1 to {PRESET_TIMES}")
-        off = [n for n, (k, key, _) in self.entries.items() if n != name and k == entry[0] and key == entry[1] and self.on(n)]
-        for other in off:  # one preset on per match: the later one
+        off, expires = self.turn_on(name, seconds, times)
+        return {"name": name, "expires_at": expires, "times": times, "turned_off": off}
+
+    def turn_on(self, name, seconds, times):
+        """Turn preset name on; one preset on per match, so another for the same
+        match goes off. The ones turned off, and when name turns off."""
+        kind, key, _ = self.entries[name]
+        off = [n for n, (k, kk, _) in self.entries.items() if n != name and k == kind and kk == key and self.on(n)]
+        for other in off:
             del self.active[other]
         now = time.time()
         self.active[name] = [time.monotonic() + seconds, times, now + seconds]
-        return {"name": name, "expires_at": now + seconds, "times": times, "turned_off": off}
+        return off, now + seconds
 
 
 class Mock:
@@ -728,11 +781,11 @@ class Mock:
         on = [i for i in hits if self.replacements[i][6] is not None and self.book.on(self.replacements[i][6])]
         return on + [i for i in hits if self.replacements[i][6] is None]
 
-    def answer(self, flow):
+    def answer(self, flow, op=False):
         """The first rule matching flow, made into its response:
         (index, status or "close", preset or None, delay_ms), or None. A preset
-        that answers uses one of its requests."""
-        op = False  # not read yet: read once, whatever it gives
+        that answers uses one of its requests. op: the GraphQL operation, if
+        known (explain_rules); False reads it from the request."""
         for i in self.candidates(flow):
             want = self.replacements[i][2]
             if want is not None:
@@ -814,13 +867,13 @@ def load_rules(path):
     for i, item in enumerate(_rule_items(data, "resolve")):
         spec, preset, description = item
         try:
-            if preset is None:
-                resolve.add(spec)
-                continue
-            if preset in book.entries:
+            if preset is not None and preset in book.entries:
                 raise RuleError("another rule has this preset name")
             name, ip, port = resolve.add(spec, preset)
-            book.add(preset, "resolve", ("resolve", name), {"description": description, "host": name, "address": f"{ip}:{port}" if port else ip})
+            shown = {"host": name, "address": f"{ip}:{port}" if port else ip}
+            book.rules.append(("resolve", i, preset, shown, None))
+            if preset is not None:
+                book.add(preset, "resolve", ("resolve", name), dict(shown, description=description))
         except ValueError as e:
             raise ValueError(f"resolve[{i}]: {e}") from None
     for kind, addon in addons.items():
@@ -830,6 +883,13 @@ def load_rules(path):
                 rule = _parse_rule(kind, spec, Path(path).parent)
                 flt, subject = _spec_parts(spec)
                 key = (kind, flt, subject.lower() if kind == "modify_headers" else subject)
+                # Derived parts only: never the filter, the regex, a value or a path.
+                shown = {}
+                if kind == "map_remote":
+                    shown = {"target": _map_remote_target(rule.replacement) if preset else _shown_target(rule.replacement)}
+                elif kind == "modify_headers":
+                    shown = {"header": rule.subject.decode(), "direction": "request" if preset else _direction(rule.matches)}
+                book.rules.append((kind, i, preset, shown, rule))
                 if preset is None:
                     if key in presets:
                         raise RuleError("a plain rule and a preset have the same match")
@@ -839,7 +899,7 @@ def load_rules(path):
                 if key in plain:
                     raise RuleError("a plain rule and a preset have the same match")
                 if kind == "map_remote":
-                    info = {"description": description, "target": _map_remote_target(rule.replacement)}
+                    info = {"description": description, "target": shown["target"]}
                 elif kind == "modify_headers":
                     if re.search(r"(?:^|[\s!(&|])~s(?:$|[\s)])", flt):
                         raise RuleError("a modify_headers preset changes requests only (no ~s): a response one could drop a page's protections")
@@ -864,12 +924,43 @@ def load_rules(path):
     for i, spec in enumerate(specs):
         try:
             mock.add(spec, Path(path).parent)
+            method, url, op, status, _, _, preset, _, delay, fault = mock.replacements[-1]
+            book.rules.append(("mock", i, preset, {"method": method, "url": url, "operation": op, "status": None if fault else status, "delay_ms": delay, "fault": fault}, None))
         except RuleError as e:
             raise ValueError(f"mock[{i}]: {e}") from None
         except Exception as e:
             raise ValueError(f"mock[{i}]: {type(e).__name__}") from None
     addons["mock"] = mock
     return addons
+
+
+def _dry_rules(rules, unknown, also=None):
+    """rules for explain_rules' dry run: the same rules, a copy of the presets'
+    state (nothing here turns a real one off or uses a request of it), preset
+    also turned on as activate_preset would, and each filter decided by what a
+    method and URL tell: one that reads more (a header, a body, the response)
+    counts as not matching, and its rule goes into unknown as kind[index]."""
+    book = copy.copy(rules["mock"].book)
+    book.active = {n: list(a) for n, a in book.active.items()}
+    if also:
+        book.turn_on(also, PRESET_SECONDS, None)
+    where = {id(spec): f"{kind}[{i}]" for kind, i, _, _, spec in book.rules if spec is not None}
+
+    def wrap(spec):
+        def matches(flow):
+            v = _decide(spec.matches, flow)
+            if v is None:
+                unknown.add(where[id(spec)])
+            return bool(v)
+        return spec._replace(matches=matches)
+
+    book.specs = {k: [(p, wrap(s)) for p, s in v] for k, v in book.specs.items()}
+    out = dict(rules, mock=copy.copy(rules["mock"]))
+    out["mock"].book = book
+    for kind in ("map_remote", "map_local", "modify_headers"):
+        out[kind] = copy.copy(rules[kind])
+        out[kind].replacements = [wrap(s) for s in rules[kind].replacements]
+    return out
 
 
 class Reqcove:
@@ -912,6 +1003,13 @@ class Reqcove:
                 req = json.loads(line or b"{}")
                 if not isinstance(req, dict) or self.secret is None or not hmac.compare_digest(str(req.get("secret", "")).encode(), self.secret.encode()):
                     out = {"error": "refused"}
+                elif req.get("op") in ("rules", "explain"):  # list_rules, explain_rules: with or without presets
+                    try:
+                        out = self._list_rules() if req["op"] == "rules" else self._explain(req)
+                    except RuleError as e:
+                        out = {"error": str(e)}
+                    except Exception as e:  # never mitmproxy's text: it quotes URLs, filters and regexes
+                        out = {"error": f"explain_rules failed: {type(e).__name__}"}
                 elif not self.rules or not self.rules["mock"].book.entries:
                     out = {"error": "no presets: the --rules file marks no rule with preset:"} if req.get("op") != "list" else {"presets": []}
                 else:
@@ -937,6 +1035,97 @@ class Reqcove:
             return
         async with server:
             await server.serve_forever()
+
+    def _list_rules(self):
+        """list_rules: each rule by kind and its index in the file, its preset
+        and whether it is on, and derived parts only (never a filter, a regex, a
+        header value, a body or a path)."""
+        rules = self.rules
+        out = {"loaded": rules is not None, "rules_error": self.rules_error, "rules": []}
+        if rules:
+            book = rules["mock"].book
+            out["keep_host_header"] = rules["map_remote"].keep_host_header
+            for kind, i, preset, shown, _ in book.rules:
+                out["rules"].append(dict(shown, kind=kind, index=i, preset=preset, active=book.on(preset) if preset else None))
+        return out
+
+    def _explain(self, req):
+        """explain_rules: what the rules do now to a request of this method, URL
+        and GraphQL operation, through the request path's own code on a made
+        flow (never sent; no preset's state or count changes); its text
+        quotes no rule."""
+        method, url, op = req.get("method"), req.get("url"), req.get("operation")
+        if not (isinstance(method, str) and re.fullmatch(r"[A-Za-z]{1,20}", method)):
+            raise RuleError("method must be a word such as GET")
+        if op is not None and not (isinstance(op, str) and GQL_NAME.fullmatch(op)):
+            raise RuleError("operation must be a GraphQL name")
+        try:
+            if not isinstance(url, str) or len(url) > 16384:
+                raise ValueError
+            r = http.Request.make(method.upper(), url)
+            port = r.port
+        except Exception:
+            raise RuleError("url must be an http or https URL") from None
+        if r.scheme not in ("http", "https"):
+            raise RuleError("url must be an http or https URL")
+        host = r.pretty_host.lower().rstrip(".")
+        # As requestheaders and next_layer decide it.
+        if not check.is_valid_host(r.pretty_host) or not self._allowed(host):
+            return {"in_scope": False, "scope": "not in --allow-hosts: carried but not recorded, and no rule applies to it"}
+        if self._passed(host):
+            return {"in_scope": False, "scope": "in --pass-hosts: carried undecrypted (or, on an allowed host's connection, passed on unrecorded), and no rule applies to it"}
+        if any(re.search(p, f"{host}:{port}") for p in ctx.options.ignore_hosts):
+            return {"in_scope": False, "scope": "mitmproxy passes this host through undecrypted (Apple's, as apple-ignore-hosts.txt lists): not recorded, and no rule applies to it"}
+        rules = self.rules
+        out = {"in_scope": True, "loaded": rules is not None, "rules_error": self.rules_error}
+        if not rules:
+            return out
+        op = op or _operation(r)  # the URL may name it (operationName)
+        from mitmproxy.test import tflow  # mitmproxy's own made flows (12.3.1 ships them)
+
+        unknown = set()
+
+        def dry(also=None):
+            flow = tflow.tflow(req=http.Request.make(method.upper(), url))  # content-length 0: a small body
+            d = _dry_rules(rules, unknown, also)
+            mocks = d["mock"].candidates(flow)
+            try:
+                done = self._rewrite_request(flow, d, mocks=bool(mocks), dry=True, op=op or False)
+            except Exception as e:  # as requestheaders: a 502, never sent on
+                return {"rewrites": [f"rules failed: {type(e).__name__}"]}, mocks
+            m = flow.metadata
+            res = {"rewrites": done, "mocked": bool(m.get("reqcove_mocked"))}
+            if not m.get("reqcove_close"):  # a response, made or the server's: response rules apply to it
+                if flow.response is None:
+                    flow.response = http.Response.make(200)
+                res["response_rewrites"] = self._modify_headers(flow, flow.response.headers, "response", d)
+            if "reqcove_mapped" in m:
+                res["mapped_to"] = _origin(m["reqcove_mapped"])
+            res["presets"] = list(dict.fromkeys(list(m.get("reqcove_presets") or []) + ([m["reqcove_preset"]] if m.get("reqcove_preset") else [])))
+            return res, mocks
+
+        now, mocks = dry()
+        out.update(now)
+        book = copy.copy(rules["mock"].book)
+        book.active = dict(book.active)  # on() drops one past its time: not from the real state
+        if_on, said, seen = {}, list(now["rewrites"]), set(mocks)
+        # ponytail: one dry run per preset that is off, on the event loop (a map_local
+        # hit reads its file each time); fine for a hand-written file's few presets.
+        for name in book.entries:
+            if not book.on(name):
+                res, more = dry(name)
+                seen.update(more)  # a mock preset off: its candidates too
+                if name in res.get("presets", []):
+                    if_on[name] = res["rewrites"] + res.get("response_rewrites", [])
+                    said += res["rewrites"]
+        out["if_turned_on"] = if_on
+        cannot = sorted(unknown)
+        if op is None:
+            cannot += [f"mock[{i}]: its method and URL match; it answers one GraphQL operation (pass operation)" for i in sorted(seen) if rules["mock"].replacements[i][2] is not None]
+        out["cannot_tell"] = cannot
+        if seen or any(s.startswith(("mock", "map_local")) for s in said):
+            out["conditions"] = ["a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)"]
+        return out
 
     def load(self, loader):
         loader.add_option("reqcove_socket", str, "", "Unix socket of `reqcove run`.")
@@ -1210,13 +1399,14 @@ class Reqcove:
         self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
 
-    def _rewrite_request(self, flow, rules, mocks=False):
+    def _rewrite_request(self, flow, rules, mocks=False, dry=False, op=False):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
         map_remote and map_local run in request(), after the body, too late.
-        With mocks (from request(), the body in), a mock comes first."""
+        With mocks (from request(), the body in), a mock comes first. dry:
+        explain_rules' made flow, never sent (op: its GraphQL operation)."""
         book = rules["mock"].book
         done = self._modify_headers(flow, flow.request.headers, "request", rules)
-        if mocks and (hit := rules["mock"].answer(flow)):
+        if mocks and (hit := rules["mock"].answer(flow, op)):
             i, status, preset, delay = hit
             flow.metadata["reqcove_mocked"] = True
             flow.metadata["reqcove_delay"] = delay
@@ -1269,7 +1459,8 @@ class Reqcove:
             # (the setters would rewrite Host).
             address = (ip, port or r.port)
             r.data.host, r.data.port = address
-            self.resolve_sni[(flow.client_conn.id, address)] = name
+            if not dry:  # a made flow's connection never ends: its entry would stay
+                self.resolve_sni[(flow.client_conn.id, address)] = name
             if preset:
                 flow.metadata.setdefault("reqcove_presets", []).append(preset)
             done.append("resolve" + (f" preset {preset}" if preset else "") + f": {address[0]}:{address[1]}")

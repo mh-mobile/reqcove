@@ -151,7 +151,8 @@ Claude Code's documentation; not tried here):
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets"],
+              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
+              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules"],
     "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
             "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
@@ -201,7 +202,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` serves the same tools over HTTP on the node, but the preset ones
 (`list_presets`, `activate_preset`, `deactivate_preset`, `list_mock_presets`,
-`activate_mock`, `deactivate_mock`), and prints the URL,
+`activate_mock`, `deactivate_mock`) and the rule ones (`list_rules`,
+`explain_rules`), and prints the URL,
 `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
 `Authorization: Bearer <token>` (`reqcove links` prints them again; off a
 terminal, only it).
@@ -874,6 +876,38 @@ that start after it; one under way keeps the rules it started with.
 
 From reading code: a change is read within about two seconds.
 
+#### Why a rule did or did not apply (`list_rules`, `explain_rules`)
+
+An agent on this computer can read the rules without the file: `list_rules`
+gives each rule by kind and number (`mock[0]`, as `rewrites` names them), its
+preset and whether it is on, and only what is derived from it: a mock's match
+and answer, a `map_remote` target's scheme and host (`path only` when the
+replacement is a path, `not shown` when it does not write the host out), a
+`modify_headers` header name and direction (`request` for `~q`, `response` for
+`~s`, else `both`), a `resolve` name and address; a `map_local` rule's number
+only. Never a filter, a regex, a header value, a body or a file's path.
+
+`explain_rules` says why a request got, or would get, which rules: give it a
+flow's id, or a method and URL (and a GraphQL operation). It answers the scope
+first (a host not in `--allow-hosts`, or in `--pass-hosts`, gets no rule), then
+runs the request path's own code on a request it makes up and never sends:
+`rewrites` as the record would say them, `mocked`, `mapped_to`, the presets on
+now that apply, and `if_turned_on`, what each preset that is off would do. A
+filter that reads headers, a body or the response (`~h`, `~b`, `~t`, `~c`…)
+cannot be told from a method and URL: that rule is counted as not matching and
+listed in `cannot_tell`. With a flow's id, `recorded` is what the flow got; the
+rules, or a preset's state, may have changed since. It uses no preset's count
+and turns none on or off.
+
+Tried with the E2E tests (real mitmproxy, plain HTTP): no filter, regex,
+header value, body or path in `list_rules` (marker strings); an out-of-scope
+host, a `--pass-hosts` host, a mock preset off and then on (its count unused,
+the server never reached), a GraphQL mock with and without the operation, a
+`~h` filter in `cannot_tell`, a `map_remote` then `resolve` explained as the
+recorded flow got them; without a rules file. Not tried: an iPhone. A
+recorded URL is masked: a masked query value can change what a filter or regex
+sees.
+
 ### An upstream proxy (`--upstream-proxy`)
 
 To see the same requests in Burp Suite (or ZAP, Charles, …) while Reqcove keeps
@@ -999,6 +1033,8 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_mock_presets` | as `list_presets`, mocks only (v0.6). Not over `--mcp-http` |
 | `activate_mock` | as `activate_preset`, mocks only (v0.6): it never turns on a `map_remote`, `modify_headers` or `resolve` preset. Not over `--mcp-http` |
 | `deactivate_mock` | turn a mock preset off (v0.6). Not over `--mcp-http` |
+| `list_rules` | the `--rules` file's [rules](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) by kind and number, with their presets and what is derived from them (a mock's match and answer, a `map_remote` target, a `modify_headers` header name and direction, a `resolve` name and address); never filters, regexes, header values, bodies or paths. Not over `--mcp-http` |
+| `explain_rules` | why a flow (`flow_id`), or a method and URL, got or would get which rules: the scope, then the rewrites, a mock, the presets on and what one off would do; rules whose filter reads more than a method and URL in `cannot_tell`. Sends nothing, uses no preset's count. Not over `--mcp-http` |
 
 ## Limits
 

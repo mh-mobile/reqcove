@@ -109,10 +109,79 @@ func (c *Capture) Presets(ctx context.Context, kind string) ([]Preset, error) {
 		Presets []Preset `json:"presets"`
 	}
 	err := c.control(ctx, withKind(map[string]any{"op": "list"}, kind), &out)
-	if errors.Is(err, ErrUncertain) { // a read: nothing to have taken effect
-		err = ErrNoAnswer
+	return out.Presets, readControl(err)
+}
+
+// readControl: a read that went unanswered changed nothing.
+func readControl(err error) error {
+	if errors.Is(err, ErrUncertain) {
+		return ErrNoAnswer
 	}
-	return out.Presets, err
+	return err
+}
+
+// Rule is one --rules rule as list_rules shows it: its kind, its index among
+// that kind's rules in the file, its preset, and derived parts only, never a
+// filter, a regex, a header value, a body or a path.
+type Rule struct {
+	Kind      string  `json:"kind"`
+	Index     int     `json:"index"`
+	Preset    string  `json:"preset,omitempty"`
+	Active    *bool   `json:"active,omitempty"`    // a preset: on now
+	Method    *string `json:"method,omitempty"`    // mock
+	URL       string  `json:"url,omitempty"`       // mock
+	Operation *string `json:"operation,omitempty"` // mock
+	Status    *int    `json:"status,omitempty"`    // mock; none for fault: close
+	DelayMS   int     `json:"delay_ms,omitempty"`  // mock
+	Fault     *string `json:"fault,omitempty"`     // mock
+	Target    string  `json:"target,omitempty"`    // map_remote: scheme and host, "path only" or "not shown"
+	Header    string  `json:"header,omitempty"`    // modify_headers: the header's name
+	Direction string  `json:"direction,omitempty"` // modify_headers: request, response or both
+	Host      string  `json:"host,omitempty"`      // resolve: the name
+	Address   string  `json:"address,omitempty"`   // resolve: where it connects
+}
+
+// Rules is list_rules' answer from the addon.
+type Rules struct {
+	Loaded         bool   `json:"loaded"`                // a --rules file is in effect
+	RulesError     string `json:"rules_error,omitempty"` // why the file (or its last change) did not load
+	KeepHostHeader bool   `json:"keep_host_header,omitempty"`
+	Rules          []Rule `json:"rules"`
+}
+
+// Explanation is explain_rules' answer from the addon: what the rules do now
+// to a request of a method and URL, by the request path's own code, on a
+// request never sent.
+type Explanation struct {
+	InScope          bool                `json:"in_scope"`
+	Scope            string              `json:"scope,omitempty"` // out of scope: why
+	Loaded           bool                `json:"loaded"`
+	RulesError       string              `json:"rules_error,omitempty"`
+	Rewrites         []string            `json:"rewrites"`                    // as a record's rewrites would say
+	ResponseRewrites []string            `json:"response_rewrites,omitempty"` // modify_headers on the answer
+	Mocked           bool                `json:"mocked"`
+	MappedTo         string              `json:"mapped_to,omitempty"` // map_remote's scheme and host
+	Presets          []string            `json:"presets"`             // presets on now that change or answer it
+	IfTurnedOn       map[string][]string `json:"if_turned_on"`        // a preset off now: its rewrites were it on
+	CannotTell       []string            `json:"cannot_tell"`         // rules whose filter reads more than a method and URL tell
+	Conditions       []string            `json:"conditions,omitempty"`
+}
+
+// ListRules is every --rules rule, by kind and index, and which presets are on.
+func (c *Capture) ListRules(ctx context.Context) (Rules, error) {
+	var out Rules
+	return out, readControl(c.control(ctx, map[string]any{"op": "rules"}, &out))
+}
+
+// Explain says what the rules do now to a request of method, url and
+// (GraphQL) operation, without sending it or changing a preset.
+func (c *Capture) Explain(ctx context.Context, method, url, operation string) (Explanation, error) {
+	var out Explanation
+	req := map[string]any{"op": "explain", "method": method, "url": url}
+	if operation != "" {
+		req["operation"] = operation
+	}
+	return out, readControl(c.control(ctx, req, &out))
 }
 
 // withKind limits req to presets of kind (activate_mock: mocks only).

@@ -43,6 +43,16 @@
   `presets`; `status`'s `active_mock_presets` has every kind, with `kind`.
   `list_mock_presets` leaves out fields that do not apply (a method of any:
   no `method`) instead of `null`.
+- `list_rules` and `explain_rules` (read-only; local socket and `reqcove mcp`
+  only, never over `--mcp-http`). `list_rules`: every `--rules` rule by kind
+  and number, its preset and whether it is on, and only what is derived from
+  it (never a filter, a regex, a header value, a body or a path).
+  `explain_rules(flow_id | method, url, operation)`: the scope, then what the
+  rules do through the request path's own code on a request never sent, what
+  each preset that is off would do, the rules whose filter a method and URL
+  cannot tell, and what a recorded flow got. It uses no preset's count. The
+  skill: call it when a flow lacks the `mocked`, `rewrites` or `presets`
+  expected. Not tried yet with an iPhone.
 
 ## v0.6.0 — 2026-11-13
 

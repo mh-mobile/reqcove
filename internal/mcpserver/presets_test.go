@@ -18,6 +18,7 @@ type fakePresets struct {
 	seconds     atomic.Int32
 	onActivate  func()
 	kind        atomic.Value // the kind the last call passed
+	explained   atomic.Value // explain_rules' method, url and operation
 }
 
 func (f *fakePresets) Presets(_ context.Context, kind string) ([]capture.Preset, error) {
@@ -41,6 +42,15 @@ func (f *fakePresets) Activate(_ context.Context, name, kind string, seconds, ti
 func (f *fakePresets) Deactivate(_ context.Context, _, kind string) (bool, error) {
 	f.kind.Store(kind)
 	return true, nil
+}
+
+func (f *fakePresets) ListRules(context.Context) (capture.Rules, error) {
+	return capture.Rules{Loaded: true, Rules: []capture.Rule{{Kind: "map_remote", Target: "https://staging.example.com"}}}, nil
+}
+
+func (f *fakePresets) Explain(_ context.Context, method, url, op string) (capture.Explanation, error) {
+	f.explained.Store(method + " " + url + " " + op)
+	return capture.Explanation{InScope: true, Loaded: true, Rewrites: []string{"map_remote"}}, nil
 }
 
 func callText(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) (string, bool) {
@@ -96,7 +106,7 @@ func TestServersPresetToolsLocalOnly(t *testing.T) {
 	for _, c := range []struct {
 		s    *mcp.Server
 		want int
-	}{{local, 6}, {remote, 0}} {
+	}{{local, 8}, {remote, 0}} {
 		ct, st := mcp.NewInMemoryTransports()
 		if _, err := c.s.Connect(context.Background(), st, nil); err != nil {
 			t.Fatal(err)
@@ -116,6 +126,48 @@ func TestServersPresetToolsLocalOnly(t *testing.T) {
 		}
 		if n != c.want {
 			t.Errorf("%d preset tools, want %d", n, c.want)
+		}
+	}
+}
+
+// list_rules and explain_rules are read-only (not in writeTools: the proxy may
+// send them again); explain_rules takes a recorded flow's method, URL and
+// operation, or method and url, not both.
+func TestRuleTools(t *testing.T) {
+	f := &fakePresets{}
+	st := capture.NewStore(10, 1<<20)
+	st.Apply([]byte(`{"v":2,"ev":"request","id":"f1","host":"h.example","method":"POST","url":"https://h.example/graphql","rewrites":["map_remote"],"mapped_url":"https://s.example:8443/graphql?x=1"}`))
+	s := New(st, nil)
+	AddPresetTools(s, st, f)
+	ct, sst := mcp.NewInMemoryTransports()
+	if _, err := s.Connect(context.Background(), sst, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tool, err := range cs.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (tool.Name == "list_rules" || tool.Name == "explain_rules") && (tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || writeTools[tool.Name]) {
+			t.Errorf("%s is not read-only", tool.Name)
+		}
+	}
+	if got, isErr := callText(t, cs, "list_rules", nil); isErr || !strings.Contains(got, `"target":"https://staging.example.com"`) {
+		t.Errorf("list_rules: %s %v", got, isErr)
+	}
+	got, isErr := callText(t, cs, "explain_rules", map[string]any{"flow_id": "f1"})
+	if isErr || f.explained.Load() != "POST https://h.example/graphql " || !strings.Contains(got, `"recorded":{"mapped_to":"https://s.example:8443","mocked":false,"presets":[],"rewrites":["map_remote"]}`) {
+		t.Errorf("flow_id: %s %v (%v)", got, isErr, f.explained.Load())
+	}
+	if got, isErr := callText(t, cs, "explain_rules", map[string]any{"method": "GET", "url": "https://h.example/", "operation": "Feed"}); isErr || f.explained.Load() != "GET https://h.example/ Feed" {
+		t.Errorf("method and url: %s %v", got, isErr)
+	}
+	for _, args := range []map[string]any{nil, {"flow_id": "f1", "method": "GET"}, {"url": "https://h.example/"}, {"method": "GET", "url": "https://h.example/", "operation": "a b"}} {
+		if got, isErr := callText(t, cs, "explain_rules", args); !isErr {
+			t.Errorf("%v accepted: %s", args, got)
 		}
 	}
 }

@@ -437,11 +437,11 @@ func hostOf(h string) string {
 	return strings.ToLower(h)
 }
 
-func orEmpty(flows []capture.Summary) []capture.Summary {
-	if flows == nil {
-		return []capture.Summary{}
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
 	}
-	return flows
+	return s
 }
 
 // passNote says a host filter names a --pass-hosts host, whose flows are
