@@ -93,9 +93,9 @@ func AppleIgnored(host string) bool {
 	return false
 }
 
-// UVExcludeNewer: for another --mitmproxy-spec, uv resolves mitmproxy's
-// dependencies only from releases before this, so a release made later (a
-// compromised one included) never runs with the CA key.
+// UVExcludeNewer: uv resolves mitmproxy's dependencies only from releases
+// before this, the versions tested with it, so a release made later (a
+// compromised one included) never runs with the CA key. Move it with MitmSpec.
 const UVExcludeNewer = "2026-11-08T00:00:00Z"
 
 type Config struct {
