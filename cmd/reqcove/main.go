@@ -510,8 +510,7 @@ func run(ctx context.Context, args []string) error {
 				log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, cap.Store.PresetTargets()), ", "))
 			}
 		}
-		names, _ := s["mock_presets"].([]string)
-		logPresets(names)
+		logPresets(statsPresets(s))
 		if *rulesReload {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
 			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
@@ -557,14 +556,10 @@ func run(ctx context.Context, args []string) error {
 	}
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
 		out := remoteStatus()
-		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
+		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
-			if ps, err := cap.Presets(ctx, ""); err == nil {
-				out.ActivePresets = mcpserver.PresetsView(ps, true)
-			} else {
-				out.PresetsError = err.Error()
-			}
+			out.SetActivePresets(cap.Presets(ctx, ""))
 		}
 		return out
 	}, remoteStatus, cap)
