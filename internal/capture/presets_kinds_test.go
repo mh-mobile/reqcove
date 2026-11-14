@@ -80,9 +80,6 @@ assert r["resolve"].target("api.example.com", b) == (("203.0.113.21", None), "ap
 b.control({"op": "deactivate", "name": "api-b"}); assert r["resolve"].target("api.example.com", b) is None
 try: b.control({"op": "activate", "name": "dev", "seconds": 60, "times": 1}); raise SystemExit("times accepted")
 except ValueError as e: assert "mocks only" in str(e)
-try: b.control({"op": "activate", "name": "dev", "seconds": 60, "kind": "mock"}); raise SystemExit("kind ignored")
-except ValueError as e: assert "no mock preset" in str(e), e
-assert [x["name"] for x in b.control({"op": "list", "kind": "mock"})["presets"]] == ["mx"]
 refused('map_remote:\n  - {rule: "|a|https://u:p@h.example/", preset: x}\n', "no user or password")
 refused('map_remote:\n  - {rule: "|(a)|https://\\\\1.example/", preset: x}\n', "written out")
 refused('map_remote:\n  - {rule: "|a|http://h.example/", preset: x}\n', "plain http only")
@@ -158,7 +155,7 @@ resolve:
 		resp.Body.Close()
 		return fmt.Sprintf("%d %s", resp.StatusCode, b)
 	}
-	ps, err := h.c.Presets(ctx, "")
+	ps, err := h.c.Presets(ctx)
 	if err != nil || len(ps) != 4 {
 		t.Fatalf("presets: %+v %v", ps, err)
 	}
@@ -167,13 +164,7 @@ resolve:
 			t.Errorf("a header value shown: %+v", x)
 		}
 	}
-	if ms, _ := h.c.Presets(ctx, "mock"); len(ms) != 0 {
-		t.Errorf("mocks only listed others: %+v", ms)
-	}
-	if _, err := h.c.Activate(ctx, "staging", "mock", 60, 0); err == nil {
-		t.Errorf("activate_mock turned on a map_remote preset")
-	}
-	if _, err := h.c.Activate(ctx, "staging", "", 60, 1); err == nil || !strings.Contains(err.Error(), "mocks only") {
+	if _, err := h.c.Activate(ctx, "staging", 60, 1); err == nil || !strings.Contains(err.Error(), "mocks only") {
 		t.Errorf("times on map_remote: %v", err)
 	}
 
@@ -184,7 +175,7 @@ resolve:
 		t.Errorf("resolve off: %q", got)
 	}
 	for _, n := range []string{"staging", "flag", "api-local"} {
-		if _, err := h.c.Activate(ctx, n, "", 60, 0); err != nil {
+		if _, err := h.c.Activate(ctx, n, 60, 0); err != nil {
 			t.Fatalf("activate %s: %v", n, err)
 		}
 	}
@@ -203,20 +194,20 @@ resolve:
 		t.Errorf("a plain header rule beat the preset: %q", got)
 	}
 	// A regex that matches inside the URL would make one outside the target: 502, never sent.
-	h.c.Deactivate(ctx, "staging", "")
-	h.c.Activate(ctx, "mid", "", 60, 0)
+	h.c.Deactivate(ctx, "staging")
+	h.c.Activate(ctx, "mid", 60, 0)
 	if got := get("http://" + p + "/x/mid/y"); !strings.HasPrefix(got, "502") {
 		t.Errorf("a URL outside the target: %q", got)
 	}
-	h.c.Deactivate(ctx, "mid", "")
-	h.c.Activate(ctx, "staging", "", 60, 0)
+	h.c.Deactivate(ctx, "mid")
+	h.c.Activate(ctx, "staging", 60, 0)
 	if got := get("http://"+p+"/r?n=on", "api.test"); !strings.HasPrefix(got, "200 staging /r") {
 		t.Errorf("resolve on: %q", got)
 	}
 	if f := h.doneFlow("/r?n=on", false); !slices.Contains(f.Presets, "api-local") {
 		t.Errorf("resolve row: %v %v", f.Presets, f.Rewrites)
 	}
-	if was, err := h.c.Deactivate(ctx, "staging", ""); !was || err != nil {
+	if was, err := h.c.Deactivate(ctx, "staging"); !was || err != nil {
 		t.Errorf("deactivate: %v %v", was, err)
 	}
 	if got := get("http://" + p + "/a?n=staging-off"); got != "200 prod /a flag=VALUEMARK3" {
@@ -235,7 +226,7 @@ resolve:
 	}
 	waitFor("presets still on after a reload", "200 prod /a flag=")
 	// So does a change that does not load: the rules before it stay, their presets off.
-	h.c.Activate(ctx, "staging", "", 60, 0)
+	h.c.Activate(ctx, "staging", 60, 0)
 	if got := get("http://" + p + "/a?n=on-again"); !strings.HasPrefix(got, "200 staging") {
 		t.Fatalf("on again: %q", got)
 	}

@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`,
+  `activate_preset` and `deactivate_preset`, which take mocks and the other
+  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
+  `active_presets` and `active_presets_error`), and `capture_stats`'
+  `mock_presets` (use `presets`). No tool list has them, local or
+  `--mcp-http`, nor does a tool description or the server's instructions
+  (unit tests). A call to one of the tools, from a script or from an agent
+  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
+  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
+  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
+  (from reading its code). `reqcove status` still reads the old fields from a
+  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
+
+### Upgrading from v0.8
+
+- Restart `reqcove run` with the new version (or `reqcove service restart`,
+  or `brew services restart reqcove`), then reconnect the agent's MCP server
+  once (`/mcp` in Claude Code): until then its `reqcove mcp`, of v0.8, still
+  lists the removed tools.
+- Run `reqcove init` (or `reqcove setup`) again to update the skill.
+- In permission lists, replace `mcp__reqcove__list_mock_presets`,
+  `mcp__reqcove__activate_mock` and `mcp__reqcove__deactivate_mock` with
+  `mcp__reqcove__list_presets`, `mcp__reqcove__activate_preset` and
+  `mcp__reqcove__deactivate_preset`. `activate_preset` also turns on
+  `map_remote`, `modify_headers` and `resolve` presets: put it under `ask`,
+  even where `activate_mock` was allowed
+  ([guide](docs/guide.md#allow-the-tools)).
+- In scripts, read `active_presets`, `active_presets_error` and `presets`
+  instead of `active_mock_presets`, `active_mock_presets_error` and
+  `mock_presets`.
+
 ## v0.8.0 — 2026-11-14
 
 ### For people

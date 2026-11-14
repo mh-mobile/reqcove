@@ -54,7 +54,7 @@ type Preset struct {
 	ExpiresAt   *float64 `json:"expires_at"` // while active (Unix seconds)
 }
 
-// Activation is activate_mock's answer from the addon.
+// Activation is activate_preset's answer from the addon.
 type Activation struct {
 	Name      string   `json:"name"`
 	ExpiresAt float64  `json:"expires_at"`
@@ -70,18 +70,12 @@ var ErrNoControl = errors.New("mitmproxy did not answer about presets (restartin
 // have taken effect. Activate and Deactivate add the tool to see it with.
 var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect")
 
-// uncertain names the tool that shows whether a change to a preset of kind
-// took effect: list_mock_presets for the mock tools (a v0.6 reqcove mcp has
-// no list_presets).
-func uncertain(err error, kind string) error {
+// uncertain names the tool that shows whether a change to a preset took effect.
+func uncertain(err error) error {
 	if !errors.Is(err, ErrUncertain) {
 		return err
 	}
-	see := "list_presets"
-	if kind == "mock" {
-		see = "list_mock_presets"
-	}
-	return fmt.Errorf("%w; call %s to see", err, see)
+	return fmt.Errorf("%w; call list_presets to see", err)
 }
 
 // ErrNoAnswer: a read (the list) went unanswered: nothing changed.
@@ -125,12 +119,12 @@ func control(ctx context.Context, dir, secret string, req map[string]any, out an
 	return json.Unmarshal(line, out)
 }
 
-// Presets lists the --rules file's presets of kind ("": every kind) and which are on.
-func (c *Capture) Presets(ctx context.Context, kind string) ([]Preset, error) {
+// Presets lists the --rules file's presets, of every kind, and which are on.
+func (c *Capture) Presets(ctx context.Context) ([]Preset, error) {
 	var out struct {
 		Presets []Preset `json:"presets"`
 	}
-	err := c.control(ctx, withKind(map[string]any{"op": "list"}, kind), &out)
+	err := c.control(ctx, map[string]any{"op": "list"}, &out)
 	return out.Presets, readControl(err)
 }
 
@@ -206,18 +200,9 @@ func (c *Capture) Explain(ctx context.Context, method, url, operation string) (E
 	return out, readControl(c.control(ctx, req, &out))
 }
 
-// withKind limits req to presets of kind (activate_mock: mocks only).
-func withKind(req map[string]any, kind string) map[string]any {
-	if kind != "" {
-		req["kind"] = kind
-	}
-	return req
-}
-
-// Activate turns preset name (of kind, or "" for any) on for seconds and, for
-// a mock when times > 0, that many requests; it replaces the limits of a
-// preset already on.
-func (c *Capture) Activate(ctx context.Context, name, kind string, seconds, times int) (Activation, error) {
+// Activate turns preset name on for seconds and, for a mock when times > 0,
+// that many requests; it replaces the limits of a preset already on.
+func (c *Capture) Activate(ctx context.Context, name string, seconds, times int) (Activation, error) {
 	var a Activation
 	if !PresetName.MatchString(name) {
 		return a, errors.New("no preset by that name")
@@ -225,7 +210,7 @@ func (c *Capture) Activate(ctx context.Context, name, kind string, seconds, time
 	if seconds < 1 || seconds > PresetMaxSeconds {
 		return a, errors.New("at most 5 minutes")
 	}
-	req := withKind(map[string]any{"op": "activate", "name": name, "seconds": seconds}, kind)
+	req := map[string]any{"op": "activate", "name": name, "seconds": seconds}
 	if times != 0 {
 		if times < 1 || times > PresetMaxTimes {
 			return a, errors.New("times must be from 1 to 20")
@@ -233,19 +218,19 @@ func (c *Capture) Activate(ctx context.Context, name, kind string, seconds, time
 		req["times"] = times
 	}
 	err := c.control(ctx, req, &a)
-	return a, uncertain(err, kind)
+	return a, uncertain(err)
 }
 
-// Deactivate turns preset name (of kind, or "" for any) off; wasActive says it was on.
-func (c *Capture) Deactivate(ctx context.Context, name, kind string) (wasActive bool, err error) {
+// Deactivate turns preset name off; wasActive says it was on.
+func (c *Capture) Deactivate(ctx context.Context, name string) (wasActive bool, err error) {
 	var out struct {
 		WasActive bool `json:"was_active"`
 	}
 	if !PresetName.MatchString(name) {
 		return false, errors.New("no preset by that name")
 	}
-	err = c.control(ctx, withKind(map[string]any{"op": "deactivate", "name": name}, kind), &out)
-	return out.WasActive, uncertain(err, kind)
+	err = c.control(ctx, map[string]any{"op": "deactivate", "name": name}, &out)
+	return out.WasActive, uncertain(err)
 }
 
 // RulesCheck is the addon's word on a --rules file as it would be (reqcove
