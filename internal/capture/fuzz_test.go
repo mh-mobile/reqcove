@@ -13,7 +13,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 30
+const fuzzShapes = 34
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
 // the secret: XML masking never panics on it, and a secret element and
@@ -91,6 +91,14 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`<p>`+filler+`</p>`, `<input value="`+secret+`" type="hidden" name="authenticity_token">`, "text/html")
 	case 29: // a script's object, its key unquoted
 		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: "`+secret+`"};</script>`, "text/html")
+	case 30: // a script's string that would open an attribute, then a field
+		return pre(`<script>var s="<a x='";</script><p>`+filler+`</p>`, `<input type="hidden" name="csrf" value="`+secret+`">`, "text/html")
+	case 31: // a comment's quote, then a field
+		return pre(`<!-- it's <a x=' `+filler+` -->`, `<input name="authenticity_token" value="`+secret+`">`, "text/html")
+	case 32: // a comment between a script's key and its value
+		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: /* c */ '`+secret+`'};</script>`, "text/html")
+	case 33: // a script's string continued on the next line
+		return pre(`var c = {note: "`+filler+`", `, "idToken: \"x\\\n"+secret+"\"};", "application/javascript")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
