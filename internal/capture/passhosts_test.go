@@ -422,6 +422,30 @@ func TestStorePassthroughs(t *testing.T) {
 	if s := st.Stats(); s["passed_through"] != maxPasses+7 || !slices.Equal(s["pass_hosts"].([]string), []string{"api.example.com"}) {
 		t.Errorf("stats: %v %v", s["passed_through"], s["pass_hosts"])
 	}
+	// Raw TCP connections have their own bound: many do not push the pass
+	// hosts' out, nor the reverse.
+	kinds := func() map[string]int {
+		n := map[string]int{}
+		for _, p := range st.Passthroughs(Filter{Limit: 3 * maxPasses}) {
+			n[p.Reason]++
+		}
+		return n
+	}
+	for i := range maxPasses + 5 {
+		ev(fmt.Sprintf(`"ev":"pass_open","conn":"r%d","device":"d","sni":"grpc.example.com","raw":true,"ts":1794000005`, i))
+	}
+	if n := kinds(); n["pass_hosts"] != maxPasses || n["raw_tcp"] != maxPasses {
+		t.Errorf("after raw TCP: %v", n)
+	}
+	for i := range 5 {
+		ev(fmt.Sprintf(`"ev":"pass_open","conn":"y%d","device":"d","sni":"api.example.com","ts":1794000006`, i))
+	}
+	if n := kinds(); n["pass_hosts"] != maxPasses || n["raw_tcp"] != maxPasses || len(st.passByConn) != 2*maxPasses {
+		t.Errorf("after more pass hosts: %v, %d open", n, len(st.passByConn))
+	}
+	if p := st.Passthroughs(Filter{Limit: 1}); p[0].Conn != "y4" {
+		t.Errorf("newest: %+v", p)
+	}
 }
 
 // Refused hosts: refused again and again (alerts or hang-ups) by a device that
