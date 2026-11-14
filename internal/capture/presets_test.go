@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -356,9 +357,11 @@ func (endless) Read(p []byte) (int, error) {
 
 // TestHTTP2BodyOfUnknownLength (REQCOVE_E2E=1): an HTTP/2 GET without a
 // length that a mock or map_local may answer is held only while it has no
-// body. One that ended with its headers is answered; one that sends a body
-// anyway gets a 502 at once, recorded, and its body is never held in memory
-// (mitmproxy buffered all of it, with no end, until v0.8.0).
+// body. One that ended with its headers is answered, or goes on to the
+// origin (through the upstream proxy) when no mock answers it after all; one
+// that sends a body anyway gets a 502 at once, recorded, and its body is
+// never held in memory (mitmproxy buffered all of it, with no end, until
+// v0.8.0).
 func TestHTTP2BodyOfUnknownLength(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
@@ -382,6 +385,8 @@ func TestHTTP2BodyOfUnknownLength(t *testing.T) {
 	os.WriteFile(rules, []byte(fmt.Sprintf(`mock:
   - match: {url: "%[1]s/mocked"}
     body: mocked
+  - match: {url: "%[1]s/graphql", operation: Feed}
+    body: feed
 map_local:
   - "|//%[2]s/local/|files"
 `, srv.URL, srv.Listener.Addr().String())), 0o600)
@@ -430,6 +435,13 @@ map_local:
 	}
 	if st, b := get("/mocked", nil); st != 200 || b != "mocked" {
 		t.Errorf("a mock after them: %d %q", st, b)
+	}
+	// Held (a mock's method and URL match), then not answered: it names no operation.
+	if st, b := get("/graphql", nil); st != 200 || b != "origin /graphql" || reached.Load() != 1 {
+		t.Errorf("held, then sent on: %d %q (the origin got %d)", st, b, reached.Load())
+	}
+	if want := "CONNECT " + srv.Listener.Addr().String(); !slices.Contains(up.all(), want) {
+		t.Errorf("not through the upstream proxy: %q, want %q", up.all(), want)
 	}
 }
 
