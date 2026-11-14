@@ -13,6 +13,9 @@
   at the last logout (tried).
 - LAN mode's question and `lan` commands, and the refusals of this computer's
   own addresses, say "this computer", not "this Mac" (seen on Linux).
+- Containers with Podman 6.2.0 on macOS (rootless `podman machine`): the smoke
+  script passes, `run` up to the login, `--rules`, `host.containers.internal`
+  ([container](docs/container.md#with-podman)); not tried: a login, an iPhone, an agent.
 
 ### For agents
 
