@@ -38,8 +38,8 @@
   journald. Refused while Homebrew's service is there, and for a config file
   missing, readable by others, or with `--no-redact`, `--web`,
   `--rules-reload` or `--lan`. `reqcove status` names it and says how to stop it. The
-  guide has a section. Tried on macOS: install (an iPhone recorded) and
-  uninstall. Not tried yet: a start at login or after a reboot, `service
+  guide has a section. Tried on macOS: install (an iPhone recorded), a sleep,
+  a start at login after a reboot, and uninstall. Not tried yet: `service
   restart`, Linux.
 - `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
   out of the proxy, as its IPv4 range already was.
