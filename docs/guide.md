@@ -677,13 +677,17 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_local` answers only requests whose body is at most 1 MiB and of known
   length; others go on to the real destination (the record says so). An HTTP/2
   GET (HEAD, OPTIONS, DELETE) without a length is answered when its stream
-  ends with its headers, as GETs with no body do; one that sends a body anyway
-  gets a 502, recorded as an error, and its body is not held (until v0.8.0 it
-  was held whole in memory). Tested with Go's HTTP/2 client through
-  mitmproxy. macOS's URLSession, tried against a test server without
-  mitmproxy, ends a GET's and a HEAD's stream with their headers and gives
-  DELETE and OPTIONS a length of 0, so none is refused; iPhone apps have not
-  been tried. How mitmproxy tells a stream's end is from reading its code.
+  ends with no body: with its headers, as GETs with no body do, or with an
+  empty DATA frame (Go's client sends one for a body of unknown length that
+  turns out empty). One that sends a body anyway gets a 502, recorded as an
+  error, and its body is not held (until v0.8.0 it was held whole in
+  memory). Tested with Go's HTTP/2 client through mitmproxy. macOS's
+  URLSession, tried against a test server without mitmproxy, ends a GET's
+  and a HEAD's stream with their headers and gives DELETE and OPTIONS a
+  length of 0, so none is refused; iPhone apps have not been tried. How
+  mitmproxy tells a stream's end is from reading its code. With a mitmproxy
+  other than 12.3.1 (another `--mitmproxy-spec`), a stream not ended with its
+  headers gets the 502, empty DATA frame or not (from reading code).
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
@@ -693,7 +697,8 @@ POST not yet ended and SSE (both reach the other end as they stream), with
 to the origin instead; `modify_headers` both ways; a request outside
 `--allow-hosts` left alone; the rules' values kept out of the records; the
 refusals at load; an HTTP/2 GET without a length to `map_local` and to a
-mock, with no body (answered) and with an endless one (a 502 at once).
+mock, with no body (answered), ended with an empty DATA frame (answered), and
+with an endless body or a single byte (a 502 at once).
 
 #### Connect elsewhere (`resolve`)
 
@@ -767,7 +772,7 @@ mock:                           # Reqcove's own; the first that matches answers,
   of unknown length, goes on unanswered, its `rewrites` saying
   `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
   without a length is held too; over HTTP/2, one that sends a body anyway
-  gets a 502 instead of being held.
+  gets a 502 instead of being held (an empty DATA frame is no body).
 - **The record** says so: `mocked: true` on its row, `rewrites` with the
   rule's number and status (`mock[0]: 401`), a note in a HAR. `capture_stats`
   has `rules_loaded`, when the file was last taken.

@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -446,5 +448,33 @@ func TestStateNotes(t *testing.T) {
 	}
 	if got := stateNotes(defaultState(), "reqcove", false); len(got) != 0 {
 		t.Errorf("default state: %q", got)
+	}
+}
+
+// A status, har or mark asking whether a run is starting (stateHeld) holds
+// the lock shared for a moment: a run taking it then waits that out instead
+// of exiting with "another reqcove is using"; a run holding it still refuses
+// another. A cleanup --delete-state that took the lock file away meanwhile
+// leaves the waiting run nothing to lock.
+func TestLockStateWaitsOutACheck(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(100*time.Millisecond, func() { f.Close() })
+	unlock, err := lockState(dir)
+	if err != nil {
+		t.Fatalf("with a check's shared lock: %v", err)
+	}
+	if _, err := lockState(dir); err == nil || !strings.Contains(err.Error(), "another reqcove") {
+		t.Errorf("with a run's lock: %v", err)
+	}
+	time.AfterFunc(100*time.Millisecond, func() { os.Remove(filepath.Join(dir, "lock")); unlock() })
+	if _, err := lockState(dir); err == nil || !strings.Contains(err.Error(), "deleted") {
+		t.Errorf("its lock file deleted meanwhile: %v", err)
 	}
 }

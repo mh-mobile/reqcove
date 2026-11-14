@@ -394,10 +394,10 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_remote`、`map_local`、`modify_headers` は mitmproxy の機能で、mitmproxy 自身のコードが処理します。相対パスは、ルールファイルの場所が基準です。
 - `map_remote` は URL を書き換えるので、`keep_host_header` を true にしない限り、`Host` ヘッダーも変わります。上の例のように、スキームも書いてください。アプリは `https` で送り、平文のサーバーは TLS に応答できないためです。
 - v1.0 から、`modify_headers` が効くのは、その `Host` へ行くリクエストと、そのレスポンスだけです。Host のアドレスへ送られたリクエスト、HTTPS でその TLS の名前へ送られたリクエスト、または `map_remote` か `resolve` が送り先を決めたリクエストです。`Host` を変えるルールは、この 2 つのどちらかと一緒のときだけ効きます。それだけでは、そのリクエストのヘッダーのルールはどれも効きません。効かなかったときは、記録の `rewrites` にそう出ます（[SECURITY](SECURITY.ja.md#ルール--rules)）。
-- `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET（HEAD、OPTIONS、DELETE も）には、ボディのない GET と同じく、ヘッダーでストリームが終わったときに応答します。それでもボディを送ってきたものには 502 を返してエラーとして記録し、そのボディは保持しません（v0.8.0 までは、すべてメモリに保持していました）。Go の HTTP/2 クライアントから mitmproxy を通して試しました。macOS の URLSession は、GET と HEAD のストリームをヘッダーで終え、DELETE と OPTIONS には長さ 0 を付けるので、どれも 502 になりません（mitmproxy を通さず、テスト用のサーバーで試しました）。iPhone のアプリでは試していません。mitmproxy がストリームの終わりを知る仕組みはコードを読んだものです。
+- `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET（HEAD、OPTIONS、DELETE も）には、ボディなしでストリームが終わったときに応答します。ボディのない GET と同じくヘッダーで終わったときと、空の DATA フレームで終わったときです（Go のクライアントは、長さの分からないボディが空だったときにこれを送ります）。それでもボディを送ってきたものには 502 を返してエラーとして記録し、そのボディは保持しません（v0.8.0 までは、すべてメモリに保持していました）。Go の HTTP/2 クライアントから mitmproxy を通して試しました。macOS の URLSession は、GET と HEAD のストリームをヘッダーで終え、DELETE と OPTIONS には長さ 0 を付けるので、どれも 502 になりません（mitmproxy を通さず、テスト用のサーバーで試しました）。iPhone のアプリでは試していません。mitmproxy がストリームの終わりを知る仕組みはコードを読んだものです。12.3.1 以外の mitmproxy（別の `--mitmproxy-spec`）では、ヘッダーで終わらなかったストリームは、空の DATA フレームでも 502 になります（コードを読んでの記述）。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 
-確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。長さのない HTTP/2 の GET への `map_local` とモックも、ボディなし（応答します）と終わりのないボディ（すぐに 502）で確かめました。
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。長さのない HTTP/2 の GET への `map_local` とモックも、ボディなし（応答します）、空の DATA フレームで終わるもの（応答します）、終わりのないボディと 1 バイトのボディ（すぐに 502）で確かめました。
 
 #### 接続先だけを変える（`resolve`）
 
@@ -435,7 +435,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 - **`method`** と **`operation`** は省略できます。`operation` は GraphQL の operation です（`operationName`、Apollo の `X-APOLLO-OPERATION-NAME` ヘッダー、または文書の最初の名前付き operation）。
 - **応答**：`status` は 100〜599 で、省略すると 200 です。ボディは書くかファイルで指定し、1 MiB までです。`HEAD`、204、304 にはボディを付けません。`Cache-Control` を書かなければ `no-store` を付けます。
 - **`modify_headers` との関係**：リクエストに対する `modify_headers` のルールは一致を調べる前に効き、応答に対するものはモックにも効きます。
-- **保持するもの**：モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送り、`rewrites` に `mock: skipped, …` と残します。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持します。HTTP/2 で、それでもボディを送ってきたものには、保持せずに 502 を返します。
+- **保持するもの**：モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送り、`rewrites` に `mock: skipped, …` と残します。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持します。HTTP/2 で、それでもボディを送ってきたものには、保持せずに 502 を返します（空の DATA フレームはボディではありません）。
 - **記録**にその旨が残ります。一覧の行に `mocked: true`、`rewrites` にルールの番号とステータス（`mock[0]: 401`）、HAR には注記が入ります。`capture_stats` の `rules_loaded` は、ファイルを最後に読み込んだ時刻です。
 
 確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone では、Safari（httpbin.org）への 401 と、GitHub アプリの GraphQL の operation 1 つをモックできることを確認しました（同じ接続のほかの operation は GitHub に届きました）。

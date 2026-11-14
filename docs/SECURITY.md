@@ -619,9 +619,14 @@ header values are checked as `modify_headers`'s are. The records say a flow was
 mocked, with the rule's number and status, never its text. A request a mock may
 answer is held whole until its body is in (the operation is in it): at most
 1 MiB when it says its length. A GET without one is held only while it has no
-body: over HTTP/2, one that sends a body anyway gets a 502 and its body is not
-held, as for `map_local` (until v0.8.0 it was kept whole; tested with Go's
-HTTP/2 client, the stream's end as mitmproxy tells it from reading its code). No MCP tool writes a rule: a mock comes from the file the user wrote, and
+body: over HTTP/2, one that sends a body anyway gets a 502 at its first body
+byte and its body is not held, as for `map_local`; one whose stream ends with
+an empty DATA frame is answered (until v0.8.0 the body was kept whole; tested
+with Go's HTTP/2 client, the stream's end as mitmproxy tells it from reading
+its code). While it waits for that byte or the stream's end, none of its body
+is held and no server is connected to (from reading code). With a mitmproxy
+other than 12.3.1 (another `--mitmproxy-spec`), a stream not ended with its
+headers gets the 502 at once (from reading code). No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
 `list_rules` and `explain_rules` (read-only, since v0.7) show each rule by kind
 and number with its preset, and only what is derived from it: a mock's method,
