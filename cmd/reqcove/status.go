@@ -243,7 +243,8 @@ func status(ctx context.Context, args []string) error {
 		Capture   map[string]any        `json:"capture"`
 		Active    []mcpserver.PresetOut `json:"active_presets"` // every kind (kind says which)
 		ActiveErr string                `json:"active_presets_error"`
-		// v0.7's names (a run not yet restarted): read when the new ones are absent.
+		// v0.6 and v0.7's names (a run not yet restarted): read when the new
+		// ones are absent, never written (removed in v1.0).
 		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
 		OldActiveErr string                `json:"active_mock_presets_error"`
 		Service      string                `json:"service"`
@@ -278,7 +279,7 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
 	presets, ok := c["presets"]
 	if !ok {
-		presets = c["mock_presets"] // v0.7's name
+		presets = c["mock_presets"] // v0.6 and v0.7's name
 	}
 	if names, _ := presets.([]any); len(names) > 0 {
 		var on []string

@@ -416,7 +416,7 @@ class Resolve:
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 MOCK_DELAY_MS = 30000  # under URLSession's default timeout (60 s): slow, not a timeout
 PRESET_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
-PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_mock's bounds (Go checks them too)
+PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_preset's bounds (Go checks them too)
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
@@ -578,8 +578,6 @@ class Presets:
     modify_headers, resolve), by name: what an agent may turn on. Kept with the
     rules, so a reload (new Presets) turns every one off."""
 
-    KINDS = ("mock", "map_remote", "modify_headers", "resolve")
-
     def __init__(self):
         self.entries = {}  # name -> (kind, match key, what list shows)
         self.specs = {"map_remote": [], "modify_headers": []}  # kind -> [(name, mitmproxy's rule)]
@@ -596,8 +594,8 @@ class Presets:
             raise RuleError("another rule has this preset name")
         self.entries[name] = (kind, key, info)
 
-    def names(self, kind=None):
-        return [n for n, (k, _, _) in self.entries.items() if kind in (None, k)]
+    def names(self):
+        return list(self.entries)
 
     def on(self, name):
         """Whether preset name is on now; one past its time is turned off.
@@ -619,25 +617,19 @@ class Presets:
 
     def control(self, req):
         """An agent's request through reqcove (activate_preset and the others):
-        the answer, or ValueError with why not. kind, when given, limits it to
-        presets of that kind (activate_mock and the other v0.6 tools: mocks only)."""
-        op, only = req.get("op"), req.get("kind")
-        if only is not None and only not in self.KINDS:
-            raise ValueError("unknown kind")
+        the answer, or ValueError with why not."""
+        op = req.get("op")
         if op == "list":
             out = []
             for name, (kind, _, info) in self.entries.items():
-                if only not in (None, kind):
-                    continue
                 on = self.on(name)
                 a = self.active.get(name)
                 out.append(dict(info, name=name, kind=kind, active=on, remaining=a[1] if a else None, expires_at=a[2] if a else None))
             return {"presets": out}
         name = req.get("name")
         entry = self.entries.get(name) if isinstance(name, str) else None
-        if entry is None or only not in (None, entry[0]):
-            what = "mock preset" if only == "mock" else "preset"
-            raise ValueError(f"no {what} named {name!r}" if isinstance(name, str) and PRESET_NAME.fullmatch(name) else f"no {what} by that name")
+        if entry is None:
+            raise ValueError(f"no preset named {name!r}" if isinstance(name, str) and PRESET_NAME.fullmatch(name) else "no preset by that name")
         if op == "deactivate":
             on = self.on(name)
             self.active.pop(name, None)
@@ -1158,7 +1150,7 @@ class Reqcove:
         loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
-        loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns mock presets on and off.")
+        loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns presets on and off.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket

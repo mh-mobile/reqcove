@@ -583,10 +583,10 @@ modify_headers:
 	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:5") {
 		t.Errorf("rules loaded: %s", got)
 	}
-	if _, err := h.c.Activate(ctx, "any", "", 60, 0); err == nil || !strings.Contains(err.Error(), "no presets") {
+	if _, err := h.c.Activate(ctx, "any", 60, 0); err == nil || !strings.Contains(err.Error(), "no presets") {
 		t.Errorf("no presets: %v", err)
 	}
-	if ps, err := h.c.Presets(ctx, ""); err != nil || len(ps) != 0 {
+	if ps, err := h.c.Presets(ctx); err != nil || len(ps) != 0 {
 		t.Errorf("list without presets: %v %v", ps, err)
 	}
 	hc := h.client("dev")

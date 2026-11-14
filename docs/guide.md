@@ -148,13 +148,13 @@ What the tools can do:
 - The tools that read are marked read-only (`readOnlyHint`). A client may use
   that to ask less (not checked with any client).
 - Not marked read-only: the tools that turn presets on and off
-  (`activate_preset`, `deactivate_preset`, and v0.6's `activate_mock`,
-  `deactivate_mock`, deprecated), and `add_marker` (a write to Reqcove's memory only).
+  (`activate_preset`, `deactivate_preset`), and `add_marker` (a write to
+  Reqcove's memory only).
 - Claude Code asks before a tool it has not been allowed. Allow the read tools
   by name (`"mcp__reqcove__list_flows"` and so on), not `"mcp__reqcove"`:
-  that also allows the ones not marked read-only (`activate_mock` since v0.6;
-  since v0.7 `activate_preset`, which can send requests to a server you wrote
-  in a preset). From Claude Code's documentation, not tried here.
+  that also allows the ones not marked read-only (`activate_preset`, which can
+  send requests to a server you wrote in a preset). From Claude Code's
+  documentation, not tried here.
 
 For example, in `.claude/settings.json` (the form is from Claude Code's
 documentation; not tried here):
@@ -167,16 +167,23 @@ documentation; not tried here):
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
-              "mcp__reqcove__list_mock_presets"],
-    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset",
-            "mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
 ```
 
-Its v0.6 entries, last in each list (`list_mock_presets`, `activate_mock`,
-`deactivate_mock`), are deprecated, removed in v1.0.
+Removed in v1.0 (deprecated in v0.8): the tools `list_mock_presets`,
+`activate_mock` and `deactivate_mock`. In a list written before, replace
+`mcp__reqcove__list_mock_presets`, `mcp__reqcove__activate_mock` and
+`mcp__reqcove__deactivate_mock` with `mcp__reqcove__list_presets`,
+`mcp__reqcove__activate_preset` and `mcp__reqcove__deactivate_preset`.
+`activate_preset` turns on the other kinds too, not only mocks: the example
+keeps it and `deactivate_preset` under `ask`. In scripts, read `status`'
+`active_presets` and `active_presets_error`, and `capture_stats`' `presets`,
+instead of `active_mock_presets`, `active_mock_presets_error` and
+`mock_presets`. A call to a removed tool is answered with the one that
+replaces it (unit tests).
 
 What to know:
 
@@ -252,8 +259,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` serves the same tools over HTTP on the node, all but these:
 
-- the preset ones: `list_presets`, `activate_preset`, `deactivate_preset`, and
-  the deprecated `list_mock_presets`, `activate_mock`, `deactivate_mock`;
+- the preset ones: `list_presets`, `activate_preset`, `deactivate_preset`;
 - the rule ones: `list_rules`, `explain_rules`;
 - the marker ones: `add_marker`, `list_markers`.
 
@@ -843,10 +849,8 @@ mock:
 
 - The tools: `list_presets`, `activate_preset(name, minutes, times)` (at
   most 5 minutes, 5 if left out; with `times`, at most 20 requests, then off),
-  `deactivate_preset(name)`. v0.6's `list_mock_presets`, `activate_mock` and
-  `deactivate_mock` do the same for mocks only: deprecated, removed in v1.0.
-  Only an agent on this computer has them (`reqcove
-  mcp` and `run`'s socket); never over `--mcp-http`.
+  `deactivate_preset(name)`. Only an agent on this computer has them
+  (`reqcove mcp` and `run`'s socket); never over `--mcp-http`.
 - A preset that is on answers before other mocks; one that is off is no mock at
   all. One preset is on per match (method, URL and operation): turning on
   another for the same match turns the first off. Turning on one already on
@@ -895,10 +899,8 @@ resolve:
 ```
 
 - The tools: `list_presets` (every kind, with `kind`), `activate_preset(name,
-  minutes)`, `deactivate_preset(name)`. `list_mock_presets`, `activate_mock`
-  and `deactivate_mock` stay, for mocks only, until v1.0 (deprecated): an agent
-  allowed `activate_mock` in v0.6 cannot turn on these. `times` is for mocks only; the others are on
-  for a time.
+  minutes)`, `deactivate_preset(name)`. `times` is for mocks only; the others
+  are on for a time.
 - While on, a `map_remote` preset sends the matching requests, with the app's
   cookies, tokens and bodies, to its target; `resolve` connects its name to its
   address (Host, SNI and the TLS check stay the name's). The 5 minutes bound
@@ -931,14 +933,11 @@ resolve:
   `presets` (`preset` stays the mock's that answered).
 - `reqcove status` and the `status` tool's `active_presets` list every kind
   that is on (with `kind`; `active_presets_error` when mitmproxy did not say);
-  `capture_stats`' `presets` names every preset. v0.6's names, the same until
-  then (`active_mock_presets`, `active_mock_presets_error`, `mock_presets`), are
-  deprecated and removed in v1.0.
+  `capture_stats`' `presets` names every preset.
 
 Tried with the E2E tests (real mitmproxy, plain HTTP): a `map_remote`, a
 `modify_headers` and a `resolve` preset each change requests only while on, the
-row lists them, the header's value is never shown, `activate_mock` and
-`list_mock_presets` leave them alone, `times` refused, a changed file turns
+row lists them, the header's value is never shown, `times` refused, a changed file turns
 them off; the refusals at load (mitmproxy's Python). Not tried: HTTPS through a
 `map_remote` or `resolve` preset turned on while the app's connections are open
 (pooled HTTP/1, HTTP/2): the app may keep using a connection opened before.
@@ -1412,13 +1411,10 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_presets`, with `kind`; v0.6's `active_mock_presets`, the same, is deprecated, removed in v1.0; not over `--mcp-http`, which has no preset tools) |
+| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_presets`, with `kind`; not over `--mcp-http`, which has no preset tools) |
 | `list_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file, of every kind (`kind`): a mock's match and answer, a `map_remote` preset's target, a `modify_headers` preset's header name, a `resolve` preset's name and address; whether it is on, when it turns off. Never bodies, header values, filters or regexes. Not over `--mcp-http` |
 | `activate_preset` | turn a preset of any kind on, for at most 5 minutes (`minutes`; `times`, at most 20 requests, for a mock); returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
 | `deactivate_preset` | turn a preset off. Not over `--mcp-http` |
-| `list_mock_presets` | deprecated, removed in v1.0: as `list_presets`, mocks only (v0.6). Not over `--mcp-http` |
-| `activate_mock` | deprecated, removed in v1.0: as `activate_preset`, mocks only (v0.6): it never turns on a `map_remote`, `modify_headers` or `resolve` preset. Not over `--mcp-http` |
-| `deactivate_mock` | deprecated, removed in v1.0: turn a mock preset off (v0.6). Not over `--mcp-http` |
 | `list_rules` | the `--rules` file's [rules](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) by kind and number, with their presets and what is derived from them (a mock's match and answer, a `map_remote` target, a `modify_headers` header name and direction, a `resolve` name and address); never filters, regexes, header values, bodies or paths. Not over `--mcp-http` |
 | `explain_rules` | why a flow (`flow_id`), or a method and URL, got or would get which rules: the scope, then the rewrites, a mock, the presets on and what one off would do; rules whose filter reads more than a method and URL in `cannot_tell`. Sends nothing, uses no preset's count. Not over `--mcp-http` |
 | `add_marker` | a [marker](#mark-a-moment-reqcove-mark) (`text`, at most 80 characters, one line, masked); returns `id`, `time` (for `since`) and `checkpoint` (for `wait_for_flows`' `after`). Changes nothing on the device. Not over `--mcp-http` |
