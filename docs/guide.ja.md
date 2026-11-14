@@ -91,7 +91,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 - 次のログインまで止めるには、`launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove`。`reqcove status` がどちらかを表示します。
 - Linux：ユーザーユニットはログインしたときに起動します。ログインする前の起動時に動かすには `loginctl enable-linger $USER` が要ります（systemd のドキュメントによる。試していません）。
 
-確認状況：書き出すファイル（空白、`&`、`<`、`%`、`$`、引用符を含むパス）、断る場合、実行する launchctl と systemctl のコマンドをユニットテストで確認しました（テストでは実行しません）。macOS では試しました（2026-11-14：`service install` が LaunchAgent を書いて設定ファイルのフラグで `run` を起動し、Exit Node の iPhone が記録され、`service.log` にログイン用の URL やトークンは入りませんでした。`reqcove status` がサービスを表示し、`service uninstall` で止まってファイルが消えました）。まだ試していないこと：ログイン時や再起動後の起動、`service restart`、Linux。
+確認状況：書き出すファイル（空白、`&`、`<`、`%`、`$`、引用符を含むパス）、断る場合、実行する launchctl と systemctl のコマンドをユニットテストで確認しました（テストでは実行しません）。macOS では試しました（2026-11-14：`service install` が LaunchAgent を書いて設定ファイルのフラグで `run` を起動し、Exit Node の iPhone が記録され、`service.log` にログイン用の URL やトークンは入りませんでした。`reqcove status` がサービスを表示し、`service uninstall` で止まってファイルが消えました。スリープのあとも動き続け、再起動のあとはログイン時に自動で起動しました（iPhone が記録され、ログイン時のアラートはなし）。macOS は、スリープの前とあとにローカルネットワークの許可を求めました（どちらも許可しました。その一覧には、別の場所に置いたビルドがそれぞれ別の項目として並びます））。まだ試していないこと：`service restart`、Linux。
 
 ### 元に戻す（`reqcove cleanup`）
 
