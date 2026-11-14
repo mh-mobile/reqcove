@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -151,6 +152,18 @@ func percentUnescapeAll(s string) string {
 	})
 }
 
+// fuzzSlow, deferred around masking, fails an input whose masking takes
+// seconds (a 64 KiB head takes milliseconds): go test -fuzz then hunts inputs
+// that grow faster than their size too, as TestMaskingLinear's units do.
+func fuzzSlow(t *testing.T, n int) func() {
+	start := time.Now()
+	return func() {
+		if d := time.Since(start); d > 2*slow*time.Second {
+			t.Errorf("masking %d bytes took %v", n, d)
+		}
+	}
+}
+
 // FuzzMaskBody: no 5 characters of a secret in a known shape survive masking,
 // read as written or decoded, whatever comes around it and wherever the head
 // is cut (a cut inside the value masks to the end): every cut over the part
@@ -174,6 +187,7 @@ func FuzzMaskBody(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
 		if shape%fuzzShapes == fuzzMarkup {
+			defer fuzzSlow(t, 2*len(filler))()
 			maskBody([]byte(strings.ReplaceAll(filler, "#", fuzzSecret)), "text/xml", true)
 			// The filler may hold pieces of the secret itself: past the
 			// prefix, the output must start with it masked.
@@ -198,6 +212,7 @@ func FuzzMaskBody(f *testing.F) {
 			if cut > 0 && cut < len(head) {
 				head = head[:cut]
 			}
+			defer fuzzSlow(t, len(head))()
 			got := string(maskBody(head, ct, shape%fuzzShapes != 20 && shape%fuzzShapes != 26)) // 20, 26: responses
 			if l := leak(got, fuzzSecret); l != "" {
 				t.Errorf("shape %d, cut %d: %q survived:\n%s", shape%fuzzShapes, cut, l, got[max(0, len(got)-200):])

@@ -160,6 +160,15 @@ Found by a code review of v0.8.0; each test fails without its fix.
   endless body gets its 502 at once). macOS's URLSession sends none of these
   with an open stream (tried against a test server, without mitmproxy);
   iPhone apps not tried.
+- Masking an Apple plist whose `<key>` text comes in many pieces (split by
+  comments, CDATA or child elements) copied the text so far at each piece,
+  so its time and memory grew with the square of its size (up to v0.8):
+  64 KiB of `    <b/>` in one key allocated about 140 MB and took 26 ms on
+  an M1 Max, 16 KiB 9 MB. It now grows with the size (64 KiB: 1.8 MB,
+  6 ms); what is masked does not change. Masking runs on the path every
+  event from a connection takes, in order, so such a body held up what came
+  after it (from reading code). Found by the growth test (Inside), which
+  fails without the fix.
 
 ### For people
 
@@ -175,6 +184,18 @@ Found by a code review of v0.8.0; each test fails without its fix.
 
 ### Inside
 
+- A test measures how masking's time and allocations grow between two
+  sizes 4 times apart (mostly 16 and 64 KiB for bodies, 64 and 256 KiB for
+  headers and URLs; protobuf's below its caps, 1 to 8 KiB), for 152 inputs
+  built to be slow for its regexps and loops: each content type a body is
+  masked differently for (JSON, forms, text, none, HTML, JavaScript, XML,
+  GraphQL, multipart, protobuf with and without `--proto`, gRPC frames),
+  headers, URLs, WebSocket messages, error text and `Apply` as a whole; more
+  than 9 times fails. It catches the two this
+  version's reviews found (script comments, folded multipart headers: checked
+  by putting them back). Under the race detector, which distorts both
+  measures, only the inputs that caught one run (those two and the
+  plist's). The fuzz tests also fail an input whose masking takes over 2 s.
 - The release workflow refuses a tag whose commit has no successful run of
   the test workflow (macOS and Linux, end to end with mitmproxy, the
   container, the checks). Checked with actionlint and by running its query
