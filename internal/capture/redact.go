@@ -40,7 +40,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	// After JSON's: a tag's masked value can take a quote JSON's reading
 	// keys on ({"html": "<b data-token=x\"", "password": …} as text/html).
 	if html {
-		s = maskHTML(s)
+		s = maskHTML(maskTokens(s)) // shapes first: masking a tag's unquoted value (to a space) would take "Bearer" from its token
 	}
 	if html || isScript(contentType) {
 		s = maskScript(s, request)

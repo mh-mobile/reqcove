@@ -235,6 +235,26 @@ func TestV080ReviewBodies(t *testing.T) {
 	}
 }
 
+// v1.0's final review: an unquoted HTML value with a scheme and a token
+// (masked whole in v0.8.0, which had no HTML masking) keeps no token.
+func TestHTMLUnquotedScheme(t *testing.T) {
+	for _, in := range []string{
+		`<input name=password value=Bearer PlaceholderBearer9876>`,
+		`<b data-token=Bearer PlaceholderBearer9876>x</b>`,
+		`<input value=Bearer PlaceholderBearer9876`,
+	} {
+		for _, ct := range []string{"text/html", ""} {
+			body := in
+			if ct == "" {
+				body = "<!doctype html>" + in
+			}
+			if got := string(maskBody([]byte(body), ct, false)); strings.Contains(got, "PlaceholderBearer9876") {
+				t.Errorf("%q (%q): %s", in, ct, got)
+			}
+		}
+	}
+}
+
 // A crafted value nested many times over cannot make masking slow.
 func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
