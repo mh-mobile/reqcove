@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -92,7 +91,7 @@ func TestLogsHoldNoSecrets(t *testing.T) {
 		}
 	}
 	// A restart, logged by reqcove.
-	syscall.Kill(pidOn(":"+h.port()), syscall.SIGKILL)
+	killMitmdump(t, ":"+h.port())
 	for deadline := time.Now().Add(time.Minute); h.stats()["state"] != "ready" || h.stat("restarts") != 1; time.Sleep(100 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("mitmdump not back: %v", h.stats())
