@@ -241,8 +241,8 @@ func status(ctx context.Context, args []string) error {
 		Node      exitnode.Status       `json:"node"`
 		NextSteps []string              `json:"next_steps"`
 		Capture   map[string]any        `json:"capture"`
-		Active    []mcpserver.PresetOut `json:"active_mock_presets"` // every kind since v0.7 (kind says which)
-		ActiveErr string                `json:"active_mock_presets_error"`
+		Active    []mcpserver.PresetOut `json:"active_presets"` // every kind (kind says which)
+		ActiveErr string                `json:"active_presets_error"`
 		Service   string                `json:"service"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
@@ -270,7 +270,7 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
-	if names, _ := c["mock_presets"].([]any); len(names) > 0 {
+	if names, _ := c["presets"].([]any); len(names) > 0 {
 		var on []string
 		for _, p := range out.Active {
 			s := p.Name

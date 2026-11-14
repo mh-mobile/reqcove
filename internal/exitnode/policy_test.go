@@ -127,9 +127,7 @@ func TestLogUDPOnceBounded(t *testing.T) {
 	if n > maxSeen {
 		t.Errorf("remembers %d flows, want at most %d", n, maxSeen)
 	}
-	for len(events) > 0 { // drop the lines this made
-		<-events
-	}
+	drainEvents() // drop the lines this made
 }
 
 // A LAN numbered from public space (11.22.33.0/24 here) is refused like any
@@ -162,6 +160,20 @@ func TestInterfaceAddrsOnLink(t *testing.T) {
 	for _, n := range nets {
 		if !n.Addr().Is4() || n.Bits() < 8 || n.Bits() >= 32 || n.Addr().IsLoopback() || n != n.Masked() {
 			t.Errorf("unexpected on-link network %v", n)
+		}
+	}
+}
+
+// drainEvents takes the log lines waiting in events without blocking: a Run's
+// logLoop reads events too, so a line counted by len may be gone by <-events.
+func drainEvents() []string {
+	var out []string
+	for {
+		select {
+		case l := <-events:
+			out = append(out, l)
+		default:
+			return out
 		}
 	}
 }
