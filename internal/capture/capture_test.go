@@ -363,7 +363,7 @@ func TestEndToEnd(t *testing.T) {
 
 	// mitmdump is restarted when it dies, on the same port with the same
 	// secret, and the counts of the dead process are kept.
-	syscall.Kill(pidOn(":"+h.port()), syscall.SIGKILL)
+	killMitmdump(t, ":"+h.port())
 	for deadline := time.Now().Add(time.Minute); h.stats()["state"] != "ready" || h.stat("restarts") != 1; time.Sleep(100 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("mitmdump not back: %v", h.stats())
@@ -382,11 +382,36 @@ func TestEndToEnd(t *testing.T) {
 	}
 }
 
+// pidOn: the Python process (mitmdump) listening on port. reqcove, which
+// holds the SOCKS listener, and uv, mitmdump's parent, have it open too.
+// pidOn is the Python process (mitmdump) listening on port, or 0. reqcove
+// and uv hold the same listening socket (it is passed down), so the owners are
+// filtered by their command name, case-insensitively (macOS may show Python).
 func pidOn(port string) int {
-	out, _ := exec.Command("lsof", "-t", "-iTCP"+port, "-sTCP:LISTEN").Output()
-	var pid int
-	fmt.Sscan(string(out), &pid)
-	return pid
+	out, _ := exec.Command("lsof", "-t", "-a", "-iTCP"+port, "-sTCP:LISTEN").Output()
+	for _, f := range strings.Fields(string(out)) {
+		var pid int
+		if _, err := fmt.Sscan(f, &pid); err != nil || pid <= 1 || pid == os.Getpid() {
+			continue
+		}
+		comm, _ := exec.Command("ps", "-o", "comm=", "-p", f).Output()
+		if strings.Contains(strings.ToLower(filepath.Base(strings.TrimSpace(string(comm)))), "python") {
+			return pid
+		}
+	}
+	return 0
+}
+
+// killMitmdump kills mitmdump on port; never kill(0) (this process group)
+// when it is not found.
+func killMitmdump(t *testing.T, port string) {
+	t.Helper()
+	pid := pidOn(port)
+	if pid <= 1 {
+		out, _ := exec.Command("lsof", "-a", "-iTCP"+port, "-sTCP:LISTEN").CombinedOutput()
+		t.Fatalf("no mitmdump found listening on %s:\n%s", port, out)
+	}
+	syscall.Kill(pid, syscall.SIGKILL)
 }
 
 func rss(pid int) string {
@@ -769,8 +794,8 @@ func TestPyCommand(t *testing.T) {
 	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
 		t.Errorf("a --uvx not named uvx: %s", bin)
 	}
-	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3"}, "mitmdump")
-	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 mitmdump") {
+	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3", Dir: "/s"}, "mitmdump")
+	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 python /s/mitm.py mitmdump") {
 		t.Errorf("other spec: %s %q", bin, args)
 	}
 }

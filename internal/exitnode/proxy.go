@@ -395,9 +395,9 @@ var socksHold = 15 * time.Second
 var dialTimeout = 10 * time.Second
 
 // dialVia dials dst directly, or through mitmproxy's SOCKS5 listener with the
-// device's StableID as the user name, once ready says mitmproxy is up: while
-// it is down another local process could hold its port, and would get the
-// password and the device's traffic. dialTimeout bounds the SOCKS reply too:
+// device's StableID as the user name, once ready says mitmproxy is up (its
+// port stays held by reqcove meanwhile: capture.Capture.socks), so a dial
+// does not wait in the port's queue instead. dialTimeout bounds the SOCKS reply too:
 // mitmproxy sends it only once it has connected upstream, with no timeout of
 // its own but the OS's (75 s on macOS; read in mitmproxy 12.3.1, and tried).
 func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
