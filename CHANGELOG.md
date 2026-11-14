@@ -6,13 +6,31 @@
 
 - The SOCKS5 port no longer comes free while mitmdump restarts: reqcove binds
   it once per `run` and hands the socket to each mitmdump (through its
-  launcher, `mitm.py`, with another `--mitmproxy-spec` too), so another local
-  user's process can no longer take it and get the SOCKS password and the
-  devices' connections, in the milliseconds before reqcove noticed a death nor
-  before the first start. A connection made while mitmdump is down waits for
-  the next one. Tests: binding the port fails while mitmdump is down (unit,
+  launcher, `mitm.py`, with another `--mitmproxy-spec` too). Before, another
+  local user's process could take the port, and with it the SOCKS password and
+  the devices' connections, before the first mitmdump bound it and in the
+  milliseconds between a mitmdump's death and reqcove noticing it. A
+  connection made while mitmdump is down waits for the next one. Tests: binding the port fails while mitmdump is down (unit,
   and with real mitmproxy); a request sent then is recorded by the next
   mitmdump (real mitmproxy). SECURITY.md says what is covered and what not.
+
+### For agents
+
+- `status` (and `reqcove status --json`) has `active_presets`, the presets on
+  of every kind, each with `kind`, and `active_presets_error` when mitmproxy
+  did not say which; `capture_stats` has `presets`, every preset's name. They
+  hold what `active_mock_presets`, `active_mock_presets_error` and
+  `mock_presets` hold (unit tests). `reqcove status`, run's log and the ready
+  block read the new names. The skill and the server's instructions name the
+  `*_preset` tools first and the v0.6 ones as deprecated.
+
+### Deprecated
+
+- v0.6's names, removed in v1.0: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`, `activate_preset`
+  and `deactivate_preset`; their descriptions say so, their behaviour is
+  unchanged), `status`' `active_mock_presets` and `active_mock_presets_error`,
+  and `capture_stats`' `mock_presets` (filled as before until then).
 
 ## v0.7.0 — 2026-11-14
 
