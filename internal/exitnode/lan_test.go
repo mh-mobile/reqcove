@@ -36,8 +36,8 @@ func TestDecideLAN(t *testing.T) {
 		{"17.253.1.1:443", false, direct}, // Apple's, as on the exit node
 		{"17.2.3.2:80", false, reject},    // a network of this Mac numbered in Apple's 17/8: a LAN, not Apple
 		{"17.2.3.2:80", true, reject},
-		{"10.1.2.3:443", false, reject},   // private
-		{"10.1.2.3:443", true, socks},     // private, for an exact name
+		{"10.1.2.3:443", false, reject}, // private
+		{"10.1.2.3:443", true, socks},   // private, for an exact name
 		{"172.16.0.9:80", true, socks},
 		{"100.64.0.7:443", false, reject}, // CGNAT, the tailnet
 		{"100.64.0.7:443", true, socks},
