@@ -4,6 +4,13 @@
 
 ### For people
 
+- A connection carried through mitmproxy (hosts outside `--allow-hosts` too)
+  gives up after 10 seconds, as a direct one does, when the server does not
+  answer: mitmproxy answers reqcove only once connected, and waited up to the
+  OS's 75 s (macOS). The log names the server (`… did not answer within 10s`,
+  or `the client left before … answered`) instead of x/net's
+  `read 127.0.0.1:…->127.0.0.1:…: i/o timeout`. Tried with an address that
+  never answers.
 - The guide says RoamRun works alongside `--local-proxy` (tried with RoamRun
   0.12.0 and its PR #253: doctor, and a bridge over the tailnet to Ready).
 - LAN mode prints the CA's SHA-256 as iOS shows it (`ab 90 7e …`) and where:

@@ -391,12 +391,17 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 // restart takes a few seconds); a var for tests.
 var socksHold = 15 * time.Second
 
+// dialTimeout is how long a dial may take, direct or through mitmproxy; a var for tests.
+var dialTimeout = 10 * time.Second
+
 // dialVia dials dst directly, or through mitmproxy's SOCKS5 listener with the
 // device's StableID as the user name, once ready says mitmproxy is up: while
 // it is down another local process could hold its port, and would get the
-// password and the device's traffic.
+// password and the device's traffic. dialTimeout bounds the SOCKS reply too:
+// mitmproxy sends it only once it has connected upstream, with no timeout of
+// its own but the OS's (75 s on macOS; read in mitmproxy 12.3.1, and tried).
 func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
-	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
+	var d proxy.Dialer = &net.Dialer{}
 	if v == socks {
 		if ready != nil {
 			hold, cancel := context.WithTimeout(ctx, socksHold)
@@ -411,7 +416,18 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			return nil, err
 		}
 	}
-	return d.(proxy.ContextDialer).DialContext(ctx, "tcp", dst.String())
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	c, err := d.(proxy.ContextDialer).DialContext(dctx, "tcp", dst.String())
+	if err != nil && v == socks { // x/net says only "read 127.0.0.1:…->127.0.0.1:…: i/o timeout" for both
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("the client left before %v answered (through mitmproxy)", dst)
+		}
+		if ne, ok := errors.AsType[net.Error](err); ok && ne.Timeout() { // the conn's deadline is dctx's: it can come first
+			return nil, fmt.Errorf("%v did not answer within %v (through mitmproxy)", dst, dialTimeout)
+		}
+	}
+	return c, err
 }
 
 // localResolve looks host up as this computer's apps would (search domains,
