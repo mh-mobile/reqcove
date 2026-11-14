@@ -261,6 +261,9 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.redact.Store(redact)
 }
 
+// Redacting says whether secrets are masked (false: --no-redact).
+func (s *Store) Redacting() bool { return s.redact.Load() }
+
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
 // by kind, resolve's targets, the presets and the targets of those that send
 // requests elsewhere), and why the file did not load when it did not (the rules

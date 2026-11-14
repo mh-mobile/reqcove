@@ -95,8 +95,9 @@ So "delete the directory" above means each of them.
   parameter or body field is secret by its name: a name containing token,
   secret, password, passwd, passphrase, passcode, credential, signature, session,
   jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket
-  (a WebSocket's `wsTicket` was seen unmasked) or dpop, even run
-  together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, sign
+  (a WebSocket's `wsTicket` was seen unmasked), dpop, hmac, verifier
+  (OAuth's `oauth_verifier`), privkey or mnemonic (a wallet's recovery
+  phrase), even run together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, sign
   (an app's request-signing header `sign` was seen unmasked), pwd,
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
@@ -184,8 +185,8 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (`multipart/mixed`; protobuf, `multipart/form-data` and XML are read as
-  below). XML is masked by names only: a secret in an element or attribute
+  (`multipart/mixed`; protobuf, `multipart/form-data`, XML and HTML are read
+  as below). XML is masked by names only: a secret in an element or attribute
   named otherwise passes; what does not tokenize outside a secret element
   (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the text
   masking only, but a start tag the decoder refuses (`a=b!c`, an unquoted
@@ -273,6 +274,35 @@ So "delete the directory" above means each of them.
   the text masking alone would; a fuzz test of markup checks that it never
   fails and that a secret element and attribute before any markup stay masked.
   (Tests, the fuzz test, and an E2E test over mitmproxy with a SOAP request.)
+- HTML (a content type naming `html`, or a head that starts with
+  `<!doctype html` or `<html`; since v1.0) is read tag by tag, not as a
+  browser parses it: a tag whose `name`, `id` or `property` is secret by the
+  rule above, a lone `code` included as in forms (an OAuth `form_post`'s
+  hidden `code` and `id_token`, Rails' `authenticity_token`, ASP.NET's
+  `__RequestVerificationToken`, `<meta name="csrf-token">`), has its `value`
+  and `content` masked, a `<textarea>` so named its text, and an attribute
+  secret by its own name (`data-auth-token`) its value, as XML's. A tag cut
+  by the head's end has its `value` and `content` masked whatever its name,
+  which may come after them (a secret `<textarea>` cut, its text to the end).
+  A comment, and the text of `<script>`, `<style>`, `<textarea>`, `<title>`
+  and the other elements whose text is no markup, is read up to its end only:
+  a quote or a `<` in it (a script's `"<a x='"`) does not make the tags after
+  it read as an attribute's value. Tags inside are still read (a
+  commented-out field, HTML in a script's string). In HTML and in JavaScript
+  (by its content type), an object's field with an unquoted name
+  (`{accessToken: "…"}`, `{pin: 1234}`; a lone `code` as in JSON) has its
+  string, template literal or number value masked, with comments around its
+  name and colon (two at most, of 80 bytes or less each: unbounded, they made
+  masking quadratic), and a string going on past a line's end after a
+  backslash. Not caught: a longer comment or more between a name and its
+  value, a quoted name (`{'accessToken': '…'}`), an assignment
+  (`x.accessToken = "…"`), a name written with character references (`&#99;ode`), a
+  template literal holding another (masked up to that one), a secret in a
+  tag's text other than a `<textarea>`'s, or under an innocent name; a
+  script's text that a browser reads past its first `</script>`
+  (`<script><!--<script>`) ends there here. SAML's `SAMLResponse` field
+  passes, as in a form. The text masking applies on top. (Tests and the fuzz
+  test, cut anywhere.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text
@@ -308,7 +338,14 @@ So "delete the directory" above means each of them.
   them, with your shell's file mode (often readable by other users; the state
   directory is 0700). `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
-  sent in failing and malformed requests do not reach it).
+  sent in failing and malformed requests do not reach it). `run`'s own output,
+  when it is a file (brew services' `$(brew --prefix)/var/log/reqcove.log`,
+  which launchd makes 0644; a redirect), is made 0600 as `run` starts, before
+  its first line; `reqcove setup` makes brew's log 0600 before the service
+  first starts, as `reqcove service install` does its `service.log` (tests of
+  `run` and of making the log; not tried with brew services). It holds no
+  token or login URL ([below](#the-login-url)), but what `run` logs of the
+  devices.
 - Markers (`reqcove mark`, `add_marker`) are kept in memory with the records:
   at most 80 characters on one line (else refused), masked as error text is,
   at most 100 per source, not logged (from reading code). Their `source` (`cli`, `mcp`) is the
@@ -357,9 +394,10 @@ that clients get them over stdio and HTTP, not their wording; whether a model
 keeps to them is not something a test can show). A request whose Host is no host name or address (an app's own HTTP stack
 can put any text there) is carried but not recorded (a test); hosts from TLS
 are host names by mitmproxy's own check (from reading its code). A flow's host
-is the request's Host, which the app chooses: on a connection to an allowed
-host it can name another allowed one, and the record shows that one (the
-request still goes where the connection went). User-Agents in lists and summaries
+is the request's Host, which the app chooses: over plain HTTP on a connection
+to any address, and over HTTPS on one to an allowed host, it can name an
+allowed host, and the record shows that one (the request still goes where the
+connection went; what that means for rules: [Rules](#rules---rules)). User-Agents in lists and summaries
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools read, with one exception: an agent can turn on, for at most 5
@@ -498,6 +536,48 @@ a line break or NUL (they would start a header of their own on the wire); a
 value file read again for a later flow and given one since is dropped from
 that flow's headers. `resolve` names are host names only, so nothing in them
 reaches the log as control characters (tests).
+A request's Host is the app's to write, and mitmproxy connects where the app
+dialled whatever it says, while rules (`~d`) read the Host. So since v1.0 a
+header a rule sets (`modify_headers`, presets too) goes only to the host the
+request names, and one set on a response only to that host's response: when
+no `map_remote` or `resolve` sends the request on, the rules apply only if
+the address dialled is the Host as the app sent it (read before any rule), or
+over HTTPS that Host is the TLS name mitmproxy checks the server's
+certificate for (not through `--upstream-proxy`: mitmproxy then checks the
+proxy's certificate, and the server's is the proxy's to check), or its addresses, as this computer looks them up, include
+it. Nor do they apply to such a request when a rule changes its Host: a
+rule's own Host would vouch for itself (a token rule for the Host, then one
+setting Host to the address dialled), and where a request goes is for
+`map_remote` and `resolve` to change. Otherwise the request goes on as the
+app sent it, and its response as the server sent it, their rewrites saying
+the rules were not applied (`explain_rules` names the condition). Tested with
+real mitmproxy: a stand-in server dialled with another host's Host gets no
+rule's value, over plain HTTP and over HTTPS with a valid certificate for its
+own name, nor with a rule setting Host to its address, and the app gets no
+response rule's value from it; a server without a certificate for the name
+asked gets no request (mitmproxy's own check); a request to its Host's
+address, and one a `resolve` rule sends on, get them, both ways. Names are
+compared in IDNA's ASCII form (HTTP/2's `:authority` comes decoded, SNI
+does not; tested on mitmproxy's own made flows, not over the network); a
+Host with İ, ı, ſ or K (as such or in `xn--` form) gets no rules, as `~d`,
+case-insensitive, matches it to an ASCII name it is not (`mysıte.com` to
+`mysite.com`; tested the same way). Each
+name is looked up on a thread of its own, one lookup at a time per name, 16
+names at most at once, and its answer kept 30 seconds: a stalled resolver
+leaves the loop's executor free and the process able to exit (tested in
+mitmproxy's Python with a lookup that never answers, not in a running
+mitmdump), and a request whose Host takes over 3 seconds, or comes while
+16 names are being looked up, goes without the rules. Up
+to v0.8, any app on a carried device, an allowed LAN address or any user of
+this computer through `--local-proxy` could have a rule's header sent to its
+own server so (reproduced with mitmproxy 12.3.1 through its SOCKS5 port; the
+other ways from reading code). This computer's lookup can
+disagree with the device's (the exit node asks `--dns`, 1.1.1.1 by default,
+and a CDN may answer resolvers differently): such a request then goes without
+the rule; a `resolve` rule for the name avoids that (from reading code, not
+tried with a CDN). Sending such a request to its Host instead was not done:
+mitmproxy would look the name up itself, past the exit node's refusals of this
+computer and the LAN (from reading its code).
 `map_remote` and `resolve` make mitmproxy connect, from this computer, where the
 rule says, this computer and the LAN included: the exit node's refusal of those
 addresses is about the devices' own connections, and a rule opens its target to

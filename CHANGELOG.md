@@ -4,6 +4,59 @@
 
 ### Security
 
+- A header your `--rules` set on requests (`modify_headers`, and presets of
+  that kind) now goes only to the host the request names, and one set on
+  responses only to that host's response. Up to v0.8, any app
+  on a carried device, an address allowed in LAN mode, or any user of this
+  computer through `--local-proxy` could send a plain-HTTP request naming an
+  allowed host in `Host` to its own server and get the rule's value (a token,
+  say); over HTTPS the same worked with a certificate for another allowed name
+  (`--allow-hosts '*'`, or a wide pattern). Reproduced with mitmproxy 12.3.1
+  through its SOCKS5 port; the other ways from reading code.
+  Now, unless `map_remote` or `resolve` sends it elsewhere, such a request
+  goes on as the app sent it, without the rules, its response as the server
+  sent it, and their `rewrites` say so; a request to its host's own address
+  (as this computer looks the name up), or over HTTPS to its TLS name, keeps
+  them (the TLS name not through `--upstream-proxy`, where mitmproxy checks
+  the proxy's certificate; a Host with İ, ı, ſ or K, which `~d` matches to an
+  ASCII name, never). The Host checked is the app's, read before any rule; a
+  `modify_headers` rule that changes `Host` is no longer applied to a
+  request nothing sends elsewhere (nor are the request's other header
+  rules): use `map_remote` to change where it goes. When this computer's
+  lookup of a CDN's name differs from the device's, the rules can be left out
+  of a real request: a `resolve` rule for the name avoids it. E2E tests with
+  real mitmproxy: a stand-in server gets no rule's value (nor an active
+  preset's), over plain HTTP and over HTTPS, nor with a rule setting `Host`
+  to its address, and the app gets no response rule's value from it;
+  requests to the right server still get them. Lookups run on threads of
+  their own, bounded (16 names at once, 3 seconds each, answers kept 30
+  seconds), so a stalled resolver holds nothing else up (tested in
+  mitmproxy's Python, not in a running mitmdump); names are compared
+  in IDNA's ASCII form (tests with mitmproxy's own made flows).
+  docs/SECURITY.md, Rules.
+- HTML pages are masked by their tags too: hidden form fields and meta tags
+  named as secrets (an OAuth `form_post`'s `code` and `id_token`, Rails'
+  `authenticity_token`, ASP.NET's `__RequestVerificationToken`, `csrf-token`)
+  and attributes named so (`data-auth-token`), and a `<textarea>`'s text;
+  comments and scripts' text read only to their end, so a quote in them
+  hides no field after them; in pages and JavaScript, object fields with
+  unquoted secret names (`{accessToken: "…"}`, up to two short comments
+  around them, strings over lines, template literals). Up to v0.8 these
+  reached the tools unmasked. `hmac`, `verifier` (`oauth_verifier`), `privkey`
+  and `mnemonic` count as secret names now. Tests, and new shapes in the fuzz
+  test; what it does not catch is in docs/SECURITY.md.
+- `run`'s log is 0600 when its output is a file: brew services'
+  `$(brew --prefix)/var/log/reqcove.log` was 0644 (launchd's), readable by
+  other users of this computer. `run` makes it 0600 as it starts, and
+  `reqcove setup` before the service first starts. Tests; not tried with brew
+  services.
+- Over `--mcp-http`, `capture_stats` and `status` no longer carry `resolve`'s
+  rules (a name and the address it is sent to) nor the upstream proxy's
+  address, as docs/SECURITY.md said (a test).
+- With masking off (`--no-redact`), every tool answer with flows in it
+  (`get_flow`, `list_flows`, `search_flows`, `wait_for_flows`, `summarize`,
+  `list_ws_messages`, `diff_flows`) says so in `note`, as the `--ui` page
+  shows a badge (a test).
 - LAN mode refuses this computer's other networks before letting Apple's
   17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
   neighbours were reachable (found by a code review; unit test).

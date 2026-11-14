@@ -29,6 +29,9 @@ func setup(ctx context.Context, args []string) error {
 		return errors.New("reqcove setup runs only in a terminal: it asks you questions. Run it in your own terminal (or follow the steps by hand: README, Use)")
 	}
 	brew := brewPrefix()
+	if brew != "" {
+		privateLog(brewLog(brew)) // best effort: run makes its output 0600 too, as it starts
+	}
 	return setupIn(ctx, os.Stdin, os.Stdout, setupConfig(brew), brew != "")
 }
 

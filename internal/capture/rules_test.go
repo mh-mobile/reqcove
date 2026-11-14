@@ -6,12 +6,14 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -308,6 +310,317 @@ resolve:
 		t.Error("a rule's value reached the records or the stats")
 	}
 }
+
+// TestRulesGoToNamedHost (REQCOVE_E2E=1): mitmproxy connects where the app
+// dialled, whatever its Host says, and ~d reads the Host. A request header
+// rule's value must reach only the host the request names: not a server
+// dialled with someone else's Host, over plain HTTP or over HTTPS with a
+// certificate for another name, nor one a rule's own Host vouches for; and
+// a response rule's value only its response. A legitimate request keeps its
+// rules, and a resolve rule pins a name (then the rule applies, as it goes
+// where the rule says).
+func TestRulesGoToNamedHost(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var mu sync.Mutex
+	seen := map[string]http.Header{} // path -> the headers it arrived with
+	record := func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path] = r.Header.Clone()
+		seen[r.URL.Path].Set("X-Seen-Host", r.Host)
+		mu.Unlock()
+		fmt.Fprint(w, "ok")
+	}
+	header := func(path, name string) (string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		h, ok := seen[path]
+		return h.Get(name), ok
+	}
+	got := func(path string) (string, bool) { return header(path, "Authorization") }
+	attacker := httptest.NewServer(http.HandlerFunc(record))
+	defer attacker.Close()
+	legit := httptest.NewServer(http.HandlerFunc(record))
+	defer legit.Close()
+	// A TLS server mitmproxy trusts (trustCA), with a certificate for
+	// example.com, *.example.com and 127.0.0.1 only, as an attacker's own site
+	// would have. The names below lead nowhere (.invalid, or not in DNS),
+	// so a lookup never finds 127.0.0.1.
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(record))
+	defer tlsSrv.Close()
+	_, lport, _ := net.SplitHostPort(legit.Listener.Addr().String())
+
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "trusted.pem")
+	os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsSrv.Certificate().Raw}), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`modify_headers:
+  - "|~q|Authorization|Bearer s3cret-rule"
+  - {rule: "|~q|X-Preset|s3cret-preset", preset: hdr}
+  - "|~q & ~d ^swap[.]invalid$|X-Swap-Token|s3cret-swap"
+  - "|~q & ~d ^swap[.]invalid$|Host|127.0.0.1"
+  - "/~d ^(api[.]forged[.]invalid|localhost)$/X-Both-Token/s3cret-both"
+  - "/~s & ~d ^(api[.]forged[.]invalid|localhost)$/X-Resp-Token/s3cret-resp"
+resolve:
+  - "pinned.invalid=127.0.0.1:%s"
+`, lport)), 0o600)
+	h, err := tryHarness(t, ctx, []string{"localhost", "api.forged.invalid", "pinned.invalid", "swap.invalid", "rq-attacker.example.com", "rq-named.example.com"}, func(c *Config) {
+		c.Rules, c.trustCA = rules, ca
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A preset an agent can turn on is held to the same rule.
+	if _, err := h.c.Activate(ctx, "hdr", 120, 0); err != nil {
+		t.Fatal(err)
+	}
+	hc := h.client("dev")
+	send := func(c *http.Client, url, host string) http.Header { // the response's, as the app gets them
+		t.Helper()
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Host = host
+		r, err := c.Do(req)
+		if err != nil {
+			return http.Header{}
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+		return r.Header
+	}
+	applied := "modify_headers request: Authorization"
+	const notApplied = "modify_headers request: not applied, the request goes to an address not known to be its Host's"
+	const hostSet = "modify_headers request: not applied, a rule changed Host (map_remote or resolve changes where a request goes)"
+	const respNotApplied = "modify_headers response: not applied, the response comes from an address not known to be its request's Host's"
+	noRespRules := func(what string, h http.Header) {
+		t.Helper()
+		if h.Get("X-Both-Token") != "" || h.Get("X-Resp-Token") != "" {
+			t.Errorf("%s: the app got the response rules' values: %q %q", what, h.Get("X-Both-Token"), h.Get("X-Resp-Token"))
+		}
+	}
+
+	// Plain HTTP to the attacker's address, with the Host of a host the rule is for.
+	// Its response gets no rule's value either (a rule for both ways, one for responses).
+	resp := send(hc, attacker.URL+"/forged", "api.forged.invalid")
+	if a, ok := got("/forged"); !ok || a != "" {
+		t.Errorf("the attacker's server: reached %v, with Authorization %q (want reached, without it)", ok, a)
+	}
+	for _, n := range []string{"X-Preset", "X-Both-Token"} {
+		if p, _ := header("/forged", n); p != "" {
+			t.Errorf("the attacker's server got %s %q", n, p)
+		}
+	}
+	noRespRules("forged Host", resp)
+	if v := h.doneFlow("/forged", false); v.Host != "api.forged.invalid" || !slices.Contains(v.Rewrites, notApplied) || !slices.Contains(v.Rewrites, respNotApplied) || slices.Contains(v.Rewrites, applied) || len(v.Presets) != 0 {
+		t.Errorf("forged Host, record: host %q rewrites %v presets %v", v.Host, v.Rewrites, v.Presets)
+	}
+	// A token rule for the Host, then a rule setting Host to the address
+	// dialled: the rule's own Host must not vouch for the request.
+	send(hc, attacker.URL+"/swap", "swap.invalid")
+	for _, n := range []string{"Authorization", "X-Swap-Token", "X-Preset"} {
+		if p, ok := header("/swap", n); !ok || p != "" {
+			t.Errorf("a rule's Host: the attacker's server reached %v, with %s %q (want reached, without it)", ok, n, p)
+		}
+	}
+	mu.Lock()
+	swapHost := seen["/swap"].Get("X-Seen-Host")
+	mu.Unlock()
+	if swapHost != "swap.invalid" {
+		t.Errorf("a rule's Host: the server got Host %q, want the app's", swapHost)
+	}
+	if v := h.doneFlow("/swap", false); !slices.Contains(v.Rewrites, hostSet) || slices.Contains(v.Rewrites, applied) {
+		t.Errorf("a rule's Host, rewrites: %v", v.Rewrites)
+	}
+	// Plain HTTP to the Host's own address: the rules apply, both ways.
+	resp = send(hc, legit.URL+"/legit", "localhost:"+lport)
+	if a, _ := got("/legit"); a != "Bearer s3cret-rule" {
+		t.Errorf("plain HTTP to the Host's address: Authorization %q, want the rule's", a)
+	}
+	for n, want := range map[string]string{"X-Preset": "s3cret-preset", "X-Both-Token": "s3cret-both"} {
+		if p, _ := header("/legit", n); p != want {
+			t.Errorf("plain HTTP to the Host's address: %s %q, want the rule's", n, p)
+		}
+	}
+	if resp.Get("X-Both-Token") != "s3cret-both" || resp.Get("X-Resp-Token") != "s3cret-resp" {
+		t.Errorf("plain HTTP to the Host's address: the response rules' values %q %q", resp.Get("X-Both-Token"), resp.Get("X-Resp-Token"))
+	}
+	if v := h.doneFlow("/legit", false); !slices.Contains(v.Rewrites, applied) || !slices.Equal(v.Presets, []string{"hdr"}) {
+		t.Errorf("plain HTTP to the Host's address, rewrites: %v presets %v", v.Rewrites, v.Presets)
+	}
+	// resolve sends pinned.invalid to the legitimate server, wherever the app dialled.
+	send(hc, attacker.URL+"/pinned", "pinned.invalid")
+	if a, _ := got("/pinned"); a != "Bearer s3cret-rule" {
+		t.Errorf("resolve: Authorization %q at the rule's address, want the rule's", a)
+	}
+	if v := h.doneFlow("/pinned", false); !slices.Contains(v.Rewrites, applied) || !slices.Contains(v.Rewrites, "resolve: 127.0.0.1:"+lport) {
+		t.Errorf("resolve, rewrites: %v", v.Rewrites)
+	}
+
+	tlsTo := func(sni string) *http.Client {
+		c := h.client("dev")
+		c.Transport.(*http.Transport).TLSClientConfig.ServerName = sni
+		return c
+	}
+	// HTTPS: a server whose certificate is not for the name asked never gets the
+	// request (mitmproxy checks it before sending: ssl_insecure is off).
+	send(tlsTo("api.forged.invalid"), tlsSrv.URL+"/tls-forged-sni", "api.forged.invalid")
+	if _, ok := got("/tls-forged-sni"); ok {
+		t.Error("a server without the name's certificate got the request")
+	}
+	// HTTPS to a server with a certificate for its own name and another Host:
+	// the request goes there, without the rule's value.
+	resp = send(tlsTo("rq-attacker.example.com"), tlsSrv.URL+"/tls-other-host", "api.forged.invalid")
+	if a, ok := got("/tls-other-host"); !ok || a != "" {
+		t.Errorf("HTTPS with another Host than its TLS name: reached %v, with Authorization %q (want reached, without it)", ok, a)
+	}
+	noRespRules("HTTPS with another Host", resp)
+	if v := h.doneFlow("/tls-other-host", false); !slices.Contains(v.Rewrites, notApplied) || !slices.Contains(v.Rewrites, respNotApplied) {
+		t.Errorf("HTTPS with another Host, rewrites: %v", v.Rewrites)
+	}
+	// HTTPS whose Host is its TLS name: the rule applies, with no lookup
+	// (one would not find 127.0.0.1).
+	send(tlsTo("rq-named.example.com"), tlsSrv.URL+"/tls-named", "rq-named.example.com")
+	if a, _ := got("/tls-named"); a != "Bearer s3cret-rule" {
+		t.Errorf("HTTPS to its TLS name: Authorization %q, want the rule's", a)
+	}
+
+	all, _ := json.Marshal(h.stats())
+	for _, f := range listAll(h.c.Store, 1000) {
+		fv, _ := h.c.Store.Get(f.ID, true)
+		b, _ := json.Marshal(fv)
+		all = append(all, b...)
+	}
+	if strings.Contains(string(all), "s3cret") {
+		t.Error("a rule's value reached the records or the stats")
+	}
+}
+
+// TestNamedHostLookups (REQCOVE_E2E=1, mitmproxy's Python): HTTP/2's
+// :authority (decoded) and SNI (IDNA's ASCII form) name the same host; a
+// stalled resolver holds neither the loop's executor nor more than
+// LOOKUPS_AT_ONCE threads, nor mitmdump's exit; one name is looked up once
+// at a time, and kept.
+func TestNamedHostLookups(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	dir := t.TempDir()
+	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+		os.WriteFile(filepath.Join(dir, f), b, 0o600)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // a lookup thread holding the exit fails it
+	defer cancel()
+	bin, args := PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.3.1", Dir: dir}, "python")
+	cmd := exec.CommandContext(ctx, bin, append(args, "-c", namedHostScript, dir)...)
+	cmd.WaitDelay = time.Second // uv's python holds the output past uv
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), "ok") {
+		t.Errorf("%v\n%s", err, out)
+	}
+}
+
+const namedHostScript = `import sys, asyncio, socket, tempfile, threading, time, types
+sys.path.insert(0, sys.argv[1])
+import addon
+from mitmproxy import ctx
+from mitmproxy.test import tflow
+from pathlib import Path
+ctx.options = types.SimpleNamespace(ignore_hosts=[])
+p = Path(tempfile.mkdtemp()) / "r.yaml"
+p.write_text('modify_headers:\n  - "|~q|X-Token|v"\n')
+rules = addon.load_rules(p)
+calls, release, never = [], threading.Event(), threading.Event()
+def lookup(name, *a, **kw):  # this computer's resolver, stalled until release
+    calls.append(name)
+    if name == "boom.example":
+        raise RuntimeError("not an OSError")
+    (never if name == "stuck.example" else release).wait()
+    return [(2, 1, 6, "", ("198.51.100.9" if name.startswith(("n", "same")) else "203.0.113.7", 0))]
+socket.getaddrinfo = lookup
+release.set()
+
+def flow(host, scheme="http", sni=None, h2=False):
+    f = tflow.tflow()
+    r = f.request
+    r.scheme = scheme
+    r.headers.pop("Host", None)
+    r.data.host, r.data.port = "198.51.100.9", 443 if scheme == "https" else 80
+    if h2:
+        r.http_version = "HTTP/2.0"
+        r.authority = host
+    else:
+        r.headers["Host"] = host
+    f.client_conn.sni = f.server_conn.sni = sni
+    return f
+
+async def applied(a, f):
+    await a._rewrite_sent(f, rules)
+    return f.request.headers.get("X-Token") == "v"
+
+async def main():
+    try:
+        await checks()
+    finally:
+        release.set()  # a failed check must not hold the exit (stuck.example's lookup must)
+
+async def checks():
+    a = addon.Reqcove()
+    # IDNA: the same name, decoded and in ASCII; another name is not it.
+    f = flow("bücher.example", "https", "xn--bcher-kva.example", h2=True)
+    assert f.request.pretty_host == "bücher.example", f.request.pretty_host
+    assert await applied(a, f), "an IDN's :authority and its SNI"
+    assert not await applied(a, flow("bücher.example", "https", "xn--mnchen-3ya.example", h2=True)), "another IDN's SNI"
+    assert not await applied(a, flow("bad\udcff.example", "https", None)), "a name with no IDNA form"
+    # A name ~d would match to an ASCII one it is not (mysıte.com, re.IGNORECASE), its own certificate or not.
+    assert not await applied(a, flow("xn--myste-p4a.com", "https", "xn--myste-p4a.com", h2=True)), "a dotless i"
+    # Through --upstream-proxy, mitmproxy checks the proxy's certificate, not the server's: the TLS name vouches for nothing.
+    a.upstream = ("127.0.0.1", 8080)
+    assert not await applied(a, flow("victim.example", "https", "victim.example")), "the TLS name through an upstream proxy"
+    a.upstream = None
+    assert await applied(a, flow("victim.example", "https", "victim.example")), "the TLS name"
+    # resolve sends it where the user says, the address dialled too.
+    q = Path(tempfile.mkdtemp()) / "r.yaml"
+    q.write_text('modify_headers:\n  - "|~q|X-Token|v"\nresolve:\n  - "r.example=198.51.100.9"\n')
+    f = flow("r.example")
+    await a._rewrite_sent(f, addon.load_rules(q))
+    assert f.request.headers.get("X-Token") == "v", "resolve to the address dialled"
+    # A lookup failing with anything frees its slot.
+    assert not await applied(a, flow("boom.example"))
+    for _ in range(50):
+        if not a.looking:
+            break
+        await asyncio.sleep(0.02)
+    assert not a.looking, a.looking
+    loop = asyncio.get_running_loop()
+    addon.NAME_LOOKUP_SECONDS = 0.3
+    release.clear()
+    calls.clear()
+    t0 = time.monotonic()
+    got = await asyncio.gather(*[applied(a, flow(f"n{i}.example")) for i in range(40)])
+    assert not any(got) and time.monotonic() - t0 < 3, (got, time.monotonic() - t0)
+    # The loop's own executor is free, a stalled resolver or not.
+    assert await asyncio.wait_for(loop.run_in_executor(None, lambda: "free"), 1) == "free", "the executor"
+    assert len(calls) == addon.LOOKUPS_AT_ONCE, len(calls)  # past them, refused without a thread
+    release.set()
+    for _ in range(100):
+        if not a.looking:
+            break
+        await asyncio.sleep(0.02)
+    calls.clear()
+    assert await applied(a, flow("n0.example")) and calls == [], calls  # kept
+    release.clear()
+    loop.call_later(0.1, release.set)
+    addon.NAME_LOOKUP_SECONDS = 2
+    got = await asyncio.gather(*[applied(a, flow("same.example")) for _ in range(10)])
+    assert all(got) and calls == ["same.example"], (got, calls)  # one lookup for all
+    # A lookup that never ends must not hold the exit (an executor's thread would).
+    addon.NAME_LOOKUP_SECONDS = 0.1
+    assert not await applied(a, flow("stuck.example"))
+asyncio.run(main())
+print("ok")
+`
 
 // TestRulesRefused: bad rules files stop Start with the reason, never the rule's text.
 func TestRulesRefused(t *testing.T) {

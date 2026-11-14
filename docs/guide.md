@@ -668,6 +668,12 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_remote` changes the URL, and with it `Host` unless `keep_host_header` is
   true. Write the schemes, as above: apps send `https`, and a plain server
   cannot answer TLS.
+- Since v1.0, `modify_headers` applies only to a request that goes to its
+  `Host`, and to its response: one sent to the Host's address, or over HTTPS
+  to its TLS name, or that `map_remote` or `resolve` sends on. A rule that
+  changes `Host` applies only with one of those two; on its own, none of the
+  request's header rules do. The record's `rewrites` say when they were not
+  applied ([SECURITY](SECURITY.md#rules---rules)).
 - `map_local` answers only requests whose body is at most 1 MiB and of known
   length; others go on to the real destination (the record says so). An HTTP/2
   GET (HEAD, OPTIONS, DELETE) without a length is answered when its stream

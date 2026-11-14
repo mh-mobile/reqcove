@@ -393,6 +393,7 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 
 - `map_remote`、`map_local`、`modify_headers` は mitmproxy の機能で、mitmproxy 自身のコードが処理します。相対パスは、ルールファイルの場所が基準です。
 - `map_remote` は URL を書き換えるので、`keep_host_header` を true にしない限り、`Host` ヘッダーも変わります。上の例のように、スキームも書いてください。アプリは `https` で送り、平文のサーバーは TLS に応答できないためです。
+- v1.0 から、`modify_headers` が効くのは、その `Host` へ行くリクエストと、そのレスポンスだけです。Host のアドレスへ送られたリクエスト、HTTPS でその TLS の名前へ送られたリクエスト、または `map_remote` か `resolve` が送り先を決めたリクエストです。`Host` を変えるルールは、この 2 つのどちらかと一緒のときだけ効きます。それだけでは、そのリクエストのヘッダーのルールはどれも効きません。効かなかったときは、記録の `rewrites` にそう出ます（[SECURITY](SECURITY.ja.md#ルール--rules)）。
 - `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET（HEAD、OPTIONS、DELETE も）には、ボディのない GET と同じく、ヘッダーでストリームが終わったときに応答します。それでもボディを送ってきたものには 502 を返してエラーとして記録し、そのボディは保持しません（v0.8.0 までは、すべてメモリに保持していました）。Go の HTTP/2 クライアントから mitmproxy を通して試しました。macOS の URLSession は、GET と HEAD のストリームをヘッダーで終え、DELETE と OPTIONS には長さ 0 を付けるので、どれも 502 になりません（mitmproxy を通さず、テスト用のサーバーで試しました）。iPhone のアプリでは試していません。mitmproxy がストリームの終わりを知る仕組みはコードを読んだものです。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 

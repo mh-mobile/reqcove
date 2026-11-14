@@ -133,6 +133,12 @@ resolve:
 	if !slices.Contains(e.CannotTell, "modify_headers[1]") || slices.Contains(e.Rewrites, "modify_headers request: X-Seen") {
 		t.Errorf("a ~h filter: %+v", e)
 	}
+	// A header rule applies only to a request that goes to its Host: said.
+	if !slices.Contains(e.Rewrites, "modify_headers request: X-Token") || !slices.ContainsFunc(e.Conditions, func(c string) bool {
+		return strings.HasPrefix(c, "modify_headers apply only to a request that goes to its Host, and to its response")
+	}) {
+		t.Errorf("the Host condition: %+v", e)
+	}
 	// On, for one request: explained three times, the count stays, nothing sent.
 	if _, err := h.c.Activate(ctx, "p503", 60, 1); err != nil {
 		t.Fatal(err)
@@ -280,5 +286,19 @@ e = a._explain({"method": "GET", "url": "http://k.a.test/graphql?operationName=F
 assert e["mocked"], e  # the URL's operation first, as a real request is read
 e = a._explain({"method": "POST", "url": "http://k.a.test/graphql", "operation": "(anonymous)"})
 assert not e["mocked"] and e["cannot_tell"] == [] and "no one GraphQL operation" in e["conditions"][0], e
+# A rule that changes Host, nothing moving the request: none of its header rules, as a real request's.
+p.write_text(r'''
+modify_headers:
+  - '|~q|X-Token|v'
+  - '|~q & ~d ^h\.a\.test$|Host|127.0.0.1'
+''')
+a = addon.Reqcove()
+a.allow = [re.compile(r"^(.+\.)?a\.test$")]
+a.rules, why = a._load_checked(p)
+assert a.rules, why
+e = a._explain({"method": "GET", "url": "http://h.a.test/"})
+assert e["rewrites"] == [addon.HOST_SET] and any(c.startswith("modify_headers apply only") for c in e["conditions"]), e
+e = a._explain({"method": "GET", "url": "http://k.a.test/"})
+assert e["rewrites"] == ["modify_headers request: X-Token"], e
 print("ok")
 `

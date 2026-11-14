@@ -388,6 +388,99 @@ func TestFourthReview(t *testing.T) {
 	}
 }
 
+// Comments between a script's key and value stay linear: unclosed ones, and
+// chains of them (#84's review: 7 s on 64 KiB). Told by how the time grows
+// with the size (4 times the input: about 4 times the time, 16 if quadratic),
+// as the race detector and CI's machines change the time itself.
+func TestMaskScriptCommentsLinear(t *testing.T) {
+	run := func(n int) time.Duration {
+		start := time.Now()
+		for _, unit := range []string{"{/*x,a:1", "{//x,a:1", "{a:/*,b:1", "/*,/*,a:1*/"} {
+			for _, ct := range []string{"application/javascript", "text/html"} {
+				maskBody([]byte(strings.Repeat(unit, n/len(unit))), ct, false)
+			}
+		}
+		return time.Since(start)
+	}
+	run(1 << 10) // warm up
+	small, large := run(8<<10), run(32<<10)
+	if large > 9*small {
+		t.Errorf("8 KiB took %v, 32 KiB %v: grows faster than the size", small, large)
+	}
+}
+
+// TestMaskHTML: an HTML page's secrets live in its tags (an OAuth form_post's
+// hidden fields, CSRF tokens in forms and meta tags) and its scripts' objects;
+// the text masking alone missed them all.
+func TestMaskHTML(t *testing.T) {
+	for _, c := range []struct {
+		name, ctype, in string
+		gone, keep      []string
+	}{
+		{"OAuth form_post", "text/html; charset=utf-8",
+			`<form method="post" action="https://app.example/cb"><input type="hidden" name="code" value="S3CRET-1"/><input type="hidden" name="state" value="st-42"><input type=hidden name=id_token value=S3CRET-2><input name='access_token' value='S3CRET-3'></form>`,
+			[]string{"S3CRET-1", "S3CRET-2", "S3CRET-3"}, []string{`name="state" value="st-42"`, `name="code" value="[redacted]"`, `action="https://app.example/cb"`}},
+		{"CSRF tokens", "text/html",
+			`<meta name="csrf-token" content="S3CRET-4"><input type="hidden" name="authenticity_token" value="S3CRET-5"><input name="__RequestVerificationToken" type="hidden" value="S3CRET-6"><meta property="og:title" content="Shop">`,
+			[]string{"S3CRET-4", "S3CRET-5", "S3CRET-6"}, []string{`content="Shop"`}},
+		{"value before the name, id, own name", "text/html",
+			`<input value="S3CRET-7" type="hidden" name="csrf"><input id="session_key" value="S3CRET-8"><div data-auth-token="S3CRET-9" class="x"></div><input name="email" value="a@example.com">`,
+			[]string{"S3CRET-7", "S3CRET-8", "S3CRET-9"}, []string{`value="a@example.com"`, `class="x"`}},
+		{"a tag cut before its name", "text/html", `<p>hi</p><input type="hidden" value="S3CRET-10" na`,
+			[]string{"S3CRET-10"}, []string{"<p>hi</p>"}},
+		{"a value cut", "text/html", `<input type="hidden" name="code" value="S3CRET-11ab`, []string{"S3CRET-11"}, nil},
+		{"by its start, no type", "", `<!DOCTYPE html><html><input name="code" value="S3CRET-12"></html>`, []string{"S3CRET-12"}, nil},
+		{"a script's object", "text/html",
+			`<script>window.__INIT__ = {user: "u", accessToken: "S3CRET-13", refresh_token: 'S3CRET-14', pin: 1234, code: 404, esc: "a\"b"};</script>`,
+			[]string{"S3CRET-13", "S3CRET-14", "1234"}, []string{`user: "u"`, `code: 404`, `accessToken: "[redacted]"`, `refresh_token: '[redacted]'`, `esc: "a\"b"`}},
+		{"a script's string cut", "application/javascript", `var c = {idToken: "S3CRET-15`, []string{"S3CRET-15"}, nil},
+		{"new names", "application/json", `{"oauth_verifier":"S3CRET-16","hmac":"S3CRET-17","privkey":"S3CRET-18","mnemonic":"S3CRET-19","x":"y"}`,
+			[]string{"S3CRET-16", "S3CRET-17", "S3CRET-18", "S3CRET-19"}, []string{`"x":"y"`}},
+		{"text stays", "text/html", `<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`, nil,
+			[]string{`<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`}},
+		// Comments and raw text are regions: a quote in them never hides the markup after.
+		{"a script's quote before a field", "text/html",
+			`<script>var s="<a x='";</script><input type="hidden" name="csrf" value="S3CRET-20"><p>after</p>`,
+			[]string{"S3CRET-20"}, []string{`<script>var s="<a x='";</script>`, "<p>after</p>"}},
+		{"a comment's quote before a field", "text/html",
+			`<!-- it's <a x=' --><input name="authenticity_token" value="S3CRET-21">`, []string{"S3CRET-21"}, nil},
+		{"a style's", "text/html", `<style>/* <a x=' */</style><meta name="csrf-token" content="S3CRET-22">`, []string{"S3CRET-22"}, nil},
+		{"end tags in any case, comments' short forms", "text/html",
+			`<SCRIPT>var s="<a x='";</SCRIPT ><!--><input name="csrf" value="S3CRET-23"><!-- <b c=' --!><input name="csrf" value="S3CRET-24"><!---><b c='x'><input name="csrf" value="S3CRET-25">`,
+			[]string{"S3CRET-23", "S3CRET-24", "S3CRET-25"}, nil},
+		{"tags in a comment, and in a script's strings", "text/html",
+			`<!-- <input type="hidden" name="csrf" value="S3CRET-26"> --><script>$("form").append('<input type="hidden" name="authenticity_token" value="S3CRET-27">')</script>`,
+			[]string{"S3CRET-26", "S3CRET-27"}, nil},
+		{"a secret textarea's text", "text/html", `<textarea name="token">S3CRET-28</textarea><p>after</p><textarea name="note">kept</textarea>`,
+			[]string{"S3CRET-28"}, []string{"<p>after</p>", ">kept</textarea>"}},
+		{"a secret textarea cut", "text/html", `<textarea id="csrf_token">S3CRET-29ab`, []string{"S3CRET-29"}, nil},
+		{"a script's code stays", "text/html", `<script>if (a<b && c>d) { s = "it's"; el.value = v; }</script>`, nil,
+			[]string{`<script>if (a<b && c>d) { s = "it's"; el.value = v; }</script>`}},
+		// Scripts: comments around the key, continued strings, template literals.
+		{"a script's comments", "application/javascript",
+			"var c = {accessToken: /* c */ 'S3CRET-30', /* d */ idToken // e\n : \"S3CRET-31\", note: /* f */ \"kept\"}",
+			[]string{"S3CRET-30", "S3CRET-31"}, []string{`note: /* f */ "kept"`}},
+		{"a script's continued strings", "text/html",
+			"<script>var c = {refreshToken: \"abc\\\nS3CRET-32\", session: 'a\\\r\nS3CRET-33', user: \"u\"}</script>",
+			[]string{"S3CRET-32", "S3CRET-33"}, []string{`user: "u"`}},
+		{"a script's template literals", "application/javascript",
+			"var c = {apiKey: `S3CRET-34${x}`, password: `a\nS3CRET-35`, cut: 1, secret: `S3CRET-36",
+			[]string{"S3CRET-34", "S3CRET-35", "S3CRET-36"}, []string{"cut: 1"}},
+	} {
+		got := string(maskBody([]byte(c.in), c.ctype, false))
+		for _, g := range c.gone {
+			if strings.Contains(got, g) {
+				t.Errorf("%s: %q survived: %s", c.name, g, got)
+			}
+		}
+		for _, k := range c.keep {
+			if !strings.Contains(got, k) {
+				t.Errorf("%s: %q was lost: %s", c.name, k, got)
+			}
+		}
+	}
+}
+
 // The v0.8.0 review (Opus): a nameless cookie after the first, name=value
 // lines, key with a number or after "primary", cookies joined in one Set-Cookie.
 func TestV080OpusReview(t *testing.T) {

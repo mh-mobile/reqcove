@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -425,5 +427,60 @@ func TestServicePathOnce(t *testing.T) {
 	t.Setenv("PATH", bin)
 	if got, found := servicePath(); !found || got != bin+":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" {
 		t.Errorf("%q %v", got, found)
+	}
+}
+
+// TestPrivateLogs: run's output, when it is a file (brew services' log,
+// which launchd makes 0644; a redirect), and the services' logs are this
+// user's only: they hold what run logs of the devices.
+func TestPrivateLogs(t *testing.T) {
+	dir := t.TempDir()
+	open := func(name string) *os.File {
+		f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(f.Name(), 0o644) // as launchd's umask leaves it
+		t.Cleanup(func() { f.Close() })
+		return f
+	}
+	mode := func(path string) os.FileMode {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Mode().Perm()
+	}
+	// run does it first, before it reads its flags.
+	out, errOut := open("out.log"), open("err.log")
+	stdout, stderr, logw := os.Stdout, os.Stderr, log.Writer()
+	os.Stdout, os.Stderr = out, errOut
+	err := run(context.Background(), []string{"stray"})
+	os.Stdout, os.Stderr = stdout, stderr
+	log.SetOutput(logw)
+	if err == nil {
+		t.Fatal("run took a stray argument")
+	}
+	if mode(out.Name()) != 0o600 || mode(errOut.Name()) != 0o600 {
+		t.Errorf("run's output files: %v %v, want 0600", mode(out.Name()), mode(errOut.Name()))
+	}
+	_, w, _ := os.Pipe()
+	privateOutput(w) // not a file: left alone
+	w.Close()
+
+	// setup makes brew services' log 0600 before launchd makes it, and one
+	// already there 0600 (service install does the same with its own).
+	l := brewLog(dir)
+	os.MkdirAll(filepath.Dir(l), 0o755)
+	if err := privateLog(l); err != nil || mode(l) != 0o600 {
+		t.Errorf("a new log: %v %v", mode(l), err)
+	}
+	os.Chmod(l, 0o644)
+	if err := privateLog(l); err != nil || mode(l) != 0o600 {
+		t.Errorf("a log already there: %v %v", mode(l), err)
+	}
+	formula, err := os.ReadFile("../../packaging/homebrew/reqcove.rb")
+	if err != nil || !strings.Contains(string(formula), `log_path var/"log/reqcove.log"`) || brewLog("/p") != "/p/var/log/reqcove.log" {
+		t.Errorf("brewLog is not the formula's log_path (%v)", err)
 	}
 }

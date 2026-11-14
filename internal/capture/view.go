@@ -110,6 +110,7 @@ type FlowView struct {
 	RespBodyText string `json:"response_body_head,omitempty"`
 	RespBodyEnc  string `json:"response_body_head_encoding,omitempty"`
 	WSKept       int    `json:"websocket_messages_kept,omitempty"` // list_ws_messages returns these: the socket's first 5 and its newest 100
+	Note         string `json:"note,omitempty"`                    // the MCP tools': masking is off
 }
 
 func (s *Store) Get(id string, bodies bool) (FlowView, error) {
@@ -267,7 +268,8 @@ func (s *Store) RulesLoaded() time.Time {
 }
 
 // PresetTargets are the map_remote and resolve presets' targets, by name, for
-// run's terminal (not capture_stats: a remote agent reads that).
+// run's terminal, not capture_stats (a remote agent reads that; --mcp-http's
+// server leaves resolve and upstream out of it: mcpserver.remoteStats).
 func (s *Store) PresetTargets() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

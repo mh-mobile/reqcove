@@ -15,7 +15,9 @@ import (
 // content type: a JSON body may come labelled as a form), the values of such
 // form fields (when the body is, or looks like, a form), and anywhere,
 // values whose shape gives them away (maskTokens) and secret parameters of
-// URLs in it (maskURLs). An XML body is masked by names first (maskXML).
+// URLs in it (maskURLs). An XML body is masked by names first (maskXML),
+// an HTML page by its tags' names (maskHTML), and a page's or a script's
+// object fields with unquoted names (maskScript).
 // The head may be cut anywhere, so it is scanned as
 // text, not parsed: a value cut before its closing quote is masked to the end.
 // Heads that are not text are left alone here and never handed out while
@@ -27,8 +29,15 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 		return head
 	}
 	s := string(head)
+	html := isHTML(contentType, s)
 	if isXML(contentType, s) { // by names first; the text masking below still applies
 		s = maskXML(s, request)
+	}
+	if html {
+		s = maskHTML(s)
+	}
+	if html || isScript(contentType) {
+		s = maskScript(s, request)
 	}
 	// A GraphQL document as the body (application/graphql, or shaped like
 	// one); those in JSON strings are found by maskJSON.
@@ -667,8 +676,11 @@ var strongSecretParts = []string{
 	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
 	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
 	"authentication", "csrf", "xsrf",
-	"ticket", // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
-	"dpop",   // a DPoP proof, a JWT already, also when not shaped like one
+	"ticket",              // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
+	"dpop",                // a DPoP proof, a JWT already, also when not shaped like one
+	"hmac",                // a request's signature (X-Hmac, hmacSha256)
+	"verifier",            // OAuth 1's oauth_verifier, PKCE's code_verifier
+	"privkey", "mnemonic", // a private key; a wallet's recovery phrase
 }
 
 var shortSecretWords = map[string]bool{

@@ -42,6 +42,7 @@ type FlowDiff struct {
 	RequestBody  BodyDiff `json:"request_body"`
 	ResponseBody BodyDiff `json:"response_body"`
 	Truncated    bool     `json:"truncated,omitempty"` // more differences than maxDiffs: the rest left out
+	Note         string   `json:"note,omitempty"`      // the MCP tools': masking is off
 }
 
 const (

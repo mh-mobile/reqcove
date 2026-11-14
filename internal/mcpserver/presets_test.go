@@ -127,6 +127,40 @@ func TestServersPresetToolsLocalOnly(t *testing.T) {
 	}
 }
 
+// --mcp-http's capture_stats, and the capture in its status, leave out where
+// requests can be sent: resolve's addresses and the upstream proxy. The
+// local server keeps them; counts and rules_error stay on both.
+func TestRemoteStatsWithoutTargets(t *testing.T) {
+	st := storeWith("a")
+	st.Apply([]byte(`{"v":2,"ev":"hello","rules":{"resolve":1},"rules_error":"","resolve":["api.example.com -> 192.0.2.7:443"],"upstream":"127.0.0.1:8080"}`))
+	status := func() StatusOut { return StatusOut{Capture: st.Stats()} }
+	local, remote := Servers(st, status, status, &fakePresets{})
+	for _, c := range []struct {
+		s      *mcp.Server
+		remote bool
+	}{{local, false}, {remote, true}} {
+		ct, sst := mcp.NewInMemoryTransports()
+		if _, err := c.s.Connect(context.Background(), sst, nil); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range []string{"capture_stats", "status"} {
+			res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool})
+			if err != nil || res.IsError {
+				t.Fatalf("%s: %v %v", tool, err, res)
+			}
+			got := res.Content[0].(*mcp.TextContent).Text
+			targets := strings.Contains(got, "192.0.2.7") || strings.Contains(got, "127.0.0.1:8080")
+			if targets == c.remote || !strings.Contains(got, `"rules":{"resolve":1}`) {
+				t.Errorf("%s (remote %v): %s", tool, c.remote, got)
+			}
+		}
+	}
+}
+
 // list_rules and explain_rules are read-only (not in writeTools: the proxy may
 // send them again); explain_rules takes a recorded flow's method, URL and
 // operation, or method and url, not both.

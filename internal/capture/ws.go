@@ -278,6 +278,7 @@ type WSPage struct {
 	Total        int      `json:"total"` // messages on the socket so far, kept or not
 	Open         bool     `json:"open"`
 	Close        *WSClose `json:"close,omitempty"`
+	Note         string   `json:"note,omitempty"` // the MCP tools': masking is off
 }
 
 // WSQuery selects messages for WSList.
