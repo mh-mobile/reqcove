@@ -47,6 +47,7 @@
     command; it did not.
   - The guide's `--state` row names `~/.reqcove/ca-copies`, the list of the
     directories its CA was copied into (as docs/SECURITY.md did).
+- The guide reorganised for reading; no claim changed.
 - docs/SECURITY.ja.md: the security model in Japanese, section for section
   with SECURITY.md; README.ja.md and guide.ja.md link to it.
 
