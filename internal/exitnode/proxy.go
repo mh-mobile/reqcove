@@ -402,6 +402,7 @@ var dialTimeout = 10 * time.Second
 // its own but the OS's (75 s on macOS; read in mitmproxy 12.3.1, and tried).
 func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
 	var d proxy.Dialer = &net.Dialer{}
+	raw := &rawDialer{}
 	if v == socks {
 		if ready != nil {
 			hold, cancel := context.WithTimeout(ctx, socksHold)
@@ -412,7 +413,7 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			}
 		}
 		var err error
-		if d, err = proxy.SOCKS5("tcp", socksAddr, &proxy.Auth{User: device, Password: socksSecret}, d); err != nil {
+		if d, err = proxy.SOCKS5("tcp", socksAddr, &proxy.Auth{User: device, Password: socksSecret}, raw); err != nil {
 			return nil, err
 		}
 	}
@@ -427,6 +428,23 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			return nil, fmt.Errorf("%v did not answer within %v (through mitmproxy)", dst, dialTimeout)
 		}
 	}
+	if err == nil && raw.c != nil {
+		// x/net's SOCKS conn adds only BoundAddr and hides CloseWrite: a client's
+		// half-close would close both ways (pipe), cutting the answer still to come.
+		return raw.c, nil
+	}
+	return c, err
+}
+
+// rawDialer dials SOCKS5's own connection and keeps it.
+type rawDialer struct {
+	net.Dialer
+	c net.Conn
+}
+
+func (d *rawDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	c, err := d.Dialer.DialContext(ctx, network, addr)
+	d.c = c
 	return c, err
 }
 

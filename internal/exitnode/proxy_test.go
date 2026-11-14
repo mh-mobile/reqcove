@@ -456,6 +456,33 @@ func TestSOCKSDialTimeout(t *testing.T) {
 	}
 }
 
+// TestRelayHalfClose: through SOCKS, a client that is done sending (nc -N)
+// still gets the answer the server sends after that.
+func TestRelayHalfClose(t *testing.T) {
+	fs := startFakeSOCKS(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			relay(c, netip.MustParseAddrPort("100.64.0.2:5000"), netip.MustParseAddrPort("203.0.113.5:443"), socks, "dev", fs.addr, "pw", nil, false)
+		}
+	}()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	io.WriteString(c, "ping")
+	c.(*net.TCPConn).CloseWrite()
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if b, _ := io.ReadAll(c); string(b) != "pingbye" {
+		t.Errorf("got %q, want the echo and the answer after the half-close", b)
+	}
+}
+
 // TestDialWaitsForReady: a SOCKS dial goes to the port only once ready says
 // mitmproxy is up; while it is not, nothing reaches the port, and the dial
 // fails after socksHold. Direct dials do not wait.

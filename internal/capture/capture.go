@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -118,6 +119,9 @@ const WebKeep = 2 << 20
 const (
 	maxRestarts = 5
 	stableAfter = time.Minute
+	// drainWait bounds how long an exited mitmdump's lines, still in its
+	// socket, are waited for before its open flows are closed.
+	drainWait = 2 * time.Second
 )
 
 type Capture struct {
@@ -139,6 +143,7 @@ type Capture struct {
 	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
 	restarted bool
 	err       error
+	readers   atomic.Int64 // ingest connections still being read
 }
 
 // proc is one mitmdump process.
@@ -375,6 +380,12 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 		// First: from now connections wait in the listener's queue for the next one.
 		c.setUp(false)
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would still accept on the port
+		// Its lines still in the socket come first: one read after
+		// mitmdumpExited would open a flow nothing closes, and count its
+		// counters twice. Its connections end at their EOF, now it is gone.
+		for deadline := time.Now().Add(drainWait); c.readers.Load() > 0 && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
 		err := fmt.Errorf("mitmdump exited: %v", p.err)
 		c.Store.mitmdumpExited(err.Error())
 		if time.Since(p.ready) >= stableAfter {
@@ -482,7 +493,9 @@ func (c *Capture) accept() {
 		if err != nil {
 			return
 		}
+		c.readers.Add(1)
 		go func() {
+			defer c.readers.Add(-1)
 			defer conn.Close()
 			r := bufio.NewReaderSize(conn, 1<<16)
 			for {
