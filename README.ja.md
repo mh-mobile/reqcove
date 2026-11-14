@@ -120,7 +120,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 - Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
 - LAN モード（`--lan`）にはパスワードがありません。このコンピュータで許可したアドレスは、このコンピュータを通って、あなたのアドレスからインターネット（80 番と 443 番ポート）と、`--allow-hosts` に完全な名前で書いたプライベートなホストに届きます。
 
-詳しくは [docs/SECURITY.md](docs/SECURITY.md) を見てください（英語）。
+詳しくは [docs/SECURITY.ja.md](docs/SECURITY.ja.md) を見てください。
 
 ## 制限事項
 
