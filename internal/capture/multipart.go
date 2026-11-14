@@ -108,12 +108,14 @@ func maskPart(part []byte, request, cut bool) []byte {
 	}
 	var name, filename, ctype, cte string
 	var logical, lines []string
-	for _, l := range strings.Split(strings.TrimPrefix(hdr, "\r\n"), "\r\n") {
-		if n := len(logical); n > 0 && (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")) {
-			logical[n-1] += l // folded: the header before it goes on, read and masked as one line
-			continue
+	raw := strings.Split(strings.TrimPrefix(hdr, "\r\n"), "\r\n")
+	for i := 0; i < len(raw); {
+		j := i + 1
+		for j < len(raw) && (strings.HasPrefix(raw[j], " ") || strings.HasPrefix(raw[j], "\t")) {
+			j++ // folded: the header before it goes on, read and masked as one line
 		}
-		logical = append(logical, l)
+		logical = append(logical, strings.Join(raw[i:j], "")) // joined once: many folds stay linear
+		i = j
 	}
 	dispositions, unread := 0, false
 	for _, l := range logical {
@@ -153,8 +155,10 @@ func maskPart(part []byte, request, cut bool) []byte {
 			note += ", cut"
 		}
 		return []byte(out + note + "]")
-	case cte != "" && cte != "7bit" && cte != "8bit" && cte != "binary":
+	case cte == "base64" || cte == "quoted-printable":
 		return []byte(out + fmt.Sprintf("[encoded (%s): %d bytes]", cte, len(content)))
+	case cte != "" && cte != "7bit" && cte != "8bit" && cte != "binary": // another name is not repeated: it could be anything
+		return []byte(out + fmt.Sprintf("[encoded: %d bytes]", len(content)))
 	case !utf8.Valid(trimCutRune(content)) || !strictText(trimCutRune(content)):
 		return []byte(out + fmt.Sprintf("[not text: %d bytes]", len(content)))
 	}

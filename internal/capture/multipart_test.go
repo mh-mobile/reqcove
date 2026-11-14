@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,19 @@ func TestMultipartReview(t *testing.T) {
 		if leak(got, S) != "" || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(`{"password":"`))) {
 			t.Errorf("%q\n->\n%s", body, got)
 		}
+	}
+	// #85's re-check: an encoding that is not a known one is not repeated in the note.
+	if got := string(renderMultipart([]byte(mpBody("Content-Disposition: form-data; name=\"note\"\r\nContent-Transfer-Encoding: sk-aaaaaaaaaaaaaaaaaaaa\r\n\r\nabcde")), "XyZ", true, false)); strings.Contains(got, "aaaaaaaaaaaaaaaaaaaa") || !strings.Contains(got, "[encoded: 5 bytes]") {
+		t.Errorf("encoding: %q", got)
+	}
+	// Many short folds are joined once: linear, not quadratic (counted in bytes allocated, which the race detector does not change much).
+	folds := []byte(mpBody("Content-Disposition: form-data; name=\"x\"" + strings.Repeat("\r\n a", 20000) + "\r\n\r\nplain"))
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	renderMultipart(folds, "XyZ", true, false)
+	runtime.ReadMemStats(&after)
+	if n := after.TotalAlloc - before.TotalAlloc; n > 32<<20 {
+		t.Errorf("20,000 folds (%d bytes) allocated %d MB", len(folds), n>>20)
 	}
 	// Unfolded, a field's name reads and its content shows.
 	if got := string(renderMultipart([]byte(mpBody("Content-Disposition: form-data;\r\n\tname=\"note\"\r\n\r\nhello")), "XyZ", true, false)); !strings.Contains(got, "name=\"note\"\r\n\r\nhello") {
