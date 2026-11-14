@@ -338,6 +338,10 @@ func TestMaskingLinear(t *testing.T) {
 			if !slowTime && !copies {
 				break
 			}
+			if try == 1 && loops > 1 {
+				loops *= 10 // a quick input measured again over 10 times as long: CI's machines jitter at a millisecond
+				continue
+			}
 			if try == 2 {
 				t.Errorf("%s: %d KiB took %v and allocated %d KiB, %d KiB %v and %d KiB: grows faster than the size",
 					c.name, len(small)/kb, ts/time.Duration(loops), as/uint64(loops)/kb, len(large)/kb, tl/time.Duration(loops), al/uint64(loops)/kb)
