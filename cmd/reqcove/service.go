@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -265,7 +266,13 @@ func servicePath() (string, bool) {
 			dirs = append([]string{filepath.Dir(abs)}, dirs...)
 		}
 	}
-	return strings.Join(dirs, ":"), err == nil
+	var once []string // uvx in one of the others: listed once, first
+	for _, d := range dirs {
+		if !slices.Contains(once, d) {
+			once = append(once, d)
+		}
+	}
+	return strings.Join(once, ":"), err == nil
 }
 
 func xmlText(s string) string {
