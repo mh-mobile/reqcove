@@ -169,7 +169,7 @@ func TestMaskingLinear(t *testing.T) {
 		// GraphQL documents: the lexer, and the values it masks.
 		{"graphql nested", gql, rep(`query { `, `a(b: 1) { `, `login(password: "x")`), red, 0},
 		{"graphql many arguments", gql, rep(`mutation { `, `a(password: "x") `, `}`), red, 0},
-		{"graphql nested lists", gql, rep(`mutation { a(password: `, `[`, `1`), red, 0},
+		{"graphql nested lists", gql, rep(`mutation { a(password: `, `[`, `1`), red, 8 * kb}, // one token a byte: 4x 16 KiB passes gqlMaxTokens, another path
 		{"graphql comments", gql, rep(`query { a `, "# c\n", `login(password: "x") }`), red, 0},
 		{"graphql block strings", gql, rep(`query { `, `a(b: """x""") `, `login(password: "x") }`), red, 0},
 		{"graphql block string cut", gql, rep(`mutation { a(password: """`, `\"""`, ``), red, 0},
@@ -300,6 +300,7 @@ func TestMaskingLinear(t *testing.T) {
 		d, a := time.Duration(math.MaxInt64), uint64(math.MaxUint64)
 		for range runs {
 			var m0, m1 runtime.MemStats
+			runtime.GC() // the garbage of the run before is not this one's time
 			runtime.ReadMemStats(&m0)
 			start := time.Now()
 			for range loops {
