@@ -26,10 +26,14 @@ def serve_inherited_socks():
     each mitmdump (fd REQCOVE_SOCKS_FD), so the port is never free while
     mitmdump restarts. mitmproxy (12.3.1) has no option for that: it binds
     with asyncio.start_server(handler, host, port), which for that address
-    serves on the inherited socket instead. Done here, not in the addon:
-    mitmproxy loads -s scripts after it binds. Were it missed (another
+    makes a server on the inherited socket instead. Done here, not in the
+    addon: mitmproxy loads -s scripts after it binds. Were it missed (another
     mitmproxy), mitmproxy's own bind fails, the port being held, and it
-    exits before the addon's hello: never ready, nothing sent to it."""
+    exits before the addon's hello: never ready, nothing sent to it.
+
+    The server does not accept until the addon's running() calls serve_socks:
+    mitmproxy runs with proxyauth=any and only the addon checks the password,
+    so a connection queued while mitmdump was down must not be read first."""
     import asyncio
     import os
     import socket
@@ -41,13 +45,26 @@ def serve_inherited_socks():
     with socket.fromfd(fd, socket.AF_INET, socket.SOCK_STREAM) as s:
         addr = s.getsockname()[:2]
     start = asyncio.start_server
+    waiting = []  # servers made before serve_socks; once it ran, None: serve at once
 
     async def start_server(cb, host=None, port=None, **kw):
-        if (host, port) == addr:  # fromfd dups: mitmproxy may close and reopen its servers
-            return await start(cb, sock=socket.fromfd(fd, socket.AF_INET, socket.SOCK_STREAM), **kw)
-        return await start(cb, host, port, **kw)
+        if (host, port) != addr:
+            return await start(cb, host, port, **kw)
+        # fromfd dups: mitmproxy may close and reopen its servers
+        srv = await start(cb, sock=socket.fromfd(fd, socket.AF_INET, socket.SOCK_STREAM), start_serving=waiting is None, **kw)
+        if waiting is not None:
+            waiting.append(srv)
+        return srv
+
+    def serve_socks():
+        nonlocal waiting
+        for srv in waiting or []:
+            if not srv.is_serving() and srv.sockets:  # not one mitmproxy closed since
+                asyncio.get_running_loop().create_task(srv.start_serving())
+        waiting = None
 
     asyncio.start_server = start_server
+    globals()["serve_socks"] = serve_socks  # the addon finds it in __main__
 
 
 serve_inherited_socks()
