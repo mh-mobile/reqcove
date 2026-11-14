@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -80,8 +81,9 @@ type proxy struct {
 // stopped with Ctrl-Z, say, would make each call wait for the handshake.
 var redialAfter = 2 * time.Second
 
-// handshake bounds a `run` that takes the connection but does not answer.
-var handshake = 5 * time.Second
+// Handshake bounds a `run` that takes the connection but does not answer (a
+// `run` stopped with Ctrl-Z): here and in `reqcove mark`.
+var Handshake = 5 * time.Second
 
 // session returns the kept session to `run`, or dials it when there is none or
 // the kept one is failed, the one a call just failed on (another call may have
@@ -109,12 +111,24 @@ func (p *proxy) session(ctx context.Context, failed *mcp.ClientSession) (*mcp.Cl
 	}
 	p.failedAt = time.Time{}
 	if n := p.dials.Add(1); n > 1 {
-		p.note = "reqcove run restarted: its records start anew, so flow ids and cursors from before it are gone, and every mock preset is off."
+		p.note = "reqcove run restarted: its records start anew, so flow ids, cursors and markers from before it are gone, and every preset is off."
 	}
 	if v := cs.InitializeResult().ServerInfo.Version; v != Version {
 		p.note += fmt.Sprintf(" reqcove run is version %s, this reqcove mcp %s: run both at one version: restart reqcove run with the newer one, then reconnect the agent's MCP server (/mcp in Claude Code).", v, Version)
 	}
 	p.cs = cs
+	// Once the connection ends (run stopped), the next call dials again, so a
+	// write after a restart reaches the new run instead of failing on the dead
+	// session. A write sent right after the drop, before this notices, still
+	// fails as "may or may not have taken effect".
+	go func() {
+		cs.Wait()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.cs == cs {
+			p.cs = nil
+		}
+	}()
 	return cs, nil
 }
 
@@ -125,7 +139,7 @@ func (p *proxy) dial(ctx context.Context) (*mcp.ClientSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, handshake)
+	ctx, cancel := context.WithTimeout(ctx, Handshake)
 	defer cancel()
 	cs, err := p.client.Connect(ctx, &mcp.IOTransport{Reader: c, Writer: c}, nil)
 	if err != nil {
@@ -196,7 +210,8 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case writeTools[req.Params.Name]:
-			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call list_mock_presets to see"), nil
+			see := cmp.Or(map[string]string{"add_marker": "list_markers", "activate_mock": "list_mock_presets", "deactivate_mock": "list_mock_presets"}[req.Params.Name], "list_presets")
+			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call " + see + " to see"), nil
 		case try == 1:
 			return p.down(), nil
 		}

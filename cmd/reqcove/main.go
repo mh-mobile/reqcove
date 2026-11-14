@@ -62,16 +62,32 @@ func buildVersion(v string, info *debug.BuildInfo) string {
 const usage = `Reqcove hands an iPhone's HTTP(S) traffic to AI agents over MCP.
 
 Usage:
+  reqcove setup      the first run, in your terminal: checks uv, writes the device and
+                     the hosts to the service's config file, adds the skill, says how to start
   reqcove run --device NAME --allow-hosts HOSTS [flags]
                      (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
   reqcove status     what reqcove is doing, and the next steps
+  reqcove run --lan --allow-hosts HOSTS [flags]
+                     LAN mode, without Tailscale: an HTTP proxy on this computer's
+                     LAN address for the clients you allow
+  reqcove lan allow ADDR | lan deny ADDR | lan list
+                     the client addresses LAN mode carries, in your terminal only
   reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
                      terminal only (never for an agent)
+  reqcove mark [TEXT]
+                     a marker among the records (now I tap Pay), in your terminal only;
+                     reqcove mark -- TEXT for a text starting with -
+  reqcove mock add --rules FILE --url URL [flags]
+                     add a mock to a --rules file, checked first, in your terminal
+                     only (-h for its flags; --print shows it without writing)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
+  reqcove service install [--config FILE] | service restart | service uninstall
+                     start run now and at login without Homebrew (launchd or
+                     systemd), with run's flags in FILE (~/.config/reqcove/config)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
   reqcove init       add the agent skill (how to use reqcove's tools) to the agents in ~
   reqcove version
@@ -117,8 +133,13 @@ var commands = map[string]func(context.Context, []string) error{
 	"status":  status,
 	"har":     har,
 	"cleanup": func(_ context.Context, args []string) error { return cleanup(args) },
-	"init":    func(_ context.Context, args []string) error { return initSkill(args) },
+	"init":    func(_ context.Context, args []string) error { return initSkill(os.Stdout, args) },
+	"setup":   setup,
 	"links":   links,
+	"lan":     lan,
+	"mark":    mark,
+	"service": service,
+	"mock":    mockCmd,
 }
 
 // noFlags are the commands that take nothing.
@@ -191,14 +212,16 @@ func run(ctx context.Context, args []string) error {
 	mitmSpec := fs.String("mitmproxy-spec", defaultMitmSpec, "uvx --from spec for mitmproxy")
 	python := fs.String("python", defaultPython, "Python for uvx")
 	uvx := fs.String("uvx", "uvx", "path to uvx (uv beside it runs the default mitmproxy from its lock, hashes checked)")
-	proxyPort := fs.Int("proxy-port", 8080, "Remote Proxy port on the tailnet, for the iPhone's Wi-Fi proxy setting; 0 turns it off")
+	proxyPort := fs.Int("proxy-port", 8080, "the proxy port for the iPhone's Wi-Fi proxy setting: the Remote Proxy's on the tailnet, or with --lan the LAN proxy's; 0 turns the Remote Proxy off")
 	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token reqcove links prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
 	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
+	lanMode := fs.Bool("lan", false, "LAN mode, without Tailscale: an HTTP proxy on this computer's LAN address (--proxy-port), for clients on that network you allow (reqcove lan allow ADDR, or run's prompt); ports 80 and 443 only")
+	lanIface := fs.String("lan-interface", "", "with --lan, the interface to listen on (default: the default route's, such as en0)")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
-	fs.String("config", "", "a `FILE` of these flags, one a line (for brew services), read before the command line's; --no-redact, --web, --rules-reload and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
 	if takeFlags == nil { // the docs test reads no file
 		if path, ok, err := configFile(args); err != nil {
 			return err
@@ -211,8 +234,11 @@ func run(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if err := lanFlags(fs, *lanMode, *proxyPort); err != nil {
+		return err
+	}
 	hostname := nodeName(fs, *state)
-	if len(devices) == 0 && !*localProxy {
+	if len(devices) == 0 && !*localProxy && !*lanMode {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
 		if names := iosDevices(); len(names) > 0 {
 			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
@@ -301,7 +327,7 @@ func run(ctx context.Context, args []string) error {
 	if *uiFlag && *proxyPort == 80 {
 		return errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
-	if *web && *proxyPort == exitnode.WebPort {
+	if *web && *proxyPort == exitnode.WebPort && !*lanMode { // LAN mode serves no node port
 		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
 	}
 	if *mcpHTTP && *proxyPort == exitnode.MCPPort {
@@ -326,6 +352,25 @@ func run(ctx context.Context, args []string) error {
 		log.Print("WARN: --upstream-proxy with --allow-hosts '*': the proxy connects to HTTPS hosts by name, looked up again on this computer, so a site the iPhone visits can point it at this computer or the LAN. Keep --allow-hosts to the hosts you test.")
 	}
 
+	var lanCfg *exitnode.LAN
+	if *lanMode {
+		name, _, err := exitnode.LANAddr(*lanIface) // before anything starts: a VPN's tunnel, or no network
+		if err != nil {
+			return err
+		}
+		lanCfg = &exitnode.LAN{Interface: name, Allowed: lanAddrs(*state), AllowCmd: withState("reqcove lan allow", *state)}
+		for _, h := range allow.Hosts {
+			if !strings.Contains(h, "*") {
+				lanCfg.Names = append(lanCfg.Names, h)
+			}
+		}
+		if isTerminal(os.Stdin) {
+			signal.Ignore(syscall.SIGTTIN) // a read from the background fails instead of stopping run
+			fd := int(os.Stdin.Fd())
+			lanCfg.Refused = lanAsker(ctx, os.Stdin, os.Stderr, *state, lanTTY{foreground: func() bool { return ttyForeground(fd) }, flush: func() { ttyFlushInput(fd) }})
+		}
+	}
+
 	// First, before anything is changed: one --local-proxy per computer.
 	var localLn net.Listener
 	if *localProxy {
@@ -344,6 +389,7 @@ func run(ctx context.Context, args []string) error {
 	defer unlock()
 	linksCmd := withState("reqcove links", *state)
 	user := newUserLinks(os.Stderr, red, *state, linksCmd)
+	user.lan = *lanMode
 	defer func() { stepLinksCmd = "reqcove links" }()
 	for _, name := range []string{loginURLFile, linksFile} { // a crashed run's, and this one's at the end
 		p := filepath.Join(*state, name)
@@ -461,7 +507,7 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("rules from %s: %v", *rules, s["rules"])
 		logPresets := func(names []string) {
 			if len(names) > 0 {
-				log.Printf("mock presets (off until an agent turns one on, for at most 5 minutes): %s", strings.Join(names, ", "))
+				log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, cap.Store.PresetTargets()), ", "))
 			}
 		}
 		names, _ := s["mock_presets"].([]string)
@@ -470,10 +516,10 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("--rules-reload: %s is taken again whenever it changes", *rules)
 			cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
 				if problem != "" {
-					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(r))
+					log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", *rules, problem, presetsOff(presets))
 					return
 				}
-				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(r))
+				log.Printf("rules from %s, again: %v%s", *rules, r, presetsOff(presets))
 				logPresets(presets)
 				if len(resolve) > 0 {
 					log.Printf("resolve: %s", strings.Join(resolve, ", "))
@@ -486,7 +532,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *web {
 		user.web(cap.WebURL)
-		if webLocal != exitnode.WebPort {
+		if webLocal != exitnode.WebPort && !*lanMode {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
 		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all")
@@ -503,6 +549,9 @@ func run(ctx context.Context, args []string) error {
 	}()
 	mcpSock := filepath.Join(*state, "mcp.sock")
 	var node nodeState
+	if *lanMode {
+		node.set(exitnode.Status{Mode: "lan"}) // before the first status: not a tailnet node starting
+	}
 	remoteStatus := func() mcpserver.StatusOut {
 		return statusOut(node.get(), cap.Store.Stats(), allow, cap.CA, cap.Store.Devices())
 	}
@@ -511,7 +560,7 @@ func run(ctx context.Context, args []string) error {
 		if names, _ := out.Capture["mock_presets"].([]string); len(names) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
-			if ps, err := cap.Presets(ctx); err == nil {
+			if ps, err := cap.Presets(ctx, ""); err == nil {
 				out.ActivePresets = mcpserver.PresetsView(ps, true)
 			} else {
 				out.PresetsError = err.Error()
@@ -566,7 +615,7 @@ func run(ctx context.Context, args []string) error {
 		if page != nil {
 			uiLink = "http://" + ip + "/?k=" + uiToken
 		}
-		if webAddr != "" {
+		if webAddr != "" && !*lanMode { // LAN mode: mitmweb on this computer only
 			webLink = nodeWebLink(cap.WebURL, webAddr, ip)
 		}
 		var mcpURL string
@@ -578,11 +627,18 @@ func run(ctx context.Context, args []string) error {
 			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
 		}
 		var ca string
-		if len(devices) > 0 {
+		if len(devices) > 0 || *lanMode {
 			ca = "http://mitm.it"
 		}
 		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(cap.Store.Stats())))
+		var lanR *lanReady
+		caCaption := "CA (with the exit node on)"
+		if s.LAN != nil {
+			lanR = &lanReady{listen: s.LAN.Listen, allowed: s.LAN.Allowed, state: *state, prompt: lanCfg.Refused != nil,
+				caSHA256: cap.CA.SHA256, caFile: filepath.Join(*state, "mitmproxy", "mitmproxy-ca-cert.pem")}
+			caCaption = "CA (with the Wi-Fi proxy set)"
+		}
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, *state, statusOut(s, cap.Store.Stats(), allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(statsPresets(cap.Store.Stats()), cap.Store.PresetTargets()), lanR))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
@@ -590,8 +646,8 @@ func run(ctx context.Context, args []string) error {
 		if webLink != "" {
 			codes = append(codes, qrItem{webLink, "--web (mitmweb, unmasked)"})
 		}
-		if len(devices) > 0 {
-			codes = append(codes, qrItem{"http://mitm.it", "CA (with the exit node on)"})
+		if len(devices) > 0 || *lanMode {
+			codes = append(codes, qrItem{"http://mitm.it", caCaption})
 		}
 		printQRs(os.Stderr, codes...)
 	}
@@ -631,12 +687,13 @@ func run(ctx context.Context, args []string) error {
 			Web:        webAddr,
 			MCP:        mcpHandler,
 			LocalProxy: localLn,
+			LAN:        lanCfg,
 			StatusCmd:  withState("reqcove status", *state),
 			LinksCmd:   linksCmd,
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})
-	if len(devices) > 0 {
+	if len(devices) > 0 || *lanMode {
 		fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	}
 	if ctx.Err() != nil {

@@ -347,7 +347,7 @@ func TestRulesRefused(t *testing.T) {
 		"mock body_file a device":     {"mock: [{match: {url: \"http://127.0.0.1/x\"}, body_file: /dev/zero}]\n", "mock[0]: body_file must be a plain file"},
 		"mock default port":           {"mock: [{match: {url: \"http://127.0.0.1:80/x\"}}]\n", "mock[0]: leave out the default port"},
 		"preset bad name":             {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: \"a b\"}]\n", "mock[0]: preset must be a name"},
-		"preset twice":                {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a}, {match: {url: \"http://127.0.0.1/x\"}, preset: a}]\n", "mock[1]: another mock has this preset name"},
+		"preset twice":                {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a}, {match: {url: \"http://127.0.0.1/x\"}, preset: a}]\n", "mock[1]: another rule has this preset name"},
 		"description alone":           {"mock: [{match: {url: \"http://127.0.0.1/x\"}, description: hi}]\n", "mock[0]: description goes with preset"},
 		"description two lines":       {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a, description: \"a\\nb\"}]\n", "mock[0]: description goes with preset"},
 		"description long":            {"mock: [{match: {url: \"http://127.0.0.1/x\"}, preset: a, description: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx}]\n", "mock[0]: description goes with preset"},
@@ -583,10 +583,10 @@ modify_headers:
 	if got := fmt.Sprint(h.stats()["rules"]); !strings.Contains(got, "mock:5") {
 		t.Errorf("rules loaded: %s", got)
 	}
-	if _, err := h.c.Activate(ctx, "any", 60, 0); err == nil || !strings.Contains(err.Error(), "no presets") {
+	if _, err := h.c.Activate(ctx, "any", "", 60, 0); err == nil || !strings.Contains(err.Error(), "no presets") {
 		t.Errorf("no presets: %v", err)
 	}
-	if ps, err := h.c.Presets(ctx); err != nil || len(ps) != 0 {
+	if ps, err := h.c.Presets(ctx, ""); err != nil || len(ps) != 0 {
 		t.Errorf("list without presets: %v %v", ps, err)
 	}
 	hc := h.client("dev")

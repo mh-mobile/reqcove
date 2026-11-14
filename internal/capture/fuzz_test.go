@@ -6,13 +6,19 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fuzzSecret: every 5 characters of it hold a capital, and fillers have none,
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 22
+const fuzzShapes = 26
+
+// fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
+// the secret: XML masking never panics on it, and a secret element and
+// attribute before it are masked whatever follows, wherever the head is cut.
+const fuzzMarkup = 25
 
 // secretIn puts a secret under a secret name in one of the shapes masking
 // knows, with filler (letters, digits, spaces, commas only: other text can
@@ -71,6 +77,12 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
 	case 21: // a STOMP frame's header line
 		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
+	case 22: // SOAP: a namespaced element
+		return pre(`<s:Envelope xmlns:s="urn:s"><s:Body><m:Note>`+filler+`</m:Note>`, `<wsse:Password>`+secret+`</wsse:Password></s:Body></s:Envelope>`, "application/soap+xml")
+	case 23: // an XML attribute
+		return pre(`<Login note="`+filler+`" `, `api_key="`+secret+`"/>`, "text/xml")
+	case 24: // a plist: the value after a secret key
+		return pre(`<plist><dict><key>note</key><string>`+filler+`</string>`, `<key>sessionToken</key><string>`+secret+`</string></dict></plist>`, "application/xml")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
@@ -95,6 +107,8 @@ func leak(got, secret string) string {
 	}
 	return ""
 }
+
+func trimCutRunes(s string) string { return string(trimCutRune([]byte(s))) }
 
 var jsonEscapeRE = regexp.MustCompile(`\\(u[0-9a-fA-F]{4}|.)`)
 
@@ -128,7 +142,36 @@ func FuzzMaskBody(f *testing.F) {
 		f.Add(shape, "some words, 42", 7)
 		f.Add(shape, strings.Repeat("x", 65530), 65536) // the 64 KiB boundary
 	}
+	for _, m := range []string{
+		`<a><Password>#</Password></a></b>`, `password=#</dict>>password=#`, `<Password>abc</i>#</Password>`,
+		`<?xml version="1.1"?><a token='#'/>`, `<a x="1"password="#"/>`, `<plist><dict><key>pin</key><string>#</string>`,
+		`<a>{"secret":"#"}</a>`, `<b>"</b>{"token":"#"}`, `<a>Bearer #</a><!-- -- --><Key>#`,
+		`<Password>"password":"</Password>password=#`, `<Password a=b!c>#</Password>`, `<a password="#<VxLu9Kz`,
+		`<plist><dict><!-- -- </dict> --><key>pin</key><string>#</string>`,
+	} {
+		f.Add(uint8(fuzzMarkup), m, 0)
+		f.Add(uint8(fuzzMarkup), m, len(m)-3)
+	}
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
+		if shape%fuzzShapes == fuzzMarkup {
+			maskBody([]byte(strings.ReplaceAll(filler, "#", fuzzSecret)), "text/xml", true)
+			// The filler may hold pieces of the secret itself: past the
+			// prefix, the output must start with it masked.
+			prefix := `<r><Password>` + fuzzSecret + `</Password><a token="` + fuzzSecret + `"/>`
+			const masked = `<r><Password>[redacted]</Password><a token="[redacted]"/>`
+			in := prefix + filler
+			if cut > 0 && cut < len(in) {
+				in = in[:cut]
+			}
+			if !utf8.ValidString(trimCutRunes(in)) {
+				return
+			}
+			got := string(maskBody([]byte(in), "text/xml", true))
+			if len(in) < len(prefix) && leak(got, fuzzSecret) != "" || len(in) >= len(prefix) && !strings.HasPrefix(got, masked) {
+				t.Errorf("a secret element or attribute left:\n%q\n%q", in, got)
+			}
+			return
+		}
 		body, ct, at := secretIn(shape, filler, fuzzSecret)
 		check := func(cut int) {
 			head := []byte(body)

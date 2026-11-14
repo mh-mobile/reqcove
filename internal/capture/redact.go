@@ -15,7 +15,8 @@ import (
 // content type: a JSON body may come labelled as a form), the values of such
 // form fields (when the body is, or looks like, a form), and anywhere,
 // values whose shape gives them away (maskTokens) and secret parameters of
-// URLs in it (maskURLs). The head may be cut anywhere, so it is scanned as
+// URLs in it (maskURLs). An XML body is masked by names first (maskXML).
+// The head may be cut anywhere, so it is scanned as
 // text, not parsed: a value cut before its closing quote is masked to the end.
 // Heads that are not text are left alone here and never handed out while
 // masking (Store.bodyOut). Secrets under names that do not say so are not
@@ -25,9 +26,13 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if len(head) == 0 || !utf8.Valid(trimCutRune(head)) {
 		return head
 	}
+	s := string(head)
+	if isXML(contentType, s) { // by names first; the text masking below still applies
+		s = maskXML(s, request)
+	}
 	// A GraphQL document as the body (application/graphql, or shaped like
 	// one); those in JSON strings are found by maskJSON.
-	s, isDoc := maskGraphQLDoc(string(head), request)
+	s, isDoc := maskGraphQLDoc(s, request)
 	s = maskJSON(s, request, 0)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)

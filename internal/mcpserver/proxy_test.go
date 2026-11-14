@@ -115,7 +115,11 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s has an output schema: a run of another version could fail it", tool.Name)
 		}
 		a := tool.Annotations
-		if writeTools[tool.Name] {
+		if tool.Name == "add_marker" { // a write, but only to reqcove's memory
+			if !writeTools[tool.Name] || a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+				t.Errorf("%s: annotations %+v, want a write, not destructive", tool.Name, a)
+			}
+		} else if writeTools[tool.Name] {
 			if a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
 				t.Errorf("%s: annotations %+v, want a write a client asks about", tool.Name, a)
 			}
@@ -123,7 +127,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s: annotations %+v, want read-only, not destructive", tool.Name, a)
 		}
 	}
-	if len(names) != 15 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "activate_mock") { // the tools, without run
+	if len(names) != 22 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {
@@ -135,7 +139,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 	}
 	stop()
 	stop = serve(t, sock, New(storeWith("b"), nil))
-	if got, _ := ids(t, cs); got != "b" || len(lastNotes) != 1 || !strings.Contains(lastNotes[0], "flow ids and cursors from before it are gone") { // no call in between: the dead session is found by this one
+	if got, _ := ids(t, cs); got != "b" || len(lastNotes) != 1 || !strings.Contains(lastNotes[0], "flow ids, cursors and markers from before it are gone, and every preset is off.") { // no call in between: the dead session is found by this one
 		t.Fatalf("after a restart: %q %v", got, lastNotes)
 	}
 	// The first answer after a restart says so, once: ids and cursors from before are gone.
@@ -251,9 +255,9 @@ func TestProxyHungRun(t *testing.T) {
 			defer c.Close()
 		}
 	}()
-	oldH, oldR := handshake, redialAfter
-	handshake, redialAfter = 200*time.Millisecond, time.Second
-	defer func() { handshake, redialAfter = oldH, oldR }()
+	oldH, oldR := Handshake, redialAfter
+	Handshake, redialAfter = 200*time.Millisecond, time.Second
+	defer func() { Handshake, redialAfter = oldH, oldR }()
 	p := &proxy{sock: sock, notRunning: "down", ctx: context.Background(), client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
 	start := time.Now()
 	var wg sync.WaitGroup

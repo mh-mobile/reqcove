@@ -51,16 +51,17 @@ type event struct {
 	Code        int         `json:"code"`       // ws_end: the close code
 	ByClient    bool        `json:"by_client"`  // ws_end: the client closed it
 	// hello
-	Mitmproxy    string         `json:"mitmproxy"`
-	Python       string         `json:"python"`
-	Brotli       string         `json:"brotli"`
-	BrotliDecode bool           `json:"brotli_decode"`
-	ZstdDecode   bool           `json:"zstd_decode"`
-	Rules        map[string]int `json:"rules"`       // --rules loaded, by kind
-	RulesError   string         `json:"rules_error"` // why --rules could not be loaded (at start), or reloaded
-	Resolve      []string       `json:"resolve"`     // resolve rules, "name -> ip:port"
-	Presets      []string       `json:"presets"`     // the mock presets' names
-	Upstream     string         `json:"upstream"`    // host:port decrypted requests go on to
+	Mitmproxy     string            `json:"mitmproxy"`
+	Python        string            `json:"python"`
+	Brotli        string            `json:"brotli"`
+	BrotliDecode  bool              `json:"brotli_decode"`
+	ZstdDecode    bool              `json:"zstd_decode"`
+	Rules         map[string]int    `json:"rules"`          // --rules loaded, by kind, presets in their kind
+	RulesError    string            `json:"rules_error"`    // why --rules could not be loaded (at start), or reloaded
+	Resolve       []string          `json:"resolve"`        // resolve rules, "name -> ip:port"
+	Presets       []string          `json:"presets"`        // hello: every preset's name; request: the presets that changed or answered it
+	PresetTargets map[string]string `json:"preset_targets"` // hello: map_remote and resolve presets' targets, by name
+	Upstream      string            `json:"upstream"`       // host:port decrypted requests go on to
 	// counters the addon attaches to every line
 	DroppedBodies int64       `json:"dropped_bodies"`
 	DroppedEvents int64       `json:"dropped_events"`
@@ -105,6 +106,7 @@ type Flow struct {
 	Operation    string      `json:"operation,omitempty"` // GraphQL's: operationName, or the document's first; (anonymous), (batched)
 	Mocked       bool        `json:"mocked,omitempty"`    // a mock rule answered it: the request was not sent to the server
 	Preset       string      `json:"preset,omitempty"`    // a mock preset an agent turned on answered it
+	Presets      []string    `json:"presets,omitempty"`   // every preset an agent turned on that changed or answered it
 	Host         string      `json:"host"`
 	Path         string      `json:"path"`
 	HTTPVersion  string      `json:"http_version"`
@@ -178,12 +180,13 @@ type Store struct {
 	unknownVer    int64
 	orphanUpdates int64
 	evicted       int64
-	names         map[string]string // device StableID -> display name
-	allow         HostRules         // hosts recorded (--allow-hosts)
-	redact        atomic.Bool       // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
-	outOfScope    int64             // requests to hosts outside allow, seen here
-	addonOOS      int64             // the same, seen by the addon
-	earlier       [3]int64          // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
+	names         map[string]string  // device StableID -> display name
+	firstSeen     map[string]float64 // device StableID -> its first request or connection this run (a few devices: only reqcove names them)
+	allow         HostRules          // hosts recorded (--allow-hosts)
+	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
+	outOfScope    int64              // requests to hosts outside allow, seen here
+	addonOOS      int64              // the same, seen by the addon
+	earlier       [3]int64           // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
 	seq           int64         // last Flow.seq (or Flow.answered) handed out
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
@@ -193,7 +196,9 @@ type Store struct {
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
-	rulesLoaded   time.Time // when the --rules file was last taken (at start, or a reload)
+	rulesLoaded   time.Time           // when the --rules file was last taken (at start, or a reload)
+	markers       map[string][]Marker // by source, oldest first, at most maxMarkers each
+	markerID      int64
 }
 
 func (s *Store) setState(state, detail string) {
@@ -290,7 +295,7 @@ func NewStore(maxFlows, maxBytes int) *Store {
 	// ponytail: a run handing out over a million seqs a second for its whole
 	// life (two a flow, its arrival and its answer, and one a WebSocket message)
 	// could pass the next run's base, and then its cursors look current.
-	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, allow: HostRules{All: true}, state: "starting",
+	s := &Store{maxFlows: maxFlows, maxBytes: maxBytes, flows: map[string]*Flow{}, passByConn: map[string]*passthrough{}, firstSeen: map[string]float64{}, allow: HostRules{All: true}, state: "starting",
 		started: now, base: now.UnixMicro(), seq: now.UnixMicro()}
 	s.redact.Store(true)
 	return s
@@ -350,7 +355,7 @@ func (s *Store) Apply(line []byte) {
 	case "skip": // a request outside --allow-hosts; only its count matters
 		return
 	case "rules": // --rules-reload took the file again, or could not
-		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.RulesError
+		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.PresetTargets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
@@ -364,6 +369,7 @@ func (s *Store) Apply(line []byte) {
 			return
 		}
 		p := &passthrough{conn: e.Conn, device: e.Device, host: e.SNI, server: e.Server, alpn: e.ALPN, start: e.TS}
+		s.seenLocked(e.Device, e.TS)
 		s.passes = append(s.passes, p)
 		s.passByConn[e.Conn] = p
 		s.passCount++
@@ -391,6 +397,7 @@ func (s *Store) Apply(line []byte) {
 		if s.allow.Passed(host) { // a --pass-hosts host was decrypted after all: say so, it is why it failed
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
+		s.seenLocked(e.Device, e.TS) // a client whose CA is not trusted yet has only these
 		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
@@ -420,12 +427,13 @@ func (s *Store) Apply(line []byte) {
 	switch e.Ev {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
+		s.seenLocked(e.Device, e.TS)
 		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
 		}
-		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.op != ""
+		f.MappedURL, f.Rewrites, f.Operation, f.Mocked, f.Preset, f.Presets, f.opNamed = e.MappedURL, e.Rewrites, e.op, e.Mocked, e.Preset, e.Presets, e.op != ""
 	case "response":
 		s.answerLocked(f)
 		f.Status, f.Reason, f.RespHeaders = e.Status, e.Reason, e.Headers
@@ -585,4 +593,11 @@ func header(h [][2]string, name string) string {
 		}
 	}
 	return ""
+}
+
+// seenLocked keeps when a device was first seen this run.
+func (s *Store) seenLocked(device string, ts float64) {
+	if _, ok := s.firstSeen[device]; !ok && device != "" {
+		s.firstSeen[device] = ts
+	}
 }

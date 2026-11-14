@@ -87,7 +87,9 @@ func firstIPv4(ips []string) string {
 // and the next steps, numbered, in one place.
 // Off a terminal (terminal false) the callers pass hints in place of the
 // links and the token, and there are no QR codes.
-func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool, presets []string) string {
+// In LAN mode (lan set) it says how to set the iPhone's Wi-Fi proxy and allow
+// it, and how to get the CA without trusting plain HTTP on the LAN.
+func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, state string, steps []string, terminal bool, presets []string, lan *lanReady) string {
 	var b strings.Builder
 	qr := "; QR code below"
 	if !terminal {
@@ -102,7 +104,11 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	fmt.Fprintf(&b, "devices:  %s\n", strings.Join(names, ", "))
+	shown := strings.Join(names, ", ")
+	if shown == "" && lan != nil {
+		shown = "none allowed yet"
+	}
+	fmt.Fprintf(&b, "devices:  %s\n", shown)
 	if uiLink != "" {
 		fmt.Fprintf(&b, "--ui:     %s  (the flows, read only%s; the same at each start, rm %s to change it)\n", uiLink, qr, "-- "+shellWord(filepath.Join(state, "ui-token")))
 	}
@@ -112,11 +118,13 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	if mcpURL != "" {
 		fmt.Fprintf(&b, "--mcp-http: %s  with the header  Authorization: Bearer %s\n            (for agents on your own devices; the same at each start, rm %s to change it)\n", mcpURL, mcpToken, "-- "+shellWord(filepath.Join(state, "mcp-token")))
 	}
-	if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
+	if lan != nil {
+		b.WriteString(lan.lines(qr))
+	} else if slices.ContainsFunc(names, func(n string) bool { return !strings.HasPrefix(n, exitnode.Local.Name+" ") }) { // a phone, not only this computer's apps
 		fmt.Fprintf(&b, "CA:       http://mitm.it  (on an iPhone, with the exit node on%s; once per device)\n", strings.Replace(qr, ";", ":", 1))
 	}
 	if len(presets) > 0 {
-		fmt.Fprintf(&b, "presets:  %s  (mocks an agent may turn on, at most 5 minutes each time; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
+		fmt.Fprintf(&b, "presets:  %s  (rules an agent may turn on, at most 5 minutes each time; one with -> sends the app's requests, cookies and tokens there while on; `%s` shows which are on)\n", strings.Join(presets, ", "), withState("reqcove status", state))
 	}
 	if len(steps) > 0 {
 		fmt.Fprintf(&b, "\nnext:\n")
@@ -130,17 +138,25 @@ func readyBlock(devices map[string]string, uiLink, webLink, mcpURL, mcpToken, st
 	return b.String()
 }
 
-// presetsOff is a reload's note when the rules had mocks (presets among them).
-func presetsOff(r map[string]int) string {
-	if r["mock"] > 0 {
-		return " (any mock preset on is off now)"
+// presetsOff is a reload's note when the rules had presets.
+func presetsOff(presets []string) string {
+	if len(presets) > 0 {
+		return " (any preset on is off now)"
 	}
 	return ""
 }
 
-func presetNames(stats map[string]any) []string {
-	names, _ := stats["mock_presets"].([]string)
-	return names
+// presetNames are the presets' names, a map_remote or resolve one's with its
+// target: `staging -> https://staging.example.com`.
+func presetNames(names []string, targets map[string]string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if t := targets[n]; t != "" {
+			n += " -> " + t
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // readyGate says when the node is ready to report: Running at two polls in a
@@ -152,7 +168,7 @@ type readyGate struct {
 }
 
 func (g *readyGate) ready(s exitnode.Status) bool {
-	if s.Backend != "Running" {
+	if s.Backend != "Running" && s.Mode != "lan" {
 		g.seen = false
 		return false
 	}
@@ -160,4 +176,10 @@ func (g *readyGate) ready(s exitnode.Status) bool {
 	agreed := g.seen && first == g.first
 	g.seen, g.first = true, first
 	return agreed
+}
+
+// statsPresets are capture_stats' preset names (mock_presets: every kind since v0.7).
+func statsPresets(stats map[string]any) []string {
+	n, _ := stats["mock_presets"].([]string)
+	return n
 }

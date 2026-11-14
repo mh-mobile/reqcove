@@ -6,11 +6,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,21 +157,114 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 func TestRemoteProxyLogsNoURL(t *testing.T) {
 	pu, _ := proxyHarness(t, "127.0.0.1")
 	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
-	for len(events) > 0 { // lines from earlier tests
-		<-events
-	}
+	drainEvents() // lines from earlier tests
+	// The line waits in events, or is in the log once a Run's logLoop took it.
+	var mu sync.Mutex
+	var out strings.Builder
+	log.SetOutput(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }))
+	defer log.SetOutput(os.Stderr)
 	if r, err := c.Get("http://nowhere.test/private/path?token=s3cret"); err == nil {
 		r.Body.Close()
 	}
-	select {
-	case line := <-events:
-		if !strings.Contains(line, "nowhere.test") || strings.Contains(line, "s3cret") || strings.Contains(line, "private") {
-			t.Errorf("log line: %q", line)
+	for range 500 {
+		var line string
+		select {
+		case line = <-events:
+		default:
+			mu.Lock()
+			for _, l := range strings.Split(out.String(), "\n") {
+				if strings.Contains(l, "nowhere.test") {
+					line = l
+				}
+			}
+			mu.Unlock()
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no log line")
+		if strings.Contains(line, "nowhere.test") {
+			if strings.Contains(line, "s3cret") || strings.Contains(line, "private") {
+				t.Errorf("log line: %q", line)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no log line")
+}
+
+// An app retrying a name that does not resolve: the first failure is logged,
+// the same ones again (another source port each time) are not.
+func TestRemoteProxyLogsRepeatOnce(t *testing.T) {
+	rp := &remoteProxy{policy: func() *policy { return nil }, resolve: func(context.Context, string) (netip.Addr, error) {
+		return netip.Addr{}, &net.DNSError{Err: "no such host", Name: "repeat.test", IsNotFound: true}
+	}}
+	var mu sync.Mutex
+	var out strings.Builder
+	log.SetOutput(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }))
+	defer log.SetOutput(os.Stderr)
+	drainEvents() // lines from earlier tests
+	for i := range 5 {
+		w := httptest.NewRecorder()
+		rp.connect(w, &http.Request{Method: http.MethodConnect, Host: "repeat.test:443"}, netip.AddrPortFrom(netip.MustParseAddr("192.168.0.50"), uint16(50000+i)), Device{})
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("status %d", w.Code)
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // a Run's logLoop may take the line
+	n := 0
+	for _, l := range drainEvents() {
+		if strings.Contains(l, "CONNECT repeat.test") {
+			n++
+		}
+	}
+	mu.Lock()
+	n += strings.Count(out.String(), "CONNECT repeat.test")
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d lines for 5 identical failures", n)
 	}
 }
+
+// The same failure again: not logged within a minute, then with how many were
+// not; at most maxFailKinds kinds kept, the one logged longest ago dropped.
+func TestFailLog(t *testing.T) {
+	var f failLog
+	t0 := time.Date(2026, 11, 14, 7, 13, 30, 0, time.Local)
+	steps := []struct {
+		kind string
+		at   time.Duration
+		more string
+		ok   bool
+	}{
+		{"a", 0, "", true},
+		{"a", 5 * time.Second, "", false},
+		{"b", 6 * time.Second, "", true}, // another kind: at once
+		{"a", 50 * time.Second, "", false},
+		{"a", 61 * time.Second, " (2 more since 07:13:30)", true},
+		{"a", 2 * time.Minute, "", false},
+		{"a", 3 * time.Minute, " (1 more since 07:14:31)", true},
+		{"a", 5 * time.Minute, "", true}, // none skipped since
+	}
+	for i, s := range steps {
+		if more, ok := f.note(s.kind, t0.Add(s.at)); more != s.more || ok != s.ok {
+			t.Errorf("%d: %q %v, want %q %v", i, more, ok, s.more, s.ok)
+		}
+	}
+	for i := range maxFailKinds + 10 {
+		f.note(fmt.Sprint("k", i), t0.Add(time.Hour+time.Duration(i)*time.Second))
+	}
+	if len(f.m) != maxFailKinds {
+		t.Errorf("%d kinds kept", len(f.m))
+	}
+	if _, ok := f.m["k0"]; ok {
+		t.Error("the oldest kind kept")
+	}
+	if _, ok := f.m[fmt.Sprint("k", maxFailKinds+9)]; !ok {
+		t.Error("the newest kind dropped")
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // Peers that are not devices are closed as they are accepted, so they cannot
 // hold Remote Proxy connections open; a connection whose device is dropped
@@ -310,6 +405,54 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 	defer cancelShort()
 	if _, err := resolver([]netip.AddrPort{deadAddr})(short, "x.example"); err == nil || !strings.Contains(err.Error(), deadAddr.String()) {
 		t.Errorf("dead upstream error: %v", err)
+	}
+}
+
+// TestSOCKSDialTimeout: mitmproxy answers SOCKS only once connected upstream
+// (75 s on macOS for a black-holed address, tried), so a SOCKS dial gives up
+// after dialTimeout, as a direct one does, and says which destination did not
+// answer, or that the client left, rather than x/net's read timeout on the
+// local port.
+func TestSOCKSDialTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // a SOCKS port that never answers
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	defer func(d time.Duration) { dialTimeout = d }(dialTimeout)
+	dialTimeout = 200 * time.Millisecond
+	dst := netip.MustParseAddrPort("192.0.2.1:443")
+	dial := func(ctx context.Context) error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := dialVia(ctx, socks, "dev", ln.Addr().String(), "pw", nil, dst)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("a SOCKS dial waited past dialTimeout")
+			return nil
+		}
+	}
+	if err := dial(context.Background()); err == nil || err.Error() != "192.0.2.1:443 did not answer within 200ms (through mitmproxy)" {
+		t.Errorf("timeout: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background()) // the client leaves first (a request's context is canceled)
+	defer cancel()
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if err := dial(ctx); err == nil || err.Error() != "the client left before 192.0.2.1:443 answered (through mitmproxy)" {
+		t.Errorf("client left: %v", err)
 	}
 }
 

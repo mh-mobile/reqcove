@@ -542,7 +542,7 @@ func killStale(dir, sock string) {
 // CA describes the mitmproxy CA, so the profile on the iPhone can be matched.
 type CA struct {
 	Name     string
-	SHA256   string // fingerprint, as iOS shows it in the profile's details
+	SHA256   string // fingerprint, uppercase hex as security -Z takes it (iOS shows it lowercase, in spaced pairs)
 	NotAfter time.Time
 }
 

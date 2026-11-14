@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.6.
+come from reading code rather than from a test say so. It describes v0.7.
 
 ## Trust
 
@@ -15,6 +15,8 @@ come from reading code rather than from a test say so. It describes v0.6.
   your own user's devices, and only while neither it nor Reqcove's node is tagged
   (a tagged node keeps the user ID of whoever tagged it); name other devices by
   machine name, IP or StableID.
+- **In LAN mode (`--lan`), the addresses you allow are trusted to use the
+  proxy**, with no password: an address, not a device ([below](#lan-mode---lan)).
 
 ## In a container
 
@@ -166,8 +168,22 @@ So "delete the directory" above means each of them.
 - **What this does not catch:** a secret under a name that does not say so
   (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
   or in formats other than JSON, forms and text
-  (`multipart/mixed`, XML elements and attributes; protobuf and
-  `multipart/form-data` are read as below). In GraphQL the same
+  (`multipart/mixed`; protobuf, `multipart/form-data` and XML are read as
+  below). XML is masked by names only: a secret in an element or attribute
+  named otherwise passes; what does not tokenize outside a secret element
+  (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the text
+  masking only, but a start tag the decoder refuses (`a=b!c`, an unquoted
+  value) is still read as one, by its name and attributes; nothing in a DTD
+  (`<!ENTITY p "…">`), and no comment outside a secret element, is masked by
+  names; XML carried as text in an element, escaped (`&lt;Password&gt;`) or in
+  CDATA outside a secret element, is not read as XML (a test); a WebSocket
+  message has no content type, so it is read as XML only if it starts with
+  `<?xml` (XMPP's `<auth mechanism='PLAIN'>…</auth>` passes: a test); a
+  declared encoding is not used:
+  a head that is not valid UTF-8 (Latin-1 or Shift_JIS with text beyond
+  ASCII, UTF-16) is not masked, as no such body is, and so is neither handed
+  out nor searched (a test); SAML's POST binding sends the assertion as a base64
+  `SAMLResponse` form field, which is not decoded and passes (a test). In GraphQL the same
   holds: a secret under an innocent name passes, so ids stay readable and
   `diff_flows` can compare them (tools that parse GraphQL, such as
   OpenTelemetry and Apollo, drop every value written into the query instead);
@@ -216,6 +232,29 @@ So "delete the directory" above means each of them.
   with LF-only lines shows no part. A preamble and an epilogue are not
   shown. At most 256 parts are read.
   (Tests, and an E2E test with Go's multipart writer.)
+- XML (`text/xml`, `application/xml`, `application/*+xml` such as SOAP's
+  `application/soap+xml`, or a body that starts with `<?xml`) is read token
+  by token: an element whose local name (`wsse:Password` is `Password`) is
+  secret by the rule above, JSON's, has its whole content masked (text,
+  CDATA, child elements, comments: `<wsse:Password>[redacted]</wsse:Password>`)
+  up to an end tag of the same local name (a stray `</i>` inside does not end
+  it), and an attribute whose local name is has its value masked; namespace
+  declarations stay. The rest stays as it came, byte for byte (prefixes,
+  entities, spacing). A SAML `Assertion` or `EncryptedAssertion` is masked
+  whole: it is a bearer credential (whoever holds it can present it until it
+  expires), so its subject and attributes do not show either. In an Apple
+  plist, the value after a `<key>` in a `<dict>` whose text is secret is
+  masked (`<key>access_token</key><string>[redacted]</string>`). As JSON's
+  `key` is, an element named `Key` is masked, S3's object names among them. A
+  head cut, or that does not tokenize, inside a secret element or attribute
+  value is masked to its end; elsewhere, reading goes on past it (after a bad
+  comment's `-->`), in bounded time (a test). No DTD is read: no entity is
+  expanded or fetched (a billion-laughs test). The text masking above applies
+  on top. The XML masking can take away what the text masking keys on (a
+  quote inside a masked element), so it is not checked to mask everything
+  the text masking alone would; a fuzz test of markup checks that it never
+  fails and that a secret element and attribute before any markup stay masked.
+  (Tests, the fuzz test, and an E2E test over mitmproxy with a SOAP request.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text
@@ -252,6 +291,16 @@ So "delete the directory" above means each of them.
   directory is 0700). `mitmproxy.log` in the
   state directory holds mitmproxy's error lines only (a test checks that secrets
   sent in failing and malformed requests do not reach it).
+- Markers (`reqcove mark`, `add_marker`) are kept in memory with the records:
+  at most 80 characters on one line (else refused), masked as error text is,
+  at most 100 per source, not logged (from reading code). Their `source` (`cli`, `mcp`) is the
+  channel, set by Reqcove from how the call came (`reqcove mcp` never passes
+  on an agent's client name), not proof: an agent that can run commands on
+  this computer can claim `cli`, by running `reqcove mark` or by connecting
+  to `run`'s socket (same user) itself, and then push out the user's 100. An
+  agent through `reqcove mcp` gets `mcp` and cannot. Their text is the user's or an agent's words: data, never
+  instructions (the server's instructions say so; tests check the masking, the
+  refusals and that an agent through `reqcove mcp` gets `mcp`).
 
 ## What the agent sees goes further
 
@@ -264,13 +313,13 @@ login (from reading code).
 
 ## Prompt injection
 
-Reqcove's tools read (the one exception, [mock presets](#mock-presets), turns
+Reqcove's tools read (the one exception, [presets](#mock-presets), turns
 on only what you wrote), but an agent that reads them may also hold other
 tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's read tools by name (not `activate_mock`) without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_mock` or `activate_preset`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -296,26 +345,33 @@ request still goes where the connection went). User-Agents in lists and summarie
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools read, with one exception: an agent can turn on, for at most 5
-minutes each time (no cap on turning it on again), a mock you marked as a
-preset ([Mock presets](#mock-presets)). No tool
+minutes each time (no cap on turning it on again), a rule you marked as a
+preset: a mock ([Mock presets](#mock-presets)), or since v0.7 a `map_remote`,
+`modify_headers` or `resolve` rule, which changes what requests carry or where they go
+([map_remote, modify_headers and resolve presets](#map_remote-modify_headers-and-resolve-presets));
+`add_marker` writes too, but only a marker in Reqcove's memory. No tool
 writes or changes a rule; with no presets, nothing an agent calls changes
 traffic. (`--rules` are yours, from a file, at start.)
 
 ## A flags file (`--config`)
 
-`run --config FILE` (for `brew services`) takes run's flags from a file: what
+`run --config FILE` (for `brew services` and `reqcove service install`) takes run's flags from a file: what
 can write that file decides the next start's flags. So it must be yours and
 readable by you only (refused otherwise; it may hold `--mask-values` patterns),
 errors name its lines, never a value, and the flags that take masking off,
 show traffic unmasked, record every site or let a file change where requests
 go while running stay on the command line: `--no-redact`, `--web`,
-`--allow-hosts '*'` (also through `@FILE`) and `--rules-reload` are refused in
+`--allow-hosts '*'` (also through `@FILE`), `--rules-reload` and `--lan` (an open proxy on the LAN) are refused in
 it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 
 ## Mock presets
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
-turns it on with `activate_mock` (`list_mock_presets`, `deactivate_mock`).
+turns it on with `activate_preset` or `activate_mock` (`list_presets`,
+`deactivate_preset`; the `*_mock` tools take mocks only). Since v0.7 a
+`map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
+[below](#map_remote-modify_headers-and-resolve-presets), it can send requests
+elsewhere.
 Writing a preset is your consent that an agent may turn it on; there is no
 switch at start. The skill and the server's instructions tell an agent to write
 `preset:` only when you ask in the conversation, as any rule, never because of
@@ -328,8 +384,8 @@ What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
 client, or a sandboxed one) can now change what the device gets, at the moment
 it chooses and, by calling again, for as long as it keeps calling. Text a site
 wrote into the records can try to steer it into that. What it can turn on is
-only what you wrote: no new content, target or host, and nothing new leaves
-this computer. The worst case: every preset kept on all the time, each
+only what you wrote. For a mock preset: no new content, target or host, and
+nothing new leaves this computer. The worst case: every preset kept on all the time, each
 answering in the site's name what you wrote (a mock of an HTML page on an
 allowed host runs in Safari with that host's cookies, as any mock does).
 
@@ -360,6 +416,56 @@ allowed host runs in Safari with that host's cookies, as any mock does).
   goes out after the preset is turned off.
 - `list_mock_presets` gives what each matches and its status, delay or fault,
   never its body or header values.
+
+### map_remote, modify_headers and resolve presets
+
+A preset of these kinds changes where the device's requests go, or what they
+carry, while it is on: not only what the app gets.
+
+- A `map_remote` preset sends the matching requests, with the app's cookies,
+  tokens, login bodies and everything else in them, to the target you wrote,
+  from every device recorded (in LAN mode, every address you allowed). An
+  agent cannot choose the target, only when, and for how long by turning it on
+  again. The worst case through text a site wrote into the records: your
+  production credentials sent to the staging or dev server in the preset, again
+  and again. The risk to weigh is a stale target: an old tunnel or staging name
+  someone else holds now.
+- The 5 minutes bound the switch, not its effects: what the app wrote while it
+  was on (orders, edits) is on that server; the app may keep the tokens, cookies
+  and caches it got there, and send them to the usual server once it is off.
+- `resolve` connects a name elsewhere but keeps Host, SNI and the TLS check the
+  name's (from reading code, and the E2E test over plain HTTP): over HTTPS the
+  other server needs a certificate for that name, so it is the safer kind.
+- `modify_headers` presets change requests only: one on responses (`~s`) is
+  refused at load, as it could drop a page's protections (CSP, HSTS) or set
+  cookies on a host Safari shows. Its value is never shown.
+- Refused at load, so the target can be shown and checked: a `map_remote`
+  preset whose replacement is not `http://` or `https://`, a host and `/`, has
+  a user or password, takes its host from the request, or goes to a link-local
+  address; plain `http://` to anything but this computer or a LAN address
+  (`localhost`, `*.local`, a private address). On each request the rewritten
+  URL's scheme, host and port are checked against the target shown: a regex
+  that matched inside the URL gets a 502, never a request elsewhere (a test).
+- A `modify_headers` preset that is on applies after the plain rules, so its
+  header is the one sent (a test).
+- Shown: each preset's target (`map_remote`) or address (`resolve`) in `run`'s
+  ready block and log and `list_presets`, the ones on in `reqcove status`; never a filter, a
+  regex or a header's value. A flow a preset changed lists it in `presets`; the
+  skill and the server's instructions tell agents never to report such a
+  flow's answer as the usual server's.
+- `activate_mock` takes mocks only (a test): a v0.6 client that allowed it
+  without a prompt does not get these. `activate_preset` is new, not marked
+  read-only, and asked about by clients that ask before such tools; a client
+  that allowed `"mcp__reqcove"` wholesale allows it too.
+- The same bounds and visibility as mock presets: at most 5 minutes each time
+  (no `times` for these kinds), only on this computer, never over
+  `--mcp-http`, off after a reload or a restart, both clocks.
+- Not tried: what an app does with connections it opened before a preset
+  turned on or off (pooled HTTP/1, HTTP/2): it may keep using them, so a
+  switch may not take effect at once, or may last past the end. From reading
+  code: rules apply when a request starts, so a WebSocket, a stream or a long
+  upload begun while a `map_remote` or `resolve` preset was on stays with its
+  target after the preset is off, past the 5 minutes.
 
 ## Rules (`--rules`)
 
@@ -396,6 +502,13 @@ a 502 rather than sent on as it was (a test), and a `map_remote` whose replaceme
 cannot work at all stops `run` at start.
 A rules file from someone else is code: it can send your apps' requests, cookies
 and tokens included, anywhere.
+`reqcove mock add` writes a mock into a rules file for you, and runs only when
+its input and output are a terminal: a help against an agent running it
+unasked, not a guarantee (an agent that can run commands can give it a
+terminal, or edit the file itself). Writing rules stays yours: the skill tells agents never to run
+it. To have `run` check the file first, it reads `run`'s SOCKS5 password from
+the state directory (0600, your user); `run` checks the file it is pointed at
+without taking it (a test).
 A `mock` answers in the site's name: the app, and a web view's page, take it
 as the site's own answer (a script in it runs in that origin, a redirect is
 followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
@@ -405,6 +518,18 @@ answer is held whole until its body is in (the operation is in it): at most
 1 MiB when it says its length; a GET without one can carry more over HTTP/2,
 kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
+`list_rules` and `explain_rules` (read-only, since v0.7) show each rule by kind
+and number with its preset, and only what is derived from it: a mock's method,
+URL, operation, status, delay and fault, a `map_remote` target's scheme and host
+(or "path only", or "not shown" when the rule does not write it out), a
+`modify_headers` header name and direction, a `resolve` name and address; never
+a filter, a regex, a header value, a body or a file's path (an E2E test with
+marker strings; a `map_local` rule shows its number only). `explain_rules` runs
+the request path's own code on a request it makes up, never sent, with a copy of
+the presets' state, so it uses no preset's count and turns none on or off
+(tests). Like the preset tools they are on `run`'s local socket and `reqcove
+mcp` only, never over `--mcp-http`: the targets say where the devices' requests
+can be sent.
 
 ## An upstream proxy (`--upstream-proxy`)
 
@@ -527,8 +652,10 @@ Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp` but the mock preset ones, which
-`--mcp-http`'s own server does not have (a test), and give the same masked records.
+The tools are the same as over `reqcove mcp` but the preset ones,
+`list_rules` and `explain_rules`, and the marker tools (`add_marker`,
+`list_markers`), which `--mcp-http`'s own server does not have
+(a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets
@@ -570,6 +697,57 @@ trust when done (`reqcove status` and `cleanup` print how, by its fingerprint).
 Tried with the real `networksetup` (set, and put back at Ctrl-C) and an iOS 27
 Simulator.
 
+## LAN mode (`--lan`)
+
+`run --lan` starts no tailnet node. An HTTP proxy listens on one address of
+this computer, that of one LAN interface (never 0.0.0.0, never a VPN's tunnel),
+on `--proxy-port`. There is no password; who may use it is decided here, by
+address:
+
+- A connection from outside that interface's network is closed as it is
+  accepted, as is one from an address not allowed: nothing is recorded, and
+  each new address is logged once, until the list of addresses seen (10,000)
+  fills and is emptied: then once more, and run asks again (tests). Each
+  request on a kept connection is checked again, so a `reqcove lan deny`
+  refuses new requests within two seconds; an HTTPS tunnel already open goes
+  on until it closes.
+- The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
+  each was allowed). They change through `reqcove lan allow|deny`, or through
+  run's question on its own terminal. The `lan` commands refuse to run unless
+  stdin and stdout are a terminal, as `reqcove links` does: an agent's shell
+  usually has neither (a help, not a guarantee: a script can give it one), and
+  no MCP tool changes the list. The question is asked only while run is the
+  terminal's foreground job, and input typed before it is dropped first, so an
+  earlier Enter or `y` does not answer it (tests through a seam; the terminal
+  calls themselves not tested).
+- An address is not a device: whoever has an allowed address later is allowed
+  too, on this network or on another with the same prefix (a café's
+  192.168.1.0/24 as your home's). The ready block, `reqcove status` and
+  `reqcove lan list` show the list.
+- `--lan` is refused in a `--config` file, so `brew services` and
+  `reqcove service install` (which refuses the file at install too) never
+  keep an open proxy running.
+
+What an allowed address reaches through this computer (tests): ports 80 and
+443 only (others refused, before any lookup), on public addresses, from your
+address; private ranges (10/8, 172.16/12, 192.168/16, 100.64/10), those behind
+this computer's VPN included, only by a name written exactly in
+`--allow-hosts` (no `*`). Never, even by an exact name: this computer (loopback,
+its addresses), link-local addresses, the network the proxy is on, this
+computer's other networks numbered from public space, special-purpose ranges,
+IPv6. Names are looked up with this computer's resolver, `/etc/hosts` first.
+`map_remote` and `resolve` targets are dialled by mitmproxy, outside these
+checks: a rule sending an allowed host to a server on this computer serves the
+LAN clients' requests too.
+
+The CA at `http://mitm.it` comes over plain HTTP, which anyone else on the LAN
+can swap. The ready block names the CA file, to send by AirDrop instead, and
+prints its SHA-256 as iOS shows it in the profile's More Details (checked on
+iOS 27.3, 2026-11-14: it matched). Use LAN mode on a network you trust, and
+stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
+2026-11-14): refused until allowed, then recorded; refused again after
+`reqcove lan deny`.
+
 ## Other processes on this computer
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
@@ -606,8 +784,9 @@ known), from releases before a fixed date (`--exclude-newer`). CI
 checks that the lock matches the launcher and audits it for known
 vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
 mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
-overrides it to 6.6, which fixes them (Reqcove's `--web` test passes with it;
-mitmproxy's own tests were not run).
+overrides it, and pins 6.6.1: 6.6 fixed those three, and 6.6 itself has
+CVE-2026-126347 (Reqcove's `--web` test passes with 6.6.1; mitmproxy's own
+tests were not run).
 
 ## The exit node's DNS
 
@@ -682,7 +861,8 @@ to find it but does not carry it.
   URL among them, in a buffer file there (`tsnet/tailscaled.log*.txt`, 0600),
   also without `--verbose` (from reading code).
 - `reqcove links` refuses when its output is not a terminal: a help against an
-  agent running it, not a guarantee (a program can give it a terminal). The
+  agent running it, not a guarantee (a program can give it a terminal). Claude Code's
+  `!` gets nothing (tried 2026-11-13). The
   skill and the server's instructions tell agents never to run it.
 - mitmweb's server logs a failed request's URL, `?token=` included, into
   `mitmproxy.log`: the addon masks the token there first (checked by the

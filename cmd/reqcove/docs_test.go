@@ -183,6 +183,31 @@ func parseDocumented(words []string) error {
 		}
 		args = append(args, a)
 	}
+	if words[0] == "lan" && len(args) > 0 { // lan allow ADDR: its subcommand and address come before the flags
+		if !slices.Contains([]string{"allow", "deny", "list"}, args[0]) {
+			return fmt.Errorf("lan takes allow, deny or list, not %q", args)
+		}
+		n := 1
+		if args[0] != "list" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			n = 2
+		}
+		args = args[n:]
+	}
+	if words[0] == "service" { // service install: its subcommand comes first
+		if len(args) == 0 || !slices.Contains([]string{"install", "restart", "uninstall"}, args[0]) {
+			return fmt.Errorf("service takes install, restart or uninstall, not %q", args)
+		}
+		args = args[1:]
+	}
+	if words[0] == "mock" { // mock add: its subcommand first
+		if len(args) == 0 || args[0] != "add" {
+			return fmt.Errorf("mock takes add, not %q", args)
+		}
+		args = args[1:]
+	}
+	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
+		_, args = wordsAndFlags(args)
+	}
 	for i := 1; i < len(args); i++ { // NAME, N: a placeholder, valid for its flag
 		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(args[i]) && isInt(fs, args[i-1]) {
 			args[i] = "1"
@@ -257,6 +282,13 @@ func TestParseDocumentedRefuses(t *testing.T) {
 		{"status", "--state"},
 		{"har", "--host", "a", "stray"},
 		{"version", "--json"},
+		{"lan", "permit", "1.2.3.4"},
+		{"lan", "allow", "1.2.3.4", "--no-such-flag"},
+		{"mark", "tapping", "--no-such-flag"},
+		{"service", "start"},
+		{"service", "install", "--lan"},
+		{"mock", "remove", "--url", "x"},
+		{"mock", "add", "--no-such-flag"},
 	} {
 		if err := parseDocumented(words); err == nil {
 			t.Errorf("reqcove %s: no error", strings.Join(words, " "))

@@ -20,11 +20,9 @@ class Reqcove < Formula
       The first `reqcove run` fetches mitmproxy and Python with uv.
       State, including a CA private key, lives in ~/.reqcove.
 
-      To keep it running at login (`brew services start reqcove`), write run's
-      flags, one a line, in #{etc}/reqcove/config (mkdir -p #{etc}/reqcove;
-      chmod 600 the file), such as:
-        --device iphone
-        --allow-hosts api.example.com
+      To keep it running at login: `reqcove setup` (in your terminal) asks
+      for the device and the hosts and writes #{etc}/reqcove/config,
+      the file the service reads; then `brew services start reqcove`.
       `reqcove links` prints the login URL; the log is #{var}/log/reqcove.log.
     EOS
   end

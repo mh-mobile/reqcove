@@ -21,7 +21,7 @@ func skillHome(t *testing.T) string {
 func initOut(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var err error
-	out := captureStdout(t, func() error { err = initSkill(args); return nil })
+	out := captureStdout(t, func() error { err = initSkill(os.Stdout, args); return nil })
 	return out, err
 }
 

@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.6). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.7). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
 
 ## What you need
@@ -66,6 +66,27 @@ through a `replace` directive.
 
 ## Use
 
+The first time, in a terminal:
+
+```sh
+reqcove setup
+```
+
+It checks uv, asks for the iPhone's name in your tailnet and the hosts to
+record, and writes them to `~/.config/reqcove/config`, or to Homebrew's
+`etc/reqcove/config` for a brew install (an existing file is shown and kept
+unless you answer `y`; replaced, the old one is kept as `config.old`). It adds
+the agent skill if you answer `y`, and prints the line that gives Claude Code the
+tools. It starts nothing itself. Then:
+
+- Start it as setup says: `brew services start reqcove` (a brew install),
+  `reqcove service install`, or `reqcove run --config FILE` in a terminal.
+- `reqcove links` prints the login URL (the first time) and the CA's QR code;
+  `reqcove status` says what is left, such as approving the exit node.
+- Then steps 2 and 3 below, on the iPhone.
+
+The same by hand:
+
 1. Start it on the computer, naming the iPhone (as in `tailscale status`) and the
    hosts to record:
 
@@ -78,7 +99,7 @@ through a `replace` directive.
    Tailnet Lock). `reqcove status` always says what is still missing.
 2. On the iPhone, in the Tailscale app, choose the exit node `reqcove`.
 3. Still on the iPhone, trust Reqcove's CA: scan the QR code `reqcove run`
-   prints with the Camera (or open `http://mitm.it` in Safari, typing the
+   prints (`reqcove links` prints it too, as for a service) with the Camera (or open `http://mitm.it` in Safari, typing the
    `http://`), install the profile (Settings › Profile Downloaded), and trust
    it in Settings › General › About › Certificate Trust Settings (it is named
    `Reqcove CA (<computer>, <date>)`).
@@ -96,10 +117,11 @@ through a `replace` directive.
 The agent reads the records through MCP tools such as `summarize`, `list_flows`,
 `search_flows` and `get_flow` ([all of them](docs/guide.md#mcp-tools)). After
 it acts on the phone (through RoamRun, say), `wait_for_flows` returns the
-requests that action sent. With a mock you marked as a preset in the
-`--rules` file, it can also turn that mock on, a few minutes at a time
-(`activate_mock`, [presets](docs/guide.md#presets-an-agent-can-turn-on)) to
-see how the app takes an error. The tools cannot write or change a rule (an
+requests that action sent. With a rule you marked as a preset in the
+`--rules` file, it can also turn that rule on, a few minutes at a time
+(`activate_preset`, [presets](docs/guide.md#presets-an-agent-can-turn-on)): a
+mock to see how the app takes an error, or since v0.7 a `map_remote` or
+`resolve` rule to send the app to your staging server. The tools cannot write or change a rule (an
 agent with file access writes one only when you ask).
 `reqcove cleanup` lists how to undo everything; stopping, restarting and
 updating are in [the guide](docs/guide.md#stop-restart-update).
@@ -124,6 +146,21 @@ All of them: [the guide](docs/guide.md#options).
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 
+### Without Tailscale (LAN mode)
+
+On the same network, the iPhone can also use this computer as its Wi-Fi
+proxy, with no Tailscale: `reqcove run --lan --allow-hosts api.example.com`,
+set the iPhone's Wi-Fi proxy (Manual) to the address and port run prints, and
+allow the iPhone's address on this computer (run asks, or
+`reqcove lan allow ADDR`). Then trust the CA, once per device: open
+`http://mitm.it` with the proxy set, or send the CA file run names by
+AirDrop (not tried), and compare the SHA-256 run prints with the profile's
+(More Details); install and trust it as in step 3 above. Wi-Fi only, ports
+80 and 443 only, and no password: an address you allow can send through
+this computer. Tried with an iPhone on
+a home Wi-Fi (iOS 27.3). What it reaches and what blocks it:
+[the guide](docs/guide.md#without-tailscale-lan-mode---lan).
+
 ## What it keeps safe, and what it does not
 
 - Only requests to the hosts in `--allow-hosts` are recorded. A request to
@@ -139,6 +176,9 @@ All of them: [the guide](docs/guide.md#options).
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.
+- LAN mode (`--lan`) has no password: an address you allow on this computer
+  can reach the internet through it from your address (ports 80 and 443), and
+  the private hosts named exactly in `--allow-hosts`.
 
 More in [docs/SECURITY.md](docs/SECURITY.md).
 

@@ -326,13 +326,13 @@ func TestReadyBlock(t *testing.T) {
 	n := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
 	devs := []capture.DeviceInfo{{ID: "local", Name: "local", Carried: true, Flows: 1}, {ID: "n1", Name: "iphone", Carried: true}}
 	steps := nextSteps(n, ready, allow, capture.CA{}, devs)
-	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps, true, nil)
+	got := readyBlock(map[string]string{"n1": "iphone", "local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/s", steps, true, nil, nil)
 	for _, w := range []string{"reqcove is ready", "devices:  iphone, local (this computer's apps", "--ui:     http://100.1.2.3/?k=K", "CA:       http://mitm.it", "rm -- /s/ui-token", "next:\n  1. this Mac's browsers warn", "  2. no traffic from iphone yet"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("%q not in:\n%s", w, got)
 		}
 	}
-	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil, true, nil); strings.Contains(only, "mitm.it") {
+	if only := readyBlock(map[string]string{"local": "local"}, "", "", "", "", "/s", nil, true, nil, nil); strings.Contains(only, "mitm.it") {
 		t.Errorf("the CA's link with the local proxy alone (the Simulator gets it by itself):\n%s", only)
 	}
 	if strings.Contains(got, "--web:") {
@@ -341,7 +341,7 @@ func TestReadyBlock(t *testing.T) {
 	if strings.Contains(got, "--mcp-http") {
 		t.Errorf("MCP over HTTP without --mcp-http:\n%s", got)
 	}
-	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil, true, nil)
+	withMCP := readyBlock(map[string]string{"n1": "iphone"}, "", "", "http://reqcove.ts.net:8090/mcp", "TOK", "/s", nil, true, nil, nil)
 	if !strings.Contains(withMCP, "--mcp-http: http://reqcove.ts.net:8090/mcp  with the header  Authorization: Bearer TOK") || !strings.Contains(withMCP, "rm -- /s/mcp-token") {
 		t.Errorf("the MCP line:\n%s", withMCP)
 	}
@@ -582,8 +582,19 @@ func TestPassSuggestionKeepsRecorded(t *testing.T) {
 // TestReadyRmQuoted: the rm a ready block suggests quotes the state path: a
 // path with shell syntax in it is a path, not a command, when pasted.
 func TestReadyRmQuoted(t *testing.T) {
-	got := readyBlock(map[string]string{"local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/tmp/r-$(id) x", nil, true, nil)
+	got := readyBlock(map[string]string{"local": "local"}, "http://100.1.2.3/?k=K", "", "", "", "/tmp/r-$(id) x", nil, true, nil, nil)
 	if !strings.Contains(got, "rm -- '/tmp/r-$(id) x/ui-token'") {
 		t.Errorf("rm not quoted:\n%s", got)
+	}
+}
+
+// A map_remote or resolve preset is shown with where it sends requests while on.
+func TestPresetNames(t *testing.T) {
+	got := strings.Join(presetNames([]string{"mx", "staging", "api"}, map[string]string{"staging": "https://staging.example.com", "api": "203.0.113.5"}), ", ")
+	if got != "mx, staging -> https://staging.example.com, api -> 203.0.113.5" {
+		t.Errorf("presetNames: %q", got)
+	}
+	if presetsOff(nil) != "" || presetsOff([]string{"x"}) == "" {
+		t.Errorf("presetsOff")
 	}
 }

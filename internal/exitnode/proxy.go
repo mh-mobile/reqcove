@@ -9,9 +9,11 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -33,11 +35,80 @@ type remoteProxy struct {
 	local   bool         // the local proxy: this computer's own apps, as the device Local
 
 	// One per device: a pooled connection carries one device's SOCKS user.
-	// ponytail: never pruned; bounded by the devices seen in this run.
-	plain sync.Map // src IP + StableID -> *httputil.ReverseProxy
+	// ponytail: emptied whole past maxPlain clients (their idle connections
+	// close on their own timeout); an LRU if that ever matters.
+	plain  sync.Map // src IP + StableID -> *httputil.ReverseProxy
+	plainN atomic.Int64
+
+	failed failLog // repeated failures, logged once a minute
 }
 
-var errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
+const maxPlain = 256
+
+// logFailure logs a failed request, the first of its kind at once, then the
+// same again (client address, method, host:port, error) at most once a
+// minute with how many were not logged: an app retrying a name that does not
+// resolve would fill the log.
+func (rp *remoteProxy) logFailure(src netip.AddrPort, method, host string, err error) {
+	msg := err.Error()
+	kind := msg[strings.LastIndex(msg, ": ")+1:] // without the addresses before it (a local port differs each time)
+	if more, ok := rp.failed.note(src.Addr().String()+" "+method+" "+host+" "+kind, time.Now()); ok {
+		logEvent("proxy %v %s %s: %v%s", src, method, host, err, more) // never the path or query: they carry secrets
+	}
+}
+
+// failLog counts failures by kind, for logFailure. At most maxFailKinds kinds:
+// the one logged longest ago goes first.
+type failLog struct {
+	mu sync.Mutex
+	m  map[string]*failKind
+}
+
+type failKind struct {
+	logged  time.Time // the last line logged
+	skipped int       // since
+}
+
+const maxFailKinds = 256
+
+// note says whether to log a failure of kind at now, and the words to add
+// about the ones not logged since the last line.
+func (f *failLog) note(kind string, now time.Time) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := f.m[kind]
+	if k == nil {
+		if f.m == nil {
+			f.m = map[string]*failKind{}
+		}
+		if len(f.m) >= maxFailKinds { // ponytail: a scan, on a full map only
+			var oldest string
+			for s, v := range f.m {
+				if oldest == "" || v.logged.Before(f.m[oldest].logged) {
+					oldest = s
+				}
+			}
+			delete(f.m, oldest)
+		}
+		f.m[kind] = &failKind{logged: now}
+		return "", true
+	}
+	if now.Sub(k.logged) < time.Minute {
+		k.skipped++
+		return "", false
+	}
+	more := ""
+	if k.skipped > 0 {
+		more = fmt.Sprintf(" (%d more since %s)", k.skipped, k.logged.Format("15:04:05"))
+	}
+	k.logged, k.skipped = now, 0
+	return more, true
+}
+
+var (
+	errNotCarried = errors.New("destination not carried (LAN, loopback, tailnet, IPv6 or this Mac)")
+	errLANRefused = errors.New("refused in LAN mode")
+)
 
 // onlyDevices closes connections from peers that are not devices as soon as
 // they are accepted, so they cannot hold the Remote Proxy's connections open
@@ -140,7 +211,7 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 		out, err = rp.open(r.Context(), src, dev, r.Host)
 	}
 	if err != nil {
-		logEvent("proxy %v CONNECT %s: %v", src, r.Host, err)
+		rp.logFailure(src, "CONNECT", r.Host, err)
 		http.Error(w, "reqcove: "+err.Error(), statusFor(err))
 		return
 	}
@@ -176,6 +247,10 @@ func (rp *remoteProxy) reverseProxy(src netip.AddrPort, dev Device) *httputil.Re
 	if v, ok := rp.plain.Load(key); ok {
 		return v.(*httputil.ReverseProxy)
 	}
+	if rp.plainN.Add(1) > maxPlain {
+		rp.plain.Clear()
+		rp.plainN.Store(1)
+	}
 	v, _ := rp.plain.LoadOrStore(key, &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) { pr.Out.Host = pr.In.Host }, // URL is already absolute
 		Transport: &http.Transport{
@@ -185,7 +260,7 @@ func (rp *remoteProxy) reverseProxy(src netip.AddrPort, dev Device) *httputil.Re
 			IdleConnTimeout: 90 * time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			logEvent("proxy %v %s %s: %v", src, r.Method, r.Host, err) // never the path or query: they carry secrets
+			rp.logFailure(src, r.Method, r.Host, err)
 			http.Error(w, "reqcove: "+err.Error(), statusFor(err))
 		},
 	})
@@ -203,12 +278,23 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 	if err != nil {
 		return nil, fmt.Errorf("bad port %q", port)
 	}
+	p := rp.policy()
+	lan := !rp.local && p != nil && p.lan
+	if lan && pn != 80 && pn != 443 { // before the lookup: the reason is the port
+		return nil, fmt.Errorf("%s: port %d: LAN mode carries ports 80 and 443 only: %w", host, pn, errLANRefused)
+	}
 	ip, err := rp.resolve(ctx, host)
 	if err != nil {
 		return nil, err
 	}
 	dst := netip.AddrPortFrom(ip, uint16(pn))
-	v := decideTCP(rp.policy(), src, dst)
+	v := decideTCP(p, src, dst)
+	if lan {
+		var why string
+		if v, why = decideLAN(p, dst, slices.Contains(p.exact, strings.ToLower(strings.TrimSuffix(host, ".")))); v == reject {
+			return nil, fmt.Errorf("%s (%v): %s: %w", host, ip, why, errLANRefused)
+		}
+	}
 	if rp.local {
 		// An address the app gave, or a name this computer's /etc/hosts gives, is the app's own choice.
 		_, literal := netip.ParseAddr(host)
@@ -226,7 +312,7 @@ func (rp *remoteProxy) open(ctx context.Context, src netip.AddrPort, dev Device,
 }
 
 func statusFor(err error) int {
-	if errors.Is(err, errNotCarried) {
+	if errors.Is(err, errNotCarried) || errors.Is(err, errLANRefused) {
 		return http.StatusForbidden
 	}
 	return http.StatusBadGateway
@@ -305,12 +391,17 @@ func resolver(dns []netip.AddrPort) func(ctx context.Context, host string) (neti
 // restart takes a few seconds); a var for tests.
 var socksHold = 15 * time.Second
 
+// dialTimeout is how long a dial may take, direct or through mitmproxy; a var for tests.
+var dialTimeout = 10 * time.Second
+
 // dialVia dials dst directly, or through mitmproxy's SOCKS5 listener with the
 // device's StableID as the user name, once ready says mitmproxy is up: while
 // it is down another local process could hold its port, and would get the
-// password and the device's traffic.
+// password and the device's traffic. dialTimeout bounds the SOCKS reply too:
+// mitmproxy sends it only once it has connected upstream, with no timeout of
+// its own but the OS's (75 s on macOS; read in mitmproxy 12.3.1, and tried).
 func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
-	var d proxy.Dialer = &net.Dialer{Timeout: 10 * time.Second}
+	var d proxy.Dialer = &net.Dialer{}
 	if v == socks {
 		if ready != nil {
 			hold, cancel := context.WithTimeout(ctx, socksHold)
@@ -325,7 +416,18 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			return nil, err
 		}
 	}
-	return d.(proxy.ContextDialer).DialContext(ctx, "tcp", dst.String())
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	c, err := d.(proxy.ContextDialer).DialContext(dctx, "tcp", dst.String())
+	if err != nil && v == socks { // x/net says only "read 127.0.0.1:…->127.0.0.1:…: i/o timeout" for both
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("the client left before %v answered (through mitmproxy)", dst)
+		}
+		if ne, ok := errors.AsType[net.Error](err); ok && ne.Timeout() { // the conn's deadline is dctx's: it can come first
+			return nil, fmt.Errorf("%v did not answer within %v (through mitmproxy)", dst, dialTimeout)
+		}
+	}
+	return c, err
 }
 
 // localResolve looks host up as this computer's apps would (search domains,

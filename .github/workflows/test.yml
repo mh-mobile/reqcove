@@ -33,7 +33,7 @@ jobs:
       - name: end to end with mitmproxy
         env:
           REQCOVE_E2E: "1"
-        run: go test -count=1 ./internal/capture/
+        run: go test -count=1 ./internal/capture/ ./internal/exitnode/ ./cmd/reqcove/
 
   # The container image (Dockerfile), built and run without a tailnet login:
   # mitmproxy offline, reqcove mcp from another container, the lock, docker stop.
