@@ -144,4 +144,4 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです（テスト）。
 - `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。両方を同じバージョンにすること、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます（テスト）。
 - この `reqcove mcp` にあって `run` にないツール：プリセット、ルール、マーカーのツールは、動いている reqcove（そのバージョン）にそのツールがないと答えます（テスト）。それ以外は `run` 自身のエラー（知らないツール）がそのまま返ります（テスト）。
-- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。
+- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります（テストで確認）。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます（テストで確認）。v0.6 や v0.7 の `reqcove status` と `reqcove mcp` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードを読んだだけです）。

@@ -244,4 +244,9 @@ These may change in any release, a patch release included:
 - Mixed versions are not supported beyond these notes: run `reqcove run` and
   `reqcove mcp` at one version. A v1.0.0 `reqcove mcp` has no
   `list_mock_presets`, `activate_mock` or `deactivate_mock`, even against an
-  older `run`.
+  older `run`; a call to one of them, to `run` or to `reqcove mcp`, gets a tool
+  error naming what replaced it (tests). A v1.0.0 `reqcove status` still reads
+  an older `run`'s `active_mock_presets` and `mock_presets` (tests); a v0.6 or
+  v0.7 `reqcove status` or `reqcove mcp` against a v1.0.0 `run` shows no
+  preset on, since those versions read only the old names (from reading
+  their code).
