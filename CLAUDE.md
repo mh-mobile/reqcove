@@ -26,7 +26,7 @@ How to contribute: `CONTRIBUTING.md`.
 ## Rules
 
 - Docs say only what was checked; what was not tried, or comes from reading code,
-  says so. Keep the English and Japanese READMEs (and guides) in step.
+  says so. Keep the English and Japanese READMEs (and guides and SECURITY) in step.
 - Secrets must not reach the records, the MCP tools or the logs unmasked.
 - Ask the maintainer before anything that leaves this computer (pushing a tag, a
   release, issues or pull requests upstream).
