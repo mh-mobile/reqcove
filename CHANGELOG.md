@@ -76,7 +76,6 @@
   place, the rest as it came; a head cut inside a secret element is masked to
   its end; no DTD is read. The text masking still applies on top. SECURITY
   lists the limits. Tests and an E2E test with a SOAP request.
-
 - mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
   v0.6.0's lock has tornado 6.6: updating to v0.7.0 is the fix. tornado is
   mitmweb's server (`--web`; from reading code). Reqcove's `--web` test passes
