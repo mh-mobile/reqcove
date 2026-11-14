@@ -107,6 +107,10 @@
 
 Found by a code review of v0.8.0; each test fails without its fix.
 
+- A body that is empty with nothing to stream (an HTTP/1 GET's request, a 204,
+  304 or 101's response) was recorded as not ended (`final: false`, not
+  decoded): mitmproxy never calls the stream then. It is now recorded whole
+  and empty (E2E test; seen on the iPhone in the v1.0 sitting, up to v0.8).
 - `reqcove status --json`, with no run to answer (none, or one starting or
   stopping), printed text: it prints nothing on stdout and exits 1, the
   reason on stderr, so a script reads only the status tool's JSON (unit test).

@@ -1823,6 +1823,8 @@ class Reqcove:
             self._copy_whole(flow, "request", flow.request)  # buffered, not streamed
         elif flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "request", flow.request)
+        elif isinstance(head := flow.request.stream, _Head) and head.sent_len == -1:
+            head._send(final=True)  # no body to stream (an HTTP/1 GET): mitmproxy never called it, not even with its end
         self._give_web(flow, "request", flow.request)
 
     def _give_web(self, flow, direction, msg):
@@ -1896,6 +1898,8 @@ class Reqcove:
             return
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "response", flow.response)
+        elif isinstance(head := flow.response.stream, _Head) and head.sent_len == -1:
+            head._send(final=True)  # no body to stream (a 204, a 304, a 101): never called, not even with its end
         done = {"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end}
         if flow.response.trailers:  # HTTP/2's, set before this hook also when streamed: gRPC's status
             done["trailers"], done["note"] = _headers(flow.response.trailers)
