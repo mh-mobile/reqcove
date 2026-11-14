@@ -349,8 +349,25 @@ def _ip(s):
     return getattr(a, "ipv4_mapped", None) or a
 
 
-NAME_LOOKUP_SECONDS = 3  # a Host looked up for a request a header rule changed (_to_named_host)
-NOT_NAMED = "modify_headers request: not applied, the request goes to an address that is not its Host's"
+def _idna(s):
+    """A host name as SNI carries it (lowercase, IDNA's ASCII form, no final
+    dot: HTTP/2's :authority comes decoded), or None for one with no such
+    form, which then matches nothing."""
+    s = s.lower().rstrip(".")
+    if not s.isascii():
+        try:
+            s = s.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    return s or None
+
+
+NAME_LOOKUP_SECONDS = 3  # how long a request (or its response) waits on its Host's lookup (_addresses)
+LOOKUPS_AT_ONCE = 16  # names looked up at once; past them, a name has no addresses (the rules not applied)
+NAMES_KEPT, NAME_KEEP_SECONDS = 1024, 30  # lookups' answers kept, per name
+NOT_NAMED = "modify_headers request: not applied, the request goes to an address not known to be its Host's"
+HOST_SET = "modify_headers request: not applied, a rule changed Host (map_remote or resolve changes where a request goes)"
+NOT_NAMED_RESPONSE = "modify_headers response: not applied, the response comes from an address not known to be its request's Host's"
 
 
 class RuleError(ValueError):
@@ -997,6 +1014,8 @@ class Reqcove:
         self.web_flows = collections.deque()  # (flow, bytes kept): mitmweb's flows, oldest first
         self.web_bytes = 0
         self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
+        self.names = {}  # host name -> (until when, its addresses): _addresses' answers
+        self.looking = {}  # host name -> the future its lookup (on its own thread) settles
         self.rules_stamp = None  # the file's (mtime, size, inode) when loaded, for --rules-reload
         self.rules_watch = None
         self.upstream = None  # (host, port) of --upstream-proxy
@@ -1109,11 +1128,17 @@ class Reqcove:
             flow = tflow.tflow(req=r.copy())  # content-length 0: a small body
             d = _dry_rules(rules, unknown, also)
             mocks = d["mock"].candidates(flow)
+            q = flow.request
+            at, sent = (q.data.host, q.data.port), q.headers.copy()
             try:
                 done = self._rewrite_request(flow, d, mocks=bool(mocks), dry=True, op=op or False)
             except Exception as e:  # as requestheaders: a 502, never sent on
                 return {"rewrites": [f"rules failed: {type(e).__name__}"]}, mocks
             m = flow.metadata
+            if flow.response is None and (q.data.host, q.data.port) == at and q.headers.get_all("host") != sent.get_all("host"):
+                q.headers = sent  # as _rewrite_sent: a rule's Host, with nothing moving the request, takes them all back
+                m.pop("reqcove_presets", None)
+                done = [x for x in done if not x.startswith("modify_headers request:")] + [HOST_SET]
             res = {"rewrites": done, "mocked": bool(m.get("reqcove_mocked"))}
             if not m.get("reqcove_close"):  # a response, made or the server's: response rules apply to it
                 if flow.response is None:
@@ -1148,8 +1173,8 @@ class Reqcove:
         out["cannot_tell"] = cannot
         if seen or any(s.startswith(("mock", "map_local")) for s in said):
             conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)")
-        if any(s.startswith("modify_headers request:") for s in said):
-            conditions.append("request modify_headers apply only to a request that goes to its Host: one sent to its Host's address (looked up on this computer), or over HTTPS with its Host as the TLS name, or that map_remote or resolve sends on; otherwise it goes on as the app sent it (its rewrites say not applied)")
+        if any(s.startswith("modify_headers") for s in said + now.get("response_rewrites", []) + [x for v in if_on.values() for x in v]):
+            conditions.append("modify_headers apply only to a request that goes to its Host, and to its response: one sent to its Host's address (looked up on this computer), or over HTTPS with its Host as the TLS name, or that map_remote or resolve sends on; otherwise it goes on as the app sent it, and its response as the server sent it (their rewrites say not applied). A rule that changes Host is not applied to a request that map_remote or resolve does not send on (nor are the others)")
         if conditions:
             out["conditions"] = conditions
         return out
@@ -1454,36 +1479,106 @@ class Reqcove:
         the Host is the TLS name mitmproxy checks the server's certificate
         for, or the Host's addresses (this computer's lookup) include it.
         Else the request goes on as the app sent it, its rewrites saying so.
-        Not sending it to the Host instead: mitmproxy would look that up
-        itself, past the exit node's refusals of this computer and the LAN."""
+        The Host checked is the app's, taken before any rule: a rule's own Host
+        would vouch for itself (a token rule for the Host, then one setting it
+        to the address dialled). And when a rule changes the Host of such a
+        request, none of its header rules apply: ~d would read a name the
+        request does not go to. Changing where a request goes is map_remote's
+        and resolve's. Its response's rules are held to the same answer
+        (responseheaders). Not sending it to the Host instead: mitmproxy would
+        look that up itself, past the exit node's refusals of this computer
+        and the LAN."""
         r = flow.request
-        dialled, sent = (r.data.host, r.data.port), r.headers.copy()
+        name, dialled, sent = r.pretty_host, (r.data.host, r.data.port), r.headers.copy()
         done = self._rewrite_request(flow, rules, mocks)
-        if flow.response is None and (r.data.host, r.data.port) == dialled and r.headers.fields != sent.fields and not await self._to_named_host(flow, dialled[0]):
-            r.headers = sent
-            # Nothing moved the request, so the presets in it are modify_headers ones.
-            flow.metadata.pop("reqcove_presets", None)
-            done = [d for d in done if not d.startswith("modify_headers request:")] + [NOT_NAMED]
-        return done
+        if flow.response is not None or (r.data.host, r.data.port) != dialled:
+            return done  # answered here, or sent where a rule says
+        flow.metadata["reqcove_named"] = (name, dialled[0])  # _goes_to_host decides it, once
+        if r.headers.fields == sent.fields:
+            return done
+        if r.headers.get_all("host") != sent.get_all("host"):  # HTTP/2's :authority is no header: rules cannot change it
+            why = HOST_SET
+        elif not await self._goes_to_host(flow):
+            why = NOT_NAMED
+        else:
+            return done
+        r.headers = sent
+        # Nothing moved the request, so the presets in it are modify_headers ones.
+        flow.metadata.pop("reqcove_presets", None)
+        return [d for d in done if not d.startswith("modify_headers request:")] + [why]
 
-    @staticmethod
-    async def _to_named_host(flow, dialled):
-        r = flow.request
-        name = r.pretty_host.lower().rstrip(".")
-        if name == dialled.lower().rstrip(".") or _ip(name) is not None and _ip(name) == _ip(dialled):
+    async def _goes_to_host(self, flow):
+        """Whether a request _rewrite_sent left where the app dialled goes to
+        the host it names, decided once (its response's rules get the same
+        answer); True for one answered here or sent where a rule says."""
+        named = flow.metadata.get("reqcove_named", True)
+        if isinstance(named, tuple):
+            named = flow.metadata["reqcove_named"] = await self._to_named_host(flow, *named)
+        return named
+
+    async def _to_named_host(self, flow, name, dialled):
+        """Whether dialled (where mitmproxy connects) is name (the Host as the
+        app sent it), or one of its addresses as this computer looks them up,
+        or, over HTTPS, name is the TLS name mitmproxy checks the server's
+        certificate for. Names are compared in IDNA's ASCII form."""
+        name = _idna(name)
+        if name is None:
+            return False
+        if name == _idna(dialled) or _ip(name) is not None and _ip(name) == _ip(dialled):
             return True
         # mitmproxy verifies the server's certificate for this name (ssl_insecure is off).
-        if r.scheme == "https" and name == (flow.server_conn.sni or flow.client_conn.sni or "").lower().rstrip("."):
+        if flow.request.scheme == "https" and name == _idna(flow.server_conn.sni or flow.client_conn.sni or ""):
             return True
         want = _ip(dialled)
-        if want is None:
+        if want is None or _ip(name) is not None:
             return False
-        # ponytail: one lookup per such request (the OS caches it); cache here if it shows.
+        return want in await self._addresses(name)
+
+    async def _addresses(self, name):
+        """name's addresses as this computer looks them up, or none if that
+        takes over NAME_LOOKUP_SECONDS. Kept NAME_KEEP_SECONDS; one lookup at
+        a time per name, LOOKUPS_AT_ONCE names at most (past them, none: the
+        rules are not applied). Each on a daemon thread of its own, not an
+        executor's: a lookup cannot be cancelled, and a stalled resolver must
+        hold neither the loop's executor (other work waits on it) nor
+        mitmdump's exit (an executor's threads are joined then)."""
+        kept = self.names.get(name)
+        if kept and kept[0] > time.monotonic():
+            return kept[1]
+        fut = self.looking.get(name)
+        if fut is None:
+            if len(self.looking) >= LOOKUPS_AT_ONCE:
+                return frozenset()
+            loop = asyncio.get_running_loop()
+            fut = self.looking[name] = loop.create_future()
+            try:
+                threading.Thread(target=self._look_up, args=(loop, fut, name), daemon=True).start()
+            except RuntimeError:  # no thread to be had: no lookup, none left pending
+                del self.looking[name]
+                return frozenset()
         try:
-            infos = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(name, None, type=socket.SOCK_STREAM), NAME_LOOKUP_SECONDS)
-        except (OSError, ValueError):  # TimeoutError is an OSError; a bad IDNA name's UnicodeError a ValueError
-            return False
-        return any(_ip(i[4][0]) == want for i in infos)
+            return await asyncio.wait_for(asyncio.shield(fut), NAME_LOOKUP_SECONDS)
+        except TimeoutError:
+            return frozenset()
+
+    def _look_up(self, loop, fut, name):
+        try:
+            found = frozenset(_ip(i[4][0]) for i in socket.getaddrinfo(name, None, type=socket.SOCK_STREAM))
+        except (OSError, ValueError):  # a bad IDNA name's UnicodeError is a ValueError
+            found = frozenset()
+
+        def settle():
+            self.looking.pop(name, None)
+            if len(self.names) >= NAMES_KEPT:
+                self.names.clear()  # ponytail: all at once (the names are the apps' to choose); oldest first if lookups show
+            self.names[name] = (time.monotonic() + NAME_KEEP_SECONDS, found)
+            if not fut.done():
+                fut.set_result(found)
+
+        try:
+            loop.call_soon_threadsafe(settle)
+        except RuntimeError:  # the loop is closed: mitmdump is stopping
+            pass
 
     def _rewrite_request(self, flow, rules, mocks=False, dry=False, op=False):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
@@ -1659,13 +1754,22 @@ class Reqcove:
         h(msg.raw_content or b"")
         h(b"")
 
-    def responseheaders(self, flow):
+    async def responseheaders(self, flow):
         if flow.metadata.get("reqcove_skip"):
             flow.response.stream = True
             return
         s = flow.response
         rules = self.flow_rules.get(flow.id)
-        rewrites = self._modify_headers(flow, s.headers, "response", rules) if rules else []
+        rewrites = []
+        if rules:
+            got = s.headers.copy()
+            rewrites = self._modify_headers(flow, s.headers, "response", rules)
+            # A response from a server the request does not name gets no rule's
+            # value either: an app would keep a cookie so set for the Host, and
+            # send it there, to the same server, next time.
+            if s.headers.fields != got.fields and not await self._goes_to_host(flow):
+                s.headers = got
+                rewrites = [NOT_NAMED_RESPONSE]
         headers, note = _headers(s.headers)
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
