@@ -159,15 +159,29 @@ type StatusOut struct {
 	// PassHosts is --pass-hosts: carried undecrypted, their connections listed
 	// by list_passthrough, never their contents.
 	PassHosts []string       `json:"pass_hosts,omitempty"`
-	Capture   map[string]any `json:"capture"` // capture_stats (mock_presets: the presets' names)
-	// ActivePresets are the mock presets an agent has turned on now (not over
-	// --mcp-http, whose server has no preset tools); PresetsError: mitmproxy
-	// did not say which, so none listed means unknown.
-	ActivePresets []PresetOut `json:"active_mock_presets,omitempty"`
-	PresetsError  string      `json:"active_mock_presets_error,omitempty"`
+	Capture   map[string]any `json:"capture"` // capture_stats (presets: the presets' names)
+	// ActivePresets are the presets an agent has turned on now, of every kind
+	// (not over --mcp-http, whose server has no preset tools); PresetsError:
+	// mitmproxy did not say which, so none listed means unknown.
+	ActivePresets []PresetOut `json:"active_presets,omitempty"`
+	PresetsError  string      `json:"active_presets_error,omitempty"`
+	// The same, by v0.6's names: removed in v1.0.
+	ActiveMockPresets []PresetOut `json:"active_mock_presets,omitempty"`
+	MockPresetsError  string      `json:"active_mock_presets_error,omitempty"`
 	// Service names the service that started run (brew services' or reqcove
 	// service install's launchd label, or its systemd unit), when one did.
 	Service string `json:"service,omitempty"`
+}
+
+// SetActivePresets fills active_presets (and, until v1.0,
+// active_mock_presets) from what mitmproxy says is on.
+func (o *StatusOut) SetActivePresets(ps []capture.Preset, err error) {
+	if err != nil {
+		o.PresetsError, o.MockPresetsError = err.Error(), err.Error()
+		return
+	}
+	o.ActivePresets = PresetsView(ps, true)
+	o.ActiveMockPresets = o.ActivePresets
 }
 
 // New returns an MCP server with the read-only tools over st; status, when

@@ -157,9 +157,7 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 func TestRemoteProxyLogsNoURL(t *testing.T) {
 	pu, _ := proxyHarness(t, "127.0.0.1")
 	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
-	for len(events) > 0 { // lines from earlier tests
-		<-events
-	}
+	drainEvents() // lines from earlier tests
 	// The line waits in events, or is in the log once a Run's logLoop took it.
 	var mu sync.Mutex
 	var out strings.Builder
@@ -202,9 +200,7 @@ func TestRemoteProxyLogsRepeatOnce(t *testing.T) {
 	var out strings.Builder
 	log.SetOutput(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }))
 	defer log.SetOutput(os.Stderr)
-	for len(events) > 0 { // lines from earlier tests
-		<-events
-	}
+	drainEvents() // lines from earlier tests
 	for i := range 5 {
 		w := httptest.NewRecorder()
 		rp.connect(w, &http.Request{Method: http.MethodConnect, Host: "repeat.test:443"}, netip.AddrPortFrom(netip.MustParseAddr("192.168.0.50"), uint16(50000+i)), Device{})
@@ -214,8 +210,8 @@ func TestRemoteProxyLogsRepeatOnce(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond) // a Run's logLoop may take the line
 	n := 0
-	for len(events) > 0 {
-		if strings.Contains(<-events, "CONNECT repeat.test") {
+	for _, l := range drainEvents() {
+		if strings.Contains(l, "CONNECT repeat.test") {
 			n++
 		}
 	}
