@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### For agents
+
+- `status` (and `reqcove status --json`) has `active_presets`, the presets on
+  of every kind, each with `kind`, and `active_presets_error` when mitmproxy
+  did not say which; `capture_stats` has `presets`, every preset's name. They
+  hold what `active_mock_presets`, `active_mock_presets_error` and
+  `mock_presets` hold (unit tests). `reqcove status`, run's log and the ready
+  block read the new names. The skill and the server's instructions use them.
+
+### Deprecated
+
+- v0.6's names, removed in v1.0: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`, `activate_preset`
+  and `deactivate_preset`; their descriptions say so, their behaviour is
+  unchanged), `status`' `active_mock_presets` and `active_mock_presets_error`,
+  and `capture_stats`' `mock_presets` (filled as before until then).
+
 ## v0.7.0 — 2026-11-14
 
 ### For people
