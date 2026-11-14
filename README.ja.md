@@ -108,6 +108,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 - [リクエストの行き先を変える](docs/guide.ja.md#リクエストの行き先を変える)：開発サーバーへ送る、別のプロキシに回す
 - [サービスとして動かす](docs/guide.ja.md#サービスとして動かす)、[うまくいかないとき](docs/guide.ja.md#うまくいかないとき)
 - [1 台で複数の Exit Node](docs/several-exit-nodes.ja.md)、[コンテナ](docs/container.ja.md)、[別の Mac をデバイスに](docs/another-mac.ja.md)
+- [互換性](docs/COMPATIBILITY.ja.md)：v1.0.0 から変わらないものと、変わるときの知らせ方
 
 ### Tailscale を使わずに（LAN モード）
 

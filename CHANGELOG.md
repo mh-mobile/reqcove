@@ -17,6 +17,7 @@
   with a wrong password is refused, nothing carried or recorded (real
   mitmproxy; the test fails if mitmdump accepts before the addon is loaded,
   its loading delayed by hand). SECURITY.md says what is covered and what not.
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) (and .ja): what stays stable from v1.0.0, and how it changes.
 - Tried on a Linux host, Ubuntu 24.04.5 LTS (arm64, a tart VM, 2026-11-14):
   `reqcove setup`, `service install` (a systemd user unit; its journal holds
   no login URL or token), `status`, `service restart` and `uninstall`, and LAN

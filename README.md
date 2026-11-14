@@ -146,6 +146,7 @@ All of them: [the guide](docs/guide.md#options).
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
 - [Run it as a service](docs/guide.md#run-it-as-a-service), [troubleshooting](docs/guide.md#troubleshooting)
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
+- [Compatibility](docs/COMPATIBILITY.md): what stays stable from v1.0.0, and how it changes
 
 ### Without Tailscale (LAN mode)
 
