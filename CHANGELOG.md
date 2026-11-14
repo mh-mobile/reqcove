@@ -58,6 +58,13 @@
 - LAN mode refuses this computer's other networks before letting Apple's
   17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
   neighbours were reachable (found by a code review; unit test).
+- Masking catches more of what an app sends: a credential behind JSON's
+  escapes (`Basic\t…`, `\/` in a token, also in a string cut at 64 KiB); the
+  rest of a secret-named line (`password: …`) even when a token sits in it;
+  folded `multipart/form-data` part headers (a field's name or a cookie on the
+  next line), and a part naming no field shows its size only; a token-shaped
+  host, SNI, method, ALPN name or `Content-Encoding` and the notes quoting
+  them (found by a code review; unit tests, and the fuzz test for the line).
 
 ### Removed
 

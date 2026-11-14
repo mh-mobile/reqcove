@@ -113,8 +113,11 @@ So "delete the directory" above means each of them.
   appears (any header, such as `Referer`, `Location` or `Link`; fragments such
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error
   messages), as is a URL's password (`https://user:…@host`) and the response's
-  reason text. Raw bytes that mitmproxy quotes in an error message (`b'…'`) are
-  masked whole. `--no-redact` turns this off.
+  reason text. A credential's shape is masked also in a host (a flow's `host`,
+  an SNI), a method, the ALPN names a pass-through connection offered, a body's
+  `Content-Encoding` and the notes that quote it; the scope is checked with the
+  host as sent (a test). Raw bytes that mitmproxy quotes in an error message
+  (`b'…'`) are masked whole. `--no-redact` turns this off.
 - Bodies are masked as they arrive too, as far as they can be recognised: in JSON
   (whatever the content type says), the string and number values of fields
   whose names are secret by the same rule, also in JSON sent as a string inside
@@ -127,13 +130,17 @@ So "delete the directory" above means each of them.
   values that look like credentials (not the next word of a sentence), JWTs,
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
   Google API keys), also behind percent-encoding (JSON encoded in a form
-  field or a URL parameter, `Bearer+…`). `WWW-Authenticate` keeps its
-  challenge (scheme, realm, error), with only such shapes masked.
+  field or a URL parameter, `Bearer+…`) and behind JSON's escapes
+  (`Basic\t…`, `\/` or `\u…` inside a token: a string with any escape is read
+  decoded, at the top level and in JSON inside a string, a cut one too).
+  `WWW-Authenticate` keeps its challenge (scheme, realm, error), with only
+  such shapes masked.
   A line `name: value` in a text body that is not a GraphQL document, or in a
   JSON string, whose name is secret (a STOMP frame's `passcode:`, also inside
   SockJS's JSON; a YAML mapping; headers written into a body) has the rest of
-  the line masked; YAML list items (`- password: …`) and quoted names are not
-  looked at. A URL parameter or form field holding base64 of a JSON object with
+  the line masked, all of it (a `Bearer`/`Basic`/`Token` scheme stays only
+  when the value is that credential alone); YAML list items
+  (`- password: …`) and quoted names are not looked at. A URL parameter or form field holding base64 of a JSON object with
   a secret in it (AppSync's `?header=`) is masked whole, and so is a credential
   carried in `Sec-WebSocket-Protocol` (after a name such as `access_token`, as
   AppSync's `header-` base64 JSON, after Kubernetes' bearer prefix, or a long
@@ -230,9 +237,11 @@ So "delete the directory" above means each of them.
   request) is masked whole, as are part headers with secret names; a text
   part (no filename, a text or JSON type) is masked as a body is; a file
   part, a part that is not text or is encoded (`Content-Transfer-Encoding:
-  base64`), and a part whose `Content-Disposition` does not read (or comes
-  twice) keep their headers and their size only, never their bytes. A body
-  with LF-only lines shows no part. A preamble and an epilogue are not
+  base64`), and a part whose `Content-Disposition` does not read, comes twice
+  or names neither a field nor a file keep their headers and their size only,
+  never their bytes. Folded part headers (a line starting with a space or a
+  tab) are read and masked unfolded, as one line. A body with LF-only lines
+  shows no part. A preamble and an epilogue are not
   shown. At most 256 parts are read.
   (Tests, and an E2E test with Go's multipart writer.)
 - XML (`text/xml`, `application/xml`, `application/*+xml` such as SOAP's

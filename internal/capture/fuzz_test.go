@@ -13,7 +13,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 34
+const fuzzShapes = 35 // a shape with no case of its own is the default one
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
 // the secret: XML masking never panics on it, and a secret element and
@@ -77,6 +77,8 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
 	case 21: // a STOMP frame's header line
 		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
+	case 30: // a secret-named line whose value also holds a token's shape
+		return pre("note: "+filler+"\n", "password: "+secret+" Bearer OtherToken456\n", "text/plain")
 	case 22: // SOAP: a namespaced element
 		return pre(`<s:Envelope xmlns:s="urn:s"><s:Body><m:Note>`+filler+`</m:Note>`, `<wsse:Password>`+secret+`</wsse:Password></s:Body></s:Envelope>`, "application/soap+xml")
 	case 23: // an XML attribute
@@ -91,13 +93,13 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`<p>`+filler+`</p>`, `<input value="`+secret+`" type="hidden" name="authenticity_token">`, "text/html")
 	case 29: // a script's object, its key unquoted
 		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: "`+secret+`"};</script>`, "text/html")
-	case 30: // a script's string that would open an attribute, then a field
+	case 31: // a script's string that would open an attribute, then a field
 		return pre(`<script>var s="<a x='";</script><p>`+filler+`</p>`, `<input type="hidden" name="csrf" value="`+secret+`">`, "text/html")
-	case 31: // a comment's quote, then a field
+	case 32: // a comment's quote, then a field
 		return pre(`<!-- it's <a x=' `+filler+` -->`, `<input name="authenticity_token" value="`+secret+`">`, "text/html")
-	case 32: // a comment between a script's key and its value
+	case 33: // a comment between a script's key and its value
 		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: /* c */ '`+secret+`'};</script>`, "text/html")
-	case 33: // a script's string continued on the next line
+	case 34: // a script's string continued on the next line
 		return pre(`var c = {note: "`+filler+`", `, "idToken: \"x\\\n"+secret+"\"};", "application/javascript")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
