@@ -152,22 +152,53 @@ remove it:
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
 - A connection to an allowed host that mitmproxy carries as raw TCP, not
-  read as HTTP (once decrypted, for TLS: an ALPN name it does not know, a
-  server that speaks first, bytes that do not look like HTTP; and what a
-  request upgrades to with a `101` other than a WebSocket, whose request is a
-  flow, from reading mitmproxy 12.3.1's code), has no flow for what it
-  carries. Only the connection is recorded, in `list_passthrough` with
-  `reason: raw_tcp`: the host the client named (its SNI, or the address), the
-  server's address, start and end, the protocols the client offered and the
-  one it got, and the bytes relayed each way (inside TLS, for TLS); never the
-  bytes themselves (an E2E test). The
-  record is checked against `--allow-hosts` and `--pass-hosts` again, so a
-  host outside the first or in the second leaves nothing (a test). Not
-  caught: connections mitmproxy passes through itself fire none of its
-  hooks, so nothing of them is recorded or counted (from reading mitmproxy
-  12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and
-  connections mitmproxy knows by their address only (TLS without SNI, plain
-  TCP on port 80 that is not HTTP), unless `--allow-hosts` names the address.
+  read as HTTP, has no flow for what it carries. mitmproxy does so (once
+  decrypted, for TLS) with an ALPN name it does not know only when the
+  server speaks first or the client's bytes do not look like HTTP; otherwise
+  it reads the connection as HTTP/1, which fails for a client speaking
+  another protocol (tried with mitmproxy 12.3.1, 2026-11-15). It does so too
+  for bytes that do not look like HTTP, and for what a request upgrades to
+  with a `101` other than a WebSocket, whose request is a flow (an E2E test
+  over plain HTTP; over TLS, tried with mitmproxy 12.3.1, 2026-11-15). Only
+  the connection is recorded, in `list_passthrough` with `reason: raw_tcp`:
+  the host the client named (its SNI; after a plain HTTP `101`, the
+  request's host; else the address), the server's address, start and end,
+  the protocols the client offered and the one it got, and the bytes relayed
+  each way (inside TLS, for TLS); never the bytes themselves (an E2E test).
+  The record is checked against `--allow-hosts` and `--pass-hosts` again, so
+  a host outside the first or in the second leaves nothing (a test).
+- Not caught, so nothing of them is recorded or counted. Connections
+  mitmproxy passes through itself fire none of its hooks (from reading
+  mitmproxy 12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and
+  connections mitmproxy knows by their address only, unless `--allow-hosts`
+  names the address. Those are TLS without SNI (on the Remote Proxy, LAN mode
+  and the local proxy too: the name in `CONNECT` does not reach mitmproxy,
+  from reading code), and plain TCP (ports 80 and 443 go to mitmproxy) whose
+  first bytes do not name an allowed host as mitmproxy reads them: not HTTP,
+  a server that speaks first, HTTP/2 without TLS (h2c with prior knowledge,
+  which mitmproxy 12.3.1 does not take), HTTP/1.0 without `Host`, `Host:`
+  with no space after the colon (tried with mitmproxy 12.3.1, 2026-11-15).
+  An allowed host's HTTP/2 requests riding a connection the client opened
+  for a name outside the list, which shares its certificate and address, go
+  with that connection, undecrypted: URLSession reuses connections so
+  (HTTP/2 connection coalescing, from Apple's WWDC 2020 session "Boost
+  performance and security with modern networking"), and CDNs give sibling
+  hosts one certificate, so an allowed host's requests can be missing when
+  the app reached a sibling first (tried with Go's HTTP/2 client and
+  mitmproxy 12.3.1, 2026-11-15; not on an iPhone). Allow the names that
+  share the certificate (`*.example.com`). TLS with Encrypted Client Hello shows
+  mitmproxy only the provider's public name, so unless that name is allowed
+  the connection passes through (tried with Go's ECH client and server and
+  mitmproxy 12.3.1, 2026-11-15); iOS does not use ECH by default, by public
+  sources (not tried on an iPhone), but an app can turn it on for its own
+  connections. An HTTP/1 connection to an allowed host (by SNI) whose first
+  request names one of Apple's hosts in `Host` is carried whole, decrypted,
+  its later requests too: mitmproxy checks the name again after TLS (tried
+  with mitmproxy 12.3.1, 2026-11-15). With an address in `--allow-hosts` and
+  a name in SNI, the connection is decrypted by its address, but one
+  mitmproxy then carries as raw TCP is checked by its name and leaves
+  nothing (its HTTP requests count as out of scope; tried with mitmproxy
+  12.3.1, 2026-11-15).
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
   return them. A header, query
   parameter or body field is secret by its name: a name containing token,
