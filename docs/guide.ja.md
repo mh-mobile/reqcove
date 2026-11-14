@@ -119,6 +119,8 @@ reqcove service uninstall     # 止めて、ファイルを消す
 }
 ```
 
+この中の v0.6 のもの（`list_mock_presets`、`activate_mock`、`deactivate_mock`）は非推奨で、v1.0 で削除します。
+
 Codex は呼び出しごとに確認します（[HTTP](#ほかのデバイスのエージェントから使う--mcp-http) でも）。許可したあとは、`--no-redact` で起動した `run` でも確認なしで読みます。その場合も、Skill とサーバーの instructions は、止まってユーザーに聞くよう伝えます。許可するのは Reqcove のツールだけにして、シェルのコマンドやネットワークのツールまで一緒に許可しないでください。サイトが記録に書き込んだ文が、エージェントにそれらを使わせようとすることがあります（[SECURITY](SECURITY.md#prompt-injection)）。
 
 ### 使い方を教える Skill を入れる（`reqcove init`）

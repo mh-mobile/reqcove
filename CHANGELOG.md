@@ -9,7 +9,8 @@
   did not say which; `capture_stats` has `presets`, every preset's name. They
   hold what `active_mock_presets`, `active_mock_presets_error` and
   `mock_presets` hold (unit tests). `reqcove status`, run's log and the ready
-  block read the new names. The skill and the server's instructions use them.
+  block read the new names. The skill and the server's instructions name the
+  `*_preset` tools first and the v0.6 ones as deprecated.
 
 ### Deprecated
 

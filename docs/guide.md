@@ -257,6 +257,8 @@ Claude Code's documentation; not tried here):
 }
 ```
 
+Its v0.6 entries (`list_mock_presets`, `activate_mock`, `deactivate_mock`) are deprecated and removed in v1.0.
+
 Codex asks before each call
 ([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
 reads without asking, also from a `run` started with `--no-redact`; the skill

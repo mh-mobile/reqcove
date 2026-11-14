@@ -368,8 +368,8 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
 turns it on with `activate_preset` (`list_presets`, `deactivate_preset`), or
-v0.6's `activate_mock`, which takes mocks only (the `*_mock` tools are
-deprecated, removed in v1.0). Since v0.7 a
+v0.6's `activate_mock`, which takes mocks only (it and the other v0.6 tools
+are deprecated, removed in v1.0). Since v0.7 a
 `map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
 [below](#map_remote-modify_headers-and-resolve-presets), it can send requests
 elsewhere.
