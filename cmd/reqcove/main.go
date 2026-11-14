@@ -415,11 +415,8 @@ func run(ctx context.Context, args []string) error {
 			log.Printf("%s has no CA yet: this node makes one of its own, and the iPhone needs its profile too (to share one: stop this node, start the default one and wait until it prints its CA, then start this one with a new --state)", defaultState())
 		}
 	}
-	if !isDefaultState(*state) {
-		log.Printf("this node's commands take --state too: %s", withState("reqcove status", *state))
-		if hostname == "reqcove" {
-			log.Print("the node is named reqcove, as the default state's is: give --hostname, or name --state reqcove-NAME, to tell them apart")
-		}
+	for _, n := range stateNotes(*state, hostname, *lanMode) {
+		log.Print(n)
 	}
 	// A run that died with the system proxy pointed at it: put it back first.
 	if err := restoreSystemProxy(*state); err != nil {
@@ -571,7 +568,7 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("MCP socket: %w (a shorter --state path helps if it is too long)", err)
 	}
 	hint := mcpHint(*state, hostname)
-	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s; Codex: %s)", mcpSock, hint, strings.Replace(hint, "claude mcp add", "codex mcp add", 1))
+	log.Printf("MCP on %s; agents connect with `reqcove mcp` (Claude Code: %s; Codex: %s%s)", mcpSock, hint, strings.Replace(hint, "claude mcp add", "codex mcp add", 1), containerEngineNote())
 	if n := staleSkillNote(); n != "" {
 		log.Print(n)
 	}

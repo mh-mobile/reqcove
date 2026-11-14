@@ -79,7 +79,7 @@ func TestLANNotATerminal(t *testing.T) {
 	state := t.TempDir()
 	for _, args := range [][]string{{"allow", "192.168.1.23"}, {"deny", "192.168.1.23"}, {"list"}} {
 		err := lan(context.Background(), append(args, "--state", state))
-		if err == nil || !strings.Contains(err.Error(), "only in a terminal") {
+		if err == nil || !strings.Contains(err.Error(), "only in a terminal") || strings.Contains(err.Error(), "this Mac") { // Linux too
 			t.Errorf("%q: %v", args, err)
 		}
 	}

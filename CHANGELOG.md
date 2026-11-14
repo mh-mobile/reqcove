@@ -17,6 +17,36 @@
   with a wrong password is refused, nothing carried or recorded (real
   mitmproxy; the test fails if mitmdump accepts before the addon is loaded,
   its loading delayed by hand). SECURITY.md says what is covered and what not.
+- Tried on a Linux host, Ubuntu 24.04.5 LTS (arm64, a tart VM, 2026-11-14):
+  `reqcove setup`, `service install` (a systemd user unit; its journal holds
+  no login URL or token), `status`, `service restart` and `uninstall`, and LAN
+  mode with curl from another computer (HTTP and HTTPS recorded, refused until
+  allowed, `lan deny`). The guide (EN, JA) says what was tried and what was
+  not, and that without `loginctl enable-linger` systemd stops the user unit
+  at the last logout (tried).
+- LAN mode's question and `lan` commands, and the refusals of this computer's
+  own addresses, say "this computer", not "this Mac" (seen on Linux).
+- Containers with Podman 6.2.0 on macOS (rootless `podman machine`): the smoke
+  script passes, `run` up to the login, `--rules`, `host.containers.internal`
+  ([container](docs/container.md#with-podman)); not tried: a login, an iPhone, an agent.
+- Fixes from a try on Ubuntu 24.04 and with Podman (unit tests):
+  - `reqcove status` with no run says "not logged in yet" for a node that
+    started but never logged in (tsnet's state file holds no profile), not
+    "has logged in before".
+  - `run --lan` with another `--state` no longer suggests `--hostname`
+    (refused with `--lan`).
+  - No empty "carrying traffic from " line at LAN mode's start or after
+    `reqcove lan deny` of the last client; the exit node's same line goes
+    through the same check (not tried with a tailnet).
+  - The service's PATH (systemd unit, launchd plist) lists uvx's directory once
+    when it is `~/.local/bin`.
+  - In a container, `run` prints the agent command with `podman run` under
+    Podman (`/run/.containerenv`), `docker run` under Docker (`/.dockerenv`),
+    and with neither a note to use `podman run` under Podman; not tried under
+    Podman. docs/container.md said `run` printed the host's form of that
+    command; it did not.
+  - The guide's `--state` row names `~/.reqcove/ca-copies`, the list of the
+    directories its CA was copied into (as docs/SECURITY.md did).
 
 ### For agents
 
