@@ -128,6 +128,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 
 - 証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。[`--pass-hosts`](docs/guide.ja.md#証明書ピンニングをするアプリを通す--pass-hosts) を見てください。
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
+- mitmproxy が HTTP として読まない接続（知らない ALPN、ほかのプロトコル）は、フローなしで、接続としてだけ記録します。[raw TCP](docs/guide.ja.md#http-として読まれない接続raw-tcp) を見てください。
 - IPv6 は拒否し、QUIC は（Apple 宛て以外）ドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
 - iPhone が使っている間に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。

@@ -83,7 +83,9 @@ func (s *Store) Devices() []DeviceInfo {
 	}
 	for _, p := range s.passes {
 		if p.device != "" {
-			get(p.device).Passthroughs++
+			if !p.raw {
+				get(p.device).Passthroughs++
+			}
 			last[p.device] = max(last[p.device], p.start)
 		}
 	}
@@ -205,6 +207,12 @@ func (s *Store) Stats() map[string]any {
 			newest = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
 		}
 	}
+	passOpen := 0
+	for _, p := range s.passByConn {
+		if !p.raw {
+			passOpen++
+		}
+	}
 	truncated := 0
 	for _, f := range s.flows {
 		if f.ReqBody.Truncated || f.RespBody.Truncated {
@@ -221,7 +229,8 @@ func (s *Store) Stats() map[string]any {
 		"bad_lines": s.badLines, "masking_failed": s.maskFailed, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact.Load(),
 		"tls_failures":   len(s.tlsFailures),
-		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),
+		"passed_through": s.passCount, "passed_through_open": passOpen,
+		"raw_tcp": s.rawCount, "raw_tcp_hosts": s.rawHostsLocked(),
 		"pass_hosts": orNone(s.allow.PassHosts), "refused_hosts": s.refusedLocked(),
 		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,

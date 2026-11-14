@@ -85,6 +85,12 @@ def _brotli_ok():
 BROTLI_OK = _brotli_ok()  # CVE-2026-111497: never decode br with an older brotli
 
 
+def _alpn(a):
+    """An ALPN protocol id as the client sent it: printable ASCII only, cut
+    (protocol ids are short)."""
+    return "".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32]
+
+
 def _device(flow):
     auth = flow.metadata.get("proxyauth")  # (user, password) from proxyauth
     return auth[0] if auth else None
@@ -2012,22 +2018,38 @@ class Reqcove:
         layer = tcp_layer.TCPLayer(nl.context, ignore=False)
         layer.flow.metadata["reqcove_pass"] = {
             "device": self.conn_device.get(nl.context.client.id), "sni": sni, "up": 0, "down": 0,
-            # The client's own bytes: printable ASCII only, cut (protocol ids are short).
-            "alpn": ["".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32] for a in hello.alpn_protocols[:8]],
+            "alpn": [_alpn(a) for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
 
     def tcp_start(self, flow):
         p = flow.metadata.get("reqcove_pass")
+        c = flow.client_conn
         if p is None:
-            return
+            # Not a --pass-hosts connection: one mitmproxy decrypted (or took as
+            # plain TCP) and then carried as raw TCP, not HTTP. Its NextLayer
+            # (12.3.1) does so for an ALPN it does not know when the server
+            # spoke first or the client's bytes do not look like HTTP: no flow,
+            # so it is recorded as a connection (raw: never its bytes). Ignored
+            # connections (Apple's, hosts outside --allow-hosts) fire no hook.
+            ip = (flow.server_conn.address or ("",))[0]
+            host = (c.sni or ip).lower().rstrip(".")
+            if not host or not check.is_valid_host(host) or not self._in_scope(host):
+                return
+            p = flow.metadata["reqcove_pass"] = {
+                "device": self.conn_device.get(c.id), "sni": host, "up": 0, "down": 0, "raw": True,
+                "alpn": [_alpn(a) for a in (c.alpn_offers or ())[:8]],
+            }
         s = flow.server_conn
         addr = s.peername or s.address
-        self.put_event({
-            "v": VERSION, "ev": "pass_open", "conn": flow.client_conn.id, "device": p["device"],
+        ev = {
+            "v": VERSION, "ev": "pass_open", "conn": c.id, "device": p["device"],
             "sni": p["sni"], "alpn": p["alpn"], "server": f"{addr[0]}:{addr[1]}" if addr else None,
-            "ts": flow.client_conn.timestamp_start or time.time(),
-        })
+            "ts": c.timestamp_start or time.time(),
+        }
+        if p.get("raw"):
+            ev["raw"], ev["alpn_negotiated"] = True, _alpn(c.alpn) if c.alpn else ""
+        self.put_event(ev)
 
     def tcp_end(self, flow):
         self._pass_closed(flow)

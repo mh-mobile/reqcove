@@ -7,7 +7,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 1. [セットアップする](#セットアップする)：[初回の起動](#初回の起動ログインと承認) · [停止・再起動・アップデート](#停止再起動アップデート) · [2 台で同じ CA](#2-台のコンピュータで同じ-ca-を使う) · [元に戻す](#元に戻すreqcove-cleanup)
 2. [エージェントに通信を読ませる](#エージェントに通信を読ませる)：[ツールを許可する](#ツールを許可する) · [Skill](#使い方を教える-skill-を入れるreqcove-init) · [マーカー](#マーカーを置くreqcove-mark) · [ほかのデバイスのエージェント](#ほかのデバイスのエージェントから使う--mcp-http)
 3. [自分でフローを見る](#自分でフローを見る)：[iPhone で](#iphone-で見る--ui) · [HAR ファイルで](#har-ファイルに書き出すreqcove-har) · [mitmweb で](#mitmweb-で見る--web)
-4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
+4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
 5. [リクエストの行き先を変える](#リクエストの行き先を変える)：[ルール](#ルールを書く--rules) · [モック](#ここで応答するmock) · [プリセット](#エージェントが有効にできるプリセット) · [ルールが当たった理由](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules) · [上流プロキシ](#上流プロキシに回す--upstream-proxy)
 6. [Tailscale を使わずに同じネットワークでつなぐ（LAN モード）](#tailscale-を使わずに同じネットワークでつなぐ--lan)
 7. [サービスとして動かす](#サービスとして動かす)：[`brew services`](#常駐させるbrew-services) · [`reqcove service install`](#homebrew-なしで常駐させるreqcove-service-install)
@@ -259,6 +259,14 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 確認状況：iPhone で確認しました。pass host の復号されたリクエストが `--upstream-proxy` を通ることはテストで、`--rules` が効かないことはコードを読んで確認しました。
 
+### HTTP として読まれない接続（raw TCP）
+
+mitmproxy は許可したホストへの接続を復号してから、それをどう読むかを決めます。HTTP だと判断しなかった接続（知らない ALPN の名前、サーバーが先に話すもの、HTTP に見えないバイト）は raw TCP として中継します。アプリは動きますが、フローは記録されません。Reqcove はその代わりに接続を記録します。`list_passthrough` が `reason: raw_tcp` として返し（ホスト、接続先サーバー、時刻、クライアントが出したプロトコルと決まったプロトコル、TLS の内側で流れた向きごとのバイト数。バイトそのものは返しません）、`capture_stats` が数え（`raw_tcp`。デバイスとホストごとには `raw_tcp_hosts`）、`reqcove status` が次の手順でそのホストを示します。iPhone の grpc-swift の呼び出しは、Reqcove がサーバーに `h2` を出すようになるまで、こうなっていました（[gRPC](#grpc)）。
+
+拾えないもの：mitmproxy が自分で素通しする接続は、mitmproxy のフックを 1 つも呼ばないので、何も記録されず、数えられもしません（mitmproxy 12.3.1 のコードを読んだもの）。Apple のホスト、`--allow-hosts` にないホスト、そして mitmproxy がアドレスでしか知らない接続（SNI のない TLS、80 番ポートの HTTP でない平文の TCP）です。`--allow-hosts` にそのアドレスを書いたときは別です。
+
+確認状況：E2E テスト（本物の mitmproxy。先に話すサーバーとの知らない ALPN が、サイズ付きで記録され、そのあとの HTTPS のリクエストもこれまでどおり記録されること）で確認しました。iPhone では試していません。
+
 ### gRPC
 
 gRPC の呼び出しは 1 件のフローになります。パスがメソッド名（`/pkg.Service/Method`）です。
@@ -297,7 +305,7 @@ gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が
 
 確認状況：確かめたのは 2 つです。1 つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで。ただし gRPC のレスポンスは、試したビルドでは出ませんでした。そのあと直し、テストで確かめましたが、iPhone では試し直していません。スキーマなしの表示はテストだけです）。もう 1 つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
 
-grpc-swift（2。どちらのトランスポートも。1 も同じであることはソースから読んだもの）は、ALPN で `h2` より先に `grpc-exp` を出します。これを選ぶサーバーもあります（Connect のデモサーバーがそうです）。Reqcove はサーバーに `grpc-exp` を外して `h2` を出すので、こうした呼び出しも HTTP/2 で通り、記録されます。確かめたのは、この Mac 上の grpc-swift 2 から Connect のデモサーバーを呼んだもの（どちらのトランスポートも。CA は信頼するルートとして渡しました。mitmproxy にはエグジットノードと同じつなぎ方で中継しました）と、E2E テストです。iPhone では試していません。
+grpc-swift（2。どちらのトランスポートも。1 も同じであることはソースから読んだもの）は、ALPN で `h2` より先に `grpc-exp` を出します。これを選ぶサーバーもあります（Connect のデモサーバーがそうです）。Reqcove はサーバーに `grpc-exp` を外して `h2` を出すので、こうした呼び出しも HTTP/2 で通り、記録されます。確かめたのは、この Mac 上の grpc-swift 2 から Connect のデモサーバーを呼んだもの（どちらのトランスポートも。CA は信頼するルートとして渡しました。mitmproxy にはエグジットノードと同じつなぎ方で中継しました）、E2E テスト、iPhone（iOS 27.3、どちらのトランスポートも）です。iPhone ではそれまで、サーバーの HTTP/2 の設定が先に届き、mitmproxy が呼び出しを raw TCP として中継していて、記録されませんでした（[raw TCP](#http-として読まれない接続raw-tcp)）。
 
 ### Android を記録する
 
@@ -707,6 +715,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | アプリのリクエストが失敗し、`reqcove status` がそのホストを表示する（証明書ピンニング） | [証明書ピンニングをするアプリを通す](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | Android のアプリが CA を拒否する | [Android を記録する](#android-を記録する) |
 | gRPC のアプリの呼び出しが TLS の失敗として出る | [gRPC](#grpc) |
+| 許可したホストの通信が見当たらず、`reqcove status` がその接続は raw TCP として中継されたと伝える | [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) |
 | `--local-proxy` で、`kill -9` や異常終了のあとこのコンピュータのアプリがつながらない、許可したホストがこのコンピュータのアプリでつながらない | [iOS シミュレーターを記録する](#ios-シミュレーターを記録する--local-proxy) |
 | ルールが当たらなかった | [ルールが当たった理由、当たらなかった理由](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules) |
 | ルールのファイルが読み込めない、変更が反映されない | [ファイルを読み込むタイミング](#ファイルを読み込むタイミング--rules-reload) |
@@ -789,7 +798,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type、gRPC のステータス（`by_grpc_status`）、エンドポイントごとの件数。エンドポイント（`by_endpoint`）は、メソッド、ホスト、クエリを除いたパス（ID は `{id}`）、GraphQL なら operation（`GET api.example.com/v1/users/{id}`、`POST api.example.com/graphql Login`）。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイス（LAN モードでは `lan:ADDR`）と、それぞれの件数、この実行での最初と最後のアクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
-| `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
+| `list_passthrough` | フローのない接続。`reason` 付きで、`--pass-hosts` のホストへの接続（`pass_hosts`）と、許可したホストへの接続のうち mitmproxy が HTTP として読まずに raw TCP として中継したもの（`raw_tcp`。クライアントに決まった ALPN 付き：[raw TCP](#http-として読まれない接続raw-tcp)）。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
 | `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。`--mcp-http` では出しません。プリセットのツールがないため） |
 | `list_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。すべての種類（`kind`）。モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名、`resolve` の名前とアドレス。有効か、無効になる時刻。ボディ、ヘッダーの値、フィルター、正規表現は返さない。`--mcp-http` からは使えない |

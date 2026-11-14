@@ -8,7 +8,7 @@ tried and what was not.
 1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
 2. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [allow the tools](#allow-the-tools) · [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
 3. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
-4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
+4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [connections not read as HTTP](#connections-not-read-as-http-raw-tcp) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
 5. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
 6. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
 7. [Run it as a service](#run-it-as-a-service): [`brew services`](#keep-it-running-brew-services) · [`reqcove service install`](#keep-it-running-without-homebrew-reqcove-service-install)
@@ -441,6 +441,29 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # o
 Tried: on an iPhone. That a pass host's decrypted requests go through
 `--upstream-proxy`: a test; that they skip `--rules`: from reading code.
 
+### Connections not read as HTTP (raw TCP)
+
+mitmproxy decrypts a connection to an allowed host, then picks how to read
+it. One it does not take for HTTP (an ALPN name it does not know, a server
+that speaks first, bytes that do not look like HTTP) it carries as raw TCP:
+the app works, but no flow is recorded. Reqcove records the connection
+instead: `list_passthrough` lists it with `reason: raw_tcp` (host, server,
+times, the protocols the client offered and the one it got, bytes each way
+inside TLS; never the bytes themselves), `capture_stats` counts it
+(`raw_tcp`, and `raw_tcp_hosts` by device and host), and `reqcove status`
+names its hosts in the next steps. grpc-swift's calls on the iPhone went so
+before Reqcove offered the server `h2` ([gRPC](#grpc)).
+
+Not caught: connections mitmproxy passes through itself fire none of its
+hooks, so nothing of them is recorded or counted (from reading mitmproxy
+12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and a
+connection mitmproxy knows by its address only (TLS without SNI, plain TCP
+on port 80 that is not HTTP), unless `--allow-hosts` names the address.
+
+Tried: by an E2E test (real mitmproxy: an unknown ALPN from a server that
+speaks first, recorded with its sizes, the next HTTPS request recorded as
+before); not on an iPhone.
+
 ### gRPC
 
 A gRPC call is a flow. Its path names the method (`/pkg.Service/Method`).
@@ -513,8 +536,10 @@ grpc-swift (2, both transports; 1 too, from its sources) offers ALPN
 does). Reqcove offers the server `h2` without `grpc-exp`, so such a call goes
 over HTTP/2 and is recorded. Tried with grpc-swift 2 on this Mac against
 Connect's demo server, through a relay that dials mitmproxy as the exit node
-does (both transports, the CA given as the trust root), and by an E2E test;
-not on an iPhone.
+does (both transports, the CA given as the trust root), by an E2E test, and
+on an iPhone (iOS 27.3, both transports). Before, on the iPhone, the server's
+HTTP/2 settings came first and mitmproxy carried the calls as raw TCP,
+unrecorded ([raw TCP](#connections-not-read-as-http-raw-tcp)).
 
 ### Android
 
@@ -1359,6 +1384,7 @@ Start with `reqcove status`: it says what reqcove is doing, and the next steps
 | An app's requests fail, and `reqcove status` names its hosts (certificate pinning) | [Apps that pin certificates](#apps-that-pin-certificates---pass-hosts) |
 | An Android app refuses the CA | [Android](#android) |
 | A gRPC app's calls show as TLS failures | [gRPC](#grpc) |
+| An allowed host's traffic is missing, and `reqcove status` says its connections were carried as raw TCP | [Connections not read as HTTP](#connections-not-read-as-http-raw-tcp) |
 | With `--local-proxy`: apps on this computer cannot connect after `kill -9` or a crash, or an allowed host breaks in an app here | [The iOS Simulator](#the-ios-simulator---local-proxy) |
 | A rule did not apply | [Why a rule did or did not apply](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) |
 | A rules file does not load, or a change to it is not taken | [When the file is read](#when-the-file-is-read---rules-reload) |
@@ -1450,7 +1476,7 @@ with no run, by a unit test.
 | `summarize` | counts by host, User-Agent, status, method, device, content type, gRPC status (`by_grpc_status`), and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
 | `list_devices` | carried devices (`lan:ADDR` in LAN mode), their counts, and first and last activity this run |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
-| `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
+| `list_passthrough` | connections with no flows, with `reason`: to `--pass-hosts` hosts (`pass_hosts`), and to allowed hosts mitmproxy carried as raw TCP, not read as HTTP (`raw_tcp`, with the ALPN the client got: [raw TCP](#connections-not-read-as-http-raw-tcp)); host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
 | `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_presets`, with `kind`; not over `--mcp-http`, which has no preset tools) |
 | `list_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file, of every kind (`kind`): a mock's match and answer, a `map_remote` preset's target, a `modify_headers` preset's header name, a `resolve` preset's name and address; whether it is on, when it turns off. Never bodies, header values, filters or regexes. Not over `--mcp-http` |
