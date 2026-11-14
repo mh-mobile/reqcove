@@ -185,7 +185,6 @@ func TestSecondReviewLeaks(t *testing.T) {
 	}
 }
 
-// A crafted value nested many times over cannot make masking slow.
 // The v0.8.0 review: escapes that hide a credential's shape (\t, \r, \/),
 // in a cut string too, and a secret-named line with a token in its value.
 func TestV080ReviewBodies(t *testing.T) {
@@ -200,6 +199,13 @@ func TestV080ReviewBodies(t *testing.T) {
 		`{"d":"{\"n\":\"Basic\\tdXNlcjpwYXNzd29yZA==\"}"}`: {"dXNlcjpwYXNzd29yZA"},
 		at64K: {"dXNlcjpwYXNzd29yZA"},
 		"password: plainSecret123 Bearer OtherToken456": {"plainSecret123", "OtherToken456"},
+		// #85's re-check: a value that only starts like a marker, and a \u escape in a cut string that is not JSON
+		"password: [redacted] plainSecret123":                   {"plainSecret123"},
+		`password: "[redacted]" plainSecret123`:                 {"plainSecret123"},
+		"password: REDACTED plainSecret123":                     {"plainSecret123"},
+		"password: REDACTED_plainSecret123":                     {"plainSecret123"},
+		`{"note":"\x \u0073k-aaaaaaaaaaaaaaaaaaaa`:              {"aaaaaaaaaaaaaaaaaaaa"},
+		`{"note":"\x \ud83d\ude00 \u0073k-aaaaaaaaaaaaaaaaaaaa`: {"aaaaaaaaaaaaaaaaaaaa"},
 	} {
 		got := string(maskBody([]byte(in), "", true))
 		for _, s := range secrets {
@@ -213,6 +219,9 @@ func TestV080ReviewBodies(t *testing.T) {
 		"password: plainSecret123 Bearer OtherToken456": "password: [redacted]",
 		"authorization: Bearer OtherToken456  ":         "authorization: Bearer [redacted]",
 		"auth: Basic dXNlcjpwYXNzd29yZA== extra":        "auth: [redacted]",
+		"password: [redacted]":                          "password: [redacted]", // masked already: as it is
+		`password: "[redacted]",`:                       `password: "[redacted]",`,
+		"authorization: Bearer [redacted]":              "authorization: Bearer [redacted]",
 	} {
 		if got := string(maskBody([]byte(in), "text/plain", true)); got != want {
 			t.Errorf("%q -> %q, want %q", in, got, want)
@@ -226,6 +235,7 @@ func TestV080ReviewBodies(t *testing.T) {
 	}
 }
 
+// A crafted value nested many times over cannot make masking slow.
 func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
 	start := time.Now()

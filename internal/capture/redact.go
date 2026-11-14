@@ -286,7 +286,7 @@ func cutSecret(lit string, loneCode bool, depth int) bool {
 	var v string
 	if json.Unmarshal([]byte(trimCutEscape(lit)+`"`), &v) != nil {
 		// Not JSON (a page's script, raw newlines): undo the common escapes.
-		v = cutEscapes.Replace(lit[1:])
+		v = cutEscapes.Replace(uEscapeRE.ReplaceAllStringFunc(lit[1:], undoUEscape))
 	}
 	m := v
 	if depth == 0 {
@@ -301,6 +301,17 @@ func cutSecret(lit string, loneCode bool, depth int) bool {
 // escaped: a string literal at this depth is read decoded too (every escape
 // can hide a shape: \t, \/, \u…), at the top level and in JSON in a string.
 func escaped(lit string, depth int) bool { return depth <= 1 && strings.Contains(lit, `\`) }
+
+// uEscapeRE: a \u escape, a surrogate pair as one.
+var uEscapeRE = regexp.MustCompile(`\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}`)
+
+func undoUEscape(e string) string {
+	var r string
+	if json.Unmarshal([]byte(`"`+e+`"`), &r) != nil {
+		return e
+	}
+	return r
+}
 
 var cutEscapes = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\/`, `/`, `\t`, "\t", `\r`, "\r", `\n`, "\n", `\b`, "\b", `\f`, "\f")
 
@@ -421,6 +432,10 @@ func b64JSONSecret(v string) bool {
 // secret: the rest of the line is masked.
 var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*(?:export[ \t]+)?)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*[:=][ \t]*)([^\r\n]+)`)
 
+// maskedValueRE: a value masking already wrote, whole (a marker, quoted or
+// not, or a scheme and a marker); a value that only starts with one is masked.
+var maskedValueRE = regexp.MustCompile(`^(?:"\[redacted\]"|\[redacted\]|REDACTED|[A-Za-z][A-Za-z0-9-]{0,31} \[redacted\])[ \t,;]*$`)
+
 func maskLines(s string, loneCode bool) string {
 	if !strings.ContainsAny(s, ":=") {
 		return s
@@ -428,7 +443,7 @@ func maskLines(s string, loneCode bool) string {
 	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
 		sub := lineFieldRE.FindStringSubmatch(m)
 		v := sub[4]
-		if !secretKind(sub[2], loneCode) || strings.HasPrefix(v, "[redacted]") || strings.HasPrefix(v, `"[redacted]`) || strings.HasPrefix(v, "REDACTED") {
+		if !secretKind(sub[2], loneCode) || maskedValueRE.MatchString(v) {
 			return m
 		}
 		// The whole value; "Bearer [redacted]" keeps the scheme when the value is that credential alone.

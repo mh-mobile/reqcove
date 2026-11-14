@@ -533,8 +533,10 @@ followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
 header values are checked as `modify_headers`'s are. The records say a flow was
 mocked, with the rule's number and status, never its text. A request a mock may
 answer is held whole until its body is in (the operation is in it): at most
-1 MiB when it says its length; a GET without one can carry more over HTTP/2,
-kept whole, as for `map_local`. No MCP tool writes a rule: a mock comes from the file the user wrote, and
+1 MiB when it says its length. A GET without one is held only while it has no
+body: over HTTP/2, one that sends a body anyway gets a 502 and its body is not
+held, as for `map_local` (until v0.8.0 it was kept whole; tested with Go's
+HTTP/2 client, the stream's end as mitmproxy tells it from reading its code). No MCP tool writes a rule: a mock comes from the file the user wrote, and
 over `--mcp-http` an agent has no way to the file at all.
 `list_rules` and `explain_rules` (read-only, since v0.7) show each rule by kind
 and number with its preset, and only what is derived from it: a mock's method,
@@ -644,7 +646,9 @@ the exit node. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
 options. It shows bodies up to 2 MB each (Reqcove gives it them,
 as mitmproxy keeps no body it streams), whole and unmasked, and keeps the newest
-10,000 flows and 256 MB of bodies. It shows every flow mitmproxy decrypted, including requests to hosts
+10,000 flows and 256 MB of bodies. Those bounds count finished flows: one still
+in progress counts once it ends, and what is kept of its bodies meanwhile (up to
+2 MB each way) is outside them (from reading code). It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
 reuse): the per-request check keeps those out of Reqcove's records only.
 
@@ -728,7 +732,8 @@ address:
   fills and is emptied: then once more, and run asks again (tests). Each
   request on a kept connection is checked again, so a `reqcove lan deny`
   refuses new requests within two seconds; an HTTPS tunnel already open goes
-  on until it closes.
+  on until it closes, or until no bytes went either way for 15 minutes. An
+  address keeps at most 256 tunnels open at once (tests, with smaller values).
 - The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
   each was allowed). They change through `reqcove lan allow|deny`, or through
   run's question on its own terminal. The `lan` commands refuse to run unless

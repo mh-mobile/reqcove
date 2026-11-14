@@ -13,7 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -340,6 +342,106 @@ func TestMockFaults(t *testing.T) {
 	f := h.doneFlow("/close-later", false)
 	if f.Preset != "close-later" || !strings.Contains(f.Error, "closed by a mock (fault: close), preset close-later") {
 		t.Errorf("row: preset %q, error %q", f.Preset, f.Error)
+	}
+}
+
+// endless is a request body that never ends.
+type endless struct{}
+
+func (endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+// TestHTTP2BodyOfUnknownLength (REQCOVE_E2E=1): an HTTP/2 GET without a
+// length that a mock or map_local may answer is held only while it has no
+// body. One that ended with its headers is answered, or goes on to the
+// origin (through the upstream proxy) when no mock answers it after all; one
+// that sends a body anyway gets a 502 at once, recorded, and its body is
+// never held in memory (mitmproxy buffered all of it, with no end, until
+// v0.8.0).
+func TestHTTP2BodyOfUnknownLength(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var reached atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		fmt.Fprintf(w, "origin %s", r.URL.Path)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "origin.pem")
+	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600)
+	os.Mkdir(filepath.Join(dir, "files"), 0o700)
+	os.WriteFile(filepath.Join(dir, "files", "a.json"), []byte(`{"local":true}`), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`mock:
+  - match: {url: "%[1]s/mocked"}
+    body: mocked
+  - match: {url: "%[1]s/graphql", operation: Feed}
+    body: feed
+map_local:
+  - "|//%[2]s/local/|files"
+`, srv.URL, srv.Listener.Addr().String())), 0o600)
+	up := startUpstream(t) // its CA setting is how mitmproxy trusts the test server
+	defer up.ln.Close()
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream, c.UpstreamCA, c.Rules = up.ln.Addr().String(), caFile, rules })
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := h.client("dev").Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	h2 := &http.Client{Transport: tr, Timeout: time.Minute}
+	get := func(path string, body io.Reader) (int, string) {
+		t.Helper()
+		rctx, rcancel := context.WithTimeout(ctx, 20*time.Second)
+		defer rcancel()
+		req, _ := http.NewRequestWithContext(rctx, "GET", srv.URL+path, body)
+		if body != nil {
+			req.ContentLength = -1 // no content-length: only the stream's end would say
+		}
+		resp, err := h2.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.ProtoMajor != 2 {
+			t.Errorf("%s: HTTP/%d", path, resp.ProtoMajor)
+		}
+		return resp.StatusCode, string(b)
+	}
+	for _, c := range []struct{ path, want string }{{"/mocked", "mocked"}, {"/local/a.json", `{"local":true}`}} {
+		if st, b := get(c.path, nil); st != 200 || b != c.want {
+			t.Errorf("%s, no body: %d %q, want %q", c.path, st, b, c.want)
+		}
+		start := time.Now()
+		if st, b := get(c.path+"?body=1", endless{}); st != 502 || !strings.Contains(b, "not held in memory") || time.Since(start) > 10*time.Second {
+			t.Errorf("%s, an endless body: %d %.200q after %v, want a 502 at once", c.path, st, b, time.Since(start))
+		}
+		if v := h.doneFlow(c.path+"?body=1", false); v.State != "error" || !strings.Contains(v.Error, "not held in memory") || v.Mocked {
+			t.Errorf("%s, an endless body, recorded: %s %q mocked=%v", c.path, v.State, v.Error, v.Mocked)
+		}
+	}
+	if n := reached.Load(); n != 0 {
+		t.Errorf("the origin got %d requests", n)
+	}
+	if st, b := get("/mocked", nil); st != 200 || b != "mocked" {
+		t.Errorf("a mock after them: %d %q", st, b)
+	}
+	// Held (a mock's method and URL match), then not answered: it names no operation.
+	if st, b := get("/graphql", nil); st != 200 || b != "origin /graphql" || reached.Load() != 1 {
+		t.Errorf("held, then sent on: %d %q (the origin got %d)", st, b, reached.Load())
+	}
+	if want := "CONNECT " + srv.Listener.Addr().String(); !slices.Contains(up.all(), want) {
+		t.Errorf("not through the upstream proxy: %q, want %q", up.all(), want)
 	}
 }
 
