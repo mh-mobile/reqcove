@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +79,17 @@ func TestCheckRulesPythonCancel(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("returned after %v", d)
+	}
+}
+
+// capture_stats' presets holds every preset's name; mock_presets (v0.6's
+// name, removed in v1.0) the same until then.
+func TestStatsPresetNames(t *testing.T) {
+	s := NewStore(10, 1<<20)
+	s.Apply([]byte(`{"v":2,"ev":"hello","presets":["mx","staging"]}`))
+	st := s.Stats()
+	got, _ := st["presets"].([]string)
+	if old, _ := st["mock_presets"].([]string); !slices.Equal(got, []string{"mx", "staging"}) || !slices.Equal(old, got) {
+		t.Errorf("presets %v, mock_presets %v", st["presets"], st["mock_presets"])
 	}
 }

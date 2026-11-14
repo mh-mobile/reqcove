@@ -178,8 +178,8 @@ func (g *readyGate) ready(s exitnode.Status) bool {
 	return agreed
 }
 
-// statsPresets are capture_stats' preset names (mock_presets: every kind since v0.7).
+// statsPresets are capture_stats' preset names, of every kind.
 func statsPresets(stats map[string]any) []string {
-	n, _ := stats["mock_presets"].([]string)
+	n, _ := stats["presets"].([]string)
 	return n
 }
