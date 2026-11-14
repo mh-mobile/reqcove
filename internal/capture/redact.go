@@ -95,7 +95,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteString(s[last:keyStart])
 				b.WriteString(m)
 				last = keyEnd + 1
-			} else if depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) {
+			} else if escaped(lit, depth) {
 				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
 					b.WriteString(s[last:keyStart])
 					b.WriteString(m)
@@ -162,10 +162,10 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
-		case valClosed && (depth == 0 && (strings.Contains(s[j:valEnd], `\"`) || strings.Contains(s[j:valEnd], `\n`)) || depth <= 1 && strings.Contains(s[j:valEnd], `\u`)):
+		case valClosed && escaped(s[j:valEnd], depth):
 			// A string with escapes is looked at decoded, as diff_flows and the
 			// agent read it: JSON inside it (one level), and shapes and URLs that
-			// \u escapes can hide (\u0073k-… is sk-…), also with quotes around.
+			// escapes can hide (\u0073k-… is sk-…, Basic\t… is Basic and a tab).
 			if m, ok := maskDecodedString(s[j:valEnd+1], loneCode, depth); ok {
 				b.WriteString(s[last:j])
 				b.WriteString(m)
@@ -280,13 +280,13 @@ func containerEnd(s string, open int) (int, bool) {
 // closed one is read decoded: JSON in it (at depth 0), and shapes and URLs
 // escapes can hide. Only escaped ones are looked at, as closed ones.
 func cutSecret(lit string, loneCode bool, depth int) bool {
-	if !(depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) || depth <= 1 && strings.Contains(lit, `\u`)) {
+	if !escaped(lit, depth) {
 		return false
 	}
 	var v string
 	if json.Unmarshal([]byte(trimCutEscape(lit)+`"`), &v) != nil {
 		// Not JSON (a page's script, raw newlines): undo the common escapes.
-		v = strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(lit[1:])
+		v = cutEscapes.Replace(uEscapeRE.ReplaceAllStringFunc(lit[1:], undoUEscape))
 	}
 	m := v
 	if depth == 0 {
@@ -297,6 +297,23 @@ func cutSecret(lit string, loneCode bool, depth int) bool {
 	}
 	return maskTokens(maskURLs(m)) != v
 }
+
+// escaped: a string literal at this depth is read decoded too (every escape
+// can hide a shape: \t, \/, \u…), at the top level and in JSON in a string.
+func escaped(lit string, depth int) bool { return depth <= 1 && strings.Contains(lit, `\`) }
+
+// uEscapeRE: a \u escape, a surrogate pair as one.
+var uEscapeRE = regexp.MustCompile(`\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}`)
+
+func undoUEscape(e string) string {
+	var r string
+	if json.Unmarshal([]byte(`"`+e+`"`), &r) != nil {
+		return e
+	}
+	return r
+}
+
+var cutEscapes = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\/`, `/`, `\t`, "\t", `\r`, "\r", `\n`, "\n", `\b`, "\b", `\f`, "\f")
 
 // trimCutEscape drops an escape the head's end cut (a lone \, or \u with
 // fewer than four digits) from a cut string literal.
@@ -413,6 +430,10 @@ func b64JSONSecret(v string) bool {
 // whose name is secret: the rest of the line is masked.
 var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*:[ \t]*)([^\r\n]+)`)
 
+// maskedValueRE: a value masking already wrote, whole (a marker, quoted or
+// not, or a scheme and a marker); a value that only starts with one is masked.
+var maskedValueRE = regexp.MustCompile(`^(?:"\[redacted\]"|\[redacted\]|REDACTED|[A-Za-z][A-Za-z0-9-]{0,31} \[redacted\])[ \t,;]*$`)
+
 func maskLines(s string, loneCode bool) string {
 	if !strings.Contains(s, ":") {
 		return s
@@ -420,11 +441,12 @@ func maskLines(s string, loneCode bool) string {
 	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
 		sub := lineFieldRE.FindStringSubmatch(m)
 		v := sub[4]
-		if !secretKind(sub[2], loneCode) || strings.HasPrefix(v, "[redacted]") || strings.HasPrefix(v, `"[redacted]`) || strings.HasPrefix(v, "REDACTED") {
+		if !secretKind(sub[2], loneCode) || maskedValueRE.MatchString(v) {
 			return m
 		}
-		if maskTokens(v) != v {
-			return m // its shape is masked anyway, and "Bearer [redacted]" keeps the scheme
+		// The whole value; "Bearer [redacted]" keeps the scheme when the value is that credential alone.
+		if c := schemeRE.FindStringSubmatchIndex(v); c != nil && c[0] == 0 && c[1] == len(strings.TrimRight(v, " \t")) && credentialLike(v[c[6]:c[7]]) {
+			return sub[1] + sub[2] + sub[3] + v[c[2]:c[5]] + "[redacted]"
 		}
 		return sub[1] + sub[2] + sub[3] + "[redacted]"
 	})

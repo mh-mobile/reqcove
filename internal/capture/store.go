@@ -163,7 +163,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, resolve, presets []string, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string) // SetRulesLog; called with s.mu let go
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -260,9 +260,10 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 }
 
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
-// by kind, and resolve's targets), and why the file did not load when it did not
-// (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, problem string)) {
+// by kind, resolve's targets, the presets and the targets of those that send
+// requests elsewhere), and why the file did not load when it did not (the rules
+// before it then stay). f is called with the store unlocked: it may call it.
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
@@ -332,6 +333,12 @@ func (s *Store) Apply(line []byte) {
 			e.wsHead, e.wsNote = s.wsHead(&e)
 		}
 	}
+	var after func() // a callback, called once the lock is let go (it may call the store)
+	defer func() {
+		if after != nil {
+			after()
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -359,8 +366,8 @@ func (s *Store) Apply(line []byte) {
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
-		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.Resolve, e.Presets, e.RulesError)
+		if f := s.rulesLog; f != nil {
+			after = func() { f(e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError) }
 		}
 		return
 	case "pass_open":
@@ -368,7 +375,7 @@ func (s *Store) Apply(line []byte) {
 			s.outOfScope++
 			return
 		}
-		p := &passthrough{conn: e.Conn, device: e.Device, host: e.SNI, server: e.Server, alpn: e.ALPN, start: e.TS}
+		p := &passthrough{conn: e.Conn, device: e.Device, host: s.mask(e.SNI), server: e.Server, alpn: e.ALPN, start: e.TS}
 		s.seenLocked(e.Device, e.TS)
 		s.passes = append(s.passes, p)
 		s.passByConn[e.Conn] = p
@@ -398,7 +405,7 @@ func (s *Store) Apply(line []byte) {
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
 		s.seenLocked(e.Device, e.TS) // a client whose CA is not trusted yet has only these
-		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
+		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, s.mask(host), msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
 		}
@@ -428,7 +435,7 @@ func (s *Store) Apply(line []byte) {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		s.seenLocked(e.Device, e.TS)
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(e.Host), e.Path, e.HTTPVersion
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
@@ -490,17 +497,27 @@ func (s *Store) Apply(line []byte) {
 }
 
 // maskEvent masks, in place, what an event brings that a site or an app
-// wrote: URLs, headers, a reason (free text from the site), an error.
+// wrote: URLs, headers, a reason (free text from the site), an error, what is
+// copied from them (a body's Content-Encoding, a decoder's note). A host (a
+// request's Host, an SNI) is masked where it is stored, after its scope is
+// checked as sent.
 func (s *Store) maskEvent(e *event) {
 	switch e.Ev {
 	case "request":
 		e.URL, e.Path, e.MappedURL, e.Headers = s.mask(e.URL), s.mask(e.Path), s.mask(e.MappedURL), s.maskHeaders(e.Headers)
+		e.Method, e.HTTPVersion = s.mask(e.Method), s.mask(e.HTTPVersion)
 		if e.op = gqlURLOperation(e.URL); e.op == "" {
 			e.op = gqlName(header(e.Headers, "x-apollo-operation-name")) // Apollo's, as mocks read it
 		}
 	case "response":
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
-	case "error", "tls_failed":
+	case "body":
+		e.Encoding, e.Note = s.mask(e.Encoding), s.maskError(e.Note)
+	case "pass_open":
+		for i := range e.ALPN {
+			e.ALPN[i] = s.mask(e.ALPN[i])
+		}
+	case "error", "tls_failed", "pass_close":
 		e.Msg = s.maskError(e.Msg)
 	case "done":
 		e.Trailers = s.maskHeaders(e.Trailers)

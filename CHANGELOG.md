@@ -14,6 +14,29 @@
   lock's versions, and the `--web` tests pass through a wrapper). Another
   `--mitmproxy-spec` still gets the tornado its mitmproxy asks for
   ([SECURITY](docs/SECURITY.md#mitmproxys-own-code)).
+- Masking catches more of what an app sends: a credential behind JSON's
+  escapes (`Basic\t…`, `\/` in a token, also in a string cut at 64 KiB); the
+  rest of a secret-named line (`password: …`) even when a token sits in it;
+  folded `multipart/form-data` part headers (a field's name or a cookie on the
+  next line), and a part naming no field shows its size only; a token-shaped
+  host, SNI, method, ALPN name or `Content-Encoding` and the notes quoting
+  them (found by a code review; unit tests, and the fuzz test for the line).
+
+### Removed
+
+- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`,
+  `activate_preset` and `deactivate_preset`, which take mocks and the other
+  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
+  `active_presets` and `active_presets_error`), and `capture_stats`'
+  `mock_presets` (use `presets`). No tool list has them, local or
+  `--mcp-http`, nor does a tool description or the server's instructions
+  (unit tests). A call to one of the tools, from a script or from an agent
+  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
+  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
+  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
+  (from reading its code). `reqcove status` still reads the old fields from a
+  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
 
 ### Fixed
 
@@ -33,22 +56,43 @@
   `reqcove mcp` do (unit test).
 - `--proxy-port` out of 0 to 65535 is refused: in LAN mode 65616 would have
   listened on port 80 (from reading code; unit test of the refusal).
+- With `--rules-reload` and a preset in the file, saving it could freeze
+  `run` (v0.7.0–v0.8.0): nothing more was recorded, and the MCP tools,
+  `reqcove status` and `--ui` stopped answering (they all wait on the store)
+  until `run` was killed. Tests:
+  a unit test, and one with real mitmproxy and `run`'s own rules log (the
+  file saved twice; flows still recorded, the stats still answering).
+- When mitmproxy kept failing and reqcove gave up on it (5 restarts in a
+  row), `run` stopped with exit status 0, as for Ctrl-C, so a service looked
+  as if it had ended fine. It now exits with status 1 and mitmproxy's error
+  (test: a stand-in for mitmproxy that dies at every restart).
+- An HTTP/2 GET (HEAD, OPTIONS, DELETE) without a length, to a URL a mock or
+  `map_local` may answer, that sent a body anyway had all of it held in
+  mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
+  recorded as an error, and its body is not held; one with no body is
+  answered as before. Tested with Go's HTTP/2 client and real mitmproxy (an
+  endless body gets its 502 at once). macOS's URLSession sends none of these
+  with an open stream (tried against a test server, without mitmproxy);
+  iPhone apps not tried.
 
-### Removed
+### For people
 
-- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
-  `activate_mock` and `deactivate_mock` (use `list_presets`,
-  `activate_preset` and `deactivate_preset`, which take mocks and the other
-  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
-  `active_presets` and `active_presets_error`), and `capture_stats`'
-  `mock_presets` (use `presets`). No tool list has them, local or
-  `--mcp-http`, nor does a tool description or the server's instructions
-  (unit tests). A call to one of the tools, from a script or from an agent
-  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
-  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
-  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
-  (from reading its code). `reqcove status` still reads the old fields from a
-  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
+- The Remote Proxy, LAN mode and `--local-proxy` keep at most 256 tunnels
+  (CONNECT: HTTPS, WebSockets) open per client, one address (with
+  `--local-proxy`, all of this computer's apps together): the next one gets a
+  503 until one closes. A tunnel with no bytes either way for 15 minutes is
+  closed; one that keeps talking (a WebSocket, an event stream) stays open.
+  Tests, with 2 tunnels and 300 ms.
+- The guide and SECURITY now say that `--web`'s 10,000 flows and 256 MB count
+  finished flows only: a flow still in progress counts once it ends (from
+  reading code).
+
+### Inside
+
+- The release workflow refuses a tag whose commit has no successful run of
+  the test workflow (macOS and Linux, end to end with mitmproxy, the
+  container, the checks). Checked with actionlint and by running its query
+  against this repository; the workflow itself runs only on a tag, not yet.
 
 ### Upgrading from v0.8
 

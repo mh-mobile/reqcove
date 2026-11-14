@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func line(t *testing.T, m map[string]any) []byte {
@@ -209,7 +210,7 @@ func TestRulesEvent(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "hello", "mitmproxy": "12.3.1", "rules": map[string]int{"map_remote": 1}}))
 	var told []string
-	st.SetRulesLog(func(r map[string]int, _, _ []string, problem string) {
+	st.SetRulesLog(func(r map[string]int, _, _ []string, _ map[string]string, problem string) {
 		told = append(told, fmt.Sprintf("%v %s", r, problem))
 	})
 	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": ""}))
@@ -220,5 +221,66 @@ func TestRulesEvent(t *testing.T) {
 	}
 	if want := []string{"map[map_remote:2] ", "map[map_remote:2] map_remote[1]: bad"}; !slices.Equal(told, want) {
 		t.Errorf("told %q", told)
+	}
+}
+
+// The v0.8.0 review: what the addon copies from the headers, the URL and the
+// TLS handshake into a record is masked as it is stored, after the scope is
+// checked with the value as sent.
+func TestMetadataMasked(t *testing.T) {
+	const tok = "sk-aaaaaaaaaaaaaaaaaaaa"
+	host := tok + ".example.com"
+	passHost := tok + ".pass.example.com"
+	allow, _ := ParseAllowHosts([]string{host, passHost}) // exactly these: a masked one is out of scope
+	allow, _ = allow.WithPass([]string{passHost})
+	st := NewStore(10, 1<<20)
+	st.SetScope(allow, true)
+	ev := func(m map[string]any) { st.Apply(line(t, m)) }
+	ev(map[string]any{"ev": "request", "id": "r", "host": host, "url": "https://" + host + "/", "method": tok, "http_version": tok,
+		"headers": [][2]string{{"Host", host}, {"Content-Encoding", tok}}})
+	ev(map[string]any{"ev": "body", "id": "r", "dir": "request", "head": b64("hello"), "size": 5, "final": true,
+		"encoding": tok, "note": `cannot decode Content-Encoding "` + tok + `"`})
+	ev(map[string]any{"ev": "tls_failed", "conn": "c1", "sni": host, "msg": "refused"})
+	ev(map[string]any{"ev": "pass_open", "conn": "c2", "sni": passHost, "alpn": []string{tok}, "ts": 1})
+	ev(map[string]any{"ev": "pass_close", "conn": "c2", "ts_end": 2, "msg": "reset by " + tok})
+	v, err := st.Get("r", true)
+	if err != nil {
+		t.Fatal("the flow was not recorded (its scope checked with the masked host?)")
+	}
+	tls, pass := st.TLSFailures(Filter{Limit: 10}), st.Passthroughs(Filter{Limit: 10})
+	if len(tls) != 1 || len(pass) != 1 {
+		t.Fatalf("not recorded: tls %+v pass %+v", tls, pass)
+	}
+	b, _ := json.Marshal([]any{v, tls, pass})
+	if strings.Contains(string(b), tok[3:]) {
+		t.Errorf("a token left: %s", b)
+	}
+	if v.Host != "[redacted].example.com" || v.ReqBody.Encoding != "[redacted]" {
+		t.Errorf("host %q encoding %q", v.Host, v.ReqBody.Encoding)
+	}
+}
+
+// The rules log is called with the store unlocked: run's calls the store
+// (PresetTargets), which hung every record and tool for good (v0.7.0-v0.8.0).
+// It is handed the presets' targets too.
+func TestRulesLogUnlocked(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	var got string
+	st.SetRulesLog(func(_ map[string]int, _, presets []string, targets map[string]string, _ string) {
+		got = fmt.Sprint(presets, targets, st.PresetTargets(), st.Stats()["rules"])
+	})
+	done := make(chan struct{})
+	go func() {
+		st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 1}, "presets": []string{"staging"},
+			"preset_targets": map[string]string{"staging": "https://staging.example"}}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Apply of a rules event did not return: the rules log ran under the store's lock")
+	}
+	if want := "[staging] map[staging:https://staging.example] map[staging:https://staging.example] map[map_remote:1]"; got != want {
+		t.Errorf("told %q, want %q", got, want)
 	}
 }
