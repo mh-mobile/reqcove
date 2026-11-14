@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -298,6 +299,147 @@ resolve:
 	}
 
 	// The injected token never reaches the records or the stats.
+	all, _ := json.Marshal(h.stats())
+	for _, f := range listAll(h.c.Store, 1000) {
+		fv, _ := h.c.Store.Get(f.ID, true)
+		b, _ := json.Marshal(fv)
+		all = append(all, b...)
+	}
+	if strings.Contains(string(all), "s3cret") {
+		t.Error("a rule's value reached the records or the stats")
+	}
+}
+
+// TestRulesGoToNamedHost (REQCOVE_E2E=1): mitmproxy connects where the app
+// dialled, whatever its Host says, and ~d reads the Host. A request header
+// rule's value must reach only the host the request names: not a server
+// dialled with someone else's Host, over plain HTTP or over HTTPS with a
+// certificate for another name. A legitimate request keeps its rule, and a
+// resolve rule pins a name (then the rule applies, as it goes where the rule says).
+func TestRulesGoToNamedHost(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var mu sync.Mutex
+	seen := map[string]http.Header{} // path -> the headers it arrived with
+	record := func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path] = r.Header.Clone()
+		mu.Unlock()
+		fmt.Fprint(w, "ok")
+	}
+	header := func(path, name string) (string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		h, ok := seen[path]
+		return h.Get(name), ok
+	}
+	got := func(path string) (string, bool) { return header(path, "Authorization") }
+	attacker := httptest.NewServer(http.HandlerFunc(record))
+	defer attacker.Close()
+	legit := httptest.NewServer(http.HandlerFunc(record))
+	defer legit.Close()
+	// A TLS server mitmproxy trusts (trustCA), with a certificate for
+	// example.com, *.example.com and 127.0.0.1 only, as an attacker's own site
+	// would have. The names below lead nowhere (.invalid, or not in DNS),
+	// so a lookup never finds 127.0.0.1.
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(record))
+	defer tlsSrv.Close()
+	_, lport, _ := net.SplitHostPort(legit.Listener.Addr().String())
+
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "trusted.pem")
+	os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsSrv.Certificate().Raw}), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`modify_headers:
+  - "|~q|Authorization|Bearer s3cret-rule"
+  - {rule: "|~q|X-Preset|s3cret-preset", preset: hdr}
+resolve:
+  - "pinned.invalid=127.0.0.1:%s"
+`, lport)), 0o600)
+	h, err := tryHarness(t, ctx, []string{"localhost", "api.forged.invalid", "pinned.invalid", "rq-attacker.example.com", "rq-named.example.com"}, func(c *Config) {
+		c.Rules, c.trustCA = rules, ca
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A preset an agent can turn on is held to the same rule.
+	if _, err := h.c.Activate(ctx, "hdr", 120, 0); err != nil {
+		t.Fatal(err)
+	}
+	hc := h.client("dev")
+	send := func(c *http.Client, url, host string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Host = host
+		if r, err := c.Do(req); err == nil {
+			io.Copy(io.Discard, r.Body)
+			r.Body.Close()
+		}
+	}
+	applied := "modify_headers request: Authorization"
+	const notApplied = "modify_headers request: not applied, the request goes to an address that is not its Host's"
+
+	// Plain HTTP to the attacker's address, with the Host of a host the rule is for.
+	send(hc, attacker.URL+"/forged", "api.forged.invalid")
+	if a, ok := got("/forged"); !ok || a != "" {
+		t.Errorf("the attacker's server: reached %v, with Authorization %q (want reached, without it)", ok, a)
+	}
+	if p, _ := header("/forged", "X-Preset"); p != "" {
+		t.Errorf("the attacker's server got the preset's header %q", p)
+	}
+	if v := h.doneFlow("/forged", false); v.Host != "api.forged.invalid" || !slices.Contains(v.Rewrites, notApplied) || slices.Contains(v.Rewrites, applied) || len(v.Presets) != 0 {
+		t.Errorf("forged Host, record: host %q rewrites %v presets %v", v.Host, v.Rewrites, v.Presets)
+	}
+	// Plain HTTP to the Host's own address: the rule applies.
+	send(hc, legit.URL+"/legit", "localhost:"+lport)
+	if a, _ := got("/legit"); a != "Bearer s3cret-rule" {
+		t.Errorf("plain HTTP to the Host's address: Authorization %q, want the rule's", a)
+	}
+	if p, _ := header("/legit", "X-Preset"); p != "s3cret-preset" {
+		t.Errorf("plain HTTP to the Host's address: the preset's header %q", p)
+	}
+	if v := h.doneFlow("/legit", false); !slices.Contains(v.Rewrites, applied) || !slices.Equal(v.Presets, []string{"hdr"}) {
+		t.Errorf("plain HTTP to the Host's address, rewrites: %v presets %v", v.Rewrites, v.Presets)
+	}
+	// resolve sends pinned.invalid to the legitimate server, wherever the app dialled.
+	send(hc, attacker.URL+"/pinned", "pinned.invalid")
+	if a, _ := got("/pinned"); a != "Bearer s3cret-rule" {
+		t.Errorf("resolve: Authorization %q at the rule's address, want the rule's", a)
+	}
+	if v := h.doneFlow("/pinned", false); !slices.Contains(v.Rewrites, applied) || !slices.Contains(v.Rewrites, "resolve: 127.0.0.1:"+lport) {
+		t.Errorf("resolve, rewrites: %v", v.Rewrites)
+	}
+
+	tlsTo := func(sni string) *http.Client {
+		c := h.client("dev")
+		c.Transport.(*http.Transport).TLSClientConfig.ServerName = sni
+		return c
+	}
+	// HTTPS: a server whose certificate is not for the name asked never gets the
+	// request (mitmproxy checks it before sending: ssl_insecure is off).
+	send(tlsTo("api.forged.invalid"), tlsSrv.URL+"/tls-forged-sni", "api.forged.invalid")
+	if _, ok := got("/tls-forged-sni"); ok {
+		t.Error("a server without the name's certificate got the request")
+	}
+	// HTTPS to a server with a certificate for its own name and another Host:
+	// the request goes there, without the rule's value.
+	send(tlsTo("rq-attacker.example.com"), tlsSrv.URL+"/tls-other-host", "api.forged.invalid")
+	if a, ok := got("/tls-other-host"); !ok || a != "" {
+		t.Errorf("HTTPS with another Host than its TLS name: reached %v, with Authorization %q (want reached, without it)", ok, a)
+	}
+	if v := h.doneFlow("/tls-other-host", false); !slices.Contains(v.Rewrites, notApplied) {
+		t.Errorf("HTTPS with another Host, rewrites: %v", v.Rewrites)
+	}
+	// HTTPS whose Host is its TLS name: the rule applies, with no lookup
+	// (one would not find 127.0.0.1).
+	send(tlsTo("rq-named.example.com"), tlsSrv.URL+"/tls-named", "rq-named.example.com")
+	if a, _ := got("/tls-named"); a != "Bearer s3cret-rule" {
+		t.Errorf("HTTPS to its TLS name: Authorization %q, want the rule's", a)
+	}
+
 	all, _ := json.Marshal(h.stats())
 	for _, f := range listAll(h.c.Store, 1000) {
 		fv, _ := h.c.Store.Get(f.ID, true)

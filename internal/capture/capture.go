@@ -108,6 +108,7 @@ type Config struct {
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
 	webMaxFlows  int                           // tests: fewer flows kept in mitmweb than its default
+	trustCA      string                        // tests: the one CA mitmproxy trusts upstream, as with --upstream-ca, without an upstream proxy
 }
 
 // WebKeep is the largest body (on the wire) given to mitmweb whole (--web).
@@ -280,6 +281,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		if cfg.UpstreamCA != "" {
 			c.args = append(c.args, "--set", "ssl_verify_upstream_trusted_ca="+cfg.UpstreamCA)
 		}
+	}
+	if cfg.trustCA != "" {
+		c.args = append(c.args, "--set", "ssl_verify_upstream_trusted_ca="+cfg.trustCA)
 	}
 	if cfg.WebPort != 0 {
 		c.args = append(c.args, "--set", "web_host=127.0.0.1", "--set", fmt.Sprintf("web_port=%d", cfg.WebPort), "--set", "web_open_browser=false")

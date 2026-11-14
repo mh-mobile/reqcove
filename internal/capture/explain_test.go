@@ -133,6 +133,12 @@ resolve:
 	if !slices.Contains(e.CannotTell, "modify_headers[1]") || slices.Contains(e.Rewrites, "modify_headers request: X-Seen") {
 		t.Errorf("a ~h filter: %+v", e)
 	}
+	// A request header rule applies only to a request that goes to its Host: said.
+	if !slices.Contains(e.Rewrites, "modify_headers request: X-Token") || !slices.ContainsFunc(e.Conditions, func(c string) bool {
+		return strings.HasPrefix(c, "request modify_headers apply only to a request that goes to its Host")
+	}) {
+		t.Errorf("the Host condition: %+v", e)
+	}
 	// On, for one request: explained three times, the count stays, nothing sent.
 	if _, err := h.c.Activate(ctx, "p503", 60, 1); err != nil {
 		t.Fatal(err)

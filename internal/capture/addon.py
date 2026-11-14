@@ -340,6 +340,19 @@ def _origin(url):
     return f"{u.scheme}://{host}" + (f":{port}" if port is not None and (u.scheme, port) not in (("http", 80), ("https", 443)) else "")
 
 
+def _ip(s):
+    """s as an IP address (an IPv4-mapped one as IPv4), or None."""
+    try:
+        a = ipaddress.ip_address(s.split("%", 1)[0])
+    except ValueError:
+        return None
+    return getattr(a, "ipv4_mapped", None) or a
+
+
+NAME_LOOKUP_SECONDS = 3  # a Host looked up for a request a header rule changed (_to_named_host)
+NOT_NAMED = "modify_headers request: not applied, the request goes to an address that is not its Host's"
+
+
 class RuleError(ValueError):
     """A rule refused by reqcove itself: its message quotes nothing of the rule."""
 
@@ -1135,6 +1148,8 @@ class Reqcove:
         out["cannot_tell"] = cannot
         if seen or any(s.startswith(("mock", "map_local")) for s in said):
             conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)")
+        if any(s.startswith("modify_headers request:") for s in said):
+            conditions.append("request modify_headers apply only to a request that goes to its Host: one sent to its Host's address (looked up on this computer), or over HTTPS with its Host as the TLS name, or that map_remote or resolve sends on; otherwise it goes on as the app sent it (its rewrites say not applied)")
         if conditions:
             out["conditions"] = conditions
         return out
@@ -1364,7 +1379,7 @@ class Reqcove:
             return
         self._put(msg, size)
 
-    def requestheaders(self, flow):
+    async def requestheaders(self, flow):
         # A Host that is no host name or address (an app's own HTTP stack can
         # send any text there) is never recorded: it would show as a host.
         if not check.is_valid_host(flow.request.pretty_host) or not self._in_scope(flow.request.pretty_host):
@@ -1406,7 +1421,7 @@ class Reqcove:
                 flow.metadata["reqcove_pending"] = ev
                 return
             try:
-                ev["rewrites"] = self._rewrite_request(flow, rules)
+                ev["rewrites"] = await self._rewrite_sent(flow, rules)
                 if mocks:  # a mock would need the body whole: say why none answered
                     ev["rewrites"].append("mock: skipped, request body over 1 MiB or of unknown length")
             except Exception as e:
@@ -1427,6 +1442,48 @@ class Reqcove:
             return
         self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
+
+    async def _rewrite_sent(self, flow, rules, mocks=False):
+        """_rewrite_request for a request that is sent: header values a rule
+        set go only to the host the request names. mitmproxy connects where
+        the app dialled (in SOCKS mode, the address), whatever its Host says,
+        and ~d reads the Host: a forged one would carry the user's token to
+        any server. So while the request still goes to the dialled address
+        (no map_remote or resolve moved it: those go where the rule says),
+        the header rules stand only if that address is the Host, or (HTTPS)
+        the Host is the TLS name mitmproxy checks the server's certificate
+        for, or the Host's addresses (this computer's lookup) include it.
+        Else the request goes on as the app sent it, its rewrites saying so.
+        Not sending it to the Host instead: mitmproxy would look that up
+        itself, past the exit node's refusals of this computer and the LAN."""
+        r = flow.request
+        dialled, sent = (r.data.host, r.data.port), r.headers.copy()
+        done = self._rewrite_request(flow, rules, mocks)
+        if flow.response is None and (r.data.host, r.data.port) == dialled and r.headers.fields != sent.fields and not await self._to_named_host(flow, dialled[0]):
+            r.headers = sent
+            # Nothing moved the request, so the presets in it are modify_headers ones.
+            flow.metadata.pop("reqcove_presets", None)
+            done = [d for d in done if not d.startswith("modify_headers request:")] + [NOT_NAMED]
+        return done
+
+    @staticmethod
+    async def _to_named_host(flow, dialled):
+        r = flow.request
+        name = r.pretty_host.lower().rstrip(".")
+        if name == dialled.lower().rstrip(".") or _ip(name) is not None and _ip(name) == _ip(dialled):
+            return True
+        # mitmproxy verifies the server's certificate for this name (ssl_insecure is off).
+        if r.scheme == "https" and name == (flow.server_conn.sni or flow.client_conn.sni or "").lower().rstrip("."):
+            return True
+        want = _ip(dialled)
+        if want is None:
+            return False
+        # ponytail: one lookup per such request (the OS caches it); cache here if it shows.
+        try:
+            infos = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(name, None, type=socket.SOCK_STREAM), NAME_LOOKUP_SECONDS)
+        except (OSError, ValueError):  # TimeoutError is an OSError; a bad IDNA name's UnicodeError a ValueError
+            return False
+        return any(_ip(i[4][0]) == want for i in infos)
 
     def _rewrite_request(self, flow, rules, mocks=False, dry=False, op=False):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
@@ -1529,7 +1586,7 @@ class Reqcove:
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
 
     async def request(self, flow):
-        self._request(flow)
+        await self._request(flow)
         # A mock's delay_ms, then its answer or fault: close. Awaited, so the
         # loop (other flows, other HTTP/2 streams) goes on meanwhile.
         if delay := flow.metadata.pop("reqcove_delay", 0):
@@ -1540,11 +1597,11 @@ class Reqcove:
             else:  # never on to the server: the mock answered for it
                 flow.response = http.Response.make(502, b"reqcove: a mock's fault: close could not close this request")
 
-    def _request(self, flow):
+    async def _request(self, flow):
         ev = flow.metadata.pop("reqcove_pending", None)
         if ev is not None:
             try:
-                ev["rewrites"] = self._rewrite_request(flow, self.flow_rules[flow.id], mocks=True)
+                ev["rewrites"] = await self._rewrite_sent(flow, self.flow_rules[flow.id], mocks=True)
             except Exception as e:
                 flow.response = http.Response.make(502, f"reqcove: a --rules rule failed on this request ({type(e).__name__})".encode())
                 ev["rewrites"] = [f"rules failed: {type(e).__name__}"]
