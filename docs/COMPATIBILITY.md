@@ -59,7 +59,9 @@ On this computer (`reqcove mcp`, and `run`'s socket), 19 tools:
 
 Over `--mcp-http`, the first twelve (`status` to `capture_stats`), never the
 preset, rule and marker tools; its `status` has no `active_presets` or
-`active_presets_error`.
+`active_presets_error`. Its server answers at `/mcp`, on port 8090 unless
+`--mcp-http` names another, with `Authorization: Bearer` and the token in
+`mcp-token` (the state directory, below).
 
 Removed in v1.0.0, deprecated since v0.8.0 (v0.6's names):
 
@@ -84,8 +86,8 @@ Each tool's fields:
   preset's `kind` (`mock`, `map_remote`, `modify_headers`, `resolve`), a marker's
   `source` (`cli`, `mcp`). A minor release may add a value (a new mode, say).
 - A field that holds text written for people (`next_steps`, `note`, `msg`,
-  error fields such as `rules_error` and `active_presets_error`) stays; its
-  wording is not stable.
+  error fields such as `list_rules`' and `explain_rules`' `rules_error`, and
+  `active_presets_error`) stays; its wording is not stable.
 
 #### `status` and `reqcove status --json`
 
@@ -99,7 +101,7 @@ exits 1, saying why on stderr (unit test). Its fields:
   `header`, `host`, `address`, `method`, `url`, `operation`, `status`,
   `delay_ms`, `fault`, `active`, `remaining`, `expires_at` (as `list_presets`'
   presets).
-- `node`: `backend`, `auth_url`, `node`, `ips`, `exit_node_approved`,
+- `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
   Tailscale's, not Reqcove's: not promised.
@@ -193,10 +195,13 @@ The defaults of `--mitmproxy-spec` and `--python` follow the lock: not stable
   and certificate): copied to share one CA with another computer
   ([guide](guide.md#use-one-ca-on-two-computers)).
 - `lan-allowed`: the addresses LAN mode carries; change it with `reqcove lan`.
+- `mcp-token` and `ui-token`: the tokens of `--mcp-http` and `--ui`, read to
+  give them to an agent or a browser, deleted to make new ones
+  ([guide](guide.md)).
 - `ca-copies`, in `~/.reqcove` only: the state directories its CA was copied
   into, which `reqcove cleanup` names.
 
-The other files there (`mcp.sock`, `tsnet/`, the tokens, the logs, the pid and
+The other files there (`mcp.sock`, `tsnet/`, the logs, the pid and
 proxy files) are Reqcove's own and may change in any release.
 
 ### The skill
@@ -249,6 +254,6 @@ These may change in any release, a patch release included:
   older `run`; a call to one of them, to `run` or to `reqcove mcp`, gets a tool
   error naming what replaced it (tests). A v1.0.0 `reqcove status` still reads
   an older `run`'s `active_mock_presets` and `mock_presets` (tests); a v0.6 or
-  v0.7 `reqcove status` or `reqcove mcp` against a v1.0.0 `run` shows no
-  preset on, since those versions read only the old names (from reading
-  their code).
+  v0.7 `reqcove status` against a v1.0.0 `run` shows no preset on, since
+  those versions read only the old names (from reading their code); their
+  `reqcove mcp` passes `run`'s answer on as it is.

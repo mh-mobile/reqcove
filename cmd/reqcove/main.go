@@ -74,7 +74,7 @@ Usage:
                      only (-h for its flags; --print shows it without writing)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
-                     the recorded flows as a HAR file, masked (-h for filters)
+                     the recorded flows as a HAR file, masked unless --no-redact (-h for filters)
   reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall
                      start run now and at login without Homebrew (launchd or
                      systemd), with run's flags in FILE (~/.config/reqcove/config)

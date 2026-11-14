@@ -54,7 +54,7 @@ type TLSIn struct {
 }
 
 type SearchIn struct {
-	Query  string `json:"query" jsonschema:"text to find, case-insensitive, in URLs and header names and values (secrets are already masked, so their values cannot be found)"`
+	Query  string `json:"query" jsonschema:"text to find, case-insensitive, in URLs and header names and values (while redacting is true, secrets are already masked, so their values cannot be found)"`
 	Bodies bool   `json:"bodies,omitempty" jsonschema:"also search the kept heads of the bodies"`
 	FilterIn
 	PageIn

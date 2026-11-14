@@ -93,7 +93,7 @@ func (s *Store) wsHead(e *event) (head, note string) {
 		text = strings.ReplaceAll(text, "\x1e", "\n")
 	}
 	if !strictText([]byte(text)) {
-		return "", "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
+		return "", "omitted: not text, so it cannot be checked for secrets (not returned while masking is on)"
 	}
 	return maskWSMessage(string(t), e.FromClient), ""
 }

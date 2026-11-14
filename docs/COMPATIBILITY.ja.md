@@ -38,7 +38,7 @@ v1.0.0 から、バージョンは `major.minor.patch`（[セマンティック 
 
 `status`、`list_flows`、`wait_for_flows`、`search_flows`、`summarize`、`get_flow`、`list_ws_messages`、`diff_flows`、`list_devices`、`list_tls_failures`、`list_passthrough`、`capture_stats`、`list_presets`、`activate_preset`、`deactivate_preset`、`list_rules`、`explain_rules`、`add_marker`、`list_markers`
 
-`--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。
+`--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。そのサーバーは `/mcp` で答えます。ポートは、`--mcp-http` で別の番号を指定しなければ 8090 です。認証は `Authorization: Bearer` で、トークンは `mcp-token`（下の状態ディレクトリ）にあります。
 
 v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 
@@ -53,14 +53,14 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 - 入力：`run` が示すツール一覧の入力スキーマにあるフィールドです。新しい入力は、省略できるものとしてだけマイナーリリースで増えます。メジャーバージョンの間、入力を削除したり、必須にしたり、意味を変えたりはしません。
 - 出力：`run` が示すツール一覧の出力スキーマにあるフィールドと、`status` と `capture_stats`（スキーマで中身を決めていないもの）については下に挙げたフィールドです。新しいフィールドはマイナーリリースで増えることがあるので、エージェントは知らないフィールドを無視してください。メジャーバージョンの間、フィールドを削除したり意味を変えたりはしません。
 - 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
-- 人が読む文を入れるフィールド（`next_steps`、`note`、`msg`、`rules_error` や `active_presets_error` などのエラーのフィールド）はなくなりませんが、文面は変わりえます。
+- 人が読む文を入れるフィールド（`next_steps`、`note`、`msg`、`list_rules` と `explain_rules` の `rules_error` や、`active_presets_error` などのエラーのフィールド）はなくなりませんが、文面は変わりえます。
 
 #### `status` と `reqcove status --json`
 
 `reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります（ユニットテスト）。そのフィールド：
 
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
-- `node`：`backend`、`auth_url`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のもので、約束しません。
+- `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のもので、約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
 #### `capture_stats`
@@ -117,9 +117,10 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - `mitmproxy/mitmproxy-ca-cert.pem`：CA の証明書。このコンピュータやブラウザに信頼させるときに使います（[ガイド](guide.ja.md#ios-シミュレーターを記録する--local-proxy)）。
 - `mitmproxy/` 全体と、その中の `mitmproxy/mitmproxy-ca.pem`（CA の秘密鍵と証明書）：別のコンピュータと同じ CA を使うときにコピーします（[ガイド](guide.ja.md#2-台のコンピュータで同じ-ca-を使う)）。
 - `lan-allowed`：LAN モードが中継するアドレス。`reqcove lan` で変えてください。
+- `mcp-token` と `ui-token`：`--mcp-http` と `--ui` のトークン。エージェントやブラウザに渡すときに読み、作り直すときに消します（[ガイド](guide.ja.md)）。
 - `ca-copies`（`~/.reqcove` だけ）：その CA をコピーした状態ディレクトリの一覧。`reqcove cleanup` が名前を挙げます。
 
-ほかのファイル（`mcp.sock`、`tsnet/`、トークン、ログ、pid やプロキシ設定のファイル）は Reqcove 内部のもので、どのリリースでも変わりえます。
+ほかのファイル（`mcp.sock`、`tsnet/`、ログ、pid やプロキシ設定のファイル）は Reqcove 内部のもので、どのリリースでも変わりえます。
 
 ### Skill
 
@@ -144,4 +145,4 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです（テスト）。
 - `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。両方を同じバージョンにすること、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます（テスト）。
 - この `reqcove mcp` にあって `run` にないツール：プリセット、ルール、マーカーのツールは、動いている reqcove（そのバージョン）にそのツールがないと答えます（テスト）。それ以外は `run` 自身のエラー（知らないツール）がそのまま返ります（テスト）。
-- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります（テストで確認）。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます（テストで確認）。v0.6 や v0.7 の `reqcove status` と `reqcove mcp` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードを読んだだけです）。
+- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります（テストで確認）。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます（テストで確認）。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードを読んだだけです）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。

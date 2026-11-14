@@ -665,7 +665,8 @@ other ways from reading code). This computer's lookup can
 disagree with the device's (the exit node asks `--dns`, 1.1.1.1 by default,
 and a CDN may answer resolvers differently): such a request then goes without
 the rule; a `resolve` rule for the name avoids that (from reading code, not
-tried with a CDN). Sending such a request to its Host instead was not done:
+tried with a CDN), except through `--upstream-proxy`, which takes no
+`resolve`: there such a request stays without the rule. Sending such a request to its Host instead was not done:
 mitmproxy would look the name up itself, past the exit node's refusals of this
 computer and the LAN (from reading its code).
 `map_remote` and `resolve` make mitmproxy connect, from this computer, where the
@@ -852,7 +853,11 @@ and the agent keeps the token until you delete `mcp-token` and restart `run`.
 The tools are the same as over `reqcove mcp` but the preset ones,
 `list_rules` and `explain_rules`, and the marker tools (`add_marker`,
 `list_markers`), which `--mcp-http`'s own server does not have
-(a test), and give the same masked records.
+(a test), and give the same masked records. Its `capture_stats` and `status`
+leave out the `resolve` rules and the upstream proxy's address (a test), but
+not `rules_error`: when a `--rules-reload` change fails on a `resolve` line,
+the error (and `status`'s `next_steps`, which quotes it) can name that line's
+host and address (found by a review; from reading code).
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
 Each device may call about 10 times a second (30 at once); past that it gets

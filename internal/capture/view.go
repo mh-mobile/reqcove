@@ -133,7 +133,7 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 
 // omittedBody is what a head that is not text says instead: nothing in it can
 // be checked for secrets, so it is not handed out while masking is on.
-const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
+const omittedBody = "omitted: not text, so it cannot be checked for secrets (not returned while masking is on)"
 
 // bodyOut: the caller holds s.mu.
 func (s *Store) bodyOut(b Body, headers [][2]string) (string, string) {
