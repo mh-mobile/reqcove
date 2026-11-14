@@ -224,7 +224,8 @@ func (s *Store) Stats() map[string]any {
 		"pass_hosts": orNone(s.allow.PassHosts), "refused_hosts": s.refusedLocked(),
 		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
-		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream, "mock_presets": orNone(s.hello.Presets),
+		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream, "presets": orNone(s.hello.Presets),
+		"mock_presets": orNone(s.hello.Presets), // v0.6's name for presets, removed in v1.0
 	}
 	if !s.rulesLoaded.IsZero() {
 		out["rules_loaded"] = s.rulesLoaded.Format("2006-01-02T15:04:05.000Z07:00") // an agent that saved the file sees whether it was taken
