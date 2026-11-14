@@ -223,8 +223,27 @@ func TestLocalProxyTakenStopsFirst(t *testing.T) {
 func TestMcpHint(t *testing.T) {
 	t.Setenv("REQCOVE_CONTAINER", "1")
 	host, _ := os.Hostname()
-	if got := mcpHint(defaultState(), "reqcove"); got != "claude mcp add "+shellWord(host)+" -- docker run -i --rm --network none --log-driver none --volumes-from "+shellWord(host)+" reqcove mcp" {
-		t.Errorf("in a container: %q", got)
+	defer func(p, d string) { podmanEnvFile, dockerEnvFile = p, d }(podmanEnvFile, dockerEnvFile)
+	marker := filepath.Join(t.TempDir(), "marker")
+	os.WriteFile(marker, nil, 0o600)
+	for _, c := range []struct{ podman, docker, engine string }{
+		{marker, "/nonexistent", "podman run"},
+		{"/nonexistent", marker, "docker run"},
+		{marker, marker, "podman run"}, // Podman's own marker first
+		{"/nonexistent", "/nonexistent", "docker run"},
+	} {
+		podmanEnvFile, dockerEnvFile = c.podman, c.docker
+		if got := mcpHint(defaultState(), "reqcove"); got != "claude mcp add "+shellWord(host)+" -- "+c.engine+" -i --rm --network none --log-driver none --volumes-from "+shellWord(host)+" reqcove mcp" {
+			t.Errorf("in a container (%+v): %q", c, got)
+		}
+	}
+	podmanEnvFile, dockerEnvFile = "/nonexistent", "/nonexistent"
+	if got := containerEngineNote(); got != "; under Podman, podman run in place of docker run" {
+		t.Errorf("engine unknown: %q", got)
+	}
+	podmanEnvFile = marker
+	if got := containerEngineNote(); got != "" {
+		t.Errorf("podman: %q", got)
 	}
 	os.Unsetenv("REQCOVE_CONTAINER")
 	if got := mcpHint(defaultState(), "reqcove"); got != "claude mcp add reqcove -- reqcove mcp" {
@@ -288,6 +307,23 @@ func TestCommandsCarryState(t *testing.T) {
 	}
 	other := filepath.Join(t.TempDir(), ".reqcove-b")
 	out := captureStdout(t, func() error { return offlineStatus(other, "/nonexistent/uvx") })
+	if !strings.Contains(out, "never started here") {
+		t.Errorf("no state yet:\n%s", out)
+	}
+	// tsnet writes its machine key before any login, the profiles after one.
+	os.MkdirAll(filepath.Join(other, "tsnet"), 0o700)
+	for state, want := range map[string]string{
+		`{"_machinekey":"bWtleQ=="}`:                                "not logged in yet",
+		`{"_machinekey":"bWtleQ==","_profiles":"e30="}`:             "not logged in yet",    // {}: logged out
+		`{"_machinekey":"bWtleQ==","_profiles":"eyJhYmNkIjp7fX0="}`: "has logged in before", // {"abcd":{}}
+		`not json`: "not logged in yet",
+	} {
+		os.WriteFile(filepath.Join(other, "tsnet", "tailscaled.state"), []byte(state), 0o600)
+		if out := captureStdout(t, func() error { return offlineStatus(other, "/nonexistent/uvx") }); !strings.Contains(out, "node:  "+want) {
+			t.Errorf("%s: no %q in\n%s", state, want, out)
+		}
+	}
+	os.RemoveAll(filepath.Join(other, "tsnet"))
 	for _, want := range []string{"`reqcove run --state " + other + "` will ask", "reqcove run --device NAME --allow-hosts api.example.com --state " + other, "the first `reqcove run --state " + other + "` copies"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
@@ -396,5 +432,19 @@ func TestHomeTilde(t *testing.T) {
 	t.Setenv("HOME", "~/h")
 	if err := status(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "HOME is ~/h") {
 		t.Errorf("got %v", err)
+	}
+}
+
+// Another --state's notes: --hostname only when a tailnet node has a name
+// (--lan refuses it).
+func TestStateNotes(t *testing.T) {
+	if got := strings.Join(stateNotes("/x/b", "reqcove", false), "\n"); !strings.Contains(got, "give --hostname") || !strings.Contains(got, "reqcove status --state /x/b") {
+		t.Errorf("tailnet: %s", got)
+	}
+	if got := strings.Join(stateNotes("/x/b", "reqcove", true), "\n"); strings.Contains(got, "hostname") || !strings.Contains(got, "reqcove status --state /x/b") {
+		t.Errorf("--lan: %s", got)
+	}
+	if got := stateNotes(defaultState(), "reqcove", false); len(got) != 0 {
+		t.Errorf("default state: %q", got)
 	}
 }

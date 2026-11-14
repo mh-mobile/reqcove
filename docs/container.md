@@ -92,8 +92,11 @@ Times in the records carry the container's time zone, UTC by default.
   host is `host.docker.internal` on Docker Desktop and OrbStack (not tried). Bind
   a folder for `--rules` (`-v ./rules:/rules:ro`, then `--rules /rules/x.yaml`),
   and the same for `--proto`.
-- The commands `run` prints (`claude mcp add … reqcove mcp`, `reqcove status`)
-  are the host's; use the forms above.
+- `run` prints the agent command above with `podman run` under Podman (it
+  looks for `/run/.containerenv`) and `docker run` under Docker
+  (`/.dockerenv`); with neither, `docker run` and a note to use `podman run`
+  under Podman (unit tests; not tried under Podman). Its other commands
+  (`reqcove status`) are the host's: `docker exec $NAME …` as above.
 - Over a VM's network the tailnet may relay more (DERP); speed was not measured.
 
 ## Several environments

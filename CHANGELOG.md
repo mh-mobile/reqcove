@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### For people
+
+- Fixes from a try on Ubuntu 24.04 and with Podman (unit tests):
+  - `reqcove status` with no run says "not logged in yet" for a node that
+    started but never logged in (tsnet's state file holds no profile), not
+    "has logged in before".
+  - `run --lan` with another `--state` no longer suggests `--hostname`
+    (refused with `--lan`).
+  - No empty "carrying traffic from " line at LAN mode's start or after
+    `reqcove lan deny` of the last client; the exit node's same line goes
+    through the same check (not tried with a tailnet).
+  - The service's PATH (systemd unit, launchd plist) lists uvx's directory once
+    when it is `~/.local/bin`.
+  - In a container, `run` prints the agent command with `podman run` under
+    Podman (`/run/.containerenv`), `docker run` under Docker (`/.dockerenv`),
+    and with neither a note to use `podman run` under Podman; not tried under
+    Podman. docs/container.md said `run` printed the host's form of that
+    command; it did not.
+  - The guide's `--state` row names `~/.reqcove/ca-copies`, the list of the
+    directories its CA was copied into (as docs/SECURITY.md did).
+
 ### For agents
 
 - `status` (and `reqcove status --json`) has `active_presets`, the presets on

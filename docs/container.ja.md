@@ -55,7 +55,7 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 - macOS：Mac がスリープすると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
 - `-t` を付けなければ、`docker logs` にログイン用の URL とトークンは残りません。付けると、コンテナを消すまで残ります。トークンは、volume の中のファイルを消すまで有効です。`--log-opt max-size=10m` でログの大きさを抑えられます。
 - `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。`--proto` も同じです。
-- `run` が表示するコマンド（`claude mcp add … reqcove mcp`、`reqcove status`）は、ホスト向けの形です。上の形に読み替えてください。
+- `run` は、上のエージェントのコマンドを、Podman では `podman run`（`/run/.containerenv` で見分けます）、Docker では `docker run`（`/.dockerenv`）で表示します。どちらもなければ `docker run` で表示し、Podman では `podman run` にするよう書き添えます（単体テストで確かめました。Podman ではまだ試していません）。ほかのコマンド（`reqcove status`）はホスト向けの形です。上のように `docker exec $NAME …` で使ってください。
 - VM のネットワーク越しでは、tailnet の通信が中継（DERP）になりやすいかもしれません。速さは測っていません。
 
 ## 複数の環境
