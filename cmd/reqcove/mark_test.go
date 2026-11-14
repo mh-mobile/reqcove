@@ -62,8 +62,8 @@ func TestMark(t *testing.T) {
 }
 
 // A run that takes the connection but never answers (stopped with Ctrl-Z):
-// mark gives up after the handshake's time, as reqcove mcp does.
-func TestMarkHandshakeTimeout(t *testing.T) {
+// mark, status and har give up after the handshake's time, as reqcove mcp does.
+func TestHandshakeTimeout(t *testing.T) {
 	dir, _ := os.MkdirTemp("/tmp", "rcvm-")
 	defer os.RemoveAll(dir)
 	ln, err := net.Listen("unix", filepath.Join(dir, "mcp.sock"))
@@ -83,14 +83,50 @@ func TestMarkHandshakeTimeout(t *testing.T) {
 	old := mcpserver.Handshake
 	mcpserver.Handshake = 200 * time.Millisecond
 	defer func() { mcpserver.Handshake = old }()
-	done := make(chan error, 1)
-	go func() { done <- sendMark(context.Background(), io.Discard, dir, "x") }()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "did not answer") {
-			t.Errorf("%v", err)
+	for name, f := range map[string]func() error{
+		"mark":   func() error { return sendMark(context.Background(), io.Discard, dir, "x") },
+		"status": func() error { return status(context.Background(), []string{"--state", dir}) },
+		"har":    func() error { return har(context.Background(), []string{"--state", dir}) },
+	} {
+		done := make(chan error, 1)
+		go func() { done <- f() }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "did not answer") {
+				t.Errorf("%s: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s waits for a run that does not answer", name)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("mark waits for a run that does not answer")
+	}
+}
+
+// While a run holds the state but serves no socket yet (mitmproxy starting,
+// up to 2 minutes) or any more (stopping), status says so, not "not running,
+// start it"; har and mark too.
+func TestStatusWhileStarting(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) })
+	if !strings.Contains(out, "reqcove is starting, or stopping") || strings.Contains(out, "not running") {
+		t.Errorf("status while starting:\n%s", out)
+	}
+	if err := har(context.Background(), []string{"--state", dir}); err == nil || !strings.Contains(err.Error(), "starting") {
+		t.Errorf("har: %v", err)
+	}
+	if err := sendMark(context.Background(), io.Discard, dir, "x"); err == nil || !strings.Contains(err.Error(), "starting") {
+		t.Errorf("mark: %v", err)
+	}
+	unlock()
+	if out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) }); !strings.Contains(out, "reqcove is not running") {
+		t.Errorf("status once the lock is free:\n%s", out)
+	}
+	empty := t.TempDir()
+	captureStdout(t, func() error { return status(context.Background(), []string{"--state", empty}) })
+	if exists(filepath.Join(empty, "lock")) {
+		t.Error("status made a lock file")
 	}
 }

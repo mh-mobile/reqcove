@@ -60,6 +60,13 @@
 - LAN mode refuses this computer's other networks before letting Apple's
   17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
   neighbours were reachable (found by a code review; unit test).
+- Through a `--uvx` wrapper (a path not named `uvx`), the default mitmproxy
+  gets the lock's tornado, 6.6.1, not 6.5.10, whose vulnerabilities are in
+  mitmweb's server (`--web`): the lock's override and its date for tornado
+  are passed to uvx (tried with uv 0.13.4; the other packages come at the
+  lock's versions, and the `--web` tests pass through a wrapper). Another
+  `--mitmproxy-spec` still gets the tornado its mitmproxy asks for
+  ([SECURITY](docs/SECURITY.md#mitmproxys-own-code)).
 - Masking catches more of what an app sends: a credential behind JSON's
   escapes (`Basic\t…`, `\/` in a token, also in a string cut at 64 KiB); the
   rest of a secret-named line (`password: …`) even when a token sits in it;
@@ -76,6 +83,22 @@
   secret word with a number after it (`key1`, `pin2`) and `primaryKey`, which
   were not secret (found by a code review; unit tests, an E2E test for the
   joined `Set-Cookie`, and the fuzz test for the `.env` line).
+
+### Removed
+
+- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`,
+  `activate_preset` and `deactivate_preset`, which take mocks and the other
+  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
+  `active_presets` and `active_presets_error`), and `capture_stats`'
+  `mock_presets` (use `presets`). No tool list has them, local or
+  `--mcp-http`, nor does a tool description or the server's instructions
+  (unit tests). A call to one of the tools, from a script or from an agent
+  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
+  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
+  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
+  (from reading its code). `reqcove status` still reads the old fields from a
+  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
 
 ### Fixed
 
@@ -103,25 +126,22 @@ Found by a code review of v0.8.0; each test fails without its fix.
   stayed open for good and the addon's counters were counted twice. Test
   with a stand-in mitmdump (`addon_dropped_events`; the other counters come
   the same way, from reading code).
-
-### Removed
-
-- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
-  `activate_mock` and `deactivate_mock` (use `list_presets`,
-  `activate_preset` and `deactivate_preset`, which take mocks and the other
-  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
-  `active_presets` and `active_presets_error`), and `capture_stats`'
-  `mock_presets` (use `presets`). No tool list has them, local or
-  `--mcp-http`, nor does a tool description or the server's instructions
-  (unit tests). A call to one of the tools, from a script or from an agent
-  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
-  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
-  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
-  (from reading its code). `reqcove status` still reads the old fields from a
-  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
-
-### Fixed
-
+- `run --local-proxy … 2>&1 | tee FILE`, stopped with Ctrl-C (which stops
+  `tee` too), left the system's web proxies pointed at the local proxy:
+  `run`'s next line to the closed pipe killed it (SIGPIPE) before it put them
+  back (from reading code; not tried with the real system proxy). A write to
+  a closed stdout or stderr now fails instead, and the proxies are put back
+  before anything is logged (unit tests: a `run` whose stderr is closed exits
+  as usual, where it was killed by SIGPIPE; nothing is logged before the
+  proxies are back).
+- `reqcove status`, while `run` starts (mitmproxy first, up to 2 minutes) or
+  stops, said reqcove was not running and how to start it: it says it is
+  starting, or stopping, as do `reqcove har` and `reqcove mark` (unit test).
+- `reqcove status` and `reqcove har`, against a `run` stopped with Ctrl-Z,
+  waited forever: they give up after 5 seconds, as `reqcove mark` and
+  `reqcove mcp` do (unit test).
+- `--proxy-port` out of 0 to 65535 is refused: in LAN mode 65616 would have
+  listened on port 80 (from reading code; unit test of the refusal).
 - With `--rules-reload` and a preset in the file, saving it could freeze
   `run` (v0.7.0–v0.8.0): nothing more was recorded, and the MCP tools,
   `reqcove status` and `--ui` stopped answering (they all wait on the store)

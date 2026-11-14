@@ -818,12 +818,55 @@ func TestPyCommand(t *testing.T) {
 	if bin, _ := PyCommand(Config{Uvx: "uvx", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "uv" {
 		t.Errorf("uvx on PATH: %s", bin)
 	}
-	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
-		t.Errorf("a --uvx not named uvx: %s", bin)
+	// A --uvx not named uvx: the lock's tornado (mitm.py), no hashes.
+	bin, args = PyCommand(Config{Uvx: "/usr/bin/false", Python: "3.14", MitmSpec: LockedMitmSpec, Dir: "/s"}, "mitmdump")
+	if want := "--python 3.14 --exclude-newer " + UVExcludeNewer + " --exclude-newer-package tornado=" + lockExcludeNewer + " --overrides /s/mitm-overrides.txt --from mitmproxy==12.3.1 python /s/mitm.py mitmdump"; bin != "/usr/bin/false" || strings.Join(args, " ") != want {
+		t.Errorf("a --uvx not named uvx: %s %q", bin, args)
 	}
 	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3", Dir: "/s"}, "mitmdump")
-	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 python /s/mitm.py mitmdump") {
+	if want := "--python 3.14 --exclude-newer " + UVExcludeNewer + " --from mitmproxy==12.2.3 python /s/mitm.py mitmdump"; bin != "uvx" || strings.Join(args, " ") != want {
 		t.Errorf("other spec: %s %q", bin, args)
+	}
+}
+
+// TestLockMeta: the locked mitmproxy through uvx (a --uvx wrapper) takes
+// mitm.py's overrides, and its date for tornado, as uv run --script does.
+func TestLockMeta(t *testing.T) {
+	for _, w := range []string{
+		"# exclude-newer = \"" + lockExcludeNewer + "\"\n",
+		"# override-dependencies = [\"" + strings.TrimSpace(lockOverrides) + "\"]",
+		"# dependencies = [\"" + LockedMitmSpec + "\"]\n",
+	} {
+		if !strings.Contains(string(mitmPy), w) {
+			t.Errorf("mitm.py has no %q", w)
+		}
+	}
+}
+
+// TestWrapperTornado (REQCOVE_E2E=1): through a --uvx wrapper, the locked
+// mitmproxy gets the lock's tornado (6.6.1), not the 6.5.10 mitmproxy 12.3.1
+// caps it at, which has known vulnerabilities (mitmweb's server).
+func TestWrapperTornado(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	dir := t.TempDir()
+	for f, b := range scriptFiles {
+		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrapper := filepath.Join(dir, "my-uvx")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec uvx \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin, args := PyCommand(Config{Uvx: wrapper, Python: "3.14", MitmSpec: LockedMitmSpec, Dir: dir}, "python")
+	out, err := exec.Command(bin, append(args, "-I", "-c", "import tornado, mitmproxy.version as m; print(tornado.version, m.VERSION)")...).Output()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "6.6.1 12.3.1" {
+		t.Errorf("tornado and mitmproxy through a wrapper: %s", got)
 	}
 }
 

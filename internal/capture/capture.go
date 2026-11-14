@@ -42,7 +42,16 @@ var mitmPy []byte
 var mitmLock []byte
 
 // scriptFiles are what Start writes into the state directory for mitmproxy.
-var scriptFiles = []string{"addon.py", "mitm.py", "mitm.py.lock"}
+var scriptFiles = map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock, "mitm-overrides.txt": []byte(lockOverrides)}
+
+// mitm.py's exclude-newer and override-dependencies (TestLockMeta keeps them
+// in step), for the locked mitmproxy through uvx (a --uvx wrapper): the
+// lock's tornado, not the older one mitmproxy 12.3.1 caps it at; the other
+// packages from before UVExcludeNewer, as for another spec; no hashes.
+const (
+	lockExcludeNewer = "2026-11-14T00:00:00Z"
+	lockOverrides    = "tornado>=6.6.1\n"
+)
 
 // LockedMitmSpec is the mitmproxy that mitm.py.lock pins. With another
 // --mitmproxy-spec, mitmproxy comes through uvx, its files unchecked.
@@ -56,7 +65,11 @@ func PyCommand(cfg Config, tool string) (string, []string) {
 		uv := filepath.Join(filepath.Dir(cfg.Uvx), "uv") // "uv" itself when uvx is on PATH
 		return uv, []string{"run", "--locked", "--no-project", "--python", cfg.Python, "--script", filepath.Join(cfg.Dir, "mitm.py"), tool}
 	}
-	args := []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+	args := []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer}
+	if cfg.MitmSpec == LockedMitmSpec { // a wrapper: the lock's tornado
+		args = append(args, "--exclude-newer-package", "tornado="+lockExcludeNewer, "--overrides", filepath.Join(cfg.Dir, "mitm-overrides.txt"))
+	}
+	args = append(args, "--from", cfg.MitmSpec, tool)
 	if tool != "python" { // mitmdump and mitmweb through the launcher too, for the SOCKS socket (mitm.py)
 		args = append(args[:len(args)-1], "python", filepath.Join(cfg.Dir, "mitm.py"), tool)
 	}
@@ -194,13 +207,13 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		}
 		os.Remove(sock)
 		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
-		for _, f := range scriptFiles {
+		for f := range scriptFiles {
 			os.Remove(filepath.Join(cfg.Dir, f))
 		}
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
-	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+	for f, b := range scriptFiles {
 		if err := os.WriteFile(filepath.Join(cfg.Dir, f), b, 0o600); err != nil {
 			return fail(err)
 		}
@@ -483,7 +496,7 @@ func (c *Capture) Stop() {
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
 	os.Remove(filepath.Join(c.cfg.Dir, ControlSock))
-	for _, f := range scriptFiles {
+	for f := range scriptFiles {
 		os.Remove(filepath.Join(c.cfg.Dir, f))
 	}
 	if c.WebURL != "" {

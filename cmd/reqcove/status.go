@@ -4,11 +4,11 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"golang.org/x/net/publicsuffix"
 	"io"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -216,13 +216,14 @@ func status(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "note: "+n) // stderr: --json stays clean
 	}
 
-	conn, err := net.Dial("unix", filepath.Join(*state, "mcp.sock"))
-	if err != nil {
+	session, err := dialRun(ctx, *state, "reqcove-status")
+	switch {
+	case errors.Is(err, errNotRunning):
 		return offlineStatus(*state, *uvx)
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "reqcove-status", Version: "dev"}, nil)
-	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
-	if err != nil {
+	case errors.Is(err, errStarting):
+		fmt.Println(err)
+		return nil
+	case err != nil:
 		return err
 	}
 	defer session.Close()

@@ -270,7 +270,7 @@ func CheckRulesPython(ctx context.Context, cfg Config, path string) (string, err
 		return "", err
 	}
 	defer os.RemoveAll(dir)
-	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+	for f, b := range scriptFiles {
 		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
 			return "", err
 		}
