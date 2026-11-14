@@ -442,8 +442,11 @@ func maskLines(s string, loneCode bool) string {
 	}
 	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
 		sub := lineFieldRE.FindStringSubmatch(m)
-		v := sub[4]
-		if !secretKind(sub[2], loneCode) || maskedValueRE.MatchString(v) {
+		v, done := sub[4], sub[4]
+		if strings.Contains(sub[3], "=") {
+			done, _, _ = strings.Cut(v, "&") // a form's field (password=[redacted]&user=bob): its value ends at &
+		}
+		if !secretKind(sub[2], loneCode) || maskedValueRE.MatchString(done) {
 			return m
 		}
 		// The whole value; "Bearer [redacted]" keeps the scheme when the value is that credential alone.

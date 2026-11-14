@@ -414,6 +414,9 @@ func TestV080OpusReview(t *testing.T) {
 			t.Errorf("form with a newline: %q", got)
 		}
 	}
+	if got := string(maskBody([]byte("x=1\npassword=[redacted]S3CRET6b&user=bob\n"), "text/plain", true)); got != "x=1\npassword=[redacted]\n" {
+		t.Errorf("a value only starting like a marker: %q", got)
+	}
 	env := "DEBUG=true\nAPI_KEY=S3CRET7\n  DB_PASSWORD = \"S3CRET8\"\nexport AUTH_TOKEN=S3CRET9\nNAME=app\n"
 	for _, got := range []string{string(maskBody([]byte(env), "text/plain", false)), maskWSMessage(env, false)} {
 		if got != "DEBUG=true\nAPI_KEY=[redacted]\n  DB_PASSWORD = [redacted]\nexport AUTH_TOKEN=[redacted]\nNAME=app\n" {
