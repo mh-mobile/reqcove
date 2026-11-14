@@ -89,6 +89,18 @@ func caCopiesOf(sha256 string) []string {
 	return dirs
 }
 
+// stateNotes are run's notes for a --state other than the default one.
+func stateNotes(state, hostname string, lan bool) []string {
+	if isDefaultState(state) {
+		return nil
+	}
+	notes := []string{"this node's commands take --state too: " + withState("reqcove status", state)}
+	if hostname == "reqcove" && !lan { // LAN mode has no tailnet node, and refuses --hostname
+		notes = append(notes, "the node is named reqcove, as the default state's is: give --hostname, or name --state reqcove-NAME, to tell them apart")
+	}
+	return notes
+}
+
 func keepNodeName(state, name string) error {
 	return os.WriteFile(filepath.Join(state, nodeNameFile), []byte(name+"\n"), 0o600)
 }
@@ -119,13 +131,36 @@ func pickWebPort() (int, error) {
 	return 0, fmt.Errorf("--web: ports 8081 and 8091-8099 on 127.0.0.1 are all taken")
 }
 
+// The files Podman and Docker put in their containers.
+var podmanEnvFile, dockerEnvFile = "/run/.containerenv", "/.dockerenv"
+
+// containerEngine names the engine this container runs under: docker when
+// neither file says (known false).
+func containerEngine() (engine string, known bool) {
+	if _, err := os.Stat(podmanEnvFile); err == nil {
+		return "podman", true
+	}
+	_, err := os.Stat(dockerEnvFile)
+	return "docker", err == nil
+}
+
+// containerEngineNote follows mcpHint's commands in run's log when the image
+// cannot tell Docker from Podman.
+func containerEngineNote() string {
+	if _, known := containerEngine(); os.Getenv("REQCOVE_CONTAINER") == "" || known {
+		return ""
+	}
+	return "; under Podman, podman run in place of docker run"
+}
+
 // mcpHint is the command that registers this node's agent tools in Claude Code.
 func mcpHint(state, name string) string {
 	if os.Getenv("REQCOVE_CONTAINER") != "" {
 		// In the image: the container is named as its hostname (docs/container.md).
 		c, _ := os.Hostname()
 		c = shellWord(cmp.Or(c, "NAME"))
-		return fmt.Sprintf("claude mcp add %s -- docker run -i --rm --network none --log-driver none --volumes-from %s reqcove mcp", c, c)
+		engine, _ := containerEngine()
+		return fmt.Sprintf("claude mcp add %s -- %s run -i --rm --network none --log-driver none --volumes-from %s reqcove mcp", c, engine, c)
 	}
 	if isDefaultState(state) {
 		return "claude mcp add reqcove -- reqcove mcp"

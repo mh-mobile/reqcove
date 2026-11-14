@@ -181,7 +181,7 @@ func runLAN(ctx context.Context, cfg Config) error {
 		current.Store(p)
 		if ids := fmt.Sprint(names); ids != lastIDs {
 			lastIDs = ids
-			log.Printf("carrying traffic from %s", strings.Join(slices.Sorted(maps.Values(names)), ", "))
+			logCarrying(names)
 			if cfg.OnDevices != nil {
 				cfg.OnDevices(names)
 			}
