@@ -102,7 +102,7 @@ func run(ctx context.Context, args []string) error {
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: o.allow, NoRedact: o.noRedact, Rules: o.rules, RulesReload: o.rulesReload, WebPort: webLocal, WebPassword: webToken,
-		Upstream: o.upstream, UpstreamCA: upstreamCAFile,
+		Upstream: o.upstream, UpstreamCA: upstreamCAFile, RestartDelay: restartDelay,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
@@ -123,11 +123,8 @@ func run(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		<-cap.Done()
-		if ctx.Err() == nil {
-			log.Printf("%v (log: %s)", cap.Err(), mitmLog.Name())
-			cancel()
-		}
+		<-cap.Done() // mitmproxy gave up (or ctx ended): the node stops too
+		cancel()
 	}()
 	var node nodeState
 	if o.lanMode {
@@ -170,10 +167,20 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	}
 	if ctx.Err() != nil {
-		return nil // Ctrl-C, or mitmproxy failed (already logged)
+		select {
+		case <-cap.Done(): // Err is set before Done closes
+			if err := cap.Err(); err != nil {
+				return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name()) // not 0: a service sees it failed
+			}
+		default:
+		}
+		return nil // Ctrl-C
 	}
 	return err
 }
+
+// restartDelay is capture's first wait before restarting mitmdump (0: its 1s); a var for tests.
+var restartDelay time.Duration
 
 // caName names a new CA after this machine and the day, so an iPhone holding
 // CAs from several machines can tell their profiles apart.

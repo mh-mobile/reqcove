@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -115,5 +118,85 @@ func TestRulesReloadPresetsE2E(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("flows recorded: %v", c.Store.Stats()["flows"])
 		}
+	}
+}
+
+// fakeMitmdump stands in for uv's mitmdump: its first run says hello and
+// lives until killed; every later run exits at once, so the restarts fail.
+const fakeMitmdump = `#!/usr/bin/env python3
+import json, os, socket, sys, time
+d = os.environ["FAKE_DIR"]
+n = len(os.listdir(os.path.join(d, "runs"))) + 1
+open(os.path.join(d, "runs", str(n)), "w").write(str(os.getpid()))
+if n > 1:
+    sys.exit(3)
+path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("reqcove_socket="))
+s = socket.socket(socket.AF_UNIX); s.connect(path)
+s.sendall((json.dumps({"v": 2, "ev": "hello", "mitmproxy": "fake"}) + "\n").encode())
+time.sleep(600)
+`
+
+// When mitmproxy keeps failing and reqcove gives up on it, run returns an
+// error (exits non-zero), not nil as for Ctrl-C: a service sees it failed.
+func TestRunFailsWhenMitmproxyGivesUp(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "rcvf-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	os.Mkdir(filepath.Join(dir, "runs"), 0o700)
+	fake := filepath.Join(dir, "fakeuv") // not "uvx": that would run the uv beside it
+	os.WriteFile(fake, []byte(fakeMitmdump), 0o700)
+	t.Setenv("FAKE_DIR", dir)
+	state := filepath.Join(dir, "s")
+	if err := claimState(state); err != nil {
+		t.Fatal(err)
+	}
+	os.Mkdir(filepath.Join(state, "mitmproxy"), 0o700)
+	for _, f := range capture.CAFiles { // a CA there already: run does not ask the fake to make one
+		os.WriteFile(filepath.Join(state, "mitmproxy", f), nil, 0o600)
+	}
+	restartDelay = time.Millisecond
+	t.Cleanup(func() { restartDelay = 0 })
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"--lan", "--lan-interface", loopback(t), "--proxy-port", fmt.Sprint(port),
+			"--allow-hosts", "api.example.com", "--state", state, "--uvx", fake})
+	}()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
+			c.Close()
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("run ended before it was up: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run's LAN proxy never listened")
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "runs", "1"))
+	pid, _ := strconv.Atoi(string(b))
+	if pid == 0 {
+		t.Fatalf("no pid for the first mitmdump: %q", b)
+	}
+	syscall.Kill(pid, syscall.SIGKILL)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "gave up after") {
+			t.Errorf("run: %v, want mitmproxy's failure", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("run did not stop after mitmproxy gave up")
 	}
 }

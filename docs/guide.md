@@ -1434,7 +1434,9 @@ The main ones are in the [README](../README.md#limits). The rest:
   compressed message has been tried), so one huge message can use a lot of
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
-  minute after 5 restarts in a row, `run` stops.
+  minute after 5 restarts in a row, `run` stops with an error (exit status 1,
+  not the 0 of Ctrl-C, so a service shows it failed; tested with a stand-in
+  for mitmproxy that kept exiting).
 - A connection reqcove gives to mitmproxy waits for mitmproxy to connect to
   the server, as a direct one waits for the server: 10 seconds at most. The
   log then says `<address>:<port> did not answer within 10s (through

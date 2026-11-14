@@ -800,7 +800,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 
 - IPv6 は拒否します。アプリはすぐに IPv4 にフォールバックします。
 - QUIC は Apple 宛てを除いてドロップするので、アプリは TCP にフォールバックします。判定はホストではなくアドレスで行うため、`--allow-hosts` にないホストの QUIC も（`--allow-hosts` を指定しないときも）フォールバックします。443 番以外のポートの QUIC はそのまま通し、記録しません。
-- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します（mitmproxy のコードを読んだもので、圧縮されたメッセージは試していません）。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` が止まります。
+- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します（mitmproxy のコードを読んだもので、圧縮されたメッセージは試していません）。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` はエラーで止まります（終了ステータスは 1 で、Ctrl-C の 0 とは違います。サービスとして動かしていれば、失敗と表示されます。終了し続ける mitmproxy の代役で試しました）。
 - reqcove が mitmproxy に渡す接続は、mitmproxy がサーバーにつながるのを待ちます。直接つなぐ接続がサーバーを待つのと同じく、最長 10 秒です。そのときログには `<アドレス>:<ポート> did not answer within 10s (through mitmproxy)` と出ます。先にアプリがあきらめたときは `the client left before <アドレス>:<ポート> answered (through mitmproxy)` と出ます。どちらも、そのときサーバーが遅かったか、このコンピュータから届かなかったということです（応答しないアドレスで試しました。実際のアプリで出た 2 件が遅かった理由はわかっていません）。
 - Exit Node 経由の通話は未確認です。
 - 機能ごとの制限事項はそれぞれの節にあります：[`--ui`](#iphone-で見る--ui)、[`--web`](#mitmweb-で見る--web)、[`--local-proxy`](#ios-シミュレーターを記録する--local-proxy)、[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)、[ルール](#ルールを書く--rules)、[上流プロキシ](#上流プロキシに回す--upstream-proxy)。
