@@ -313,3 +313,42 @@ func TestRecoverCalls(t *testing.T) {
 		t.Errorf("%v %v", res, err)
 	}
 }
+
+// With masking off (--no-redact), every answer with flows in it says so at
+// its top (note), as the --ui page has a badge; with it on, none does.
+func TestUnmaskedNote(t *testing.T) {
+	for _, redact := range []bool{false, true} {
+		st := capture.NewStore(10, 1<<20)
+		st.SetScope(capture.HostRules{All: true}, redact)
+		for _, l := range []string{
+			`{"v":2,"ev":"request","id":"a","host":"h.example","url":"https://h.example/x","headers":[["Authorization","Bearer s3cret"]]}`,
+			`{"v":2,"ev":"response","id":"a","status":200}`,
+			`{"v":2,"ev":"done","id":"a"}`,
+			`{"v":2,"ev":"request","id":"b","host":"h.example","url":"https://h.example/y"}`,
+		} {
+			st.Apply([]byte(l))
+		}
+		ct, sst := mcp.NewInMemoryTransports()
+		if _, err := New(st, nil).Connect(context.Background(), sst, nil); err != nil {
+			t.Fatal(err)
+		}
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			tool string
+			args map[string]any
+		}{
+			{"list_flows", nil}, {"search_flows", map[string]any{"query": "h.example"}}, {"summarize", nil},
+			{"wait_for_flows", map[string]any{"timeout": 1}}, {"get_flow", map[string]any{"id": "a"}},
+			{"list_ws_messages", map[string]any{"id": "a"}}, {"diff_flows", map[string]any{"a": "a", "b": "b"}},
+		} {
+			got := call[map[string]any](t, session, c.tool, c.args)
+			if note, _ := got["note"].(string); strings.HasPrefix(note, "masking is off") == redact {
+				t.Errorf("%s (redacting %v): note %q", c.tool, redact, note)
+			}
+		}
+		session.Close()
+	}
+}

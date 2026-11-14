@@ -111,7 +111,11 @@ const presetRule = "Turn one on only for a test the user asked for in this conve
 func Servers(st *capture.Store, status func() StatusOut, remoteStatus func() StatusOut, p Presets) (local, remote *mcp.Server) {
 	local = New(st, status)
 	AddPresetTools(local, st, p)
-	return local, New(st, remoteStatus)
+	return local, newServer(st, func() StatusOut {
+		out := remoteStatus()
+		out.Capture = remoteStats(out.Capture)
+		return out
+	}, func() map[string]any { return remoteStats(st.Stats()) })
 }
 
 // AddPresetTools adds list_presets, activate_preset and deactivate_preset,
