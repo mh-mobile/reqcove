@@ -40,7 +40,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	// After JSON's: a tag's masked value can take a quote JSON's reading
 	// keys on ({"html": "<b data-token=x\"", "password": …} as text/html).
 	if html {
-		s = maskHTML(maskTokens(s)) // shapes first: masking a tag's unquoted value (to a space) would take "Bearer" from its token
+		s = maskHTML(maskTokensHTML(s)) // shapes first: masking a tag's unquoted value (to a space) would take "Bearer" from its token
 	}
 	if html || isScript(contentType) {
 		s = maskScript(s, request)
@@ -551,6 +551,35 @@ func maskTokens(s string) string {
 		})
 	}
 	return maskShapes(s)
+}
+
+// maskTokensHTML is maskTokens before maskHTML. A scheme's "credential" that
+// holds '=' before its padding is the next unquoted attribute (class=token
+// name=password): masked, it would take the name maskHTML reads. It is left,
+// and the search goes on from it, so that attribute's own value (class=token
+// value=Bearer x) is still found. The last maskTokens masks what is left.
+func maskTokensHTML(s string) string {
+	if !containsFold(s, "bearer") && !containsFold(s, "basic") && !containsFold(s, "token") {
+		return maskShapes(s)
+	}
+	var b strings.Builder
+	i := 0
+	for m := schemeRE.FindStringSubmatchIndex(s); m != nil; m = schemeRE.FindStringSubmatchIndex(s[i:]) {
+		cred, at := s[i+m[6]:i+m[7]], i+m[6]
+		switch {
+		case strings.Contains(strings.TrimRight(cred, "="), "="):
+			b.WriteString(s[i:at])
+			i = at // past the scheme at least: the loop ends
+		case credentialLike(cred):
+			b.WriteString(s[i:at] + "[redacted]")
+			i += m[7]
+		default:
+			b.WriteString(s[i : i+m[1]])
+			i += m[1]
+		}
+	}
+	b.WriteString(s[i:])
+	return maskShapes(b.String())
 }
 
 // maskShapes masks the tokenShapes, and the matches of --mask-values.
