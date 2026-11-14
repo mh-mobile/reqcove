@@ -220,6 +220,11 @@ class _Head:
 RULE_KINDS = ("mock", "map_remote", "map_local", "modify_headers", "resolve")  # mock and resolve are reqcove's own
 RULE_SETTINGS = ("keep_host_header",)  # reqcove's own: map_remote keeps the app's Host
 MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
+# Where a request is held while only its stream's end can say it has no body
+# (HTTP/2 without a length): server_connect refuses it, so if a body comes after
+# all, mitmproxy's start at streaming it fails there (a 502), never on to a server.
+HOLD = ("reqcove-hold.invalid", 1)
+HOLD_REFUSED = "reqcove: a body came with this request of unknown length that a mock or map_local may answer: refused, not held in memory"
 
 
 def _parse_rule(kind, spec, base):
@@ -1172,7 +1177,7 @@ class Reqcove:
             cannot += [f"mock[{i}]: its method and URL match; it answers one GraphQL operation (pass operation)" for i in wants_op]
         out["cannot_tell"] = cannot
         if seen or any(s.startswith(("mock", "map_local")) for s in said):
-            conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)")
+            conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped); over HTTP/2, a GET of unknown length that sends a body anyway gets a 502")
         if any(s.startswith("modify_headers") for s in said + now.get("response_rewrites", []) + [x for v in if_on.values() for x in v]):
             conditions.append("modify_headers apply only to a request that goes to its Host, and to its response: one sent to its Host's address (looked up on this computer), or over HTTPS with its Host as the TLS name, or that map_remote or resolve sends on; otherwise it goes on as the app sent it, and its response as the server sent it (their rewrites say not applied). A rule that changes Host is not applied to a request that map_remote or resolve does not send on (nor are the others)")
         if conditions:
@@ -1304,6 +1309,10 @@ class Reqcove:
         self.conn_device.pop(client.id, None)
         for k in [k for k in self.resolve_sni if k[0] == client.id]:
             del self.resolve_sni[k]
+
+    def server_connect(self, data):
+        if data.server.address == HOLD:
+            data.server.error = HOLD_REFUSED
 
     def tls_start_server(self, data):
         # A connection a resolve rule made: TLS says, and is checked for, the
@@ -1439,7 +1448,17 @@ class Reqcove:
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
             mocks = rules["mock"].candidates(flow)
-            if mocks and self._small_body(r):
+            small = self._small_body(r)
+            if small is None and (mocks or any(m.matches(flow) for m in rules["map_local"].replacements)):
+                # HTTP/2 without a length: mitmproxy streams it only if a body
+                # follows the headers (it alone knows the stream's end), and then
+                # to HOLD. One that ended with them goes on to request(), as below.
+                flow.metadata["reqcove_hold"] = (r.data.host, r.data.port)
+                r.data.host, r.data.port = HOLD
+                r.stream = True
+                flow.metadata["reqcove_pending"] = ev
+                return
+            if mocks and small:
                 # A mock may answer it: decided in request(), once the body (and a
                 # GraphQL operation in it) is in. Not streamed, so buffered: at most
                 # MAP_LOCAL_BODY. The event goes then, with what the rules did.
@@ -1598,7 +1617,7 @@ class Reqcove:
             # Its index, preset name and status, never its text.
             done.append(f"mock[{i}]" + (f" preset {preset}" if preset else "") + f": {status}" + (f", after {delay} ms" if delay else ""))
             return done
-        if self._small_body(flow.request):
+        if mocks or self._small_body(flow.request):  # mocks: from request(), the body is in
             rules["map_local"].request(flow)
         elif any(s.matches(flow) for s in rules["map_local"].replacements):
             # A local answer would make mitmproxy buffer the whole request body
@@ -1649,7 +1668,9 @@ class Reqcove:
 
     @staticmethod
     def _small_body(r):
-        """Whether a request's body is known to be at most MAP_LOCAL_BODY bytes."""
+        """Whether a request's body is known to be at most MAP_LOCAL_BODY bytes;
+        None: HTTP/2 (or 3) with no length, of a method that usually has no body,
+        where only the stream's end tells."""
         cl = r.headers.get("content-length")
         if cl is not None:
             try:
@@ -1657,7 +1678,9 @@ class Reqcove:
             except ValueError:
                 return False
         # No length: a body may follow (chunked, HTTP/2) unless the method takes none.
-        return r.method in ("GET", "HEAD", "OPTIONS", "DELETE") and "transfer-encoding" not in r.headers
+        if r.method not in ("GET", "HEAD", "OPTIONS", "DELETE") or "transfer-encoding" in r.headers:
+            return False
+        return None if r.is_http2 or r.is_http3 else True  # HTTP/1: no length and no chunks is no body
 
     @staticmethod
     def _modify_headers(flow, headers, direction, rules):
@@ -1693,6 +1716,8 @@ class Reqcove:
                 flow.response = http.Response.make(502, b"reqcove: a mock's fault: close could not close this request")
 
     async def _request(self, flow):
+        if hold := flow.metadata.pop("reqcove_hold", None):
+            flow.request.data.host, flow.request.data.port = hold  # its stream ended with the headers: no body
         ev = flow.metadata.pop("reqcove_pending", None)
         if ev is not None:
             try:

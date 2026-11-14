@@ -163,7 +163,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, resolve, presets []string, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string) // SetRulesLog; called with s.mu let go
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -263,9 +263,10 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 func (s *Store) Redacting() bool { return s.redact.Load() }
 
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
-// by kind, and resolve's targets), and why the file did not load when it did not
-// (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, problem string)) {
+// by kind, resolve's targets, the presets and the targets of those that send
+// requests elsewhere), and why the file did not load when it did not (the rules
+// before it then stay). f is called with the store unlocked: it may call it.
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
@@ -335,6 +336,12 @@ func (s *Store) Apply(line []byte) {
 			e.wsHead, e.wsNote = s.wsHead(&e)
 		}
 	}
+	var after func() // a callback, called once the lock is let go (it may call the store)
+	defer func() {
+		if after != nil {
+			after()
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -362,8 +369,8 @@ func (s *Store) Apply(line []byte) {
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
-		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.Resolve, e.Presets, e.RulesError)
+		if f := s.rulesLog; f != nil {
+			after = func() { f(e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError) }
 		}
 		return
 	case "pass_open":

@@ -268,8 +268,8 @@ func (s *Store) RulesLoaded() time.Time {
 }
 
 // PresetTargets are the map_remote and resolve presets' targets, by name, for
-// run's terminal, not capture_stats (resolve and upstream are there, but
-// --mcp-http's server leaves them out: mcpserver.remoteStats).
+// run's terminal, not capture_stats (a remote agent reads that; --mcp-http's
+// server leaves resolve and upstream out of it: mcpserver.remoteStats).
 func (s *Store) PresetTargets() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

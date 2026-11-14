@@ -103,7 +103,7 @@ func run(ctx context.Context, args []string) error {
 		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 		Log: mitmLog, ReadyTimeout: 2 * time.Minute,
 		AllowHosts: o.allow, NoRedact: o.noRedact, Rules: o.rules, RulesReload: o.rulesReload, WebPort: webLocal, WebPassword: webToken,
-		Upstream: o.upstream, UpstreamCA: upstreamCAFile,
+		Upstream: o.upstream, UpstreamCA: upstreamCAFile, RestartDelay: restartDelay,
 		CAName: caName(),
 		Logf:   func(f string, a ...any) { log.Printf(f+" (log: %s)", append(a, mitmLog.Name())...) },
 	})
@@ -118,17 +118,14 @@ func run(ctx context.Context, args []string) error {
 		if webLocal != exitnode.WebPort && !o.lanMode {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
-		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all")
+		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all (finished flows: one in progress counts once it ends)")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		<-cap.Done()
-		if ctx.Err() == nil {
-			log.Printf("%v (log: %s)", cap.Err(), mitmLog.Name())
-			cancel()
-		}
+		<-cap.Done() // mitmproxy gave up (or ctx ended): the node stops too
+		cancel()
 	}()
 	var node nodeState
 	if o.lanMode {
@@ -171,10 +168,20 @@ func run(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	}
 	if ctx.Err() != nil {
-		return nil // Ctrl-C, or mitmproxy failed (already logged)
+		select {
+		case <-cap.Done(): // Err is set before Done closes
+			if err := cap.Err(); err != nil {
+				return fmt.Errorf("mitmproxy: %w (log: %s)", err, mitmLog.Name()) // not 0: a service sees it failed
+			}
+		default:
+		}
+		return nil // Ctrl-C
 	}
 	return err
 }
+
+// restartDelay is capture's first wait before restarting mitmdump (0: its 1s); a var for tests.
+var restartDelay time.Duration
 
 // caName names a new CA after this machine and the day, so an iPhone holding
 // CAs from several machines can tell their profiles apart.
@@ -276,21 +283,21 @@ func logCapture(o *runOpts, cap *capture.Capture, upstreamCAFile string) {
 // each time it is taken again.
 func logRules(o *runOpts, cap *capture.Capture, s map[string]any) {
 	log.Printf("rules from %s: %v", o.rules, s["rules"])
-	logPresets := func(names []string) {
+	logPresets := func(names []string, targets map[string]string) {
 		if len(names) > 0 {
-			log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, cap.Store.PresetTargets()), ", "))
+			log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, targets), ", "))
 		}
 	}
-	logPresets(statsPresets(s))
+	logPresets(statsPresets(s), cap.Store.PresetTargets())
 	if o.rulesReload {
 		log.Printf("--rules-reload: %s is taken again whenever it changes", o.rules)
-		cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
+		cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, targets map[string]string, problem string) {
 			if problem != "" {
 				log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", o.rules, problem, presetsOff(presets))
 				return
 			}
 			log.Printf("rules from %s, again: %v%s", o.rules, r, presetsOff(presets))
-			logPresets(presets)
+			logPresets(presets, targets)
 			if len(resolve) > 0 {
 				log.Printf("resolve: %s", strings.Join(resolve, ", "))
 			}

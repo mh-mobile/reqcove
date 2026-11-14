@@ -381,6 +381,10 @@ code `run` (or `reqcove links`) prints.
 
 - Nothing is masked ([SECURITY](SECURITY.md#mitmweb---web)). It shows bodies
   up to 2 MB each, and keeps the newest 10,000 flows and 256 MB of bodies.
+  These bounds count finished flows only: one still in progress (a download
+  or an event stream still coming, a request waiting for its answer) counts
+  once it ends, and what Reqcove keeps of its bodies for mitmweb meanwhile
+  (up to 2 MB each way) is outside them (from reading code; not measured).
 - The link is the same at each start (`web-token` in the state directory).
   After a restart, open it again: a bookmark without the token asks for it.
 - In its Capture tab, leave "Run SOCKS Proxy" on, or the devices' HTTP(S)
@@ -672,11 +676,14 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
   applied ([SECURITY](SECURITY.md#rules---rules)).
 - `map_local` answers only requests whose body is at most 1 MiB and of known
   length; others go on to the real destination (the record says so). An HTTP/2
-  GET without a length is answered too, and a body sent with it anyway is held
-  whole in memory. The senders can be apps and web pages on a `--device`
-  device (or, with `--local-proxy`, on this computer), to a host a rule
-  matches. A very large body can run mitmproxy out of memory (reqcove restarts
-  it), and the devices' traffic stalls meanwhile.
+  GET (HEAD, OPTIONS, DELETE) without a length is answered when its stream
+  ends with its headers, as GETs with no body do; one that sends a body anyway
+  gets a 502, recorded as an error, and its body is not held (until v0.8.0 it
+  was held whole in memory). Tested with Go's HTTP/2 client through
+  mitmproxy. macOS's URLSession, tried against a test server without
+  mitmproxy, ends a GET's and a HEAD's stream with their headers and gives
+  DELETE and OPTIONS a length of 0, so none is refused; iPhone apps have not
+  been tried. How mitmproxy tells a stream's end is from reading its code.
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
@@ -685,8 +692,8 @@ POST not yet ended and SSE (both reach the other end as they stream), with
 `keep_host_header`; `map_local` for a GET and a POST, and a 2 MiB body sent on
 to the origin instead; `modify_headers` both ways; a request outside
 `--allow-hosts` left alone; the rules' values kept out of the records; the
-refusals at load. Not in these tests: an HTTP/2 GET without a length to
-`map_local`, a body large enough to run mitmproxy out of memory.
+refusals at load; an HTTP/2 GET without a length to `map_local` and to a
+mock, with no body (answered) and with an endless one (a 502 at once).
 
 #### Connect elsewhere (`resolve`)
 
@@ -759,8 +766,8 @@ mock:                           # Reqcove's own; the first that matches answers,
   held whole until its body is in. One whose length is over 1 MiB, or a POST
   of unknown length, goes on unanswered, its `rewrites` saying
   `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
-  without a length is held too, and over HTTP/2 a body sent with it is kept
-  whole in memory.
+  without a length is held too; over HTTP/2, one that sends a body anyway
+  gets a 502 instead of being held.
 - **The record** says so: `mocked: true` on its row, `rewrites` with the
   rule's number and status (`mock[0]: 401`), a note in a HAR. `capture_stats`
   has `rules_loaded`, when the file was last taken.
@@ -1114,7 +1121,8 @@ list, and a dialog for a new address). What that means:
   outside these checks: a rule sending an allowed host to a server on this
   computer serves the LAN clients' requests there too.
 - `lan deny` refuses new connections within two seconds, but HTTPS tunnels
-  already open go on until they close.
+  already open go on until they close (or are idle for 15 minutes:
+  [Limits](#limits)).
 - Use it on a network you trust, and stop it when done.
 
 Other differences from the exit node:
@@ -1440,7 +1448,9 @@ The main ones are in the [README](../README.md#limits). The rest:
   compressed message has been tried), so one huge message can use a lot of
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
-  minute after 5 restarts in a row, `run` stops.
+  minute after 5 restarts in a row, `run` stops with an error (exit status 1,
+  not the 0 of Ctrl-C, so a service shows it failed; tested with a stand-in
+  for mitmproxy that kept exiting).
 - A connection reqcove gives to mitmproxy waits for mitmproxy to connect to
   the server, as a direct one waits for the server: 10 seconds at most. The
   log then says `<address>:<port> did not answer within 10s (through
@@ -1449,6 +1459,13 @@ The main ones are in the [README](../README.md#limits). The rest:
   reachable from this computer at that moment (tried with an address that
   never answers; why the two such lines seen with real apps were slow is not
   known).
+- Through the Remote Proxy, LAN mode and `--local-proxy`, a client (one
+  address; with `--local-proxy`, all of this computer's apps together) keeps
+  at most 256 tunnels (CONNECT: HTTPS, WebSockets) open: the next one gets a
+  503 until one closes. A tunnel with no bytes either way for 15 minutes is
+  closed; a WebSocket or an event stream that keeps talking stays open (tested
+  with 2 tunnels and 300 ms). The exit node's own connections have neither
+  limit (from reading code).
 - Phone calls through the exit node have not been tried.
 - Limits of one feature are in its section: [`--ui`](#on-the-iphone---ui),
   [`--web`](#in-mitmweb---web), [`--local-proxy`](#the-ios-simulator---local-proxy),
