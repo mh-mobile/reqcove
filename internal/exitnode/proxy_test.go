@@ -670,3 +670,67 @@ func TestDialWaitsForReady(t *testing.T) {
 		t.Errorf("a direct dial was held %v", d)
 	}
 }
+
+// TestHoldConn: a first write too short for mitmproxy is joined with the
+// next (TestLANEndToEnd: with real mitmproxy), or sent after holdWait; other
+// first bytes go at once; CloseWrite sends what is held.
+func TestHoldConn(t *testing.T) {
+	defer func(w time.Duration) { holdWait = w }(holdWait)
+	holdWait = 200 * time.Millisecond
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	pair := func() (*holdConn, net.Conn) {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := ln.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close(); s.Close() })
+		return &holdConn{Conn: c}, s
+	}
+	read := func(s net.Conn, wait time.Duration) string {
+		s.SetReadDeadline(time.Now().Add(wait))
+		b := make([]byte, 100)
+		n, _ := s.Read(b)
+		return string(b[:n])
+	}
+	for _, w := range [][]string{{"\x16", "\x03\x01\x02"}, {"\x16\x03", "\x01"}, {"G", "ET / HTTP/1.1\r\n"}, {"GET /a", "b HTTP/1.1\r\n"}} {
+		h, s := pair()
+		h.Write([]byte(w[0]))
+		h.Write([]byte(w[1]))
+		if got := read(s, time.Second); got != w[0]+w[1] {
+			t.Errorf("%q then %q: the first read has %q", w[0], w[1], got)
+		}
+	}
+	h, s := pair()
+	h.Write([]byte("\x16"))
+	if got := read(s, 50*time.Millisecond); got != "" {
+		t.Errorf("held 0x16 sent at once: %q", got)
+	}
+	if got := read(s, time.Second); got != "\x16" {
+		t.Errorf("after holdWait: %q", got)
+	}
+	h.Write([]byte("\x03")) // after: as it comes
+	if got := read(s, time.Second); got != "\x03" {
+		t.Errorf("after the first send: %q", got)
+	}
+	for _, first := range []string{"\x00", "\x16\x01", "GET / HTTP/1.1\r\n", "SSH-2.0-x\r\n", "\x16\x03\x01"} {
+		h, s := pair()
+		h.Write([]byte(first))
+		if got := read(s, 100*time.Millisecond); got != first {
+			t.Errorf("%q held: read %q", first, got)
+		}
+	}
+	h, s = pair()
+	h.Write([]byte("PO"))
+	h.CloseWrite()
+	if b, _ := io.ReadAll(s); string(b) != "PO" {
+		t.Errorf("CloseWrite: %q", b)
+	}
+}

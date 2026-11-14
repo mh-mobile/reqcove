@@ -297,6 +297,8 @@ gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が
 
 確認状況：確かめたのは 2 つです。1 つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで。ただし gRPC のレスポンスは、試したビルドでは出ませんでした。そのあと直し、テストで確かめましたが、iPhone では試し直していません。スキーマなしの表示はテストだけです）。もう 1 つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
 
+grpc-swift（2。どちらのトランスポートも。1 も同じであることはソースから読んだもの）は、ALPN で `h2` より先に `grpc-exp` を出します。これを選ぶサーバーもあります（Connect のデモサーバーがそうです）。Reqcove はサーバーに `grpc-exp` を外して `h2` を出すので、こうした呼び出しも HTTP/2 で通り、記録されます。確かめたのは、この Mac 上の grpc-swift 2 から Connect のデモサーバーを呼んだもの（どちらのトランスポートも。CA は信頼するルートとして渡しました。mitmproxy にはエグジットノードと同じつなぎ方で中継しました）と、E2E テストです。iPhone では試していません。
+
 ### Android を記録する
 
 Android 7 以降向けに作られたアプリは、標準ではシステムの CA だけを信頼し、自分で入れた CA（設定から CA 証明書として入れたもの）は信頼しません。アプリが `network_security_config` で自分で入れた CA を許可していれば別です。試したデバイスでは、Chrome は復号でき、ほかのアプリはすべて CA を拒否しました。Android のデバイスには、`reqcove status` がそう案内します（Tailscale が報告する OS で判断します）。
