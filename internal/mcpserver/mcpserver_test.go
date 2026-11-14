@@ -282,6 +282,23 @@ func TestPassthroughTool(t *testing.T) {
 	if got := call[ListOut](t, session, "list_flows", map[string]any{"host": "other.com"}); got.Note != "" {
 		t.Errorf("a note for another host: %q", got.Note)
 	}
+	// A host whose connections went as raw TCP (not read as HTTP): the same
+	// pointer, for the agent that looks with a host filter, not at status.
+	st.Apply([]byte(`{"v":2,"ev":"pass_open","conn":"r1","device":"d","sni":"grpc.x.com","raw":true,"alpn_negotiated":"grpc-exp","server":"203.0.113.2:443","ts":1794000001}`))
+	for _, tool := range []string{"list_flows", "summarize", "search_flows", "wait_for_flows"} {
+		args := map[string]any{"host": "grpc.x.com"}
+		switch tool {
+		case "wait_for_flows":
+			args["timeout"] = 1
+		case "search_flows":
+			args["query"] = "Say"
+		}
+		if got := call[struct {
+			Note string `json:"note"`
+		}](t, session, tool, args); !strings.Contains(got.Note, "carried as raw TCP") || !strings.Contains(got.Note, "list_passthrough") {
+			t.Errorf("%s raw note: %q", tool, got.Note)
+		}
+	}
 	for tool, err := range session.Tools(context.Background(), nil) {
 		if err != nil {
 			t.Fatal(err)

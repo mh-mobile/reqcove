@@ -482,12 +482,25 @@ func noted(st *capture.Store, note string) string {
 }
 
 // passNote says a host filter names a --pass-hosts host, whose flows are
-// never recorded: an empty answer does not mean nothing was sent.
+// never recorded, or a host some of whose connections were carried as raw
+// TCP: an empty answer does not mean nothing was sent.
 func passNote(st *capture.Store, host string) string {
-	if !st.PassHost(host) {
+	if host == "" {
 		return ""
 	}
-	return fmt.Sprintf("%q", host) + " is carried undecrypted (--pass-hosts): no flow of it is recorded, and an empty answer here does not mean nothing was sent. list_passthrough has its connections (no URLs or contents)."
+	if st.PassHost(host) {
+		return fmt.Sprintf("%q", host) + " is carried undecrypted (--pass-hosts): no flow of it is recorded, and an empty answer here does not mean nothing was sent. list_passthrough has its connections (no URLs or contents)."
+	}
+	raw := 0
+	for _, p := range st.Passthroughs(capture.Filter{Host: host, Limit: 1000}) {
+		if p.Reason == "raw_tcp" {
+			raw++
+		}
+	}
+	if raw == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d connection(s) to %q were carried as raw TCP, not read as HTTP: what they carry is not in the flows, and an empty answer here does not mean nothing was sent. list_passthrough lists them (reason raw_tcp; no URLs or contents).", raw, host)
 }
 
 // similar is SimilarHosts for an answer with no flows and a host filter. It
