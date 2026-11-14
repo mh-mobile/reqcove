@@ -320,14 +320,26 @@ func offlineStatus(state, uvx string) error {
 	} else {
 		fmt.Println("  uv:    found")
 	}
-	if _, err := os.Stat(filepath.Join(state, "tsnet", "tailscaled.state")); err != nil {
+	switch b, err := os.ReadFile(filepath.Join(state, "tsnet", "tailscaled.state")); {
+	case err != nil:
 		fmt.Printf("  node:  never started here; `%s` will ask you to log in\n", withState("reqcove run", state))
-	} else {
+	case !loggedIn(b):
+		fmt.Printf("  node:  not logged in yet; `%s` will ask you to log in\n", withState("reqcove run", state))
+	default:
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
 	printCA(os.Stdout, state, false)
 	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
 	return nil
+}
+
+// loggedIn reports whether tsnet's state file (a JSON object of base64 values)
+// holds a login profile: tsnet writes its machine key at the first start, the
+// profiles only once a login gave the node an ID; a logout empties them.
+func loggedIn(tailscaledState []byte) bool {
+	var keys map[string][]byte
+	var profiles map[string]json.RawMessage
+	return json.Unmarshal(tailscaledState, &keys) == nil && json.Unmarshal(keys["_profiles"], &profiles) == nil && len(profiles) > 0
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.

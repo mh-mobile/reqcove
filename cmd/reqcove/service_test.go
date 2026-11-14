@@ -414,3 +414,16 @@ func TestServiceArgs(t *testing.T) {
 		}
 	}
 }
+
+// uvx in ~/.local/bin (uv's installer) puts it first, once.
+func TestServicePathOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	bin := filepath.Join(home, ".local", "bin")
+	os.MkdirAll(bin, 0o755)
+	os.WriteFile(filepath.Join(bin, "uvx"), []byte("#!/bin/sh\n"), 0o755)
+	t.Setenv("PATH", bin)
+	if got, found := servicePath(); !found || got != bin+":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" {
+		t.Errorf("%q %v", got, found)
+	}
+}
