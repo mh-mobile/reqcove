@@ -752,19 +752,30 @@ stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
 start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device. When
-mitmdump dies, reqcove starts it again on the same port (visible in `ps`), and
-meanwhile another user's process on this computer could take the port. The
-devices' connections then wait (15 seconds at most, then fail) until the new
-mitmdump's addon says hello, which mitmproxy (12.3.1) does only once it
-listens: one that cannot bind the port exits first, and is started again.
-Tests: while another process holds the port, the restarted mitmdump never
-becomes ready, and comes back once the port is free; while it is not ready, no
-connection is sent to the port. One gap remains, from reading code: between
-mitmdump's death and reqcove noticing it (milliseconds), a connection can
-still be sent to the free port; whoever took it in that moment would get the
-SOCKS password and that connection: plain HTTP readable, HTTPS not. On a
-computer shared with users you do not trust, keep that in mind.
+another local process can neither use the proxy nor pose as a device. reqcove
+binds the port itself, once per `run`, and hands the listening socket to each
+mitmdump it starts: mitmproxy (12.3.1) has no option for that, so reqcove's
+launcher (`mitm.py`, also used with another `--mitmproxy-spec`) has it serve on
+that socket instead of binding its own. When mitmdump dies, reqcove starts it
+again (visible in `ps`) while the port stays held, so no other process can take
+127.0.0.1 on that port in between, nor before the first mitmdump. A connection
+made meanwhile waits in the socket's queue for the next mitmdump; the devices'
+connections wait (15 seconds at most, then fail) until its addon says hello.
+Tests: while mitmdump is down, and after reqcove gave up on it, binding the
+port fails, and Stop frees it (unit test, also in CI on Linux); with real
+mitmproxy (from the lock and through uvx, macOS), the same while it restarts,
+and a request sent then is carried and recorded by the next mitmdump. Were the
+launcher's change missed (a mitmproxy that binds another way), its own bind
+fails on the held port and it exits before its hello, never ready: tried with
+mitmproxy 12.3.1 and the change made too late (address already in use).
+Tried on macOS as the same user: binding 127.0.0.1 on the port fails even
+with SO_REUSEADDR and SO_REUSEPORT; binding 0.0.0.0 on it works with
+SO_REUSEADDR, but connections to 127.0.0.1 still reach the more specific
+socket, reqcove's, as they did before. Another user was not tried: as both
+kernels document it (not checked here), a second socket gets that address
+only if both set SO_REUSEPORT (on Linux, only for the same user), which
+reqcove's never does. Not covered: processes of your own user, which can read
+the password file anyway, and root.
 
 The state directory is checked itself, not the directories above it. Keep it
 (and `--state`) under directories only you can write: someone who can rename

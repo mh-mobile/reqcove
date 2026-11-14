@@ -382,8 +382,10 @@ func TestEndToEnd(t *testing.T) {
 	}
 }
 
+// pidOn: the Python process (mitmdump) listening on port. reqcove, which
+// holds the SOCKS listener, and uv, mitmdump's parent, have it open too.
 func pidOn(port string) int {
-	out, _ := exec.Command("lsof", "-t", "-iTCP"+port, "-sTCP:LISTEN").Output()
+	out, _ := exec.Command("lsof", "-t", "-a", "-c", "python", "-iTCP"+port, "-sTCP:LISTEN").Output()
 	var pid int
 	fmt.Sscan(string(out), &pid)
 	return pid
@@ -769,8 +771,8 @@ func TestPyCommand(t *testing.T) {
 	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
 		t.Errorf("a --uvx not named uvx: %s", bin)
 	}
-	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3"}, "mitmdump")
-	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 mitmdump") {
+	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3", Dir: "/s"}, "mitmdump")
+	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 python /s/mitm.py mitmdump") {
 		t.Errorf("other spec: %s %q", bin, args)
 	}
 }

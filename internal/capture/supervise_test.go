@@ -214,60 +214,77 @@ func TestStartStopsStaleMitmdump(t *testing.T) {
 	}
 }
 
-// TestPortTakenWhileDown (REQCOVE_E2E=1): another process takes the SOCKS
-// port while mitmdump is down. The restarted mitmproxy cannot bind, exits
-// before its addon says hello (errorcheck), and so is never ready: WaitReady
-// holds, and dials never go to the port's new owner. Once the port is free
-// again, mitmdump comes back and records.
-func TestPortTakenWhileDown(t *testing.T) {
+// TestPortHeldWhileDown: while mitmdump is down (restarting, then given
+// up), no other process can bind its SOCKS port: reqcove holds it. Stop
+// frees it.
+func TestPortHeldWhileDown(t *testing.T) {
+	c, kill := startFake(t, 2) // the first run works, every restart dies
+	kill(1)
+	for done := false; !done; {
+		select {
+		case <-c.Done():
+			done = true
+		case <-time.After(time.Millisecond):
+		}
+		if l, err := net.Listen("tcp", c.SocksAddr); err == nil {
+			l.Close()
+			t.Fatalf("bound the SOCKS port while mitmdump was %v", c.Store.Stats()["state"])
+		}
+	}
+	c.Stop()
+	l, err := net.Listen("tcp", c.SocksAddr)
+	if err != nil {
+		t.Fatalf("SOCKS port still held after Stop: %v", err)
+	}
+	l.Close()
+}
+
+// TestPortHeldAcrossRestart (REQCOVE_E2E=1): with real mitmproxy (12.3.1),
+// the restarted mitmdump serves on the socket reqcove holds: while it is
+// down no other process can bind the port, a request sent then waits in
+// the queue and is carried and recorded by the next mitmdump.
+func TestPortHeldAcrossRestart(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.RestartDelay = 300 * time.Millisecond })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.RestartDelay = time.Second })
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer srv.Close()
 	b, _ := os.ReadFile(filepath.Join(h.c.cfg.Dir, "mitmdump.pid"))
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if pid == 0 {
 		t.Fatal("no mitmdump.pid")
 	}
 	syscall.Kill(-pid, syscall.SIGKILL)
-	var squatter net.Listener
-	for deadline := time.Now().Add(10 * time.Second); squatter == nil; time.Sleep(time.Millisecond) {
-		if squatter, err = net.Listen("tcp", h.c.SocksAddr); err != nil && time.Now().After(deadline) {
-			t.Fatalf("taking the port: %v", err)
+	for deadline := time.Now().Add(10 * time.Second); h.c.Store.Stats()["state"] == "ready"; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("mitmdump never went down")
 		}
 	}
-	// Hold it across a few attempts (300 ms, 600 ms and 1.2 s apart, about a
-	// second each), short of supervise giving up (5).
-	for until := time.Now().Add(4 * time.Second); time.Now().Before(until); time.Sleep(10 * time.Millisecond) {
-		if s := h.c.Store.Stats()["state"]; s == "ready" || s == "failed" {
-			t.Fatalf("%s while another process holds its port", s)
-		}
-		wctx, wcancel := context.WithTimeout(ctx, 20*time.Millisecond)
-		err := h.c.WaitReady(wctx)
-		wcancel()
+	got := make(chan error, 1)
+	go func() {
+		r, err := h.client("dev").Get(srv.URL + "/queued")
 		if err == nil {
-			t.Fatal("WaitReady returned while another process holds its port")
+			r.Body.Close()
+		}
+		got <- err
+	}()
+	for until := time.Now().Add(500 * time.Millisecond); time.Now().Before(until); time.Sleep(time.Millisecond) {
+		if l, err := net.Listen("tcp", h.c.SocksAddr); err == nil {
+			l.Close()
+			t.Fatalf("bound the SOCKS port while mitmdump was %v", h.c.Store.Stats()["state"])
 		}
 	}
-	squatter.Close()
-	wctx, wcancel := context.WithTimeout(ctx, time.Minute)
-	defer wcancel()
-	if err := h.c.WaitReady(wctx); err != nil {
-		t.Fatalf("after the port was freed: %v (%v)", err, h.c.Store.Stats())
+	if err := <-got; err != nil {
+		t.Fatalf("request sent while mitmdump was down: %v (%v)", err, h.c.Store.Stats())
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
-	defer srv.Close()
-	r, err := h.client("dev").Get(srv.URL + "/back")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	h.doneFlow("/back", false)
+	waitState(t, h.c, "ready", 1) // the new mitmdump may serve it just before its hello
+	h.doneFlow("/queued", false)
 }
 
 // TestHostNotAHost (REQCOVE_E2E=1): a request whose Host is not a host name

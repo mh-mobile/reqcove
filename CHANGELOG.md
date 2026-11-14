@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### For people
+
+- The SOCKS5 port no longer comes free while mitmdump restarts: reqcove binds
+  it once per `run` and hands the socket to each mitmdump (through its
+  launcher, `mitm.py`, with another `--mitmproxy-spec` too), so another local
+  user's process can no longer take it and get the SOCKS password and the
+  devices' connections, in the milliseconds before reqcove noticed a death nor
+  before the first start. A connection made while mitmdump is down waits for
+  the next one. Tests: binding the port fails while mitmdump is down (unit,
+  and with real mitmproxy); a request sent then is recorded by the next
+  mitmdump (real mitmproxy). SECURITY.md says what is covered and what not.
+
 ## v0.7.0 — 2026-11-14
 
 ### For people
