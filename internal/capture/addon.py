@@ -934,6 +934,12 @@ def load_rules(path):
     return addons
 
 
+def rule_counts(rules):
+    """The rules loaded, by kind, presets in their kind (capture_stats.rules)."""
+    kinds = [r[0] for r in rules["mock"].book.rules]
+    return dict({k: kinds.count(k) for k in rules}, keep_host_header=int(rules["map_remote"].keep_host_header))
+
+
 def _dry_rules(rules, unknown, also=None):
     """rules for explain_rules' dry run: the same rules, a copy of the presets'
     state (nothing here turns a real one off or uses a request of it), preset
@@ -1247,7 +1253,7 @@ class Reqcove:
     def _rules_info(self):
         rules = self.rules  # once: the writer thread asks too, for the hello on a reconnect
         return {
-            "rules": dict({k: len(a.replacements) for k, a in rules.items()}, keep_host_header=int(rules["map_remote"].keep_host_header)) if rules else None,
+            "rules": rule_counts(rules) if rules else None,
             "resolve": [f"{n} -> {ip}:{port or 'as asked'}" for n, (ip, port) in rules["resolve"].replacements.items()] if rules else None,
             "rules_error": self.rules_error,
             "presets": rules["mock"].book.names() if rules else [],

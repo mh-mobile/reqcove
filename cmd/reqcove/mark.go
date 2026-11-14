@@ -37,13 +37,21 @@ func markIn(ctx context.Context, in, out *os.File, state, text string) error {
 }
 
 func sendMark(ctx context.Context, w io.Writer, state, text string) error {
-	conn, err := net.Dial("unix", filepath.Join(state, "mcp.sock"))
+	// Bounded as reqcove mcp bounds it: a run stopped with Ctrl-Z takes the
+	// connection but never answers.
+	hctx, cancel := context.WithTimeout(ctx, mcpserver.Handshake)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(hctx, "unix", filepath.Join(state, "mcp.sock"))
 	if err != nil {
 		return fmt.Errorf("reqcove is not running (%s): nothing to mark", state)
 	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: mcpserver.MarkClient, Version: version}, nil).Connect(ctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: mcpserver.MarkClient, Version: version}, nil).Connect(hctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
 	if err != nil {
 		conn.Close()
+		if hctx.Err() != nil && ctx.Err() == nil {
+			return fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): nothing marked", state, mcpserver.Handshake)
+		}
 		return err
 	}
 	defer cs.Close()

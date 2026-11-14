@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
@@ -55,5 +58,39 @@ func TestMark(t *testing.T) {
 	}
 	if err := sendMark(ctx, &out, older, "x"); err == nil || !strings.Contains(err.Error(), "restart") {
 		t.Errorf("older run: %v", err)
+	}
+}
+
+// A run that takes the connection but never answers (stopped with Ctrl-Z):
+// mark gives up after the handshake's time, as reqcove mcp does.
+func TestMarkHandshakeTimeout(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvm-")
+	defer os.RemoveAll(dir)
+	ln, err := net.Listen("unix", filepath.Join(dir, "mcp.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // never answers
+		}
+	}()
+	old := mcpserver.Handshake
+	mcpserver.Handshake = 200 * time.Millisecond
+	defer func() { mcpserver.Handshake = old }()
+	done := make(chan error, 1)
+	go func() { done <- sendMark(context.Background(), io.Discard, dir, "x") }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "did not answer") {
+			t.Errorf("%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mark waits for a run that does not answer")
 	}
 }

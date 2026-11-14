@@ -56,7 +56,7 @@ type event struct {
 	Brotli        string            `json:"brotli"`
 	BrotliDecode  bool              `json:"brotli_decode"`
 	ZstdDecode    bool              `json:"zstd_decode"`
-	Rules         map[string]int    `json:"rules"`          // --rules loaded, by kind
+	Rules         map[string]int    `json:"rules"`          // --rules loaded, by kind, presets in their kind
 	RulesError    string            `json:"rules_error"`    // why --rules could not be loaded (at start), or reloaded
 	Resolve       []string          `json:"resolve"`        // resolve rules, "name -> ip:port"
 	Presets       []string          `json:"presets"`        // hello: every preset's name; request: the presets that changed or answered it

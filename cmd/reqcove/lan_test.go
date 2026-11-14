@@ -254,8 +254,17 @@ func TestStatusLAN(t *testing.T) {
 	}
 	var b strings.Builder
 	printLANStatus(&b, lanStatus("192.168.1.10:8080", []string{"192.168.1.40"}, nil).LAN)
-	if got := b.String(); !strings.Contains(got, "192.168.1.10:8080 on en0, for clients on 192.168.1.0/24") || !strings.Contains(got, "allowed:     192.168.1.23 (since") || !strings.Contains(got, "refused:     192.168.1.40") {
+	if got := b.String(); !strings.Contains(got, "192.168.1.10:8080 on en0, for clients on 192.168.1.0/24") || !strings.Contains(got, "allowed:     192.168.1.23 (since") || !strings.Contains(got, "refused:     192.168.1.40 (not") {
 		t.Errorf("reqcove status:\n%s", got)
+	}
+	// More refused than the status lists: how many more, in the status and its step.
+	s = lanStatus("192.168.1.10:8080", []string{"192.168.1.40"}, nil)
+	s.LAN.RefusedMore = 7
+	b.Reset()
+	printLANStatus(&b, s.LAN)
+	steps = strings.Join(statusOut(s, ready, allow, capture.CA{}, nil).NextSteps, "\n")
+	if !strings.Contains(b.String(), "refused:     192.168.1.40 and 7 more (not") || !strings.Contains(steps, "not allowed: 192.168.1.40 and 7 more.") {
+		t.Errorf("more:\n%s\n%s", b.String(), steps)
 	}
 }
 

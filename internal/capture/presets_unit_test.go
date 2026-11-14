@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,8 +40,14 @@ func TestPresetsNoAnswer(t *testing.T) {
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel2()
-	if _, err := c.Activate(ctx2, "p", "", 60, 0); !errors.Is(err, ErrUncertain) {
+	if _, err := c.Activate(ctx2, "p", "", 60, 0); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_presets to see") {
 		t.Errorf("activate: %v", err)
+	}
+	// The mock tools (v0.6's) point to list_mock_presets: a v0.6 reqcove mcp has no list_presets.
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel3()
+	if _, err := c.Deactivate(ctx3, "p", "mock"); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_mock_presets to see") {
+		t.Errorf("deactivate_mock: %v", err)
 	}
 	ln.Close()
 	if _, err := c.Activate(context.Background(), "p", "", 60, 0); !errors.Is(err, ErrNoControl) {

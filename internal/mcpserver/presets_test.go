@@ -235,7 +235,7 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 	}
 	f.onActivate = drop
 	got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "times": 1})
-	if !isErr || !strings.Contains(got, "may or may not have taken effect") || f.activations.Load() != 1 {
+	if !isErr || !strings.Contains(got, "may or may not have taken effect; call list_mock_presets to see") || f.activations.Load() != 1 {
 		t.Errorf("%q %v, %d activations", got, isErr, f.activations.Load())
 	}
 	// add_marker too: a second would be a second marker.

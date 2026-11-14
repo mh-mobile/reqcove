@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -390,6 +391,25 @@ func TestOnceSetBounded(t *testing.T) {
 	}
 	if len(s.m) > maxSeen || !s.first(a, "refused") {
 		t.Errorf("%d kept; seen again: the list was not emptied", len(s.m))
+	}
+}
+
+// The status lists at most 50 refused addresses, the last seen first (one
+// refused again counts as new), and how many more; allowed ones are left out.
+func TestRefusedNowBounded(t *testing.T) {
+	var s onceSet
+	addr := func(i int) netip.Addr { return netip.AddrFrom4([4]byte{192, 168, 1, byte(i)}) }
+	for i := range 60 {
+		s.first(addr(i), "refused")
+	}
+	s.first(addr(0), "refused") // seen again: the last
+	allowed := map[netip.Addr]Device{addr(59): {}}
+	shown, more := refusedNow(&s, allowed)
+	if len(shown) != maxRefusedShown || more != 9 || shown[0] != "192.168.1.0" || shown[1] != "192.168.1.58" || slices.Contains(shown, "192.168.1.59") {
+		t.Errorf("%d shown, %d more: %v", len(shown), more, shown)
+	}
+	if shown, more := refusedNow(&onceSet{}, nil); shown != nil || more != 0 {
+		t.Errorf("none: %v %d", shown, more)
 	}
 }
 
