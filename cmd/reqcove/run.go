@@ -19,6 +19,7 @@ import (
 )
 
 func run(ctx context.Context, args []string) error {
+	privateOutput(os.Stdout, os.Stderr)
 	// Tokens and login URLs never in a log line: kept after run returns, so
 	// main's log.Fatal goes through it too.
 	red := &exitnode.Redactor{W: log.Writer()}
@@ -297,6 +298,17 @@ func logRules(o *runOpts, cap *capture.Capture, s map[string]any) {
 	}
 	if r, _ := s["resolve"].([]string); len(r) > 0 {
 		log.Printf("resolve: %s (Host and SNI as the app sent them; TLS checked against the name)", strings.Join(r, ", "))
+	}
+}
+
+// privateOutput makes run's output 0600 where it is a file (brew services'
+// log, which launchd makes 0644; a shell's redirect): it holds what run logs
+// of the devices. A file this user cannot change stays as it is.
+func privateOutput(fs ...*os.File) {
+	for _, f := range fs {
+		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
+			f.Chmod(0o600)
+		}
 	}
 }
 
