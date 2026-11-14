@@ -70,6 +70,8 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - iPhone から CA のプロファイルを削除します（[SECURITY](SECURITY.ja.md#ca-の秘密鍵)）。
 - サービスを止めます（`brew services stop reqcove` か `reqcove service uninstall`）。止めないと、サービスは次のログインで `run` をまた起動し、状態ディレクトリを作り直します。
 
+cleanup が削除しないもの（tailnet のノード、サービスのファイル、Skill、HAR ファイル、バックアップ、エージェントの会話の記録）は、[SECURITY](SECURITY.ja.md#reqcove-cleanup-のあとに残るもの) にあります。
+
 ## エージェントに通信を読ませる
 
 `claude mcp add reqcove -- reqcove mcp`（README の手順 4）を実行すると、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。Codex なら `codex mcp add reqcove -- reqcove mcp` です。`run` が両方を表示します。
@@ -205,7 +207,7 @@ reqcove har > flows.har
 フローを HAR 1.2 のファイルに、古い順で書き出します。デフォルトは新しい 1000 件です（`--limit 0` ですべて）。`--host`、`--device`、`--since 10m`、`--until`、`--status 4xx`、`--method`、`--user-agent` で絞り込めます。
 
 - 中身は MCP ツールが返すものと同じです。届いた時点でマスク済みで、ボディは先頭だけです（切り詰めたボディは、コメントにその旨が入ります）。マスクで確認できなかったボディは含まれません。`run --no-redact` のときは何もマスクされず、ファイルのコメントにその旨が入ります。
-- ファイルのパーミッションはシェルの設定に従うので、ほかのユーザーから読めることがあります（[SECURITY](SECURITY.ja.md#記録するもの)）。
+- ファイルのパーミッションはシェルの設定に従うので、ほかのユーザーから読めることがあります（[SECURITY](SECURITY.ja.md#記録するもの)）。ほかの人も使うコンピュータでは、`(umask 077; reqcove har > flows.har)` とすれば自分だけが読めるファイルになります。そうしないなら `/tmp` には置かず、リポジトリの中にも置かないでください。
 
 確認状況：Chrome の開発者ツール（Network）に読み込めることを確認しました（リクエスト、マスクされたヘッダー、レスポンスが見えます）。未確認：Charles、Proxyman で開くこと。仕様から：HAR 1.2 の必須項目を出力します（検証ツールは実行していません）。
 
@@ -393,6 +395,7 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 
 - `map_remote`、`map_local`、`modify_headers` は mitmproxy の機能で、mitmproxy 自身のコードが処理します。相対パスは、ルールファイルの場所が基準です。
 - `map_remote` は URL を書き換えるので、`keep_host_header` を true にしない限り、`Host` ヘッダーも変わります。上の例のように、スキームも書いてください。アプリは `https` で送り、平文のサーバーは TLS に応答できないためです。
+- リクエストを別のサーバーへ送るには、`Host` を変える `modify_headers` のルールではなく、`map_remote`（か `resolve`）を使います。v1.0 から、そうした `modify_headers` のルールは、それだけでは効きません（次の項目）。パスだけを変えてホストはそのままの `map_remote` も、リクエストを別の先へ送るルールとして働きます。mitmproxy は、アプリが接続したアドレスではなく、そのホストに名前で接続し（名前解決はこのコンピュータで行います）、ヘッダーのルールは効きます（mitmproxy の Python で、作ったリクエストに対して試したもの。ネットワーク越しではありません）。
 - v1.0 から、`modify_headers` が効くのは、その `Host` へ行くリクエストと、そのレスポンスだけです。Host のアドレスへ送られたリクエスト、HTTPS でその TLS の名前へ送られたリクエスト、または `map_remote` か `resolve` が送り先を決めたリクエストです。`Host` を変えるルールは、この 2 つのどちらかと一緒のときだけ効きます。それだけでは、そのリクエストのヘッダーのルールはどれも効きません。効かなかったときは、記録の `rewrites` にそう出ます（[SECURITY](SECURITY.ja.md#ルール--rules)）。
 - `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET（HEAD、OPTIONS、DELETE も）には、ボディのない GET と同じく、ヘッダーでストリームが終わったときに応答します。それでもボディを送ってきたものには 502 を返してエラーとして記録し、そのボディは保持しません（v0.8.0 までは、すべてメモリに保持していました）。Go の HTTP/2 クライアントから mitmproxy を通して試しました。macOS の URLSession は、GET と HEAD のストリームをヘッダーで終え、DELETE と OPTIONS には長さ 0 を付けるので、どれも 502 になりません（mitmproxy を通さず、テスト用のサーバーで試しました）。iPhone のアプリでは試していません。mitmproxy がストリームの終わりを知る仕組みはコードを読んだものです。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
@@ -754,7 +757,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 | | |
 |---|---|
-| `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
+| `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力（答える run がないときは、標準出力には何も出さず、終了ステータス 1 で、理由を標準エラーに出します）。`--uvx PATH` |
 | `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
 | `reqcove mark` | `[TEXT]`（`-` で始まるものは `-- TEXT`）。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
 | `reqcove mock add` | `--rules FILE --url URL` とモックのフラグ。[ファイルにモックを足す](#ターミナルからモックを足すreqcove-mock-add)（確かめてから）。ターミナルでのみ（`--print` での表示はどこでも）。`--uvx PATH` |
@@ -769,7 +772,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`、試験用アプリでの `diff_flows`（二重に送ったリクエスト）、`list_ws_messages`、`--proto`。テストのみ：`--mask-values`、`max_body`、`--mcp-http` の回数制限、`multipart/form-data`、XML のボディ（mitmproxy を通した SOAP のリクエストの E2E テストも）。
 
-コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
+コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`。`status --json` は、Ubuntu での LAN モードの確認で使いました。答える run がないときの終了ステータス 1 は、単体テストで確かめました。
 
 ## MCP ツール
 
@@ -814,5 +817,6 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 - [記録するもの](SECURITY.ja.md#記録するもの)：`--allow-hosts` のホストだけで、Apple のホストは対象外です。マスクで見つかるものと、見つからないものがあります。
 - [エージェントが読んだものの行き先](SECURITY.ja.md#エージェントが読んだものの行き先)：モデルの提供元に渡ります。ボディがエージェントに指示しようとすることもあります（[プロンプトインジェクション](SECURITY.ja.md#プロンプトインジェクション)）。
 - [デバイスから届く範囲](SECURITY.ja.md#デバイスから届く範囲)：このコンピュータ、LAN、tailnet には届きません。
-- [CA の秘密鍵](SECURITY.ja.md#ca-の秘密鍵)：状態ディレクトリにあります。
+- [CA の秘密鍵](SECURITY.ja.md#ca-の秘密鍵)：状態ディレクトリと、そのバックアップにあります。デバイスは、プロファイルを削除するまで、この CA をすべてのサイトについて信頼します。
+- [ほかの人のデバイス](SECURITY.ja.md#ほかの人のデバイス)：その人の同意が必要です。[ほかのユーザーと共有するコンピュータ](SECURITY.ja.md#ほかのユーザーと共有するコンピュータ)、[`cleanup` のあとに残るもの](SECURITY.ja.md#reqcove-cleanup-のあとに残るもの)。
 - [Exit Node の DNS](SECURITY.ja.md#exit-node-の-dns)（`--dns`）と、[コンテナ](SECURITY.ja.md#コンテナで動かす場合)。

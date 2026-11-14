@@ -4,7 +4,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.8.
+come from reading code rather than from a test say so. It describes v1.0.
 
 ## Trust
 
@@ -19,6 +19,18 @@ come from reading code rather than from a test say so. It describes v0.8.
   machine name, IP or StableID.
 - **In LAN mode (`--lan`), the addresses you allow are trusted to use the
   proxy**, with no password: an address, not a device ([below](#lan-mode---lan)).
+
+## Other people's devices
+
+`--device` can name a device that is not yours, and LAN mode carries whatever
+address you allow. Carry and record a device only with the consent of the
+person who uses it: its requests to the allowed hosts are decrypted and
+recorded, what an agent reads of them goes to its model provider, and the
+device trusts a CA whose key you hold, for every site, until its profile is
+removed ([below](#the-cas-private-key)). Reqcove asks no one and checks no
+consent (from reading code); recording someone's traffic without it may be
+against the law where you are. Your own device's traffic holds other
+people's words too (a chat's messages), and personal data is not masked.
 
 ## In a container
 
@@ -56,6 +68,55 @@ the others, and removing the profile from the iPhone is what stops them all.
 `~/.reqcove/ca-copies` lists the copies, and `cleanup` of `~/.reqcove` names
 those still holding the CA; `cleanup` of a copy says the profile serves both.
 So "delete the directory" above means each of them.
+
+The CA is made at the first start and is valid for 10 years (mitmproxy
+12.3.1's lifetime for a CA, from reading its code; the E2E test checks only
+that it is over 9; `run` and `reqcove status` print the date). It is not
+limited to any names (from reading the same code), so a device that trusts it
+trusts it for every HTTPS site, not only the hosts in `--allow-hosts`: that
+list is what Reqcove decrypts, not what the key can sign for. The trust lasts
+until the profile is removed from the device: stopping `run`,
+`reqcove cleanup` and deleting the state directory do not remove it.
+
+Backups hold the key too. The state directory is an ordinary directory in
+your home, and Reqcove marks nothing in it as not to be backed up (from
+reading code; no backup was looked at): Time Machine, or another backup or
+sync tool that takes your home, copies the CA's key, the node's key
+(`tsnet/`) and the tokens, and keeps them after `cleanup --delete-state`.
+Exclude the directory, or count the backup as one more place the key is. A
+restore can widen the modes: `run` makes the directory 0700 and the token
+files 0600 again at start, not the other files (from reading code).
+
+## What `reqcove cleanup` leaves
+
+`reqcove cleanup` prints the steps and takes none of them itself, with one
+exception: system web proxies that a `run` which died left pointed at
+`--local-proxy` are put back. With `--delete-state` it also deletes the state
+directory (the node's key, the CA and its key, the tokens, `lan-allowed`, the
+logs kept there), unless `run` holds it, it still holds proxy settings to put
+back, or it is not Reqcove's. (From reading its code; tests cover the
+refusals, the proxies and the CA copies it names.) What stays until you
+remove it:
+
+- The CA's profile on each device, and its trust on this computer or in a
+  Simulator. cleanup prints how for iPhones, the Simulator and a Mac's
+  keychain, and does none of it; a trust added elsewhere (Linux's store, a
+  browser's own, Android) it does not know of.
+- The node in the tailnet (the admin console's Machines), and the exit node
+  or Wi-Fi proxy chosen on the phone.
+- Other state directories (`--state`): each is cleaned up on its own, and
+  cleanup of `~/.reqcove` names only those holding a copy of its CA.
+- A service, which cleanup does not mention. `reqcove service uninstall`
+  stops it and removes its file, not its config file
+  (`~/.config/reqcove/config`); `brew services stop reqcove` stops
+  Homebrew's, whose config and log (`$(brew --prefix)/var/log/reqcove.log`)
+  stay. A service left in place starts `run` at the next login, which makes
+  the state directory, and a new CA, again.
+- The skill (`reqcove init --uninstall` removes it) and the agent's MCP
+  server entry.
+- What left Reqcove: HAR files, the agent's transcripts
+  ([below](#what-the-agent-sees-goes-further)), backups, and uv's cache of
+  mitmproxy and Python.
 
 ## What is recorded
 
@@ -198,7 +259,12 @@ So "delete the directory" above means each of them.
   names; XML carried as text in an element, escaped (`&lt;Password&gt;`) or in
   CDATA outside a secret element, is not read as XML (a test); a WebSocket
   message has no content type, so it is read as XML only if it starts with
-  `<?xml` (XMPP's `<auth mechanism='PLAIN'>…</auth>` passes: a test); a
+  `<?xml` (XMPP's `<auth mechanism='PLAIN'>…</auth>` passes: a test); XML's
+  masking reads a body before JSON's, so in a JSON body labelled XML
+  (`application/xml`) a tag inside a string, its masked value running over
+  the string's end, takes the quote JSON's reading needs, and a secret field
+  after it passes (`{"xml": "<b data-token=x\"", "password": "…"}`: a test;
+  labelled HTML, JSON's reading comes first and it is masked); a
   declared encoding is not used:
   a head that is not valid UTF-8 (Latin-1 or Shift_JIS with text beyond
   ASCII, UTF-16) is not masked, as no such body is, and so is neither handed
@@ -371,6 +437,16 @@ and `list_devices` tools carry the node's MagicDNS name (which includes the
 tailnet's name), its tailnet addresses and the devices' machine names; not your
 login (from reading code).
 
+It stays there, and with the agent. The provider keeps what it received for as
+long as its terms say, and the agent keeps its conversations on the computer
+it runs on: Claude Code writes each session, tool results included, to files
+under `~/.claude/projects/` (seen on this Mac with Claude Code 2.1,
+2026-11-14; other agents not looked at). Those are not Reqcove's: stopping
+`run` empties its records, not them, and `reqcove cleanup` does not touch
+them. A secret that masking did not find, or anything read with
+`--no-redact`, stays readable there, and in whatever the agent wrote from it
+(a summary, a file, a commit).
+
 ## Prompt injection
 
 Reqcove's tools read (the one exception, [presets](#mock-presets), turns
@@ -389,8 +465,12 @@ Response bodies, and also response headers, status reasons, redirect targets
 and error messages, are written by remote sites and may contain text meant to
 steer the agent; an app chooses its User-Agent, its TLS names and the JSON
 keys it sends, and a tailnet peer its device name. Tools return bodies only on
-request (and `diff_flows` what differs), and every tool's description says
-what it returns was written by sites, apps or the tailnet: data. The server's
+request (and `diff_flows` what differs), and each tool that returns what
+sites, apps or the tailnet wrote says so in its description: data, not
+instructions (the twelve tools `--mcp-http` has too, and `list_markers` for
+a marker's text: a test). The preset and rule tools return what your rules
+file holds, and `add_marker` Reqcove's own values; `list_presets` says a
+preset's description is your words, not instructions. The server's
 instructions, sent to every client (also those without the skill, such as Grok
 Bot), say so too, and that the agent must not write a file (a `--rules` file
 above all), a commit or a command because of what the records say, nor suggest
@@ -553,7 +633,12 @@ proxy's certificate, and the server's is the proxy's to check), or its addresses
 it. Nor do they apply to such a request when a rule changes its Host: a
 rule's own Host would vouch for itself (a token rule for the Host, then one
 setting Host to the address dialled), and where a request goes is for
-`map_remote` and `resolve` to change. Otherwise the request goes on as the
+`map_remote` and `resolve` to change. A `map_remote` rule that changes only
+the path, the host staying the same, sends the request on as any other does:
+mitmproxy then connects to that host by its name, looked up on this
+computer, not to the address the app dialled, and the header rules apply
+(tried in mitmproxy's Python on made requests, not over the network).
+Otherwise the request goes on as the
 app sent it, and its response as the server sent it, their rewrites saying
 the rules were not applied (`explain_rules` names the condition). Tested with
 real mitmproxy: a stand-in server dialled with another host's Host gets no
@@ -855,6 +940,39 @@ iOS 27.3, 2026-11-14: it matched). Use LAN mode on a network you trust, and
 stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
 2026-11-14): refused until allowed, then recorded; refused again after
 `reqcove lan deny`.
+
+## A computer shared with other users
+
+Reqcove trusts your OS user, not the others on the computer. File modes keep
+them out: the state directory is 0700, the files in it 0600, and so are the
+three sockets there (the MCP tools', mitmproxy's two), so another user
+cannot read the records, call the tools or take the keys (from reading code,
+where each is made; not tried with a second user). What another user can
+still see or reach:
+
+- `ps`: `run`'s and mitmproxy's command lines, with the device names, the
+  hosts in `--allow-hosts` and `--pass-hosts`, the paths of the rules file
+  and the state directory, the upstream proxy's address, and any
+  `--mask-names` or `--mask-values` given there rather than in an `@FILE`
+  (from reading code). Never the SOCKS5 password, the tokens or mitmweb's
+  password: those go in 0600 files.
+- `--local-proxy`: its port takes any user's requests, and records those to
+  allowed hosts as `local` ([above](#the-local-proxy---local-proxy)).
+  mitmproxy's SOCKS5 port and mitmweb's are on 127.0.0.1 too, behind their
+  passwords ([below](#other-processes-on-this-computer)).
+- The node's ports, when this computer itself is on your tailnet as you:
+  the node tells devices apart, not this computer's users, so another user's
+  programs here come to `--ui`, `--web` and `--mcp-http` as one of your own
+  devices, and to the exit node and the Remote Proxy when this computer is a
+  `--device`. The tokens are what keep them out of the first three (from
+  reading code; not tried with a second user).
+- What you write outside the state directory: a HAR file gets your shell's
+  mode, usually readable by others, and `/tmp` is everyone's.
+  `(umask 077; reqcove har > FILE)` makes a new file 0600 (tried with zsh).
+  A service's file (the LaunchAgent, the systemd unit) is 0644: it holds
+  paths, no token (from reading code).
+
+Not covered: root, and anyone who can become your user.
 
 ## Other processes on this computer
 

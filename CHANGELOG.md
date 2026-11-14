@@ -187,6 +187,29 @@ Found by a code review of v0.8.0; each test fails without its fix.
 - The guide and SECURITY now say that `--web`'s 10,000 flows and 256 MB count
   finished flows only: a flow still in progress counts once it ends (from
   reading code).
+- The skill and the server's instructions tell an agent to write a HAR file
+  where only the user can read it (`umask 077`; the skill's example wrote to
+  `/tmp`, which other users of the computer read), and that it is masked
+  only while `redacting` is true. The instructions now list the commands an
+  agent may run, as the skill does (`reqcove status`, `reqcove har`,
+  `reqcove init --print`, `reqcove mock add --print` when asked), and name
+  `reqcove cleanup` among those it never runs. The `status` tool's
+  description says its hosts and device names are data, not instructions, as
+  the other tools that return what sites, apps or the tailnet wrote do (a
+  test), and SECURITY says which tools those are instead of "every tool".
+- SECURITY covers six more things: what an agent read stays with its model
+  provider and in the agent's own transcripts; the CA is valid for 10 years
+  and for every site, until its profile is removed; backups of the state
+  directory hold its key; what `reqcove cleanup` leaves; a computer shared
+  with other users; other people's devices need their consent. It says what
+  each comes from (reading code, or tried).
+- SECURITY's list of what masking does not catch adds: XML's masking reads a
+  body before JSON's, so in a JSON body labelled XML a tag inside a string
+  can take the quote JSON's reading needs, and a secret field after it
+  passes (a test pins it).
+- The guide says that a `map_remote` rule that changes only the path sends
+  the request on as any `map_remote` does: mitmproxy connects to the host by
+  its name, and the header rules apply (tried in mitmproxy's Python).
 
 ### Inside
 
@@ -206,6 +229,9 @@ Found by a code review of v0.8.0; each test fails without its fix.
   the test workflow (macOS and Linux, end to end with mitmproxy, the
   container, the checks). Checked with actionlint and by running its query
   against this repository; the workflow itself runs only on a tag, not yet.
+- `TestWebMadeResponse` called the addon's `request`, a coroutine, without
+  awaiting it, so that half never ran (Python only warned). It is awaited
+  now; the test still fails with the addon's fix taken out.
 
 ### Upgrading from v0.8
 
@@ -224,6 +250,13 @@ Found by a code review of v0.8.0; each test fails without its fix.
 - In scripts, read `active_presets`, `active_presets_error` and `presets`
   instead of `active_mock_presets`, `active_mock_presets_error` and
   `mock_presets`.
+- In a `--rules` file, a `modify_headers` rule that sets `Host` to send a
+  request to another server is no longer applied on its own, nor are that
+  request's other header rules (its `rewrites` say so): write a `map_remote`
+  rule, or `resolve`, for where the request should go
+  ([guide](docs/guide.md#rules---rules)). A script that reads
+  `reqcove status --json` gets nothing on stdout and exit status 1 while no
+  run answers, where it got text.
 
 ## v0.8.0 — 2026-11-14
 
