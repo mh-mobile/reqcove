@@ -104,6 +104,9 @@
 
 Found by a code review of v0.8.0; each test fails without its fix.
 
+- `reqcove status --json`, with no run to answer (none, or one starting or
+  stopping), printed text: it prints nothing on stdout and exits 1, the
+  reason on stderr, so a script reads only the status tool's JSON (unit test).
 - A flow that fails mid-body keeps the head that came and its size, not
   final; before, what came in its last second was left out (size 0 for a
   body cut within a second). Tested with real mitmproxy (HTTP/1.1): a

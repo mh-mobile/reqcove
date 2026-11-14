@@ -89,7 +89,9 @@ Each tool's fields:
 
 #### `status` and `reqcove status --json`
 
-`reqcove status --json` prints the `status` tool's JSON. Its fields:
+`reqcove status --json` prints the `status` tool's JSON. When no run answers
+(none runs, or one is starting or stopping), it prints nothing on stdout and
+exits 1, saying why on stderr (unit test). Its fields:
 
 - `mode`, `next_steps`, `allow_hosts`, `pass_hosts`, `service`, `capture`
   (`capture_stats`' fields, below), `active_presets` and `active_presets_error`.
