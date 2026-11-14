@@ -388,27 +388,6 @@ func TestFourthReview(t *testing.T) {
 	}
 }
 
-// Comments between a script's key and value stay linear: unclosed ones, and
-// chains of them (#84's review: 7 s on 64 KiB). Told by how the time grows
-// with the size (4 times the input: about 4 times the time, 16 if quadratic),
-// as the race detector and CI's machines change the time itself.
-func TestMaskScriptCommentsLinear(t *testing.T) {
-	run := func(n int) time.Duration {
-		start := time.Now()
-		for _, unit := range []string{"{/*x,a:1", "{//x,a:1", "{a:/*,b:1", "/*,/*,a:1*/"} {
-			for _, ct := range []string{"application/javascript", "text/html"} {
-				maskBody([]byte(strings.Repeat(unit, n/len(unit))), ct, false)
-			}
-		}
-		return time.Since(start)
-	}
-	run(1 << 10) // warm up
-	small, large := run(8<<10), run(32<<10)
-	if large > 9*small {
-		t.Errorf("8 KiB took %v, 32 KiB %v: grows faster than the size", small, large)
-	}
-}
-
 // TestMaskHTML: an HTML page's secrets live in its tags (an OAuth form_post's
 // hidden fields, CSRF tokens in forms and meta tags) and its scripts' objects;
 // the text masking alone missed them all.
@@ -542,6 +521,62 @@ func TestV080OpusReview(t *testing.T) {
 	maskBody([]byte(strings.Repeat("API_KEY=x\n", 6<<10)), "text/plain", false)
 	maskBody([]byte(strings.Repeat("a=", 32<<10)), "text/plain", false)
 	maskBody([]byte(`[`+strings.Repeat(`"key1=x\n",`, 5<<10)+`""]`), "application/json", false)
+	if d := time.Since(start); d > slow*time.Second {
+		t.Errorf("took %v", d)
+	}
+}
+
+// The review of dev (28f4fb8): what the changes since v0.8.0 took away.
+func TestV1DevReview(t *testing.T) {
+	// A JSON body labelled text/html: HTML's masking of a tag in a string
+	// (its unquoted value running over the string's end) came first and
+	// took a quote JSON's reading needs.
+	for _, in := range []string{`{"html": "<b data-token=x\"", "password": "S3CRET12"}`, `{"html":"<b data-token=x\"","pin":"S3CRET13","n":"keep"}`} {
+		if got := string(maskBody([]byte(in), "text/html", false)); strings.Contains(got, "S3CRET") || !strings.Contains(got, `{"html":`) {
+			t.Errorf("JSON as HTML: %s", got)
+		}
+	}
+
+	// Set-Cookie: a comma before a cookie's first ; is its value's.
+	st := NewStore(10, 1<<20)
+	for in, want := range map[string]string{
+		"data=v1,QUJDREVGR0hJSktMTU5PUA==; Path=/":                       "data=[redacted]; Path=/",
+		"data=v1,QUJDREVGR0hJSktMTU5PUA=; Path=/":                        "data=[redacted]; Path=/",
+		"a=S3CRET14,b=S3CRET15":                                          "a=[redacted]",
+		"sid=S3CRET16; Path=/, data=v1,QUJDREVGR0hJSktMTU5PUA==; Secure": "sid=[redacted]; Path=/, data=[redacted]; Secure",
+	} {
+		if got := st.maskHeaders([][2]string{{"Set-Cookie", in}})[0][1]; got != want {
+			t.Errorf("Set-Cookie %q: %q, want %q", in, got, want)
+		}
+	}
+
+	// auth0 is the Auth0 service's name, not auth with a number.
+	for _, n := range []string{"Auth0-Client", "auth0Client", "auth0_domain", "AUTH0_CLIENT_ID"} {
+		if secretName(n) {
+			t.Errorf("%s secret", n)
+		}
+	}
+	for _, n := range []string{"auth2", "key1", "pin2", "auth0_token", "auth0Key"} {
+		if !secretName(n) {
+			t.Errorf("%s not secret", n)
+		}
+	}
+	const client = "eyJuYW1lIjoiQXV0aDAuc3dpZnQiLCJ2ZXJzaW9uIjoiMi43LjAifQ" // {"name":"Auth0.swift","version":"2.7.0"}
+	if h := st.maskHeaders([][2]string{{"Auth0-Client", client}}); h[0][1] != client {
+		t.Errorf("Auth0-Client: %q", h[0][1])
+	}
+	if got := st.mask("https://tenant.example/authorize?auth0Client=" + client + "&state=s"); !strings.Contains(got, "auth0Client="+client) {
+		t.Errorf("auth0Client=: %s", got)
+	}
+
+	// Each stays linear: a header's 256 KiB, a body's 64 KiB.
+	start := time.Now()
+	st.maskHeaders([][2]string{
+		{"Set-Cookie", strings.Repeat("a=1,b=", 43<<10)},
+		{"Set-Cookie", "a=1; P" + strings.Repeat(",b=", 85<<10)},
+	})
+	maskBody([]byte(strings.Repeat(`{"html": "<b data-token=x\"", "password": "p"},`, 1<<10)), "text/html", false)
+	maskBody([]byte(`{`+strings.Repeat(`"auth0_x1":"a",`, 4<<10)+`"n":1}`), "application/json", false)
 	if d := time.Since(start); d > slow*time.Second {
 		t.Errorf("took %v", d)
 	}

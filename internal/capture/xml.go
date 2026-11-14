@@ -40,12 +40,13 @@ func maskXML(s string, request bool) string {
 		b.WriteString("[redacted]")
 		last = to
 	}
-	var open []string       // the local names of the elements open
-	inSecret := false       // inside a secret element:
-	secret, nest := "", 0   // its local name, and how many of that name are open inside it
-	content := 0            // where its content starts
-	keyAt, keyText := 0, "" // a plist <key> open: its depth, its text
-	nextSecret := false     // the element after a plist key whose text is secret
+	var open []string           // the local names of the elements open
+	inSecret := false           // inside a secret element:
+	secret, nest := "", 0       // its local name, and how many of that name are open inside it
+	content := 0                // where its content starts
+	keyAt := 0                  // a plist <key> open: its depth,
+	var keyText strings.Builder // its text (written to, not added to: a key cut in many pieces stays linear)
+	nextSecret := false         // the element after a plist key whose text is secret
 	startElement := func(local string, start, end int) {
 		for _, sp := range secretAttrs(s[start:end], request) {
 			mask(start+sp[0], start+sp[1])
@@ -56,7 +57,8 @@ func maskXML(s string, request bool) string {
 		case nextSecret || secretXMLName(local, request) && !plistKey:
 			inSecret, secret, nest, content = true, local, 0, end
 		case plistKey:
-			keyAt, keyText = len(open), ""
+			keyAt = len(open)
+			keyText.Reset()
 		}
 		nextSecret = false
 	}
@@ -121,7 +123,7 @@ read:
 				startElement(t.Name.Local, start, end)
 			case xml.CharData:
 				if keyAt > 0 {
-					keyText += string(t)
+					keyText.Write(t)
 				}
 			case xml.EndElement:
 				switch {
@@ -138,7 +140,7 @@ read:
 					}
 					inSecret = false
 				case keyAt > 0 && len(open) == keyAt:
-					nextSecret, keyAt = secretKind(strings.TrimSpace(keyText), request), 0
+					nextSecret, keyAt = secretKind(strings.TrimSpace(keyText.String()), request), 0
 				default:
 					nextSecret = false
 				}

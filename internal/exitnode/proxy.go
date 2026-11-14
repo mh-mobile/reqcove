@@ -294,22 +294,17 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 	// event stream that talks stays open. Only the read sides are wrapped (pipe
 	// half-closes the write side it is given).
 	var last atomic.Int64
-	var ended atomic.Bool
 	last.Store(time.Now().UnixNano())
-	var check func()
-	check = func() {
-		if ended.Load() {
-			return
-		}
+	var timer *time.Timer
+	timer = time.AfterFunc(idle, func() {
 		if wait := idle - time.Since(time.Unix(0, last.Load())); wait > 0 {
-			time.AfterFunc(wait, check)
+			timer.Reset(wait) // one timer per tunnel, put forward
 			return
 		}
 		c.Close()
 		out.Close()
-	}
-	time.AfterFunc(idle, check)
-	defer ended.Store(true)
+	})
+	defer timer.Stop() // a tunnel that ended holds no timer, nor its connections, till it would fire
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go pipe(&wg, out, idleConn{c, &last})

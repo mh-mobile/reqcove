@@ -76,13 +76,16 @@
   them (found by a code review; unit tests, and the fuzz test for the line).
 - Masking catches more cookies and names: a cookie value without a name after
   the first (`Cookie: theme=dark; <a JWT>` kept the JWT), and each cookie of
-  a `Set-Cookie` line joining several with commas (only the first was masked;
-  an `Expires` date's comma is not a cookie's); `name=value` lines in a text
+  a `Set-Cookie` line joining several with commas after another's attributes
+  (only the first was masked; an `Expires` date's comma is not a cookie's,
+  nor one before a cookie's first `;`, which may be its value's:
+  `v1,QUJD…==`); `name=value` lines in a text
   body or a WebSocket message (a `.env` file's `API_KEY=…`, `export` too) and
   a form body ending with a newline, whose secrets were kept; and a short
-  secret word with a number after it (`key1`, `pin2`) and `primaryKey`, which
-  were not secret (found by a code review; unit tests, an E2E test for the
-  joined `Set-Cookie`, and the fuzz test for the `.env` line).
+  secret word with a number after it (`key1`, `pin2`; not `auth0`, a
+  service's name) and `primaryKey`, which were not secret (found by a code
+  review; unit tests, an E2E test for the joined `Set-Cookie`, and the fuzz
+  test for the `.env` line).
 
 ### Removed
 
@@ -104,6 +107,9 @@
 
 Found by a code review of v0.8.0; each test fails without its fix.
 
+- `reqcove status --json`, with no run to answer (none, or one starting or
+  stopping), printed text: it prints nothing on stdout and exits 1, the
+  reason on stderr, so a script reads only the status tool's JSON (unit test).
 - A flow that fails mid-body keeps the head that came and its size, not
   final; before, what came in its last second was left out (size 0 for a
   body cut within a second). Tested with real mitmproxy (HTTP/1.1): a
@@ -171,6 +177,15 @@ Found by a code review of v0.8.0; each test fails without its fix.
   12.3.1 (another `--mitmproxy-spec`), a stream still open after its
   headers gets the 502 at once, empty DATA frame or not (both from reading
   code).
+- Masking an Apple plist whose `<key>` text comes in many pieces (split by
+  comments, CDATA or child elements) copied the text so far at each piece,
+  so its time and memory grew with the square of its size (up to v0.8):
+  64 KiB of `    <b/>` in one key allocated about 140 MB and took 26 ms on
+  an M1 Max, 16 KiB 9 MB. It now grows with the size (64 KiB: 1.8 MB,
+  6 ms); what is masked does not change. Masking runs on the path every
+  event from a connection takes, in order, so such a body held up what came
+  after it (from reading code). Found by the growth test (Inside), which
+  fails without the fix.
 
 ### For people
 
@@ -186,6 +201,18 @@ Found by a code review of v0.8.0; each test fails without its fix.
 
 ### Inside
 
+- A test measures how masking's time and allocations grow between two
+  sizes 4 times apart (mostly 16 and 64 KiB for bodies, 64 and 256 KiB for
+  headers and URLs; protobuf's below its caps, 1 to 8 KiB), for 152 inputs
+  built to be slow for its regexps and loops: each content type a body is
+  masked differently for (JSON, forms, text, none, HTML, JavaScript, XML,
+  GraphQL, multipart, protobuf with and without `--proto`, gRPC frames),
+  headers, URLs, WebSocket messages, error text and `Apply` as a whole; more
+  than 9 times fails. It catches the two this
+  version's reviews found (script comments, folded multipart headers: checked
+  by putting them back). Under the race detector, which distorts both
+  measures, only the inputs that caught one run (those two and the
+  plist's). The fuzz tests also fail an input whose masking takes over 2 s.
 - The release workflow refuses a tag whose commit has no successful run of
   the test workflow (macOS and Linux, end to end with mitmproxy, the
   container, the checks). Checked with actionlint and by running its query

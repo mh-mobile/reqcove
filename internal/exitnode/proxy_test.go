@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -156,6 +157,12 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 // tunnelHarness is a Remote Proxy whose CONNECT tunnels reach an echo server.
 func tunnelHarness(t *testing.T) func() (net.Conn, string) {
 	t.Helper()
+	return tunnelHarnessDial(t, func(c net.Conn) net.Conn { return c })
+}
+
+// tunnelHarnessDial: tunnelHarness, each dialled connection passed through wrap.
+func tunnelHarnessDial(t *testing.T, wrap func(net.Conn) net.Conn) func() (net.Conn, string) {
+	t.Helper()
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +182,11 @@ func tunnelHarness(t *testing.T) func() (net.Conn, string) {
 	rp := &remoteProxy{policy: func() *policy { return p },
 		resolve: func(context.Context, string) (netip.Addr, error) { return netip.MustParseAddr("203.0.113.5"), nil },
 		dial: func(ctx context.Context, _ verdict, _ string, _ netip.AddrPort) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+			c, err := (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+			if err != nil {
+				return nil, err
+			}
+			return wrap(c), nil
 		}}
 	srv := httptest.NewServer(rp)
 	t.Cleanup(srv.Close)
@@ -245,6 +256,35 @@ func TestRemoteProxyTunnelIdle(t *testing.T) {
 	if _, err := quiet.Read(buf); err != io.EOF {
 		t.Errorf("a quiet tunnel after %v: %v, want it closed", tunnelIdle, err)
 	}
+}
+
+// A tunnel that ended keeps no idle timer, nor through it its connections,
+// till the timer would fire: the dialled connections of ended tunnels can be
+// collected.
+func TestRemoteProxyTunnelTimerStopped(t *testing.T) {
+	defer func(d time.Duration) { tunnelIdle = d }(tunnelIdle)
+	tunnelIdle = time.Hour
+	var freed atomic.Int64
+	open := tunnelHarnessDial(t, func(c net.Conn) net.Conn {
+		w := &struct{ net.Conn }{c}
+		runtime.SetFinalizer(w, func(any) { freed.Add(1) })
+		return w
+	})
+	const n = 200
+	for range n {
+		c, _ := open()
+		c.Write([]byte("x"))
+		io.ReadFull(c, make([]byte, 1))
+		c.Close()
+	}
+	for range 100 {
+		runtime.GC()
+		if freed.Load() >= n*9/10 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("of %d ended tunnels, %d dialled connections were collected", n, freed.Load())
 }
 
 // Failed plain requests are logged by host only: paths and queries carry secrets.

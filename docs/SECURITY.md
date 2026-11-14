@@ -102,7 +102,8 @@ So "delete the directory" above means each of them.
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
   `author` and `keyword` do not; a number after the word counts too: `key1`,
-  `pin2`). `code` and `key` next to an everyday word
+  `pin2`, but not in `auth0`, the Auth0 service's name: `Auth0-Client`).
+  `code` and `key` next to an everyday word
   (`country_code`, `error_code`, `sort_key`, `foreign_key`; `primaryKey` is a
   secret), `token_type`, `ticket_id`,
   `ticketNumber` and CORS's `Access-Control-Allow-Credentials` (only ever
@@ -114,7 +115,9 @@ So "delete the directory" above means each of them.
   Cookie values are masked (names stay; a value without a name too; in a
   `Set-Cookie` line joining several cookies with commas, which a server can
   send and is recorded as sent, each cookie, its attributes kept: an E2E
-  test), and query parameters wherever a URL
+  test; a comma before a cookie's first `;` may be its value's, as in
+  `v1,QUJD…==`, so cookies joined with no attributes between them are masked
+  as one value), and query parameters wherever a URL
   appears (any header, such as `Referer`, `Location` or `Link`; fragments such
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error
   messages), as is a URL's password (`https://user:…@host`) and the response's
@@ -301,8 +304,10 @@ So "delete the directory" above means each of them.
   tag's text other than a `<textarea>`'s, or under an innocent name; a
   script's text that a browser reads past its first `</script>`
   (`<script><!--<script>`) ends there here. SAML's `SAMLResponse` field
-  passes, as in a form. The text masking applies on top. (Tests and the fuzz
-  test, cut anywhere.)
+  passes, as in a form. JSON's masking reads the head before this, so a
+  masked tag takes no quote from it (a JSON body labelled `text/html`); the
+  rest of the text masking applies on top. (Tests and the fuzz test, cut
+  anywhere.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text
