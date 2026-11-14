@@ -149,7 +149,7 @@ What the tools can do:
   that to ask less (not checked with any client).
 - Not marked read-only: the tools that turn presets on and off
   (`activate_preset`, `deactivate_preset`, and v0.6's `activate_mock`,
-  `deactivate_mock`), and `add_marker` (a write to Reqcove's memory only).
+  `deactivate_mock`, deprecated), and `add_marker` (a write to Reqcove's memory only).
 - Claude Code asks before a tool it has not been allowed. Allow the read tools
   by name (`"mcp__reqcove__list_flows"` and so on), not `"mcp__reqcove"`:
   that also allows the ones not marked read-only (`activate_mock` since v0.6;
@@ -166,16 +166,17 @@ documentation; not tried here):
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
-    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
-            "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
+              "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__list_mock_presets"],
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset",
+            "mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
   }
 }
 ```
 
-Its v0.6 entries (`list_mock_presets`, `activate_mock`, `deactivate_mock`) are deprecated and removed in v1.0.
+Its v0.6 entries, last in each list (`list_mock_presets`, `activate_mock`,
+`deactivate_mock`), are deprecated, removed in v1.0.
 
 What to know:
 
@@ -667,6 +668,14 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
+Tried with the E2E tests (real mitmproxy): `map_remote` with a POST body, a
+POST not yet ended and SSE (both reach the other end as they stream), with
+`keep_host_header`; `map_local` for a GET and a POST, and a 2 MiB body sent on
+to the origin instead; `modify_headers` both ways; a request outside
+`--allow-hosts` left alone; the rules' values kept out of the records; the
+refusals at load. Not in these tests: an HTTP/2 GET without a length to
+`map_local`, a body large enough to run mitmproxy out of memory.
+
 #### Connect elsewhere (`resolve`)
 
 `resolve` connects elsewhere and leaves the request as it is, for a staging
@@ -693,6 +702,16 @@ resolve:                        # reqcove's: connect elsewhere, Host and SNI unc
 - Refused: `0.0.0.0/8`, link-local (cloud metadata), multicast, Tailscale's
   100.100.100.100 ([SECURITY](SECURITY.md#rules---rules)), and `resolve`
   together with `--upstream-proxy`.
+
+Tried with the E2E tests (real mitmproxy): plain HTTP sent to the rule's
+address with the app's `Host`, the record saying where it went; `resolve` after
+a `map_remote`; over TLS, the target asked for the name (SNI) and a 502 for a
+certificate not trusted; the refusals at load (cloud metadata,
+100.100.100.100, a name as the target, shared addresses, a host outside
+`--allow-hosts`, with `--upstream-proxy`). Tried: a server with a trusted
+certificate for another name gets a 502 ([SECURITY](SECURITY.md#rules---rules)).
+A `resolve` preset was not tried on an iPhone
+([below](#map_remote-modify_headers-and-resolve-presets)).
 
 #### Answer a request here (`mock`)
 
@@ -1155,8 +1174,8 @@ reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an
     in `/`.
   - The command line's flags come after the file's: a flag given once is the
     command line's, a repeatable one adds up.
-  - Refused in the file: `--no-redact`, `--web`, `--rules-reload`, `--lan` and
-    `--allow-hosts '*'` (also from an `@FILE`). They stay on the command line.
+  - Refused in the file: `--no-redact`, `--web`, `--rules-reload`, `--lan`,
+    `--config` and `--allow-hosts '*'` (also from an `@FILE`). They stay on the command line.
   - The file must be yours and readable by you only (`chmod 600`): it may
     hold `--mask-values` patterns.
   - One `--config` only. Nothing is read unless named.
@@ -1213,7 +1232,7 @@ reqcove service uninstall     # stops it and removes the file
   It is read as for `brew services` (above).
   - Install refuses a missing file (saying how to write one), one that is not
     yours or that others can read, and `--no-redact`, `--web`,
-    `--rules-reload` or `--lan` in it.
+    `--rules-reload`, `--lan` or `--config` in it.
   - `--allow-hosts '*'` there is refused when `run` starts (the service then
     ends once).
   - A `--state` in the file is the state directory (in full or from `~/`).
@@ -1345,12 +1364,13 @@ said there.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s (listed in `~/.reqcove/ca-copies`, so that `cleanup` of `~/.reqcove` names it), and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--allow-hosts '*'`); the file `chmod 600` |
+| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--config`, `--allow-hosts '*'`); the file `chmod 600` |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
 
-The other commands (all but `init` and `version` take `--state DIR` too):
+The other commands (all but `init`, `version`, `setup`, `service restart` and
+`service uninstall` take `--state DIR` too):
 
 | | |
 |---|---|
@@ -1362,6 +1382,8 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
+| `reqcove setup` | [the first run](#first-start): no flags; only in a terminal |
+| `reqcove service install` | `--config FILE`, `--state DIR`; then `reqcove service restart`, `reqcove service uninstall`: [run as a service without Homebrew](#keep-it-running-without-homebrew-reqcove-service-install) |
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
 | `reqcove version` | the version |
 

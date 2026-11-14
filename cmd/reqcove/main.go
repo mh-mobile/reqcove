@@ -75,7 +75,7 @@ Usage:
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked (-h for filters)
-  reqcove service install [--config FILE] | service restart | service uninstall
+  reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall
                      start run now and at login without Homebrew (launchd or
                      systemd), with run's flags in FILE (~/.config/reqcove/config)
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)

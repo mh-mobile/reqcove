@@ -131,6 +131,26 @@ func TestStatusCommandPresets(t *testing.T) {
 	}
 }
 
+// `reqcove status` against a v0.7 run (not yet restarted) reads its names:
+// mock_presets and active_mock_presets.
+func TestStatusCommandPresetsV07(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := capture.NewStore(10, 1<<20)
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
+		return mcpserver.StatusOut{Node: exitnode.Status{Backend: "Running"}, Capture: map[string]any{"mock_presets": []string{"mx", "staging"}},
+			ActiveMockPresets: []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
+	if w := "presets:     2 (mx, staging); on: staging -> https://staging.example.com until 12:00:00"; !strings.Contains(out, w) {
+		t.Errorf("%q not in:\n%s", w, out)
+	}
+}
+
 func captureStdout(t *testing.T, f func() error) string {
 	t.Helper()
 	r, w, _ := os.Pipe()

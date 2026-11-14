@@ -334,3 +334,33 @@ func TestMockToolsDeprecated(t *testing.T) {
 		t.Errorf("%d deprecated tools, want 3", n)
 	}
 }
+
+// status and capture_stats name the new fields and the v0.6 ones as deprecated.
+func TestDeprecatedFieldsDescribed(t *testing.T) {
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := New(storeWith("a"), func() StatusOut { return StatusOut{} }).Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"status":        "active_presets; active_mock_presets is the same list, deprecated, removed in v1.0",
+		"capture_stats": "presets; mock_presets the same, deprecated, removed in v1.0",
+	}
+	for tool, err := range cs.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w, ok := want[tool.Name]; ok {
+			if !strings.Contains(tool.Description, w) {
+				t.Errorf("%s: %q lacks %q", tool.Name, tool.Description, w)
+			}
+			delete(want, tool.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("tools not seen: %v", want)
+	}
+}
