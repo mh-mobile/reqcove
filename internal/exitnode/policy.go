@@ -66,12 +66,13 @@ func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
 		return reject, "a link-local address"
 	case p.network.Contains(d):
 		return reject, "the network the LAN proxy is on"
-	case apple.Contains(d):
-		return direct, ""
 	}
 	inPrivate := slices.ContainsFunc(private, func(pfx netip.Prefix) bool { return pfx.Contains(d) })
 	if !inPrivate && slices.ContainsFunc(p.onLink, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
-		return reject, "a network of this computer" // a LAN numbered from public space is still a LAN
+		return reject, "a network of this computer" // a LAN numbered from public space is still a LAN, Apple's 17/8 too
+	}
+	if apple.Contains(d) { // after this computer's own networks: an interface numbered in 17/8 is a LAN, not Apple
+		return direct, ""
 	}
 	if inPrivate && !exact {
 		return reject, "a private address: only an exact --allow-hosts name (no *) may lead there"

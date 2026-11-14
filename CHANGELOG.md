@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Security
+
+- LAN mode refuses this computer's other networks before letting Apple's
+  17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
+  neighbours were reachable (found by a code review; unit test).
+
 ### Removed
 
 - v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
