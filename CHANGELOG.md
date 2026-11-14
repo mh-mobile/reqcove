@@ -7,6 +7,32 @@
 - LAN mode refuses this computer's other networks before letting Apple's
   17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
   neighbours were reachable (found by a code review; unit test).
+- Through a `--uvx` wrapper (a path not named `uvx`), the default mitmproxy
+  gets the lock's tornado, 6.6.1, not 6.5.10, whose vulnerabilities are in
+  mitmweb's server (`--web`): the lock's override and its date for tornado
+  are passed to uvx (tried with the real uvx; the other packages come at the
+  lock's versions, and the `--web` tests pass through a wrapper). Another
+  `--mitmproxy-spec` still gets the tornado its mitmproxy asks for
+  ([SECURITY](docs/SECURITY.md#mitmproxys-own-code)).
+
+### Fixed
+
+- `run --local-proxy … 2>&1 | tee FILE`, stopped with Ctrl-C (which stops
+  `tee` too), left the system's web proxies pointed at the local proxy:
+  `run`'s next line to the closed pipe killed it (SIGPIPE) before it put them
+  back (from reading code; not tried with the real system proxy). A write to
+  a closed stdout or stderr now fails instead, and the proxies are put back
+  before anything is logged (unit tests: a `run` whose stderr is closed exits
+  as usual, where it was killed by SIGPIPE; nothing is logged before the
+  proxies are back).
+- `reqcove status`, while `run` starts (mitmproxy first, up to 2 minutes) or
+  stops, said reqcove was not running and how to start it: it says it is
+  starting, or stopping, as do `reqcove har` and `reqcove mark` (unit test).
+- `reqcove status` and `reqcove har`, against a `run` stopped with Ctrl-Z,
+  waited forever: they give up after 5 seconds, as `reqcove mark` and
+  `reqcove mcp` do (unit test).
+- `--proxy-port` out of 0 to 65535 is refused: in LAN mode 65616 would have
+  listened on port 80 (from reading code; unit test of the refusal).
 
 ### Removed
 
