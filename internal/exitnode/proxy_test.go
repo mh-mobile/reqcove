@@ -153,6 +153,100 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 	}
 }
 
+// tunnelHarness is a Remote Proxy whose CONNECT tunnels reach an echo server.
+func tunnelHarness(t *testing.T) func() (net.Conn, string) {
+	t.Helper()
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { echo.Close() })
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() { io.Copy(c, c); c.Close() }()
+		}
+	}()
+	lo := netip.MustParseAddr("127.0.0.1")
+	p := &policy{devices: map[netip.Addr]Device{lo: {ID: "nPHONE"}}, allowSrc: []netip.Addr{lo}, socks: true}
+	rp := &remoteProxy{policy: func() *policy { return p },
+		resolve: func(context.Context, string) (netip.Addr, error) { return netip.MustParseAddr("203.0.113.5"), nil },
+		dial: func(ctx context.Context, _ verdict, _ string, _ netip.AddrPort) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+		}}
+	srv := httptest.NewServer(rp)
+	t.Cleanup(srv.Close)
+	return func() (net.Conn, string) {
+		t.Helper()
+		c, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		fmt.Fprint(c, "CONNECT app.test:443 HTTP/1.1\r\nHost: app.test:443\r\n\r\n")
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		r, err := http.ReadResponse(bufio.NewReader(c), nil)
+		c.SetReadDeadline(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c, r.Status
+	}
+}
+
+// A client gets at most maxTunnels tunnels open at once: the next is a 503,
+// and one closing makes room.
+func TestRemoteProxyTunnelCap(t *testing.T) {
+	defer func(n int) { maxTunnels = n }(maxTunnels)
+	maxTunnels = 2
+	open := tunnelHarness(t)
+	first, st1 := open()
+	_, st2 := open()
+	if st1 != "200 Connection Established" || st2 != "200 Connection Established" {
+		t.Fatalf("two tunnels: %q %q", st1, st2)
+	}
+	if _, st := open(); !strings.HasPrefix(st, "503") {
+		t.Errorf("a third tunnel: %q, want a 503", st)
+	}
+	first.Close()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		c, st := open()
+		c.Close()
+		if st == "200 Connection Established" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a tunnel closed, another still refused: %q", st)
+		}
+	}
+}
+
+// A tunnel with no bytes either way for tunnelIdle is closed; one that keeps
+// talking stays open past it.
+func TestRemoteProxyTunnelIdle(t *testing.T) {
+	defer func(d time.Duration) { tunnelIdle = d }(tunnelIdle)
+	tunnelIdle = 300 * time.Millisecond
+	open := tunnelHarness(t)
+	quiet, _ := open()
+	talking, _ := open()
+	buf := make([]byte, 1)
+	for range 10 { // 1 s, a byte each way every 100 ms
+		talking.Write([]byte("x"))
+		talking.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := io.ReadFull(talking, buf); err != nil {
+			t.Fatalf("a talking tunnel closed: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	quiet.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := quiet.Read(buf); err != io.EOF {
+		t.Errorf("a quiet tunnel after %v: %v, want it closed", tunnelIdle, err)
+	}
+}
+
 // Failed plain requests are logged by host only: paths and queries carry secrets.
 func TestRemoteProxyLogsNoURL(t *testing.T) {
 	pu, _ := proxyHarness(t, "127.0.0.1")
