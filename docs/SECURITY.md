@@ -1,5 +1,7 @@
 # Reqcove's security model
 
+[日本語](SECURITY.ja.md)
+
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
 come from reading code rather than from a test say so. It describes v0.7.
