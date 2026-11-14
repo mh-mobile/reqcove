@@ -18,6 +18,44 @@
   (from reading its code). `reqcove status` still reads the old fields from a
   v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
 
+### Fixed
+
+- With `--rules-reload` and a preset in the file, saving it could freeze
+  `run` (v0.7.0–v0.8.0): nothing more was recorded, and the MCP tools,
+  `reqcove status` and `--ui` stopped answering (they all wait on the store)
+  until `run` was killed. Tests:
+  a unit test, and one with real mitmproxy and `run`'s own rules log (the
+  file saved twice; flows still recorded, the stats still answering).
+- When mitmproxy kept failing and reqcove gave up on it (5 restarts in a
+  row), `run` stopped with exit status 0, as for Ctrl-C, so a service looked
+  as if it had ended fine. It now exits with status 1 and mitmproxy's error
+  (test: a stand-in for mitmproxy that dies at every restart).
+- An HTTP/2 GET (HEAD, OPTIONS, DELETE) without a length, to a URL a mock or
+  `map_local` may answer, that sent a body anyway had all of it held in
+  mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
+  recorded as an error, and its body is not held; one with no body is
+  answered as before. Tested with Go's HTTP/2 client and real mitmproxy (an
+  endless body gets its 502 at once); iPhone apps not tried.
+
+### For people
+
+- The Remote Proxy, LAN mode and `--local-proxy` keep at most 256 tunnels
+  (CONNECT: HTTPS, WebSockets) open per client, one address (with
+  `--local-proxy`, all of this computer's apps together): the next one gets a
+  503 until one closes. A tunnel with no bytes either way for 15 minutes is
+  closed; one that keeps talking (a WebSocket, an event stream) stays open.
+  Tests, with 2 tunnels and 300 ms.
+- The guide and SECURITY now say that `--web`'s 10,000 flows and 256 MB count
+  finished flows only: a flow still in progress counts once it ends (from
+  reading code).
+
+### Inside
+
+- The release workflow refuses a tag whose commit has no successful run of
+  the test workflow (macOS and Linux, end to end with mitmproxy, the
+  container, the checks). Checked with actionlint and by running its query
+  against this repository; the workflow itself runs only on a tag, not yet.
+
 ### Upgrading from v0.8
 
 - Restart `reqcove run` with the new version (or `reqcove service restart`,
