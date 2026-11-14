@@ -198,8 +198,9 @@ the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
 node recorded; no login URL or token in `service.log`), `reqcove status` named
 the service, `service uninstall` stopped it and removed the file; after a
 sleep it kept running, and after a reboot it started at login by itself (an
-iPhone recorded, no alert at login). macOS asked once for Local Network access
-for each new build (an unsigned binary counts as a new app). Not tried yet:
+iPhone recorded, no alert at login). macOS asked for Local Network access,
+before and after the sleep (allowed both times; its list shows each build at
+another path as its own entry). Not tried yet:
 `service restart`; Linux.
 
 ### Undo everything (`reqcove cleanup`)
