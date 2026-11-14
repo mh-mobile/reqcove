@@ -883,6 +883,10 @@ func TestCutBodies(t *testing.T) {
 	part := strings.Repeat("came before the cut. ", 200) // 4200 bytes, all in one write: no periodic flush
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.ReadAll(r.Body)
+		if r.URL.Path == "/none" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.URL.Path != "/cut" {
 			return
 		}
@@ -904,6 +908,22 @@ func TestCutBodies(t *testing.T) {
 	}
 	if !v.ReqBody.Final || v.ReqBodyText != "sent whole" {
 		t.Errorf("the request body that had ended: %+v %q", v.ReqBody, v.ReqBodyText)
+	}
+
+	// An HTTP/1 GET has no body to stream: mitmproxy never calls the stream, not
+	// even with its end, and the record still says the (empty) body is whole.
+	if resp, err := hc.Get(srv.URL + "/plain"); err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	if v := h.doneFlow("/plain", true); !v.ReqBody.Final || v.ReqBody.Size != 0 {
+		t.Errorf("a GET's empty request body: %+v", v.ReqBody)
+	}
+	if resp, err := hc.Get(srv.URL + "/none"); err == nil { // and a 204's response has none either
+		resp.Body.Close()
+	}
+	if v := h.doneFlow("/none", true); !v.RespBody.Final || v.RespBody.Size != 0 {
+		t.Errorf("a 204's empty response body: %+v", v.RespBody)
 	}
 
 	// An upload the client gives up on.
