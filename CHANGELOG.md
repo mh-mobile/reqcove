@@ -31,6 +31,22 @@
   were not secret (found by a code review; unit tests, an E2E test for the
   joined `Set-Cookie`, and the fuzz test for the `.env` line).
 
+### Removed
+
+- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`,
+  `activate_preset` and `deactivate_preset`, which take mocks and the other
+  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
+  `active_presets` and `active_presets_error`), and `capture_stats`'
+  `mock_presets` (use `presets`). No tool list has them, local or
+  `--mcp-http`, nor does a tool description or the server's instructions
+  (unit tests). A call to one of the tools, from a script or from an agent
+  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
+  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
+  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
+  (from reading its code). `reqcove status` still reads the old fields from a
+  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
+
 ### Fixed
 
 Found by a code review of v0.8.0; each test fails without its fix.
@@ -57,25 +73,6 @@ Found by a code review of v0.8.0; each test fails without its fix.
   stayed open for good and the addon's counters were counted twice. Test
   with a stand-in mitmdump (`addon_dropped_events`; the other counters come
   the same way, from reading code).
-
-### Removed
-
-- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
-  `activate_mock` and `deactivate_mock` (use `list_presets`,
-  `activate_preset` and `deactivate_preset`, which take mocks and the other
-  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
-  `active_presets` and `active_presets_error`), and `capture_stats`'
-  `mock_presets` (use `presets`). No tool list has them, local or
-  `--mcp-http`, nor does a tool description or the server's instructions
-  (unit tests). A call to one of the tools, from a script or from an agent
-  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
-  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
-  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
-  (from reading its code). `reqcove status` still reads the old fields from a
-  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
-
-### Fixed
-
 - `run --local-proxy … 2>&1 | tee FILE`, stopped with Ctrl-C (which stops
   `tee` too), left the system's web proxies pointed at the local proxy:
   `run`'s next line to the closed pipe killed it (SIGPIPE) before it put them
