@@ -74,7 +74,11 @@ func TestSoak(t *testing.T) {
 	})
 	mux.Handle("/ws", websocket.Handler(func(ws *websocket.Conn) { io.Copy(ws, ws) }))
 	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	defer func() { // Close waits for active connections, and the streams below never end on their own
+		cancel()
+		srv.CloseClientConnections()
+		srv.Close()
+	}()
 	hc := h.client("soak-device")
 	hc.Timeout = 0 // the streams below last the whole run; the harness's client gives up after 2 minutes
 	dial := hc.Transport.(*http.Transport).DialContext

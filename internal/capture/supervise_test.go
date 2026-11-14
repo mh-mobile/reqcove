@@ -217,6 +217,47 @@ func TestStartStopsStaleMitmdump(t *testing.T) {
 	}
 }
 
+// A harness whose test process died without its Cleanup (a -timeout panic)
+// leaves its mitmdump group running: the next harness stops it and removes
+// its directory, but leaves a live test process's alone.
+func TestReapOrphans(t *testing.T) {
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := os.MkdirTemp("/tmp", fmt.Sprintf("rcvt-%d-", gone.Process.Pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(orphan) })
+	live, err := os.MkdirTemp("/tmp", fmt.Sprintf("rcvt-%d-", os.Getpid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(live) })
+	cmd := exec.Command("/bin/sh", "-c", "sleep 600; true", "fake-uv", "reqcove_socket="+filepath.Join(orphan, "ingest.sock"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	done := make(chan struct{})
+	go func() { cmd.Wait(); close(done) }()
+	os.WriteFile(filepath.Join(orphan, "mitmdump.pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+	reapOrphans()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Error("the orphaned mitmdump still runs")
+	}
+	if exists(orphan) {
+		t.Error("the orphan's directory is left")
+	}
+	if !exists(live) {
+		t.Error("removed the directory of a test process that still runs")
+	}
+}
+
 // TestPortHeldWhileDown: while mitmdump is down (restarting, then given
 // up), no other process can bind its SOCKS port: reqcove holds it. Stop
 // frees it.

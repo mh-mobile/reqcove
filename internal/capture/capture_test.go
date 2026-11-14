@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,7 +48,8 @@ func startHarness(t *testing.T, ctx context.Context, allow []string, extraEnv ..
 // tryHarness is startHarness with a config tweak, returning Start's error.
 func tryHarness(t *testing.T, ctx context.Context, allow []string, tweak func(*Config), extraEnv ...string) (*harness, error) {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "rcvt-") // short: macOS caps socket paths at 104 bytes
+	reapOnce.Do(reapOrphans)
+	dir, err := os.MkdirTemp("/tmp", fmt.Sprintf("rcvt-%d-", os.Getpid())) // short: macOS caps socket paths at 104 bytes; the pid: reapOrphans
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +85,23 @@ func tryHarness(t *testing.T, ctx context.Context, allow []string, tweak func(*C
 		}
 	})
 	return h, nil
+}
+
+var reapOnce sync.Once
+
+// reapOrphans stops the mitmdump (its whole group) of harnesses whose test
+// process died without running its Cleanup (a -timeout panic, Ctrl-C), and
+// removes their directories. Their directory names that process.
+func reapOrphans() {
+	dirs, _ := filepath.Glob("/tmp/rcvt-*-*")
+	for _, dir := range dirs {
+		owner, _, _ := strings.Cut(strings.TrimPrefix(filepath.Base(dir), "rcvt-"), "-")
+		if pid, err := strconv.Atoi(owner); err != nil || pid <= 1 || syscall.Kill(pid, 0) != syscall.ESRCH {
+			continue
+		}
+		killStale(dir, filepath.Join(dir, "ingest.sock"))
+		os.RemoveAll(dir)
+	}
 }
 
 func (h *harness) port() string { _, p, _ := net.SplitHostPort(h.c.SocksAddr); return p }
