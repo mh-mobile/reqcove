@@ -10,7 +10,7 @@
 - Through a `--uvx` wrapper (a path not named `uvx`), the default mitmproxy
   gets the lock's tornado, 6.6.1, not 6.5.10, whose vulnerabilities are in
   mitmweb's server (`--web`): the lock's override and its date for tornado
-  are passed to uvx (tried with the real uvx; the other packages come at the
+  are passed to uvx (tried with uv 0.13.4; the other packages come at the
   lock's versions, and the `--web` tests pass through a wrapper). Another
   `--mitmproxy-spec` still gets the tornado its mitmproxy asks for
   ([SECURITY](docs/SECURITY.md#mitmproxys-own-code)).

@@ -315,7 +315,7 @@ func TestRunSurvivesClosedStderr(t *testing.T) {
 	}
 	r.Close()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestRunSurvivesClosedStderr$")
-	cmd.Env = append(os.Environ(), "REQCOVE_TEST_MAIN=1")
+	cmd.Env = append(os.Environ(), "REQCOVE_TEST_MAIN=1", "TMPDIR="+t.TempDir()) // its exit skips TestMain's cleanup
 	cmd.Stderr = w
 	err = cmd.Run()
 	w.Close()
