@@ -11,8 +11,9 @@ import (
 // multipart/form-data (uploads, forms with files): reqcove hands out the body
 // with each part masked, never a file's bytes. A part whose name is secret is
 // masked whole; a text part (no filename, a text or JSON type) is masked as a
-// body is; a file part, and any part that is not text, keeps its headers and
-// its size only. At most multipartMaxParts parts are read.
+// body is; a file part, any part that is not text, and one that names neither
+// a field nor a file, keeps its headers (unfolded) and its size only. At most
+// multipartMaxParts parts are read.
 const multipartMaxParts = 256
 
 // isMultipartForm returns the boundary of a multipart/form-data body.
@@ -106,19 +107,20 @@ func maskPart(part []byte, request, cut bool) []byte {
 		return []byte(fmt.Sprintf("\r\n[part: %d bytes, headers not read]", len(part))) // LF-only lines: where its headers end is not known
 	}
 	var name, filename, ctype, cte string
-	var lines []string
-	dispositions, unread, redacted := 0, false, false
-	for _, l := range strings.Split(strings.TrimPrefix(hdr, "\r\n"), "\r\n") {
-		if strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") { // folded: the header before it goes on
-			if redacted {
-				continue
-			}
-			lines = append(lines, maskTokens(maskURLs(l)))
-			continue
+	var logical, lines []string
+	raw := strings.Split(strings.TrimPrefix(hdr, "\r\n"), "\r\n")
+	for i := 0; i < len(raw); {
+		j := i + 1
+		for j < len(raw) && (strings.HasPrefix(raw[j], " ") || strings.HasPrefix(raw[j], "\t")) {
+			j++ // folded: the header before it goes on, read and masked as one line
 		}
+		logical = append(logical, strings.Join(raw[i:j], "")) // joined once: many folds stay linear
+		i = j
+	}
+	dispositions, unread := 0, false
+	for _, l := range logical {
 		k, v, _ := strings.Cut(l, ":")
 		key := strings.ToLower(strings.TrimSpace(k))
-		redacted = false
 		switch key {
 		case "content-disposition":
 			dispositions++
@@ -134,7 +136,7 @@ func maskPart(part []byte, request, cut bool) []byte {
 		}
 		switch {
 		case secretName(strings.TrimSpace(k)):
-			l, redacted = k+": [redacted]", true
+			l = k + ": [redacted]"
 		case key == "cookie":
 			l = k + ": " + maskCookies(strings.TrimSpace(v), "; ", false)
 		}
@@ -143,7 +145,7 @@ func maskPart(part []byte, request, cut bool) []byte {
 	out := "\r\n" + strings.Join(lines, "\r\n") + "\r\n\r\n"
 	textType := ctype == "" || strings.HasPrefix(strings.ToLower(ctype), "text/") || strings.Contains(strings.ToLower(ctype), "json")
 	switch {
-	case dispositions != 1 || unread: // its name and filename are not known: neither a field nor a file can be told
+	case dispositions != 1 || unread || name == "" && filename == "": // its name and filename are not known: neither a field nor a file can be told
 		return []byte(out + fmt.Sprintf("[part: %d bytes, its Content-Disposition not read]", len(content)))
 	case secretKind(name, request): // a lone "code" in a request, as in a form
 		return []byte(out + "[redacted]")
@@ -153,8 +155,10 @@ func maskPart(part []byte, request, cut bool) []byte {
 			note += ", cut"
 		}
 		return []byte(out + note + "]")
-	case cte != "" && cte != "7bit" && cte != "8bit" && cte != "binary":
+	case cte == "base64" || cte == "quoted-printable":
 		return []byte(out + fmt.Sprintf("[encoded (%s): %d bytes]", cte, len(content)))
+	case cte != "" && cte != "7bit" && cte != "8bit" && cte != "binary": // another name is not repeated: it could be anything
+		return []byte(out + fmt.Sprintf("[encoded: %d bytes]", len(content)))
 	case !utf8.Valid(trimCutRune(content)) || !strictText(trimCutRune(content)):
 		return []byte(out + fmt.Sprintf("[not text: %d bytes]", len(content)))
 	}
