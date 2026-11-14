@@ -502,7 +502,7 @@ func TestRawTCPStep(t *testing.T) {
 	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}}
 	stats := map[string]any{"state": "ready", "raw_tcp_hosts": []capture.RawHost{{Device: "a", Host: "grpc.example.com", Connections: 2, ALPN: []string{"grpc-exp"}}}}
 	got := strings.Join(nextSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices), "\n")
-	if !strings.Contains(got, "iphone's connections to grpc.example.com (connections: 2; ALPN grpc-exp) were decrypted but carried as raw TCP") ||
+	if !strings.Contains(got, "iphone's connections to grpc.example.com (connections: 2; ALPN grpc-exp) were carried as raw TCP, not read as HTTP") ||
 		!strings.Contains(got, "list_passthrough") || strings.Contains(got, "no traffic from iphone") {
 		t.Errorf("steps:\n%s", got)
 	}

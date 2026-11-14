@@ -107,14 +107,16 @@
 
 ### Added
 
-- A connection to an allowed host that mitmproxy decrypts but carries as raw
-  TCP, not read as HTTP (an ALPN name it does not know, a server that speaks
-  first, bytes that do not look like HTTP), is recorded as a connection: up
-  to v0.8 it left nothing, as grpc-swift's calls on the iPhone did (below).
+- A connection to an allowed host that mitmproxy carries as raw TCP, not
+  read as HTTP (once decrypted, for TLS: an ALPN name it does not know, a
+  server that speaks first, bytes that do not look like HTTP; and, from
+  reading mitmproxy's code, what a request upgrades to with a `101` other
+  than a WebSocket), is recorded as a connection: up to v0.8 nothing showed
+  it, and grpc-swift's calls on the iPhone left nothing at all (below).
   `list_passthrough` lists it with `reason: raw_tcp` (every row now has
   `reason`: `pass_hosts` or `raw_tcp`), with the protocol the client got
-  (`alpn_negotiated`) and the bytes relayed each way inside TLS, never the
-  bytes themselves; `capture_stats` counts it (`raw_tcp`, and `raw_tcp_hosts`
+  (`alpn_negotiated`) and the bytes relayed each way (inside TLS, for TLS),
+  never the bytes themselves; `capture_stats` counts it (`raw_tcp`, and `raw_tcp_hosts`
   by device and host), and `status`' next steps name its hosts for its
   device. A device with only such connections is no longer told it has no
   traffic. `passed_through` and `list_devices`' `passthroughs` still count

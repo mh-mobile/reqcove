@@ -40,7 +40,7 @@ type event struct {
 	SNI         string      `json:"sni"`
 	Server      string      `json:"server"`          // pass_open: where the connection went
 	ALPN        []string    `json:"alpn"`            // pass_open: what the client offered
-	Raw         bool        `json:"raw"`             // pass_open: decrypted, then carried as raw TCP (not HTTP), not a --pass-hosts host's
+	Raw         bool        `json:"raw"`             // pass_open: carried as raw TCP (not read as HTTP), not a --pass-hosts host's
 	ALPNNeg     string      `json:"alpn_negotiated"` // pass_open, raw: the protocol the client got
 	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it

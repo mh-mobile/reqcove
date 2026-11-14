@@ -19,13 +19,15 @@ type passthrough struct {
 	start, end                       float64
 	up, down                         int64
 	unknown                          bool // the bytes went with mitmdump
-	raw                              bool // decrypted, then carried as raw TCP: not a --pass-hosts host's
+	raw                              bool // carried as raw TCP, not read as HTTP: not a --pass-hosts host's
 }
 
-// PassthroughView is a connection with no flow as list_passthrough returns it:
+// PassthroughView is a connection whose contents have no flow, as
+// list_passthrough returns it:
 // a --pass-hosts host's (reason pass_hosts: what is outside TLS, nothing
 // inside), or an allowed host's that mitmproxy carried as raw TCP, not read as
-// HTTP (reason raw_tcp: its sizes, never its bytes).
+// HTTP, so what it carries has no flow (reason raw_tcp: its sizes, never its
+// bytes).
 type PassthroughView struct {
 	Time        string   `json:"time"`          // the connection's start
 	End         string   `json:"end,omitempty"` // empty while open
@@ -39,7 +41,7 @@ type PassthroughView struct {
 	ALPNOffered []string `json:"alpn_offered,omitempty"`
 	ALPN        string   `json:"alpn_negotiated,omitempty"` // raw_tcp: the protocol the client got
 	// pass_hosts: from the client, TLS included, the whole connection; raw_tcp:
-	// what mitmproxy relayed, inside TLS.
+	// what mitmproxy relayed (inside TLS, for TLS).
 	BytesUp      int64  `json:"bytes_up"`
 	BytesDown    int64  `json:"bytes_down"`
 	BytesUnknown bool   `json:"bytes_unknown,omitempty"` // mitmproxy restarted mid-connection: the bytes above are not its
@@ -82,7 +84,7 @@ func (s *Store) Passthroughs(q Filter) []PassthroughView {
 }
 
 // RawHost is an allowed host whose connections from a device mitmproxy carried
-// as raw TCP, not read as HTTP: decrypted, but no flow is recorded.
+// as raw TCP, not read as HTTP: what they carry has no flows.
 type RawHost struct {
 	Device      string   `json:"device"`
 	DeviceName  string   `json:"device_name,omitempty"`

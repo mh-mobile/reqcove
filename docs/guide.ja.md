@@ -261,7 +261,7 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 
 ### HTTP として読まれない接続（raw TCP）
 
-mitmproxy は許可したホストへの接続を復号してから、それをどう読むかを決めます。HTTP だと判断しなかった接続（知らない ALPN の名前、サーバーが先に話すもの、HTTP に見えないバイト）は raw TCP として中継します。アプリは動きますが、フローは記録されません。Reqcove はその代わりに接続を記録します。`list_passthrough` が `reason: raw_tcp` として返し（ホスト、接続先サーバー、時刻、クライアントが出したプロトコルと決まったプロトコル、TLS の内側で流れた向きごとのバイト数。バイトそのものは返しません）、`capture_stats` が数え（`raw_tcp`。デバイスとホストごとには `raw_tcp_hosts`）、`reqcove status` が次の手順でそのホストを示します。iPhone の grpc-swift の呼び出しは、Reqcove がサーバーに `h2` を出すようになるまで、こうなっていました（[gRPC](#grpc)）。
+mitmproxy は、許可したホストへの接続をどう読むかを決めます（TLS なら復号してから）。HTTP だと判断しなかった接続（知らない ALPN の名前、サーバーが先に話すもの、HTTP に見えないバイト）は raw TCP として中継し、リクエストが WebSocket 以外の `101` でアップグレードした先も同じです（mitmproxy 12.3.1 のコードを読んだもの。そのリクエスト自体はフローになります）。アプリは動きますが、その接続が運ぶものはフローとして記録されません。Reqcove はその代わりに接続を記録します。`list_passthrough` が `reason: raw_tcp` として返し（ホスト、接続先サーバー、時刻、クライアントが出したプロトコルと決まったプロトコル、向きごとのバイト数。TLS なら TLS の内側の数です。バイトそのものは返しません）、`capture_stats` が数え（`raw_tcp`。デバイスとホストごとには `raw_tcp_hosts`）、`reqcove status` が次の手順でそのホストを示します。iPhone の grpc-swift の呼び出しは、Reqcove がサーバーに `h2` を出すようになるまで、こうなっていました（[gRPC](#grpc)）。
 
 拾えないもの：mitmproxy が自分で素通しする接続は、mitmproxy のフックを 1 つも呼ばないので、何も記録されず、数えられもしません（mitmproxy 12.3.1 のコードを読んだもの）。Apple のホスト、`--allow-hosts` にないホスト、そして mitmproxy がアドレスでしか知らない接続（SNI のない TLS、80 番ポートの HTTP でない平文の TCP）です。`--allow-hosts` にそのアドレスを書いたときは別です。
 
@@ -798,7 +798,7 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type、gRPC のステータス（`by_grpc_status`）、エンドポイントごとの件数。エンドポイント（`by_endpoint`）は、メソッド、ホスト、クエリを除いたパス（ID は `{id}`）、GraphQL なら operation（`GET api.example.com/v1/users/{id}`、`POST api.example.com/graphql Login`）。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイス（LAN モードでは `lan:ADDR`）と、それぞれの件数、この実行での最初と最後のアクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
-| `list_passthrough` | フローのない接続。`reason` 付きで、`--pass-hosts` のホストへの接続（`pass_hosts`）と、許可したホストへの接続のうち mitmproxy が HTTP として読まずに raw TCP として中継したもの（`raw_tcp`。クライアントに決まった ALPN 付き：[raw TCP](#http-として読まれない接続raw-tcp)）。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
+| `list_passthrough` | 運ぶものがフローとして記録されない接続。`reason` 付きで、`--pass-hosts` のホストへの接続（`pass_hosts`）と、許可したホストへの接続のうち mitmproxy が HTTP として読まずに raw TCP として中継したもの（`raw_tcp`。クライアントに決まった ALPN 付き：[raw TCP](#http-として読まれない接続raw-tcp)）。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
 | `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。`--mcp-http` では出しません。プリセットのツールがないため） |
 | `list_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。すべての種類（`kind`）。モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名、`resolve` の名前とアドレス。有効か、無効になる時刻。ボディ、ヘッダーの値、フィルター、正規表現は返さない。`--mcp-http` からは使えない |

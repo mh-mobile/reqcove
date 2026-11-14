@@ -2026,12 +2026,13 @@ class Reqcove:
         p = flow.metadata.get("reqcove_pass")
         c = flow.client_conn
         if p is None:
-            # Not a --pass-hosts connection: one mitmproxy decrypted (or took as
-            # plain TCP) and then carried as raw TCP, not HTTP. Its NextLayer
-            # (12.3.1) does so for an ALPN it does not know when the server
-            # spoke first or the client's bytes do not look like HTTP: no flow,
-            # so it is recorded as a connection (raw: never its bytes). Ignored
-            # connections (Apple's, hosts outside --allow-hosts) fire no hook.
+            # Not a --pass-hosts connection: one mitmproxy carries as raw TCP,
+            # not read as HTTP. Its NextLayer (12.3.1) does so for an ALPN it
+            # does not know when the server spoke first or the client's bytes
+            # do not look like HTTP, and its HTTP layer after a 101 that is not
+            # a WebSocket: what it carries has no flow, so it is recorded as a
+            # connection (raw: never its bytes). Ignored connections (Apple's,
+            # hosts outside --allow-hosts) fire no hook.
             ip = (flow.server_conn.address or ("",))[0]
             host = (c.sni or ip).lower().rstrip(".")
             if not host or not check.is_valid_host(host) or not self._in_scope(host):

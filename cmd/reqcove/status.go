@@ -157,7 +157,7 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			}
 		}
 		if len(hosts) > 0 {
-			steps = append(steps, fmt.Sprintf("%s's connections to %s were decrypted but carried as raw TCP, not read as HTTP: a protocol mitmproxy does not take for HTTP (an ALPN name it does not know, or not HTTP at all), so no flow of theirs is recorded. list_passthrough lists them (reason raw_tcp: host, protocols, sizes; never their contents)", cmp.Or(d.Name, d.ID), strings.Join(hosts, ", ")))
+			steps = append(steps, fmt.Sprintf("%s's connections to %s were carried as raw TCP, not read as HTTP: a protocol mitmproxy does not take for HTTP (an ALPN name it does not know, not HTTP at all, or one an HTTP request upgraded to), so what they carry is not recorded as flows. list_passthrough lists them (reason raw_tcp: host, protocols, sizes; never their contents)", cmp.Or(d.Name, d.ID), strings.Join(hosts, ", ")))
 		}
 		if d.ID == exitnode.Local.ID {
 			if d.TLSFailures > 0 && d.Flows == 0 {

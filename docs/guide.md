@@ -443,13 +443,16 @@ Tried: on an iPhone. That a pass host's decrypted requests go through
 
 ### Connections not read as HTTP (raw TCP)
 
-mitmproxy decrypts a connection to an allowed host, then picks how to read
-it. One it does not take for HTTP (an ALPN name it does not know, a server
-that speaks first, bytes that do not look like HTTP) it carries as raw TCP:
-the app works, but no flow is recorded. Reqcove records the connection
-instead: `list_passthrough` lists it with `reason: raw_tcp` (host, server,
-times, the protocols the client offered and the one it got, bytes each way
-inside TLS; never the bytes themselves), `capture_stats` counts it
+mitmproxy picks how to read a connection to an allowed host (once
+decrypted, for TLS). One it does not take for HTTP (an ALPN name it does not
+know, a server that speaks first, bytes that do not look like HTTP) it
+carries as raw TCP, and so what a request upgrades to with a `101` other
+than a WebSocket (from reading mitmproxy 12.3.1's code; the request itself
+is a flow): the app works, but what the connection carries is not recorded
+as flows. Reqcove records the connection instead: `list_passthrough` lists
+it with `reason: raw_tcp` (host, server, times, the protocols the client
+offered and the one it got, bytes each way, inside TLS for TLS; never the
+bytes themselves), `capture_stats` counts it
 (`raw_tcp`, and `raw_tcp_hosts` by device and host), and `reqcove status`
 names its hosts in the next steps. grpc-swift's calls on the iPhone went so
 before Reqcove offered the server `h2` ([gRPC](#grpc)).
@@ -1476,7 +1479,7 @@ with no run, by a unit test.
 | `summarize` | counts by host, User-Agent, status, method, device, content type, gRPC status (`by_grpc_status`), and endpoint (`by_endpoint`: method, host and path without the query, ids as `{id}`, then the GraphQL operation: `GET api.example.com/v1/users/{id}`, `POST api.example.com/graphql Login`); the same filters and `similar_hosts` |
 | `list_devices` | carried devices (`lan:ADDR` in LAN mode), their counts, and first and last activity this run |
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
-| `list_passthrough` | connections with no flows, with `reason`: to `--pass-hosts` hosts (`pass_hosts`), and to allowed hosts mitmproxy carried as raw TCP, not read as HTTP (`raw_tcp`, with the ALPN the client got: [raw TCP](#connections-not-read-as-http-raw-tcp)); host, server, times, bytes; no URLs or contents |
+| `list_passthrough` | connections whose contents are not recorded as flows, with `reason`: to `--pass-hosts` hosts (`pass_hosts`), and to allowed hosts mitmproxy carried as raw TCP, not read as HTTP (`raw_tcp`, with the ALPN the client got: [raw TCP](#connections-not-read-as-http-raw-tcp)); host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
 | `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_presets`, with `kind`; not over `--mcp-http`, which has no preset tools) |
 | `list_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file, of every kind (`kind`): a mock's match and answer, a `map_remote` preset's target, a `modify_headers` preset's header name, a `resolve` preset's name and address; whether it is on, when it turns off. Never bodies, header values, filters or regexes. Not over `--mcp-http` |
