@@ -2,11 +2,11 @@
 
 [English](container.md)
 
-Reqcove は、コンテナでも動きます（Docker。Podman でも同じコマンドで動くはずです）。uv、Python、mitmproxy、CA の秘密鍵はコンテナの中に閉じ、コンテナと volume を消せば片付きます。環境ごとにコンテナを 1 つ起動すれば、1 台のマシンで、それぞれ閉じた Exit Node をいくつも動かせます。
+Reqcove は、コンテナでも動きます（Docker。Podman でも同じコマンドで動きます：[Podman で動かす](#podman-で動かす)）。uv、Python、mitmproxy、CA の秘密鍵はコンテナの中に閉じ、コンテナと volume を消せば片付きます。環境ごとにコンテナを 1 つ起動すれば、1 台のマシンで、それぞれ閉じた Exit Node をいくつも動かせます。
 
 向いているのは Linux です。macOS では、コンテナは VM（Docker Desktop、OrbStack、colima）の中で動きます。シミュレーターと `--local-proxy` は使えず、Mac をスリープさせないようにしておく必要があります。Mac で複数の Exit Node を動かすなら、Mac の上で `--state` ごとに `run` を動かす形（[複数の Exit Node](several-exit-nodes.ja.md)）の方が、それらも使えます。
 
-**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと、`docker run -i` で Claude Code（`claude -p`）が `status` を読むこと。**まだ試していないこと**：Linux のホストでの手の確認、Podman。
+**確かめたこと**：`scripts/container-smoke.sh` を OrbStack（macOS、arm64）と CI（Linux、amd64 と arm64）で流しました。イメージができること、ネットワークなしで mitmproxy と mitmweb がイメージの中身だけで起動すること、新しい volume の状態のフォルダがコンテナのユーザーの持ち物で 0700 になること、別のコンテナの `reqcove mcp` が volume を通して `run` に届くこと、`docker exec … reqcove status` が答えること、同じ volume で 2 つ目の `run` を起動すると断られること、`docker stop` で正しく止まることです。手で（OrbStack で）確かめたこと：コンテナから tailnet にログインすること（Tailnet Lock の署名、Exit Node の承認）、iPhone の通信をそのコンテナに通すこと（コンテナの CA を入れ、GitHub アプリの通信が記録された）、`docker run -i` の `reqcove mcp` が MCP のクライアントに答えること、`docker exec … reqcove har`、`--mcp-http` を Grok Bot から読むこと、`docker run -i` で Claude Code（`claude -p`）が `status` を読むこと。**まだ試していないこと**：Linux のホストでの手の確認。Podman は[下](#podman-で動かす)に書きました。
 
 ## 1. イメージを作る
 
@@ -54,9 +54,18 @@ claude mcp add $NAME -- docker run -i --rm --network none --log-driver none --vo
 - `--local-proxy`、シミュレーター、このコンピュータで CA を信頼することは、コンテナではできません。
 - macOS：Mac がスリープすると VM が止まります。使う間は `caffeinate -i` を動かしておいてください。
 - `-t` を付けなければ、`docker logs` にログイン用の URL とトークンは残りません。付けると、コンテナを消すまで残ります。トークンは、volume の中のファイルを消すまで有効です。`--log-opt max-size=10m` でログの大きさを抑えられます。
-- `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。`--proto` も同じです。
+- `--rules` と `--upstream-proxy` の `localhost` は、コンテナ自身を指します。ホストは、Docker Desktop と OrbStack では `host.docker.internal` です（試していません）。Podman は[下](#podman-で動かす)に書きました。`--rules` はフォルダをつないで渡します（`-v ./rules:/rules:ro` として `--rules /rules/x.yaml`）。`--proto` も同じです。
 - `run` が表示するコマンド（`claude mcp add … reqcove mcp`、`reqcove status`）は、ホスト向けの形です。上の形に読み替えてください。
 - VM のネットワーク越しでは、tailnet の通信が中継（DERP）になりやすいかもしれません。速さは測っていません。
+
+## Podman で動かす
+
+Podman 6.2.0、macOS で、2026-11-14 に試しました（arm64。`podman machine init` を既定のまま：libkrun、rootless、SELinux が enforcing の Fedora 44）。上のコマンドの `docker` を `podman` に読み替えるだけで動きます。ほかに要るものはありません（`--cap-add` も、rootful のマシンも要りません）。先にマシンを起動し（`podman machine start`）、使い終わったら止めます。
+
+- **確かめたこと**：`CONTAINER=podman scripts/container-smoke.sh` が通ること（最初に挙げた確かめがすべて通り、`podman stop` の終了コードは 0）。`podman build -t reqcove .`（イメージの名前は `localhost/reqcove` になり、`reqcove` で見つかります）。2 をネットワークありで、ログインの手前まで：`podman exec $NAME reqcove status` が `NeedsLogin` と残りの手順を答え、`podman exec $NAME reqcove har` も答えること。Mac のフォルダを `-v ./rules:/rules:ro` でつないだ `--rules` が読まれること（SELinux は enforcing でしたが、`:z` は要りませんでした）。`host.containers.internal` と `host.docker.internal` のどちらでも、Mac の `127.0.0.1` のサーバーに届くこと（普通のコンテナから確かめました。`--rules` や `--upstream-proxy` を通しては試していません）。
+- **Podman で試していないこと**：ログイン、iPhone の通信を通すこと、`claude mcp add … podman run -i …` で追加したエージェント（`podman run -i --volumes-from` の MCP は、確かめのスクリプトだけです）、`reqcove links`、`--mcp-http`、Linux のホスト、rootful のマシン。コンテナでの `run --lan` は、Docker でも Podman でも試していません。
+- `run` が表示するエージェント向けのコマンドは `docker run` の形です。Podman では `podman run` に読み替えてください。
+- マシンの既定のログドライバーは journald です。`--log-opt max-size=10m` は受け付けられますが、Podman のドキュメントでは、大きさを抑えるのは `--log-driver k8s-file` のログです（ドキュメントで読んだだけで、確かめていません）。
 
 ## 複数の環境
 

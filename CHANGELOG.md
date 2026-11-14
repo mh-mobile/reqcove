@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Containers with Podman 6.2.0 on macOS (rootless `podman machine`): the smoke
+  script passes, `run` up to the login, `--rules`, `host.containers.internal`
+  ([container](docs/container.md#with-podman)); not tried: a login, an iPhone, an agent.
+
 ## v0.7.0 — 2026-11-14
 
 ### For people
