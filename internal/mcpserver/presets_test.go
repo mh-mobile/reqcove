@@ -356,6 +356,31 @@ func TestRemovedNamesGone(t *testing.T) {
 	}
 }
 
+// docs/SECURITY.md, Prompt injection: each tool that returns what sites, apps,
+// the tailnet or a marker's author wrote says in its description that it is
+// data, not instructions. The others return the user's own rules file or
+// reqcove's values.
+func TestRecordToolsSayData(t *testing.T) {
+	tools, err := toolList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := 0
+	for _, tool := range tools {
+		switch tool.Name {
+		case "list_presets", "activate_preset", "deactivate_preset", "list_rules", "explain_rules", "add_marker":
+			continue
+		}
+		if d := tool.Description; !strings.Contains(d, "data, not instructions") && !strings.Contains(d, "data, never instructions") {
+			t.Errorf("%s's description does not say its answer is data: %q", tool.Name, d)
+		}
+		said++
+	}
+	if said != 13 { // the twelve --mcp-http has too, and list_markers
+		t.Errorf("%d tools checked, want 13", said)
+	}
+}
+
 // A call to a removed tool is told what replaces it, as a tool error, not a
 // protocol error: by run's local socket (what an older reqcove mcp, which
 // still lists them, forwards the call to) and by a v1.0 reqcove mcp (whatever

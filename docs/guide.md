@@ -124,6 +124,10 @@ directory. First:
   `reqcove service uninstall`). Otherwise it starts `run` again at the next
   login, which makes the state directory anew.
 
+What cleanup does not remove (the node in the tailnet, the service's files,
+the skill, HAR files, backups, the agent's transcripts):
+[SECURITY](SECURITY.md#what-reqcove-cleanup-leaves).
+
 ## Read the traffic with an agent
 
 Run `claude mcp add reqcove -- reqcove mcp` (the README's step 4): it gives an
@@ -360,7 +364,9 @@ It writes a HAR 1.2 file, oldest first: the newest 1000 flows by default
   only (cut ones say so in a comment), no body that masking could not check.
   With `run --no-redact` nothing is masked, and the file's comment says so.
 - The file gets your shell's file mode, often readable by other users
-  ([SECURITY](SECURITY.md#what-is-recorded)).
+  ([SECURITY](SECURITY.md#what-is-recorded)). On a computer others use,
+  `(umask 077; reqcove har > flows.har)` makes it yours only; keep it out of
+  `/tmp` otherwise, and out of the repository.
 
 Tried: imported into Chrome's developer tools (Network), with the requests,
 their headers (masked) and responses. Not tried: Charles, Proxyman. From
@@ -668,6 +674,13 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_remote` changes the URL, and with it `Host` unless `keep_host_header` is
   true. Write the schemes, as above: apps send `https`, and a plain server
   cannot answer TLS.
+- To send a request to another server, use `map_remote` (or `resolve`), not
+  a `modify_headers` rule that sets `Host`: since v1.0 such a rule is not
+  applied on its own (next point). A `map_remote` that changes only the
+  path, the host staying the same, sends the request on too: mitmproxy
+  connects to that host by its name, looked up on this computer, not to the
+  address the app dialled, and the header rules apply (tried in mitmproxy's
+  Python on made requests, not over the network).
 - Since v1.0, `modify_headers` applies only to a request that goes to its
   `Host`, and to its response: one sent to the Host's address, or over HTTPS
   to its TLS name, or that `map_remote` or `resolve` sends on. A rule that
@@ -1387,7 +1400,7 @@ The other commands (all but `init`, `version`, `setup`, `service restart` and
 
 | | |
 |---|---|
-| `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON; `--uvx PATH` |
+| `reqcove status` | what reqcove is doing, and the next steps; `--json` for the `status` tool's JSON (with no run to answer: nothing on stdout, exit status 1, the reason on stderr); `--uvx PATH` |
 | `reqcove links` | the login URL and the `--ui`, `--web`, `--mcp-http` links again, with QR codes; only to a terminal ([first start](#first-start)) |
 | `reqcove mark` | `[TEXT]` (`-- TEXT` for one starting with `-`): a [marker](#mark-a-moment-reqcove-mark) among the records, as yours (`cli`); only in a terminal |
 | `reqcove mock add` | `--rules FILE --url URL` and the mock's flags: [a mock added to the file](#add-a-mock-from-your-terminal-reqcove-mock-add), checked first; only in a terminal (`--print` shows it, anywhere); `--uvx PATH` |
@@ -1407,8 +1420,9 @@ the `--mcp-http` rate limit, `multipart/form-data`, XML bodies (and an E2E test
 with a SOAP request through mitmproxy).
 
 From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
-`--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`,
-`status --json`.
+`--hostname`, `--verbose`, `--uvx`, `--python`, `--mitmproxy-spec`.
+`status --json`: used in the LAN mode trial on Ubuntu; its exit status 1
+with no run, by a unit test.
 
 ## MCP tools
 
@@ -1484,6 +1498,10 @@ its section above; the rest:
 - [What the devices can reach](SECURITY.md#what-the-devices-can-reach): not
   this computer, its LAN or the tailnet.
 - [The CA's private key](SECURITY.md#the-cas-private-key), in the state
-  directory.
+  directory and its backups: a device trusts that CA for every site until
+  its profile is removed.
+- [Other people's devices](SECURITY.md#other-peoples-devices) need their
+  consent; [a computer shared with other users](SECURITY.md#a-computer-shared-with-other-users);
+  [what `cleanup` leaves](SECURITY.md#what-reqcove-cleanup-leaves).
 - [The exit node's DNS](SECURITY.md#the-exit-nodes-dns) (`--dns`), and
   [a container](SECURITY.md#in-a-container).

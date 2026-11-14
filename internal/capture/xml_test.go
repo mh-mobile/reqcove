@@ -129,6 +129,11 @@ func TestMaskXML(t *testing.T) {
 			t.Errorf("SECURITY says this passes: %s", got)
 		}
 	}
+	// XML's masking reads before JSON's (SECURITY says so): in a JSON body
+	// labelled XML, a masked attribute takes the quote JSON's reading needs.
+	if got := string(maskBody([]byte(`{"xml": "<b data-token=x\"", "password": "Sx1"}`), "application/xml", true)); !strings.Contains(got, `"password": "Sx1"`) {
+		t.Errorf("JSON labelled XML: SECURITY says the field after the tag passes: %s", got)
+	}
 	// Not decoded: SAML's POST binding, a base64 form field (SECURITY says so).
 	saml := "SAMLResponse=" + url.QueryEscape(base64.StdEncoding.EncodeToString([]byte("<saml:Assertion>x</saml:Assertion>")))
 	if got := string(maskBody([]byte(saml), "application/x-www-form-urlencoded", true)); got != saml {
