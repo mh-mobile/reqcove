@@ -144,6 +144,7 @@ All of them: [the guide](docs/guide.md#options).
 - [Look at the flows yourself](docs/guide.md#look-at-the-flows-yourself): on the iPhone, as a HAR file, in mitmweb
 - [Record clients other than iPhone apps](docs/guide.md#record-clients-other-than-iphone-apps): apps that pin certificates, Android, the iOS Simulator, a web app's backend
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
+- [Run it as a service](docs/guide.md#run-it-as-a-service), [troubleshooting](docs/guide.md#troubleshooting)
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 
 ### Without Tailscale (LAN mode)
