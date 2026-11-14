@@ -340,9 +340,10 @@ func jsonKey(raw string) string {
 	return raw
 }
 
-// looksLikeForm: no JSON, XML or HTML, one line, and name=value at the start.
+// looksLikeForm: no JSON, XML or HTML, one line (a newline may end it), and
+// name=value at the start.
 func looksLikeForm(s string) bool {
-	t := strings.TrimLeft(s, " \t\r\n")
+	t := strings.TrimSpace(s)
 	if t == "" || strings.ContainsAny(t[:1], "{[<\"") {
 		return false
 	}
@@ -415,12 +416,13 @@ func b64JSONSecret(v string) bool {
 	return maskJSON(d, true, 2) != d || maskTokens(d) != d
 }
 
-// A "name: value" line (STOMP's passcode:, YAML, headers written into a body)
-// whose name is secret: the rest of the line is masked.
-var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*:[ \t]*)([^\r\n]+)`)
+// A "name: value" or "name=value" line (STOMP's passcode:, YAML, headers
+// written into a body, a .env file's lines, export too) whose name is
+// secret: the rest of the line is masked.
+var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*(?:export[ \t]+)?)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*[:=][ \t]*)([^\r\n]+)`)
 
 func maskLines(s string, loneCode bool) string {
-	if !strings.Contains(s, ":") {
+	if !strings.ContainsAny(s, ":=") {
 		return s
 	}
 	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
@@ -576,7 +578,7 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 		case name == "cookie":
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
-			out[i][1] = maskCookies(kv[1], ";", true)
+			out[i][1] = maskSetCookie(kv[1])
 		case name == "sec-websocket-protocol":
 			out[i][1] = maskTokens(maskWSProtocols(kv[1]))
 		case strings.HasSuffix(name, "-authenticate"):
@@ -626,8 +628,9 @@ func secretKind(name string, loneCode bool) bool {
 	}
 	words := nameWords(name)
 	everyday := false
-	for _, w := range words {
-		everyday = everyday || everydayWords[w]
+	for i, w := range words {
+		words[i] = strings.TrimRight(w, "0123456789") // key1, pin2: the word with a number after it
+		everyday = everyday || everydayWords[words[i]]
 	}
 	for _, w := range words {
 		if !shortSecretWords[w] {
@@ -661,7 +664,7 @@ var everydayWords = map[string]bool{
 	"error": true, "status": true, "reason": true, "response": true, "http": true, "result": true,
 	"country": true, "currency": true, "lang": true, "language": true, "locale": true, "region": true,
 	"zip": true, "postal": true, "area": true, "state": true, "iso": true, "sort": true, "order": true,
-	"primary": true, "foreign": true,
+	"foreign": true, // primary is not: primaryKey is a key
 }
 
 // notSecretNames look secret but carry what debugging needs (letters and digits only).
@@ -715,11 +718,28 @@ func maskCookies(v, sep string, oneCookie bool) string {
 		}
 		if name, _, ok := strings.Cut(p, "="); ok {
 			parts[i] = name + "=[redacted]"
-		} else if i == 0 {
-			parts[i] = "[redacted]" // a value without a name
+		} else if strings.TrimSpace(p) != "" {
+			parts[i] = "[redacted]" // a value without a name, first or not
 		}
 	}
 	return strings.Join(parts, sep)
+}
+
+// A comma that starts another cookie in a Set-Cookie line joining several (a
+// server can send one line for many): a name and = follow. A date's comma
+// (Expires=Wed, 21 Oct …) is followed by a word and a space.
+var cookieJoinRE = regexp.MustCompile(`,[ \t]*[^=;, \t]+=`)
+
+// maskSetCookie masks each cookie of a Set-Cookie value, its attributes kept.
+func maskSetCookie(v string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range cookieJoinRE.FindAllStringIndex(v, -1) {
+		b.WriteString(maskCookies(v[last:m[0]], ";", true) + ",")
+		last = m[0] + 1
+	}
+	b.WriteString(maskCookies(v[last:], ";", true))
+	return b.String()
 }
 
 // A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the

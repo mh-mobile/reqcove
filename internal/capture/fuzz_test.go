@@ -13,7 +13,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 31 // a shape with no case of its own is the default one
+const fuzzShapes = 32 // a shape with no case of its own is the default one
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
 // the secret: XML masking never panics on it, and a secret element and
@@ -79,6 +79,8 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
 	case 30: // a secret-named line whose value also holds a token's shape
 		return pre("note: "+filler+"\n", "password: "+secret+" Bearer OtherToken456\n", "text/plain")
+	case 31: // a .env file's line
+		return pre("NAME="+filler+"\n", "export API_KEY="+secret+"\n", "text/plain")
 	case 22: // SOAP: a namespaced element
 		return pre(`<s:Envelope xmlns:s="urn:s"><s:Body><m:Note>`+filler+`</m:Note>`, `<wsse:Password>`+secret+`</wsse:Password></s:Body></s:Envelope>`, "application/soap+xml")
 	case 23: // an XML attribute

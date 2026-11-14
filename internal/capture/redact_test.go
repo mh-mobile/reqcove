@@ -377,3 +377,66 @@ func TestFourthReview(t *testing.T) {
 		t.Errorf("cut b'…': %.120q", got)
 	}
 }
+
+// The v0.8.0 review (Opus): a nameless cookie after the first, name=value
+// lines, key with a number or after "primary", cookies joined in one Set-Cookie.
+func TestV080OpusReview(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRETsig0"
+	for in, want := range map[[2]string]string{
+		{"Cookie", "theme=dark; S3CRETnameless1; lang=ja; " + jwt}: "theme=[redacted]; [redacted]; lang=[redacted]; [redacted]",
+		// one header line joining cookies (some servers send it): each is masked, a date's comma is not a cookie's
+		{"Set-Cookie", "sid=S3CRET2; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, auth=S3CRET3; HttpOnly,theme=dark"}: "sid=[redacted]; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, auth=[redacted]; HttpOnly,theme=[redacted]",
+		{"Set-Cookie", "sid=S3CRET4; Expires=Wednesday, 21-Oct-26 07:28:00 GMT; Path=/"}:                                "sid=[redacted]; Expires=Wednesday, 21-Oct-26 07:28:00 GMT; Path=/",
+	} {
+		if got := st.maskHeaders([][2]string{in})[0][1]; got != want {
+			t.Errorf("%s: %q, want %q", in[0], got, want)
+		}
+	}
+	if got := string(maskPart([]byte("\r\nContent-Disposition: form-data; name=\"x\"\r\nCookie: a=1; S3CRETnameless5\r\n\r\nplain"), true, false)); strings.Contains(got, "S3CRET") {
+		t.Errorf("a part's Cookie: %q", got)
+	}
+
+	// name=value bodies with a newline: a form ending with one, .env lines.
+	form := "password=S3CRET6&user=bob\n"
+	for _, got := range []string{string(maskBody([]byte(form), "text/plain", true)), string(maskBody([]byte(form), "", true)), maskWSMessage(form, true)} {
+		if got != "password=[redacted]&user=bob\n" {
+			t.Errorf("form with a newline: %q", got)
+		}
+	}
+	env := "DEBUG=true\nAPI_KEY=S3CRET7\n  DB_PASSWORD = \"S3CRET8\"\nexport AUTH_TOKEN=S3CRET9\nNAME=app\n"
+	for _, got := range []string{string(maskBody([]byte(env), "text/plain", false)), maskWSMessage(env, false)} {
+		if got != "DEBUG=true\nAPI_KEY=[redacted]\n  DB_PASSWORD = [redacted]\nexport AUTH_TOKEN=[redacted]\nNAME=app\n" {
+			t.Errorf(".env lines: %q", got)
+		}
+	}
+
+	// key as one word, a number after it too; primary is no everyday word.
+	for _, n := range []string{"primaryKey", "PrimaryKey", "primary_key", "key1", "Key2", "apiKey2", "pin1", "x-key-2"} {
+		if !secretName(n) {
+			t.Errorf("%s not secret", n)
+		}
+	}
+	for _, n := range []string{"sort_key", "country_code", "foreign_key", "keyword1", "author2", "monkey3", "sort_key2"} {
+		if secretName(n) {
+			t.Errorf("%s secret", n)
+		}
+	}
+	if got := string(maskBody([]byte(`{"primaryKey":"S3CRET10","key1":"S3CRET11","sort_key":"name"}`), "application/json", false)); strings.Contains(got, "S3CRET") || !strings.Contains(got, `"sort_key":"name"`) {
+		t.Errorf("JSON: %s", got)
+	}
+
+	// Each stays linear: a header's 256 KiB and a body's 64 KiB of the shapes.
+	start := time.Now()
+	st.maskHeaders([][2]string{
+		{"Set-Cookie", strings.Repeat("a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, ", 6<<10)},
+		{"Set-Cookie", strings.Repeat(",", 256<<10)},
+		{"Cookie", strings.Repeat("x; ", 85<<10)},
+	})
+	maskBody([]byte(strings.Repeat("API_KEY=x\n", 6<<10)), "text/plain", false)
+	maskBody([]byte(strings.Repeat("a=", 32<<10)), "text/plain", false)
+	maskBody([]byte(`[`+strings.Repeat(`"key1=x\n",`, 5<<10)+`""]`), "application/json", false)
+	if d := time.Since(start); d > slow*time.Second {
+		t.Errorf("took %v", d)
+	}
+}
