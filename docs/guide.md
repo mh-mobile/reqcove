@@ -1235,6 +1235,14 @@ The main ones are in the [README](../README.md#limits). The rest:
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
   minute after 5 restarts in a row, `run` stops.
+- A connection reqcove gives to mitmproxy waits for mitmproxy to connect to
+  the server, as a direct one waits for the server: 10 seconds at most. The
+  log then says `<address>:<port> did not answer within 10s (through
+  mitmproxy)`, or, when the app gave up first, `the client left before
+  <address>:<port> answered (through mitmproxy)`: the server was slow or not
+  reachable from this computer at that moment (tried with an address that
+  never answers; why the two such lines seen with real apps were slow is not
+  known).
 - Phone calls through the exit node have not been tried.
 - Limits of one feature are in its section: [`--ui`](#on-the-iphone---ui),
   [`--web`](#in-mitmweb---web), [`--local-proxy`](#the-ios-simulator---local-proxy),
