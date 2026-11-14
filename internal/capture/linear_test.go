@@ -16,11 +16,12 @@ import (
 // that makes it superlinear stalls all recording (html.go's unbounded script
 // comments took 7 s on 64 KiB; multipart's header unfolding allocated 412 MB
 // for 80 KB). Each entry point gets inputs that repeat a short unit aimed at
-// one of its regexps or loops, measured at two sizes 4x apart: linear grows
-// about 4x, quadratic 16x, and more than 9x fails, in time (the least of three
-// runs: noise only adds) or in bytes allocated (where copying is the risk:
-// timing does not see it well). A ratio over 9 is measured once more
-// before it fails. Each input must reach what it aims at: at the small size,
+// one of its regexps or loops, measured at two sizes 8x apart: linear grows
+// about 8x, quadratic 64x, and more than 24x fails, in time (the least of three
+// runs: noise only adds; CI's shared machines still vary up to about 3x, so
+// sizes 4x apart, with 16x for quadratic, flaked) or in bytes allocated
+// (where copying is the risk: timing does not see it well). A ratio over 24
+// is measured once more before it fails. Each input must reach what it aims at: at the small size,
 // its output holds what masking writes there (want), so an early return (no
 // ':' for maskLines, no '=' for maskURLs, ...) does not pass for linear.
 func TestMaskingLinear(t *testing.T) {
@@ -301,7 +302,10 @@ func TestMaskingLinear(t *testing.T) {
 	// size (3 times on a Mac), though the work grows with the size and stops
 	// at gqlMaxTokens.
 	allocOnly := map[string]bool{"graphql nested lists": true}
-	measure := func(run func(string) string, s string, loops int) (time.Duration, uint64) {
+	// measure: the least time and allocation of its runs; it stops after a run
+	// that took over stop (0: none), so a broken build fails in seconds, not
+	// in the minutes a quadratic 128 KiB takes over every run and retry.
+	measure := func(run func(string) string, s string, loops int, stop time.Duration) (time.Duration, uint64) {
 		d, a := time.Duration(math.MaxInt64), uint64(math.MaxUint64)
 		for range runs {
 			var m0, m1 runtime.MemStats
@@ -314,6 +318,9 @@ func TestMaskingLinear(t *testing.T) {
 			took := time.Since(start)
 			runtime.ReadMemStats(&m1)
 			d, a = min(d, took), min(a, m1.TotalAlloc-m0.TotalAlloc)
+			if stop > 0 && took > stop {
+				break
+			}
 		}
 		return d, a
 	}
@@ -329,7 +336,7 @@ func TestMaskingLinear(t *testing.T) {
 		if slow > 1 {
 			size /= 2
 		}
-		small, large := c.build(size), c.build(4*size)
+		small, large := c.build(size), c.build(8*size)
 		start := time.Now()
 		if got := strings.ToLower(c.run(small)); c.want != "" && !strings.Contains(got, c.want) { // and a warm-up
 			t.Errorf("%s: does not reach what it aims at (%q not in the output): %.300q", c.name, c.want, got)
@@ -337,18 +344,20 @@ func TestMaskingLinear(t *testing.T) {
 		}
 		loops := min(1000, max(1, int(time.Millisecond/max(time.Since(start), 1)))) // what is quicker than 1 ms runs until it takes that
 		for try := 1; ; try++ {
-			ts, as := measure(c.run, small, loops)
-			tl, al := measure(c.run, large, loops)
-			slowTime, copies := !allocOnly[c.name] && tl > 9*ts+50*time.Microsecond, al > 9*as+64*kb // the slack: what is too small to count
+			ts, as := measure(c.run, small, loops, 0)
+			timeBound, allocBound := 24*ts+50*time.Microsecond, 24*as+64*kb // the slack: what is too small to count
+			tl, al := measure(c.run, large, loops, 2*timeBound)
+			slowTime, copies := !allocOnly[c.name] && tl > timeBound, al > allocBound
+			clear := slowTime && tl > 2*timeBound || copies && al > 2*allocBound // well past it: no noise, no retry
 			t.Logf("%-40s time x%.1f (%v), allocated x%.1f (%d KiB)", c.name, float64(tl)/float64(ts), tl/time.Duration(loops), float64(al)/float64(max(as, 1)), al/uint64(loops)/kb)
 			if !slowTime && !copies {
 				break
 			}
-			if try == 1 && loops > 1 {
+			if try == 1 && loops > 1 && !clear {
 				loops *= 10 // a quick input measured again over 10 times as long: CI's machines jitter at a millisecond
 				continue
 			}
-			if try == 2 {
+			if try == 2 || clear {
 				t.Errorf("%s: %d KiB took %v and allocated %d KiB, %d KiB %v and %d KiB: grows faster than the size",
 					c.name, len(small)/kb, ts/time.Duration(loops), as/uint64(loops)/kb, len(large)/kb, tl/time.Duration(loops), al/uint64(loops)/kb)
 				break
