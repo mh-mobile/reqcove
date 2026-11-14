@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### For people
+
+- Tried on a Linux host, Ubuntu 24.04.5 LTS (arm64, a tart VM, 2026-11-14):
+  `reqcove setup`, `service install` (a systemd user unit; its journal holds
+  no login URL or token), `status`, `service restart` and `uninstall`, and LAN
+  mode with curl from another computer (HTTP and HTTPS recorded, refused until
+  allowed, `lan deny`). The guide (EN, JA) says what was tried and what was
+  not, and that without `loginctl enable-linger` systemd stops the user unit
+  at the last logout (tried).
+- LAN mode's question and `lan` commands, and the refusals of this computer's
+  own addresses, say "this computer", not "this Mac" (seen on Linux).
+
 ## v0.7.0 — 2026-11-14
 
 ### For people
