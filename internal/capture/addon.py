@@ -1400,6 +1400,16 @@ class Reqcove:
         name = self.resolve_sni.get((data.context.client.id, data.conn.address))
         if name:
             data.conn.sni = name
+        # grpc-swift offers ALPN grpc-exp before h2, and Google's front ends
+        # (demo.connectrpc.com) pick it. mitmproxy offers the server what the
+        # client did, then gives the client the server's choice, and grpc-exp
+        # is not HTTP to it: it reads the client's HTTP/2 as HTTP/1 and drops
+        # the connection, the call failing. So the server is offered h2 without
+        # it. Runs before mitmproxy's TlsConfig (12.3.1), which keeps offers
+        # already set; a change of that order fails TestGRPCExpE2E.
+        offers = data.context.client.alpn_offers or ()
+        if not data.conn.alpn_offers and b"grpc-exp" in offers and b"h2" in offers:
+            data.conn.alpn_offers = tuple(a for a in offers if a != b"grpc-exp")
 
     def _via_upstream(self, flow):
         """Send a request on through --upstream-proxy. HTTPS goes in a CONNECT

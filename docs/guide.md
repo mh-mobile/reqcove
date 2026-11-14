@@ -508,6 +508,14 @@ reading without a schema by tests only); and the E2E test, gRPC's shape over
 HTTP/2 through mitmproxy (a body over 64 KiB with its status in the trailers,
 and a trailers-only error).
 
+grpc-swift (1 and 2, both transports) offers ALPN `grpc-exp` before `h2`,
+and some servers pick it (Google's front ends, Connect's demo server among
+them). Reqcove offers the server `h2` without `grpc-exp`, so such a call goes
+over HTTP/2 and is recorded. Tried with grpc-swift 2 on this Mac against
+Connect's demo server, through a relay that dials mitmproxy as the exit node
+does (both transports, the CA given as the trust root), and by an E2E test;
+not on an iPhone.
+
 ### Android
 
 Apps built for Android 7 and later trust only the system's CAs by default,

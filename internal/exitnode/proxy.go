@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -501,9 +502,106 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 	if err == nil && raw.c != nil {
 		// x/net's SOCKS conn adds only BoundAddr and hides CloseWrite: a client's
 		// half-close would close both ways (pipe), cutting the answer still to come.
-		return raw.c, nil
+		return &holdConn{Conn: raw.c}, nil
 	}
 	return c, err
+}
+
+// holdWait bounds how long holdConn keeps a first write back; maxHeld, how much.
+var (
+	holdWait = time.Second
+	maxHeld  = 64 << 10
+)
+
+// holdConn is a SOCKS connection to mitmproxy. mitmproxy (12.3.1) decides on
+// the first bytes it reads whether to decrypt: to read a TLS ClientHello's
+// name it needs 3 bytes of its record, to read an HTTP/1 request's Host its
+// request line up to "HTTP/". With less it has only the address, which
+// --allow-hosts does not name, and passes the connection through,
+// unrecorded, for good (tried: a first write of 1 or 2 bytes of a
+// ClientHello; of an HTTP request, up to 14 bytes, short of "HTTP/"). So a
+// first write that is less of either is held and joined with the next ones,
+// until there is enough, holdWait passes or maxHeld is held.
+type holdConn struct {
+	net.Conn
+	mu    sync.Mutex
+	held  []byte
+	timer *time.Timer
+	sent  atomic.Bool
+}
+
+func (c *holdConn) Write(p []byte) (int, error) {
+	if c.sent.Load() {
+		return c.Conn.Write(p)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sent.Load() { // holdWait passed meanwhile
+		return c.Conn.Write(p)
+	}
+	b := append(c.held, p...)
+	if short(b) {
+		c.held = b
+		if c.timer == nil {
+			c.timer = time.AfterFunc(holdWait, c.flush)
+		}
+		return len(p), nil
+	}
+	if err := c.send(b); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// send writes b, all that was held and more, and holds nothing after. With c.mu.
+func (c *holdConn) send(b []byte) error {
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	c.held = nil
+	_, err := c.Conn.Write(b)
+	c.sent.Store(true)
+	return err
+}
+
+func (c *holdConn) flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sent.Load() && len(c.held) > 0 {
+		c.send(c.held) // an error shows on the next Write
+	}
+}
+
+// CloseWrite sends what is held first: pipe half-closes when the client does.
+func (c *holdConn) CloseWrite() error {
+	c.flush()
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Conn.Close()
+}
+
+func (c *holdConn) Close() error {
+	c.mu.Lock()
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	c.mu.Unlock()
+	return c.Conn.Close()
+}
+
+// short says b, a connection's first bytes, is less than mitmproxy needs of a
+// TLS record or an HTTP/1 request line (holdConn).
+func short(b []byte) bool {
+	switch {
+	case len(b) == 0:
+		return false
+	case b[0] == 0x16: // a TLS handshake record: 0x16 0x03, then the version's minor
+		return len(b) < 3 && (len(b) < 2 || b[1] == 0x03)
+	case 'A' <= b[0] && b[0] <= 'Z': // a method
+		return len(b) < maxHeld && bytes.IndexByte(b, '\n') < 0 && !bytes.Contains(b, []byte("HTTP/"))
+	}
+	return false
 }
 
 // rawDialer dials SOCKS5's own connection and keeps it.

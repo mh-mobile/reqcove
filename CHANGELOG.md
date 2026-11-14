@@ -192,6 +192,31 @@ Found by a code review of v0.8.0; each test fails without its fix.
   event from a connection takes, in order, so such a body held up what came
   after it (from reading code). Found by the growth test (Inside), which
   fails without the fix.
+- A grpc-swift call (1 and 2, both transports) to a server that picks ALPN
+  `grpc-exp` (Google's front ends, Connect's demo server among them) failed
+  through Reqcove, unrecorded (up to v0.8): grpc-swift offers `grpc-exp`
+  before `h2`, mitmproxy offered the server the same, then gave the app
+  `grpc-exp`, read its HTTP/2 as HTTP/1 and dropped the connection. Such a
+  server is now offered `h2` without `grpc-exp`; the call goes on and is
+  recorded. Tried with grpc-swift 2 on this Mac against Connect's demo
+  server, through a relay that dials mitmproxy as the exit node does (both
+  transports, the CA given as the trust root); not on an iPhone. E2E test,
+  which fails without the fix. gRPC-core, grpc-java and grpc-go offer `h2`
+  only (from their sources).
+- A connection whose first bytes were too few for mitmproxy to read the
+  name was passed through undecrypted and unrecorded, for an allowed host
+  too (up to v0.8): mitmproxy decides on the first bytes it reads, and with
+  1 or 2 bytes of a ClientHello, or an HTTP request short of its request
+  line's `HTTP/`, it has only the address, which `--allow-hosts` does not
+  name. Reqcove hands bytes to mitmproxy as they come, so a client whose
+  first segment was that short got there (tried with mitmproxy 12.3.1
+  through its SOCKS5 port: a first write of 1 or 2 bytes of a ClientHello;
+  of an HTTP request, 1 to 14 bytes). Now such a first write is held, at
+  most a second, and sent with what follows, on every way to mitmproxy
+  (the exit node, the Remote Proxy, the LAN proxy, `--local-proxy`: they
+  share one dial). E2E test through the LAN proxy, which fails without the
+  fix; the other ways from reading code. Whether an iPhone app's connection
+  ever comes that short was not seen.
 
 ### For people
 

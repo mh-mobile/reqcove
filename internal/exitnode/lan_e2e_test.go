@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +89,53 @@ func TestLANEndToEnd(t *testing.T) {
 	if served := get("http://mitm.it/cert/pem"); !strings.Contains(served, strings.TrimSpace(string(pem))) {
 		t.Error("mitm.it through the LAN proxy hands out another CA")
 	}
+	// A client whose first write is 1 or 2 bytes of its ClientHello, or of its
+	// request short of "HTTP/": mitmproxy, given that alone, passes it
+	// through unrecorded (holdConn). Through a CONNECT tunnel, as an exit
+	// node flow goes through dialVia too.
+	tunnel := func(port string, n int) net.Conn {
+		t.Helper()
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "CONNECT example.org:%s HTTP/1.1\r\nHost: example.org:%s\r\n\r\n", port, port)
+		br := bufio.NewReader(conn)
+		if r, err := http.ReadResponse(br, nil); err != nil || r.StatusCode != 200 {
+			t.Fatalf("CONNECT :%s: %v %v", port, r, err)
+		}
+		return &splitConn{Conn: conn, n: n}
+	}
+	for _, n := range []int{1, 2} {
+		tc := tls.Client(tunnel("443", n), &tls.Config{ServerName: "example.org", RootCAs: roots})
+		if err := tc.Handshake(); err != nil {
+			t.Errorf("a ClientHello's first %d bytes alone: %v", n, err) // the real certificate: passed through
+			tc.Close()
+			continue
+		}
+		fmt.Fprintf(tc, "GET /?lan=split-tls%d HTTP/1.1\r\nHost: example.org\r\nConnection: close\r\n\r\n", n)
+		io.Copy(io.Discard, tc)
+		tc.Close()
+	}
+	for _, n := range []int{1, 14} {
+		conn := tunnel("80", n)
+		fmt.Fprintf(conn, "GET /?lan=split-http%02d HTTP/1.1\r\nHost: example.org\r\nConnection: close\r\n\r\n", n)
+		io.Copy(io.Discard, conn)
+		conn.Close()
+	}
+	for _, sub := range []string{"split-tls1", "split-tls2", "split-http01", "split-http14"} {
+		found := false
+		for range 100 {
+			if fs, _ := c.Store.List(capture.Filter{Device: "lan:127.0.0.1", Limit: 50}); slices.ContainsFunc(fs, func(f capture.Summary) bool { return strings.Contains(f.URL, sub) }) {
+				found = true
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if !found {
+			t.Errorf("%s: not recorded (passed through)", sub)
+		}
+	}
 	for range 100 {
 		if fs, _ := c.Store.List(capture.Filter{Device: "lan:127.0.0.1", Limit: 10}); len(fs) >= 2 {
 			for _, f := range fs {
@@ -100,4 +149,24 @@ func TestLANEndToEnd(t *testing.T) {
 	}
 	fs, _ := c.Store.List(capture.Filter{Limit: 10})
 	t.Fatalf("not recorded as lan:127.0.0.1: %+v", fs)
+}
+
+// splitConn writes its first Write's first n bytes, pauses, then the rest.
+type splitConn struct {
+	net.Conn
+	n    int
+	done bool
+}
+
+func (c *splitConn) Write(p []byte) (int, error) {
+	if c.done || len(p) <= c.n {
+		return c.Conn.Write(p)
+	}
+	c.done = true
+	if _, err := c.Conn.Write(p[:c.n]); err != nil {
+		return 0, err
+	}
+	time.Sleep(300 * time.Millisecond)
+	_, err := c.Conn.Write(p[c.n:])
+	return len(p), err
 }

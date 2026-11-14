@@ -2,6 +2,8 @@ package capture
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -16,6 +18,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/proxy"
 )
 
 func grpcFrame1(flag byte, payload string) string {
@@ -204,6 +209,85 @@ func TestGRPCE2E(t *testing.T) {
 	}
 	if !v.RespBody.Truncated || !strings.HasPrefix(v.RespBody.Note, "gRPC: 3 messages (30000, 30000, ") || !strings.HasPrefix(v.RespBodyText, "1: string(1)\n") || !strings.Contains(v.RespBodyText, "[cut: 30000 bytes]") && !strings.Contains(v.RespBodyText, "[more messages not read]") {
 		t.Errorf("a body over 64 KiB: note %q truncated %v text %d", v.RespBody.Note, v.RespBody.Truncated, len(v.RespBodyText))
+	}
+}
+
+// TestGRPCExpE2E (REQCOVE_E2E=1): grpc-swift (1 and 2, both transports)
+// offers ALPN grpc-exp, h2, and Google's front ends (demo.connectrpc.com)
+// pick grpc-exp. The origin here prefers it too; the client dials as the exit
+// node does (eager: TLS to the server first) and speaks HTTP/2 whatever was
+// negotiated, as grpc-swift does. Without the addon's change, mitmproxy gives
+// the client grpc-exp, reads its HTTP/2 as HTTP/1 and drops it: no flow.
+func TestGRPCExpE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var mu sync.Mutex
+	var serverALPN string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		serverALPN = r.TLS.NegotiatedProtocol
+		mu.Unlock()
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("Trailer", "Grpc-Status")
+		w.Write([]byte(grpcFrame1(0, "\x0a\x02ok")))
+		w.Header().Set("Grpc-Status", "0")
+	}))
+	if err := http2.ConfigureServer(srv.Config, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv.Config.TLSNextProto["grpc-exp"] = srv.Config.TLSNextProto["h2"] // grpc-exp is HTTP/2 by another name
+	srv.TLS = &tls.Config{NextProtos: []string{"grpc-exp", "h2"}}       // the server's order wins: grpc-exp
+	srv.StartTLS()
+	defer srv.Close()
+	caFile := filepath.Join(t.TempDir(), "origin.pem")
+	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600)
+	h, err := tryHarness(t, ctx, []string{"grpc.example.com"}, func(c *Config) { c.trustCA = caFile })
+	if err != nil {
+		t.Fatal(err)
+	}
+	socks, _ := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "grpc-device", Password: h.c.SocksSecret}, proxy.Direct)
+	raw, err := socks.(proxy.ContextDialer).DialContext(ctx, "tcp", srv.Listener.Addr().String()) // an address, as the exit node dials
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	ca, _ := os.ReadFile(filepath.Join(h.confdir, "mitmproxy-ca-cert.pem"))
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(ca)
+	tc := tls.Client(raw, &tls.Config{ServerName: "grpc.example.com", NextProtos: []string{"grpc-exp", "h2"}, RootCAs: roots})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p := tc.ConnectionState().NegotiatedProtocol; p != "h2" {
+		t.Errorf("ALPN to the app: %q, want h2", p)
+	}
+	cc, err := (&http2.Transport{}).NewClientConn(tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(ctx, "POST", "https://grpc.example.com/pkg.Svc/Say", strings.NewReader(grpcFrame1(0, "\x0a\x02hi")))
+	req.Header.Set("Content-Type", "application/grpc")
+	req.Header.Set("TE", "trailers")
+	resp, err := cc.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("the call: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Trailer.Get("Grpc-Status") != "0" {
+		t.Errorf("the app got %s, trailers %v", resp.Status, resp.Trailer)
+	}
+	mu.Lock()
+	if serverALPN != "h2" {
+		t.Errorf("ALPN to the server: %q, want h2", serverALPN)
+	}
+	mu.Unlock()
+	if v := h.doneFlow("/pkg.Svc/Say", false); header(v.RespTrailers, "grpc-status") != "0" {
+		t.Errorf("the record: trailers %v", v.RespTrailers)
 	}
 }
 
