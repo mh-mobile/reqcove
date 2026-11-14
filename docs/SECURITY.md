@@ -100,15 +100,20 @@ So "delete the directory" above means each of them.
   (an app's request-signing header `sign` was seen unmasked), pwd,
   pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
   and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
-  `author` and `keyword` do not). `code` and `key` next to an everyday word
-  (`country_code`, `error_code`, `sort_key`), `token_type`, `ticket_id`,
+  `author` and `keyword` do not; a number after the word counts too: `key1`,
+  `pin2`). `code` and `key` next to an everyday word
+  (`country_code`, `error_code`, `sort_key`, `foreign_key`; `primaryKey` is a
+  secret), `token_type`, `ticket_id`,
   `ticketNumber` and CORS's `Access-Control-Allow-Credentials` (only ever
   `true`; seen masked in use) are not secrets, nor a body's `"key"` whose
   value is a dotted lowercase name, as OpenTelemetry writes attributes
   (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
   or has no dots; JWTs and the other shapes below are masked whatever the field;
   `key=` in a URL stays a secret.
-  Cookie values are masked (names stay), and query parameters wherever a URL
+  Cookie values are masked (names stay; a value without a name too; in a
+  `Set-Cookie` line joining several cookies with commas, which a server can
+  send and is recorded as sent, each cookie, its attributes kept: an E2E
+  test), and query parameters wherever a URL
   appears (any header, such as `Referer`, `Location` or `Link`; fragments such
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error
   messages), as is a URL's password (`https://user:…@host`) and the response's
@@ -123,8 +128,9 @@ So "delete the directory" above means each of them.
   JSON or as a form field (one level deep). In a response a lone `code` is
   kept, as it is usually an error code (`verification_code` and `device_code`
   are masked); in a request it is masked, as it carries one-time and OAuth
-  codes. In forms (or bodies that look like one), such fields' values, a lone
-  `code` included. Anywhere in a header value, URL, body or error message,
+  codes. In forms (or bodies that look like one: one line, a newline may end
+  it), such fields' values, a lone `code` included. Anywhere in a header
+  value, URL, body or error message,
   credentials recognisable by their shape are masked: `Bearer`/`Basic`/`Token`
   values that look like credentials (not the next word of a sentence), JWTs,
   and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
@@ -134,9 +140,10 @@ So "delete the directory" above means each of them.
   decoded, at the top level and in JSON inside a string, a cut one too).
   `WWW-Authenticate` keeps its challenge (scheme, realm, error), with only
   such shapes masked.
-  A line `name: value` in a text body that is not a GraphQL document, or in a
-  JSON string, whose name is secret (a STOMP frame's `passcode:`, also inside
-  SockJS's JSON; a YAML mapping; headers written into a body) has the rest of
+  A line `name: value` or `name=value` in a text body that is not a GraphQL
+  document, or in a JSON string, whose name is secret (a STOMP frame's
+  `passcode:`, also inside SockJS's JSON; a YAML mapping; headers written into
+  a body; a `.env` file's `API_KEY=…`, after `export` too) has the rest of
   the line masked, all of it (a `Bearer`/`Basic`/`Token` scheme stays only
   when the value is that credential alone); YAML list items
   (`- password: …`) and quoted names are not looked at. A URL parameter or form field holding base64 of a JSON object with
