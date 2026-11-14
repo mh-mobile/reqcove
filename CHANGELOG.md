@@ -137,6 +137,10 @@ Found by a code review of v0.8.0; each test fails without its fix.
 - `reqcove status`, while `run` starts (mitmproxy first, up to 2 minutes) or
   stops, said reqcove was not running and how to start it: it says it is
   starting, or stopping, as do `reqcove har` and `reqcove mark` (unit test).
+  To tell, they hold the state's lock for a moment, as `reqcove cleanup`
+  does: a `run` taking it then (a service starting while a script polls
+  `status`) waits that out, up to a second, instead of exiting with
+  "another reqcove is using" (unit test).
 - `reqcove status` and `reqcove har`, against a `run` stopped with Ctrl-Z,
   waited forever: they give up after 5 seconds, as `reqcove mark` and
   `reqcove mcp` do (unit test).
