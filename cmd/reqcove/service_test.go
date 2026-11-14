@@ -273,6 +273,28 @@ func TestServiceInstallRefuses(t *testing.T) {
 	}
 }
 
+// Homebrew's binary: brew upgrade deletes its Cellar path, so install points
+// to brew services (and setup, which writes brew's config), writing nothing
+// and asking neither launchctl nor systemctl (the init guard panics).
+func TestServiceInstallBrewBinary(t *testing.T) {
+	prefix := t.TempDir()
+	old := selfExe
+	selfExe = func() (string, error) { return prefix + "/Cellar/reqcove/0.7.0/bin/reqcove", nil }
+	t.Cleanup(func() { selfExe = old })
+	for _, goos := range []string{"darwin", "linux"} {
+		home, config := serviceHome(t, "cfg")
+		state := filepath.Join(home, "st")
+		err := serviceInstall(goos, config, state, true)
+		if err == nil || !strings.Contains(err.Error(), "brew services start reqcove") || !strings.Contains(err.Error(), "reqcove setup (it writes "+filepath.Join(prefix, "etc/reqcove/config")) {
+			t.Errorf("%s: %v", goos, err)
+		}
+		ours, _ := serviceFile(goos)
+		if exists(ours) || exists(state) {
+			t.Errorf("%s: wrote the service file or the state directory", goos)
+		}
+	}
+}
+
 func TestServiceUninstall(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
 		_, config := serviceHome(t, "cfg")

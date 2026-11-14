@@ -64,6 +64,8 @@ mock:
     status: 503
 ''')
 b = r["mock"].book
+# capture_stats.rules: presets counted in their kind, as mocks are
+assert addon.rule_counts(r) == {"map_remote": 3, "map_local": 0, "modify_headers": 2, "resolve": 3, "mock": 1, "keep_host_header": 0}, addon.rule_counts(r)
 print(sorted(b.names()))
 lst = b.control({"op": "list"})["presets"]
 for x in lst: print(x["name"], x["kind"], {k: v for k, v in x.items() if k in ("target", "header", "host", "address")})

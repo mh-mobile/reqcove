@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.6). Tried on macOS (Apple silicon) and Ubuntu 24.04
+> **Status: early** (v0.7). Tried on macOS (Apple silicon) and Ubuntu 24.04
 > (arm64) with an iPhone; where something has not been tried, the docs say so.
 
 ## What you need
@@ -152,8 +152,12 @@ On the same network, the iPhone can also use this computer as its Wi-Fi
 proxy, with no Tailscale: `reqcove run --lan --allow-hosts api.example.com`,
 set the iPhone's Wi-Fi proxy (Manual) to the address and port run prints, and
 allow the iPhone's address on this computer (run asks, or
-`reqcove lan allow ADDR`). Wi-Fi only, ports 80 and 443 only, and no password:
-an address you allow can send through this computer. Tried with an iPhone on
+`reqcove lan allow ADDR`). Then trust the CA, once per device: open
+`http://mitm.it` with the proxy set, or send the CA file run names by
+AirDrop (not tried), and compare the SHA-256 run prints with the profile's
+(More Details); install and trust it as in step 3 above. Wi-Fi only, ports
+80 and 443 only, and no password: an address you allow can send through
+this computer. Tried with an iPhone on
 a home Wi-Fi (iOS 27.3). What it reaches and what blocks it:
 [the guide](docs/guide.md#without-tailscale-lan-mode---lan).
 

@@ -44,23 +44,26 @@ func setupConfig(brew string) string {
 // brewPrefix is Homebrew's prefix when this binary is its formula's
 // (PREFIX/Cellar/reqcove/VERSION/bin/reqcove), else "".
 func brewPrefix() string {
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := selfExe()
 	if i := strings.Index(exe, "/Cellar/reqcove/"); err == nil && i > 0 {
 		return exe[:i]
 	}
 	return ""
 }
 
-// selfCmd is this binary in the commands setup and service install print:
-// reqcove when that is what PATH finds, else its full path (quoted for a shell).
-func selfCmd() string {
+// selfExe is this binary, its symlinks resolved (a seam for tests).
+var selfExe = func() (string, error) {
 	exe, err := os.Executable()
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
 	}
+	return exe, err
+}
+
+// selfCmd is this binary in the commands setup and service install print:
+// reqcove when that is what PATH finds, else its full path (quoted for a shell).
+func selfCmd() string {
+	exe, err := selfExe()
 	if err != nil {
 		return "reqcove"
 	}

@@ -67,8 +67,22 @@ type Activation struct {
 var ErrNoControl = errors.New("mitmproxy did not answer about presets (restarting?)")
 
 // ErrUncertain: the request went to the addon but no answer came back: it may
-// have taken effect.
-var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect; call list_presets to see")
+// have taken effect. Activate and Deactivate add the tool to see it with.
+var ErrUncertain = errors.New("mitmproxy did not answer in time: it may or may not have taken effect")
+
+// uncertain names the tool that shows whether a change to a preset of kind
+// took effect: list_mock_presets for the mock tools (a v0.6 reqcove mcp has
+// no list_presets).
+func uncertain(err error, kind string) error {
+	if !errors.Is(err, ErrUncertain) {
+		return err
+	}
+	see := "list_presets"
+	if kind == "mock" {
+		see = "list_mock_presets"
+	}
+	return fmt.Errorf("%w; call %s to see", err, see)
+}
 
 // ErrNoAnswer: a read (the list) went unanswered: nothing changed.
 var ErrNoAnswer = errors.New("mitmproxy did not answer about presets in time (busy?)")
@@ -219,7 +233,7 @@ func (c *Capture) Activate(ctx context.Context, name, kind string, seconds, time
 		req["times"] = times
 	}
 	err := c.control(ctx, req, &a)
-	return a, err
+	return a, uncertain(err, kind)
 }
 
 // Deactivate turns preset name (of kind, or "" for any) off; wasActive says it was on.
@@ -231,7 +245,7 @@ func (c *Capture) Deactivate(ctx context.Context, name, kind string) (wasActive 
 		return false, errors.New("no preset by that name")
 	}
 	err = c.control(ctx, withKind(map[string]any{"op": "deactivate", "name": name}, kind), &out)
-	return out.WasActive, err
+	return out.WasActive, uncertain(err, kind)
 }
 
 // RulesCheck is the addon's word on a --rules file as it would be (reqcove

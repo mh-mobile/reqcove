@@ -233,8 +233,17 @@ func printLANStatus(w io.Writer, l *exitnode.LANStatus) {
 	}
 	fmt.Fprintf(w, "  allowed:     %s\n", cmp.Or(strings.Join(allowed, ", "), "-"))
 	if len(l.Refused) > 0 {
-		fmt.Fprintf(w, "  refused:     %s (not allowed, this run)\n", strings.Join(l.Refused, ", "))
+		fmt.Fprintf(w, "  refused:     %s (not allowed, this run)\n", refusedText(l))
 	}
+}
+
+// refusedText is the refused addresses listed (the last seen first), and how many more.
+func refusedText(l *exitnode.LANStatus) string {
+	s := strings.Join(l.Refused, ", ")
+	if l.RefusedMore > 0 {
+		s += fmt.Sprintf(" and %d more", l.RefusedMore)
+	}
+	return s
 }
 
 // lanSteps are LAN mode's next steps: why it does not listen, the addresses
@@ -255,7 +264,7 @@ func lanSteps(n exitnode.Status, devices []capture.DeviceInfo) []string {
 		steps = append(steps, "the LAN proxy is not listening: "+l.Stopped)
 	}
 	if len(l.Refused) > 0 {
-		steps = append(steps, fmt.Sprintf("refused by the LAN proxy, not allowed: %s. If one is your device, allow it in your own terminal: %s ADDR (an address, not a device: whoever has it later is allowed too)", strings.Join(l.Refused, ", "), allowCmd))
+		steps = append(steps, fmt.Sprintf("refused by the LAN proxy, not allowed: %s. If one is your device, allow it in your own terminal: %s ADDR (an address, not a device: whoever has it later is allowed too)", refusedText(l), allowCmd))
 	}
 	var idle []string
 	busy := false

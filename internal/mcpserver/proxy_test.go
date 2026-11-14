@@ -139,7 +139,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 	}
 	stop()
 	stop = serve(t, sock, New(storeWith("b"), nil))
-	if got, _ := ids(t, cs); got != "b" || len(lastNotes) != 1 || !strings.Contains(lastNotes[0], "flow ids and cursors from before it are gone") { // no call in between: the dead session is found by this one
+	if got, _ := ids(t, cs); got != "b" || len(lastNotes) != 1 || !strings.Contains(lastNotes[0], "flow ids, cursors and markers from before it are gone, and every preset is off.") { // no call in between: the dead session is found by this one
 		t.Fatalf("after a restart: %q %v", got, lastNotes)
 	}
 	// The first answer after a restart says so, once: ids and cursors from before are gone.
@@ -255,9 +255,9 @@ func TestProxyHungRun(t *testing.T) {
 			defer c.Close()
 		}
 	}()
-	oldH, oldR := handshake, redialAfter
-	handshake, redialAfter = 200*time.Millisecond, time.Second
-	defer func() { handshake, redialAfter = oldH, oldR }()
+	oldH, oldR := Handshake, redialAfter
+	Handshake, redialAfter = 200*time.Millisecond, time.Second
+	defer func() { Handshake, redialAfter = oldH, oldR }()
 	p := &proxy{sock: sock, notRunning: "down", ctx: context.Background(), client: mcp.NewClient(&mcp.Implementation{Name: "x", Version: "0"}, nil)}
 	start := time.Now()
 	var wg sync.WaitGroup

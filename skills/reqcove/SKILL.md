@@ -14,7 +14,9 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
 ## Rules
 
 - Never start, stop or restart `reqcove run`, nor run `reqcove cleanup` (it
-  can put the system's proxy settings back). The commands you may run:
+  can put the system's proxy settings back) or `reqcove service install`,
+  `service restart` or `service uninstall` (they start and stop `run`: a
+  restart or an uninstall empties the records). The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock
   add --print` when the user asks.
 - `activate_preset` and `activate_mock` change what the device gets, and a
@@ -67,7 +69,7 @@ traffic and the tailnet). `allow_hosts` is
 what is recorded; anything else is carried but never recorded. In LAN mode
 (`mode: "lan"`) there is no tailnet node: the steps are about the phone's Wi-Fi
 proxy and allowing its address, and `lan` lists the allowed addresses and those
-refused this run (up to 10,000). `pass_hosts`
+refused this run (the 50 last seen; `refused_more` counts the rest). `pass_hosts`
 are carried undecrypted: their connections only, in `list_passthrough`.
 
 If a tool answers that reqcove is not running: tell the user, wait, and call

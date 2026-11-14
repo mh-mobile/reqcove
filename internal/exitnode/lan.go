@@ -35,7 +35,9 @@ type LANStatus struct {
 	Listen    string       `json:"listen,omitempty"`  // ADDR:PORT, the iPhone's Wi-Fi proxy, while listening
 	Stopped   string       `json:"stopped,omitempty"` // why it does not listen
 	Allowed   []LANAllowed `json:"allowed"`
-	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run and not allowed now; up to maxSeen (the list seen is emptied when full)
+	Refused   []string     `json:"refused,omitempty"` // client addresses on the network refused this run and not allowed now, the last seen first: at most maxRefusedShown (the list seen is emptied past maxSeen)
+	// RefusedMore is how many more there are than Refused lists.
+	RefusedMore int `json:"refused_more,omitempty"`
 }
 
 // LANAllowed is an allowed client address and when it was allowed: this
@@ -175,11 +177,7 @@ func runLAN(ctx context.Context, cfg Config) error {
 				names[d.ID] = d.Name
 			}
 		}
-		for _, a := range seen.with("refused") {
-			if _, ok := p.devices[a]; !ok {
-				ls.Refused = append(ls.Refused, a.String())
-			}
-		}
+		ls.Refused, ls.RefusedMore = refusedNow(seen, p.devices)
 		current.Store(p)
 		if ids := fmt.Sprint(names); ids != lastIDs {
 			lastIDs = ids
@@ -247,40 +245,73 @@ func (l lanClients) Accept() (net.Conn, error) {
 	}
 }
 
-// onceSet remembers what was logged, so each client address is logged once;
-// anyone on the network adds to it, so it is emptied past maxSeen.
+// onceSet remembers what was logged, so each client address is logged once,
+// and when it was last seen; anyone on the network adds to it, so it is
+// emptied past maxSeen.
 // ponytail: emptying it logs (and asks about) some addresses twice.
 type onceSet struct {
 	mu sync.Mutex
-	m  map[string]bool
+	m  map[string]uint64 // the n of its last time seen
+	n  uint64
 }
 
 func (s *onceSet) first(a netip.Addr, what string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := a.String() + " " + what
-	if s.m[k] {
+	s.n++
+	if _, ok := s.m[k]; ok {
+		s.m[k] = s.n
 		return false
 	}
 	if s.m == nil || len(s.m) >= maxSeen {
-		s.m = map[string]bool{}
+		s.m = map[string]uint64{}
 	}
-	s.m[k] = true
+	s.m[k] = s.n
 	return true
 }
 
-// with lists the addresses logged as what, sorted.
+// with lists the addresses logged as what, the last seen first.
 func (s *onceSet) with(what string) []netip.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []netip.Addr
-	for k := range s.m {
+	type seenAt struct {
+		a netip.Addr
+		n uint64
+	}
+	var all []seenAt
+	for k, n := range s.m {
 		if a, w, _ := strings.Cut(k, " "); w == what {
 			if ip, err := netip.ParseAddr(a); err == nil {
-				out = append(out, ip)
+				all = append(all, seenAt{ip, n})
 			}
 		}
 	}
-	slices.SortFunc(out, netip.Addr.Compare)
+	slices.SortFunc(all, func(x, y seenAt) int { return cmp.Compare(y.n, x.n) })
+	out := make([]netip.Addr, len(all))
+	for i, x := range all {
+		out[i] = x.a
+	}
 	return out
+}
+
+// maxRefusedShown is how many refused addresses the status lists: anyone on
+// the network adds to them, and the status goes into every answer.
+const maxRefusedShown = 50
+
+// refusedNow is the status's refused addresses: those refused this run and
+// not allowed now, the last seen first, at most maxRefusedShown, and how many
+// more there are.
+func refusedNow(seen *onceSet, allowed map[netip.Addr]Device) (shown []string, more int) {
+	for _, a := range seen.with("refused") {
+		if _, ok := allowed[a]; ok {
+			continue
+		}
+		if len(shown) == maxRefusedShown {
+			more++
+			continue
+		}
+		shown = append(shown, a.String())
+	}
+	return shown, more
 }

@@ -98,6 +98,11 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if _, err := os.Stat(file); err == nil {
 		return fmt.Errorf("installed already (%s): %[2]s service restart starts it again; to change it, %[2]s service uninstall, then install again", file, selfCmd())
 	}
+	// Homebrew's binary is under a Cellar directory that brew upgrade deletes:
+	// the service would run a file that is gone.
+	if brew := brewPrefix(); brew != "" {
+		return fmt.Errorf("this reqcove is Homebrew's (%s), whose path changes at each brew upgrade: use brew services instead: reqcove setup (it writes %s), then brew services start reqcove", brew, shellWord(setupConfig(brew)))
+	}
 	if err := brewService(goos); err != nil {
 		return err
 	}
@@ -117,10 +122,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if state, err = filepath.Abs(state); err != nil {
 		return err
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := selfExe()
 	if err != nil {
 		return err
 	}
