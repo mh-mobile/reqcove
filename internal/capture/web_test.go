@@ -264,3 +264,14 @@ with taddons.context():
 		t.Errorf("after the file changed: %s", got)
 	}
 }
+
+// freePort asks the kernel for an unused port.
+// The port is free when asked, not guaranteed when mitmweb binds it.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
