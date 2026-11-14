@@ -122,8 +122,6 @@ with its defaults: libkrun, rootless, Fedora 44 with SELinux enforcing). Write
   `podman run -i --volumes-from` only by the smoke script), `reqcove links`,
   `--mcp-http`, a Linux host, a rootful machine. `run --lan` in a container
   was not tried with Docker or Podman.
-- `run` prints the agent's command with `docker run`; with Podman, write
-  `podman run`.
 - The machine's default log driver is journald. `--log-opt max-size=10m` is
   accepted, but Podman's documentation says it bounds `--log-driver k8s-file`
   logs (from the docs, not checked).

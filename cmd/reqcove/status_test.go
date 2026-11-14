@@ -18,6 +18,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tailscale.com/health/healthmsg"
 )
 
@@ -112,7 +113,7 @@ func TestStatusCommand(t *testing.T) {
 }
 
 // `reqcove status` shows the presets from capture_stats' presets and the ones
-// on from active_presets (not v0.6's names, removed in v1.0).
+// on from active_presets.
 func TestStatusCommandPresets(t *testing.T) {
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
@@ -123,6 +124,27 @@ func TestStatusCommandPresets(t *testing.T) {
 		return mcpserver.StatusOut{Node: exitnode.Status{Backend: "Running"}, Capture: map[string]any{"presets": []string{"mx", "staging"}},
 			ActivePresets: []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}
 	})); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
+	if w := "presets:     2 (mx, staging); on: staging -> https://staging.example.com until 12:00:00"; !strings.Contains(out, w) {
+		t.Errorf("%q not in:\n%s", w, out)
+	}
+}
+
+// `reqcove status` against a v0.7 run (not yet restarted) reads its names,
+// mock_presets and active_mock_presets (v1.0 reads them, never writes them).
+func TestStatusCommandPresetsV07(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	v07 := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "0.7.0"}, nil)
+	mcp.AddTool(v07, &mcp.Tool{Name: "status"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		return nil, map[string]any{"node": exitnode.Status{Backend: "Running"}, "capture": map[string]any{"mock_presets": []string{"mx", "staging"}},
+			"active_mock_presets": []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}, nil
+	})
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), v07); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
@@ -620,7 +642,7 @@ func TestPresetNames(t *testing.T) {
 	}
 }
 
-// run reads capture_stats' presets, not v0.6's mock_presets (removed in v1.0).
+// run reads capture_stats' presets.
 func TestStatsPresets(t *testing.T) {
 	if got := statsPresets(map[string]any{"presets": []string{"mx"}}); !slices.Equal(got, []string{"mx"}) {
 		t.Errorf("statsPresets: %v", got)

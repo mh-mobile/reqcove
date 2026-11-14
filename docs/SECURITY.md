@@ -4,7 +4,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.7.
+come from reading code rather than from a test say so. It describes v0.8.
 
 ## Trust
 
@@ -321,7 +321,7 @@ tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's read tools by name (not `activate_preset` or the deprecated `activate_mock`) without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_preset`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -369,9 +369,8 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 ## Mock presets
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
-turns it on with `activate_preset` (`list_presets`, `deactivate_preset`), or
-v0.6's `activate_mock`, which takes mocks only (it and the other v0.6 tools
-are deprecated, removed in v1.0). Since v0.7 a
+turns it on with `activate_preset` (`list_presets`, `deactivate_preset`).
+Since v0.7 a
 `map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
 [below](#map_remote-modify_headers-and-resolve-presets), it can send requests
 elsewhere.
@@ -417,7 +416,7 @@ allowed host runs in Safari with that host's cookies, as any mock does).
 - An end is checked on two clocks, so a computer that slept past it does not
   leave one on (a test). One answer already waiting out its `delay_ms` still
   goes out after the preset is turned off.
-- `list_presets` (and the deprecated `list_mock_presets`) gives what each
+- `list_presets` gives what each
   matches and its status, delay or fault, never its body or header values.
 
 ### map_remote, modify_headers and resolve presets
@@ -456,10 +455,10 @@ carry, while it is on: not only what the app gets.
   regex or a header's value. A flow a preset changed lists it in `presets`; the
   skill and the server's instructions tell agents never to report such a
   flow's answer as the usual server's.
-- `activate_mock` (deprecated, removed in v1.0) takes mocks only (a test): a v0.6 client that allowed it
-  without a prompt does not get these. `activate_preset` is new, not marked
-  read-only, and asked about by clients that ask before such tools; a client
-  that allowed `"mcp__reqcove"` wholesale allows it too.
+- `activate_preset` is not marked read-only, and asked about by clients that
+  ask before such tools; a client that allowed `"mcp__reqcove"` wholesale
+  allows it too. It takes every kind: allowing it without a prompt allows these
+  too (the guide's [example](guide.md#allow-the-tools) keeps it under `ask`).
 - The same bounds and visibility as mock presets: at most 5 minutes each time
   (no `times` for these kinds), only on this computer, never over
   `--mcp-http`, off after a reload or a restart, both clocks.

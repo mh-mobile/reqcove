@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,17 +18,14 @@ type fakePresets struct {
 	activations atomic.Int32
 	seconds     atomic.Int32
 	onActivate  func()
-	kind        atomic.Value // the kind the last call passed
 	explained   atomic.Value // explain_rules' method, url and operation
 }
 
-func (f *fakePresets) Presets(_ context.Context, kind string) ([]capture.Preset, error) {
-	f.kind.Store(kind)
+func (f *fakePresets) Presets(context.Context) ([]capture.Preset, error) {
 	return []capture.Preset{{Name: "p", Kind: "mock", URL: "https://api.example.com/x"}}, nil
 }
 
-func (f *fakePresets) Activate(_ context.Context, name, kind string, seconds, times int) (capture.Activation, error) {
-	f.kind.Store(kind)
+func (f *fakePresets) Activate(_ context.Context, name string, seconds, times int) (capture.Activation, error) {
 	f.activations.Add(1)
 	f.seconds.Store(int32(seconds))
 	if f.onActivate != nil {
@@ -41,8 +37,7 @@ func (f *fakePresets) Activate(_ context.Context, name, kind string, seconds, ti
 	return capture.Activation{Name: name, ExpiresAt: 1.7e9}, nil
 }
 
-func (f *fakePresets) Deactivate(_ context.Context, _, kind string) (bool, error) {
-	f.kind.Store(kind)
+func (f *fakePresets) Deactivate(context.Context, string) (bool, error) {
 	return true, nil
 }
 
@@ -81,22 +76,22 @@ func TestPresetTools(t *testing.T) {
 	cs := agent(t, sock)
 	f := &fakePresets{}
 	defer serve(t, sock, presetServer(f))()
-	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "times": 1}); isErr || !strings.Contains(got, `"checkpoint"`) || !strings.Contains(got, `"expires_at"`) || f.seconds.Load() != 300 {
+	if got, isErr := callText(t, cs, "activate_preset", map[string]any{"name": "p", "times": 1}); isErr || !strings.Contains(got, `"checkpoint"`) || !strings.Contains(got, `"expires_at"`) || f.seconds.Load() != 300 {
 		t.Errorf("activate: %s %v (seconds %d)", got, isErr, f.seconds.Load())
 	}
-	if callText(t, cs, "activate_mock", map[string]any{"name": "p", "minutes": 0.5}); f.seconds.Load() != 30 {
+	if callText(t, cs, "activate_preset", map[string]any{"name": "p", "minutes": 0.5}); f.seconds.Load() != 30 {
 		t.Errorf("half a minute: %d s", f.seconds.Load())
 	}
 	n := f.activations.Load()
 	for _, m := range []any{6, 0, -1, 1e30} { // 0 is not "the default": a short time asked for
-		if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "minutes": m}); !isErr || !strings.Contains(got, "at most 5") || f.activations.Load() != n {
+		if got, isErr := callText(t, cs, "activate_preset", map[string]any{"name": "p", "minutes": m}); !isErr || !strings.Contains(got, "at most 5") || f.activations.Load() != n {
 			t.Errorf("%v minutes: %s %v", m, got, isErr)
 		}
 	}
-	if got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "q"}); !isErr || !strings.Contains(got, "refused: no preset named 'q'") {
+	if got, isErr := callText(t, cs, "activate_preset", map[string]any{"name": "q"}); !isErr || !strings.Contains(got, "refused: no preset named 'q'") {
 		t.Errorf("unknown: %s %v", got, isErr)
 	}
-	if got, isErr := callText(t, cs, "list_mock_presets", nil); isErr || !strings.Contains(got, `"name":"p"`) {
+	if got, isErr := callText(t, cs, "list_presets", nil); isErr || !strings.Contains(got, `"name":"p"`) {
 		t.Errorf("list: %s %v", got, isErr)
 	}
 }
@@ -108,7 +103,7 @@ func TestServersPresetToolsLocalOnly(t *testing.T) {
 	for _, c := range []struct {
 		s    *mcp.Server
 		want int
-	}{{local, 10}, {remote, 0}} {
+	}{{local, 7}, {remote, 0}} {
 		ct, st := mcp.NewInMemoryTransports()
 		if _, err := c.s.Connect(context.Background(), st, nil); err != nil {
 			t.Fatal(err)
@@ -182,13 +177,13 @@ func TestRuleTools(t *testing.T) {
 	}
 }
 
-// A run without the preset tools (v0.5) answers activate_mock with a tool
+// A run without the preset tools (v0.5) answers activate_preset with a tool
 // error that says so, not a protocol error.
 func TestPresetToolsOlderRun(t *testing.T) {
 	sock := sockPath(t)
 	cs := agent(t, sock)
 	defer serve(t, sock, New(storeWith("a"), nil))()
-	for _, tool := range []string{"list_mock_presets", "activate_mock"} {
+	for _, tool := range []string{"list_presets", "activate_preset"} {
 		if got, isErr := callText(t, cs, tool, map[string]any{"name": "p"}); !isErr || !strings.Contains(got, "has no "+tool) {
 			t.Errorf("%s: %q %v", tool, got, isErr)
 		}
@@ -236,8 +231,8 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 		}
 	}
 	f.onActivate = drop
-	got, isErr := callText(t, cs, "activate_mock", map[string]any{"name": "p", "times": 1})
-	if !isErr || !strings.Contains(got, "may or may not have taken effect; call list_mock_presets to see") || f.activations.Load() != 1 {
+	got, isErr := callText(t, cs, "activate_preset", map[string]any{"name": "p", "times": 1})
+	if !isErr || !strings.Contains(got, "may or may not have taken effect; call list_presets to see") || f.activations.Load() != 1 {
 		t.Errorf("%q %v, %d activations", got, isErr, f.activations.Load())
 	}
 	// add_marker too: a second would be a second marker.
@@ -257,80 +252,104 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 	}
 }
 
-// The v0.6 tools are for mocks only: a user who allowed activate_mock did not
-// allow switching where requests go (map_remote, resolve). The *_preset tools
-// take every kind.
-func TestPresetToolKinds(t *testing.T) {
-	f := &fakePresets{}
-	ct, st := mcp.NewInMemoryTransports()
-	if _, err := presetServer(f).Connect(context.Background(), st, nil); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t"}, nil).Connect(context.Background(), ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct {
-		tool string
-		args map[string]any
-		kind string
-	}{
-		{"list_mock_presets", nil, "mock"}, {"activate_mock", map[string]any{"name": "p"}, "mock"}, {"deactivate_mock", map[string]any{"name": "p"}, "mock"},
-		{"list_presets", nil, ""}, {"activate_preset", map[string]any{"name": "p"}, ""}, {"deactivate_preset", map[string]any{"name": "p"}, ""},
-	} {
-		f.kind.Store("unset")
-		if got, isErr := callText(t, cs, c.tool, c.args); isErr {
-			t.Errorf("%s: %s", c.tool, got)
-		}
-		if k := f.kind.Load(); k != c.kind {
-			t.Errorf("%s passed kind %q, want %q", c.tool, k, c.kind)
-		}
-	}
-}
-
-// status's active_presets has every kind on now; active_mock_presets (v0.6's
-// name, removed in v1.0) the same until then, and so their errors.
+// status's active_presets has every kind on now, and active_presets_error
+// when mitmproxy did not say; v0.6's active_mock_presets and
+// active_mock_presets_error are gone (removed in v1.0).
 func TestStatusActivePresets(t *testing.T) {
+	keys := func(o StatusOut) map[string]any {
+		var got map[string]any
+		b, _ := json.Marshal(o)
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
 	var o StatusOut
 	o.SetActivePresets([]capture.Preset{{Name: "m", Kind: "mock", Active: true}, {Name: "s", Kind: "map_remote", Active: true}, {Name: "off", Kind: "mock"}}, nil)
-	var got map[string]any
-	b, _ := json.Marshal(o)
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
-	}
-	if a, _ := got["active_presets"].([]any); len(a) != 2 || !reflect.DeepEqual(got["active_mock_presets"], got["active_presets"]) {
+	got := keys(o)
+	if a, _ := got["active_presets"].([]any); len(a) != 2 || got["active_mock_presets"] != nil {
 		t.Errorf("active_presets %v, active_mock_presets %v", got["active_presets"], got["active_mock_presets"])
 	}
 	o = StatusOut{}
 	o.SetActivePresets(nil, errors.New("no answer"))
-	if o.PresetsError != "no answer" || o.MockPresetsError != o.PresetsError || o.ActivePresets != nil {
-		t.Errorf("errors: %q %q", o.PresetsError, o.MockPresetsError)
+	if got := keys(o); got["active_presets_error"] != "no answer" || got["active_mock_presets_error"] != nil || got["active_presets"] != nil {
+		t.Errorf("errors: %v", got)
 	}
 }
 
-// The v0.6 tools say they go in v1.0, and what replaces them.
-func TestMockToolsDeprecated(t *testing.T) {
-	ct, st := mcp.NewInMemoryTransports()
-	if _, err := presetServer(&fakePresets{}).Connect(context.Background(), st, nil); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+// v0.6's names, removed in v1.0, are in no tool list (run's local socket,
+// --mcp-http, a v1.0 reqcove mcp), no tool's description and not the
+// instructions.
+func TestRemovedNamesGone(t *testing.T) {
+	status := func() StatusOut { return StatusOut{} }
+	local, remote := Servers(storeWith("a"), status, status, &fakePresets{})
+	proxied, err := toolList(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := 0
-	for tool, err := range cs.Tools(context.Background(), nil) {
+	lists := map[string][]*mcp.Tool{"proxy": proxied}
+	for name, s := range map[string]*mcp.Server{"local": local, "remote": remote} {
+		ct, st := mcp.NewInMemoryTransports()
+		if _, err := s.Connect(context.Background(), st, nil); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		deprecated := strings.HasPrefix(tool.Description, "Deprecated, removed in v1.0: use list_presets / activate_preset / deactivate_preset.")
-		if old := tool.Name == mockPresets.list || tool.Name == mockPresets.activate || tool.Name == mockPresets.deactivate; old != deprecated {
-			t.Errorf("%s: %q", tool.Name, tool.Description)
-		} else if old {
-			n++
+		if got := cs.InitializeResult().Instructions; strings.Contains(got, "_mock") {
+			t.Errorf("%s: instructions name a removed tool", name)
+		}
+		for tool, err := range cs.Tools(context.Background(), nil) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			lists[name] = append(lists[name], tool)
 		}
 	}
-	if n != 3 {
-		t.Errorf("%d deprecated tools, want 3", n)
+	for name, tools := range lists {
+		if len(tools) < 10 {
+			t.Errorf("%s: only %d tools", name, len(tools))
+		}
+		for _, tool := range tools {
+			if _, old := removedTools[tool.Name]; old {
+				t.Errorf("%s lists %s", name, tool.Name)
+			}
+			if strings.Contains(tool.Description, "mock_presets") || strings.Contains(tool.Description, "_mock") || strings.Contains(tool.Description, "eprecated") {
+				t.Errorf("%s: %s's description names a removed name: %q", name, tool.Name, tool.Description)
+			}
+		}
+	}
+}
+
+// A call to a removed tool is told what replaces it, as a tool error, not a
+// protocol error: by run's local socket (what an older reqcove mcp, which
+// still lists them, forwards the call to) and by a v1.0 reqcove mcp (whatever
+// run it talks to: here one without any preset tool).
+func TestRemovedToolsAnswer(t *testing.T) {
+	ct, st := mcp.NewInMemoryTransports()
+	status := func() StatusOut { return StatusOut{} }
+	local, _ := Servers(storeWith("a"), status, status, &fakePresets{})
+	if _, err := local.Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	run, err := mcp.NewClient(&mcp.Implementation{Name: "reqcove-mcp", Version: "0.8.0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sock := sockPath(t)
+	proxy := agent(t, sock)
+	defer serve(t, sock, New(storeWith("a"), nil))()
+	for _, cs := range []*mcp.ClientSession{run, proxy} {
+		for old, use := range removedTools {
+			got, isErr := callText(t, cs, old, map[string]any{"name": "p"})
+			if !isErr || !strings.HasPrefix(got, old+" was removed in v1.0: use "+use+" ") || !strings.Contains(got, "reconnect the agent's MCP server") {
+				t.Errorf("%s: %q %v", old, got, isErr)
+			}
+		}
+	}
+	// Other unknown tools stay unknown.
+	if _, err := run.CallTool(context.Background(), &mcp.CallToolParams{Name: "activate_mocks"}); err == nil || !strings.Contains(err.Error(), "unknown tool") {
+		t.Errorf("activate_mocks: %v", err)
 	}
 }

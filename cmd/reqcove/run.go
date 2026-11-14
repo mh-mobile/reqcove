@@ -312,7 +312,7 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
-			out.SetActivePresets(cap.Presets(ctx, ""))
+			out.SetActivePresets(cap.Presets(ctx))
 		}
 		return out
 	}, remoteStatus, cap)

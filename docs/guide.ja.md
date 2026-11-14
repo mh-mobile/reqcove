@@ -83,8 +83,8 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 ### ツールを許可する
 
 - 読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。
-- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`、v0.6 の `activate_mock`、`deactivate_mock`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
-- Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の印のないツールも許可されます（v0.6 からは `activate_mock`、v0.7 からはプリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
+- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
+- Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の印のないツールも許可されます（プリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
 
 たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによるもので、ここでは試していません）。
 
@@ -95,16 +95,14 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
               "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
-    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
-            "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
 ```
 
-この中の v0.6 のもの（`list_mock_presets`、`activate_mock`、`deactivate_mock`）は非推奨で、v1.0 で削除します。
+v1.0 で削除したもの（v0.8 で非推奨）：ツールの `list_mock_presets`、`activate_mock`、`deactivate_mock` です。それより前に書いたリストでは、`mcp__reqcove__list_mock_presets`、`mcp__reqcove__activate_mock`、`mcp__reqcove__deactivate_mock` を `mcp__reqcove__list_presets`、`mcp__reqcove__activate_preset`、`mcp__reqcove__deactivate_preset` に置き換えてください。`activate_preset` はモックだけでなくほかの種類も有効にするので、例では `activate_preset` と `deactivate_preset` を `ask` に置いています。スクリプトでは、`active_mock_presets`、`active_mock_presets_error`、`mock_presets` の代わりに、`status` の `active_presets` と `active_presets_error`、`capture_stats` の `presets` を読んでください。削除したツールを呼ぶと、代わりのツールの名前を返します（ユニットテスト）。
 
 注意点は次のとおりです。
 
@@ -148,7 +146,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` は、次のものを除いた同じツールを、ノードから HTTP で提供します。
 
-- プリセットのツール：`list_presets`、`activate_preset`、`deactivate_preset`、非推奨の `list_mock_presets`、`activate_mock`、`deactivate_mock`
+- プリセットのツール：`list_presets`、`activate_preset`、`deactivate_preset`
 - ルールのツール：`list_rules`、`explain_rules`
 - マーカーのツール：`add_marker`、`list_markers`
 
@@ -398,6 +396,8 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET にも応答し、一緒に送られてきたボディはすべてメモリに保持します。`--device` のデバイス上のアプリや Web ページも（`--local-proxy` なら、このコンピュータのアプリも）、ルールに合うホストへのこうしたリクエストの送り手になりえます。とても大きなボディだと mitmproxy のメモリが尽き（reqcove が起動し直します）、その間デバイスの通信が止まります。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。これらのテストにないもの：長さのない HTTP/2 の GET への `map_local`、mitmproxy のメモリが尽きるほど大きなボディ。
+
 #### 接続先だけを変える（`resolve`）
 
 `resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
@@ -413,6 +413,8 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
 - 名前解決はこれまでどおり行われ（iPhone が行い、Remote Proxy ではこのコンピュータが行います）、先に本物のサーバーへ接続します。公開の DNS で解決できない名前や、接続を拒否する本物のサーバーは、接続先を変えられません。
 - 名前は `--allow-hosts` に入っている必要があり、名前ごとに別のアドレス（またはポート）が必要です。mitmproxy が接続をアドレス単位で使い回すためです。
 - 拒否するもの：`0.0.0.0/8`、リンクローカル（クラウドのメタデータ）、マルチキャスト、Tailscale の 100.100.100.100（[SECURITY](SECURITY.ja.md#ルール--rules)）。`--upstream-proxy` と一緒に使う `resolve` も拒否します。
+
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、平文の HTTP がアプリの `Host` のままルールのアドレスへ送られ、送り先が記録に残ること、`map_remote` のあとの `resolve`、TLS で接続先にその名前（SNI）を求め、信頼できない証明書なら 502 になること、読み込みで断るもの（クラウドのメタデータ、100.100.100.100、名前の接続先、アドレスの共有、`--allow-hosts` にないホスト、`--upstream-proxy` との組み合わせ）です。別の名前の信頼された証明書を持つサーバーで 502 になることも試しました（[SECURITY](SECURITY.ja.md#ルール--rules)）。`resolve` のプリセットは iPhone では試していません（[下](#map_remotemodify_headersresolve-のプリセット)）。
 
 #### ここで応答する（`mock`）
 
@@ -486,7 +488,7 @@ mock:
     fault: close                    # 応答しない。HTTP/1 は接続を閉じ、HTTP/2 はストリームをリセットする
 ```
 
-- ツールは `list_presets`、`activate_preset(name, minutes, times)`（最長 5 分。省略すると 5 分。`times` を付けると、最大 20 件のリクエストに応答したら無効になる）、`deactivate_preset(name)` です。v0.6 の `list_mock_presets`、`activate_mock`、`deactivate_mock` も、モックに限って同じことをします（非推奨。v1.0 で削除します）。使えるのはこのコンピュータのエージェント（`reqcove mcp` と `run` のソケット）だけで、`--mcp-http` からは使えません。
+- ツールは `list_presets`、`activate_preset(name, minutes, times)`（最長 5 分。省略すると 5 分。`times` を付けると、最大 20 件のリクエストに応答したら無効になる）、`deactivate_preset(name)` です。使えるのはこのコンピュータのエージェント（`reqcove mcp` と `run` のソケット）だけで、`--mcp-http` からは使えません。
 - 有効なプリセットは、ほかのモックより先に応答します。無効なプリセットは、モックとして扱いません。同じ match（メソッド、URL、operation）で有効にできるプリセットは 1 つです。同じ match の別のプリセットを有効にすると、先のものは無効になります。有効なものをもう一度有効にすると、期限と回数が置き換わります。
 - 一致したリクエストは、誰が送ったものでも（Safari、別のデバイス、アプリの再試行）回数を使います。一覧の行には `preset: 名前` が付き、閉じたものの error には、モックが閉じたと書かれます。
 - `delay_ms` と `fault: close` は、普通のモックでも使えます。`delay_ms` が遅らせるのはモックの応答だけです（サーバーからの応答は遅らせません）。
@@ -509,7 +511,7 @@ resolve:
   - {rule: "api.example.com=192.168.1.20", preset: api-lan}
 ```
 
-- ツールは `list_presets`（すべての種類。`kind` 付き）、`activate_preset(name, minutes)`、`deactivate_preset(name)` です。`list_mock_presets`、`activate_mock`、`deactivate_mock` は v1.0 まで残し（非推奨）、モック専用にしました。v0.6 で `activate_mock` を許可したエージェントは、これらを有効にできません。`times` はモック専用で、ほかの種類は時間だけで無効になります。
+- ツールは `list_presets`（すべての種類。`kind` 付き）、`activate_preset(name, minutes)`、`deactivate_preset(name)` です。`times` はモック専用で、ほかの種類は時間だけで無効になります。
 - 有効な間、`map_remote` のプリセットは、一致したリクエストをアプリの Cookie、トークン、ボディごと送り先へ送ります。`resolve` はその名前の接続先を指定のアドレスにします（Host、SNI、TLS の検証は名前のまま）。5 分で終わるのは切り替えで、その影響ではありません。アプリが書いたものはそのサーバーに残り、アプリはそこで得たトークンやキャッシュを持ち続けることがあります（[SECURITY](SECURITY.ja.md#map_remotemodify_headersresolve-のプリセット)）。
 - `list_presets`、起動時の表示、`reqcove status` に出すのは、`map_remote` の送り先（スキームとホスト）、`modify_headers` のヘッダー名（値は出しません）、`resolve` の名前とアドレスです。フィルターや正規表現は出しません。
 - 読み込みで断るもの：
@@ -520,9 +522,9 @@ resolve:
 - 送らずに 502 を返すもの：書き換えた URL が表示している送り先の外になるリクエスト（正規表現が URL の途中に一致したもの）。
 - 同じ一致条件で有効にできるのは、種類ごとに 1 つです（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー、`resolve` は同じ名前）。有効な `resolve` のプリセットは、同じ名前の普通の `resolve` より先に使います。有効な `map_remote` のプリセットは普通のルールより先に、`modify_headers` のプリセットは普通のルールのあとに当てます（プリセットのヘッダーが残ります）。
 - 名前は種類をまたいで共通です（モックと `resolve` のプリセットの両方を `staging` にはできません）。一覧の行の `presets` には、そのリクエストを変えたか応答したプリセットがすべて入ります（`preset` は、応答したモックのものとして残します）。
-- `reqcove status` と `status` ツールの `active_presets` には、有効なものがすべての種類で入ります（`kind` 付き。mitmproxy から答えがなければ `active_presets_error`）。`capture_stats` の `presets` には、すべてのプリセットの名前が入ります。v0.6 の名前（`active_mock_presets`、`active_mock_presets_error`、`mock_presets`）にも v1.0 までは同じものが入りますが、非推奨で、v1.0 で削除します。
+- `reqcove status` と `status` ツールの `active_presets` には、有効なものがすべての種類で入ります（`kind` 付き。mitmproxy から答えがなければ `active_presets_error`）。`capture_stats` の `presets` には、すべてのプリセットの名前が入ります。
 
-確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`activate_mock` と `list_mock_presets` がこれらに触れないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）。LAN モードの iPhone で試しました（iOS 27.3、2026-11-14）：このコンピュータの開発サーバーへの `map_remote` のプリセットを MCP で有効にすると Safari に開発サーバーの応答が返り、行に載りました（無効にするとサーバー自身の応答）。`times: 1` のモックのプリセットは 503 を 1 回返し、そのあとはサーバーの応答でした。iPhone で試していないもの：`resolve` と `modify_headers` のプリセット。コードから：ルールはリクエストの始まりで当てるので、`map_remote` や `resolve` のプリセットが有効な間に始まった WebSocket、ストリーム、長いアップロードは、プリセットが無効になったあとも、その送り先のままです。
+確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）。LAN モードの iPhone で試しました（iOS 27.3、2026-11-14）：このコンピュータの開発サーバーへの `map_remote` のプリセットを MCP で有効にすると Safari に開発サーバーの応答が返り、行に載りました（無効にするとサーバー自身の応答）。`times: 1` のモックのプリセットは 503 を 1 回返し、そのあとはサーバーの応答でした。iPhone で試していないもの：`resolve` と `modify_headers` のプリセット。コードから：ルールはリクエストの始まりで当てるので、`map_remote` や `resolve` のプリセットが有効な間に始まった WebSocket、ストリーム、長いアップロードは、プリセットが無効になったあとも、その送り先のままです。
 
 #### ルールが当たった理由、当たらなかった理由（`list_rules`、`explain_rules`）
 
@@ -631,7 +633,7 @@ reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew
 - **ファイル**：`--config FILE` は、`run` のフラグを 1 行に 1 つずつ読みます。
   - `#` から後ろはコメントです。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリです。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます。
   - コマンドラインのフラグはファイルのあとに読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。
-  - ファイルで断るもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--allow-hosts '*'`（`@FILE` で指定したものも）。これらはコマンドラインでだけ使えます。
+  - ファイルで断るもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'`（`@FILE` で指定したものも）。これらはコマンドラインでだけ使えます。
   - ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。
   - `--config` は 1 つだけです。指定しなければ、何も読みません。
 - **終わったとき**：ファイルがないときや断ったときは、サービスは 1 回で終わります（`brew services` がエラーを表示します）。繰り返し起動し直すことはありません。ほかの理由で終わったときも同じなので、`brew services restart reqcove` で起動し直してください（`brew upgrade reqcove` のあとも）。
@@ -659,7 +661,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 ```
 
 - **ファイル**は、`--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。
-  - インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan` が書いてある、のどれかなら断ります。
+  - インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config` が書いてある、のどれかなら断ります。
   - `--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。
   - ファイルに `--state` があれば、それが状態ディレクトリです（フルパスか `~/` から）。状態ディレクトリは、空か、新しいか、reqcove のものに限ります（`run` と同じ）。
 - **終わったとき**：`run` が終わると（エラー、断られたファイル、`kill`）、次のログインまで止まったままです。`reqcove service restart` で起動し直せます（`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user restart reqcove` を実行します。試したのは Linux だけです）。
@@ -742,12 +744,12 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし（写した先は `~/.reqcove/ca-copies` に記録し、`~/.reqcove` の `cleanup` が表示する）、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
-| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
+| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
 | `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、デフォルトの mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認）。ファイル名が `uvx` でないパスは uvx として実行する（ロックもハッシュの確認もなし） |
 | `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
 | `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |
 
-ほかのコマンドは次のとおりです。`init` と `version` 以外は、`--state DIR` も指定できます。
+ほかのコマンドは次のとおりです。`init`、`version`、`setup`、`service restart`、`service uninstall` 以外は、`--state DIR` も指定できます。
 
 | | |
 |---|---|
@@ -759,6 +761,8 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `reqcove lan` | `allow ADDR`、`deny ADDR`、`list`。[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)で中継するアドレス。ターミナルでのみ |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
 | `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |
+| `reqcove setup` | [初回の手順](#初回の起動ログインと承認)。フラグなし。ターミナルでのみ |
+| `reqcove service install` | `--config FILE`、`--state DIR`。そのあとは `reqcove service restart`、`reqcove service uninstall`。[Homebrew なしで常駐させる](#homebrew-なしで常駐させるreqcove-service-install) |
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 
@@ -781,13 +785,10 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
 | `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
-| `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。v0.6 の `active_mock_presets` も同じだが、非推奨で v1.0 で削除。`--mcp-http` では出しません。プリセットのツールがないため） |
+| `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。`--mcp-http` では出しません。プリセットのツールがないため） |
 | `list_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。すべての種類（`kind`）。モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名、`resolve` の名前とアドレス。有効か、無効になる時刻。ボディ、ヘッダーの値、フィルター、正規表現は返さない。`--mcp-http` からは使えない |
 | `activate_preset` | どの種類のプリセットも有効にする。最長 5 分（`minutes`。モックは `times` で最大 20 件）。`wait_for_flows` 用の `checkpoint` と、同じ一致条件で無効にしたプリセットを返す。`--mcp-http` からは使えない |
 | `deactivate_preset` | プリセットを無効にする。`--mcp-http` からは使えない |
-| `list_mock_presets` | 非推奨（v1.0 で削除）。`list_presets` のモックだけ（v0.6）。`--mcp-http` からは使えない |
-| `activate_mock` | 非推奨（v1.0 で削除）。`activate_preset` のモックだけ（v0.6）。`map_remote`、`modify_headers`、`resolve` のプリセットは有効にしない。`--mcp-http` からは使えない |
-| `deactivate_mock` | 非推奨（v1.0 で削除）。モックのプリセットを無効にする（v0.6）。`--mcp-http` からは使えない |
 | `list_rules` | `--rules` のファイルの[ルール](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules)を種類と番号で。プリセットと、ルールから導いたもの（モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名と向き、`resolve` の名前とアドレス）。フィルター、正規表現、ヘッダーの値、ボディ、パスは返さない。`--mcp-http` からは使えない |
 | `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
 | `add_marker` | [マーカー](#マーカーを置くreqcove-mark)を置く（`text` は 1 行で 80 文字まで、マスクする）。`id`、`time`（`since` 用）、`checkpoint`（`wait_for_flows` の `after` 用）を返す。デバイスには何も変えない。`--mcp-http` からは使えない |
