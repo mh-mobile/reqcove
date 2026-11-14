@@ -519,7 +519,7 @@ var (
 // request line up to "HTTP/". With less it has only the address, which
 // --allow-hosts does not name, and passes the connection through,
 // unrecorded, for good (tried: a first write of 1 or 2 bytes of a
-// ClientHello; of an HTTP request, up to 14 bytes, short of "HTTP/"). So a
+// ClientHello; of an HTTP request, 1, 2, 3, 10 or 14 bytes, short of "HTTP/"). So a
 // first write that is less of either is held and joined with the next ones,
 // until there is enough, holdWait passes or maxHeld is held.
 type holdConn struct {
@@ -578,15 +578,6 @@ func (c *holdConn) CloseWrite() error {
 	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return cw.CloseWrite()
 	}
-	return c.Conn.Close()
-}
-
-func (c *holdConn) Close() error {
-	c.mu.Lock()
-	if c.timer != nil {
-		c.timer.Stop()
-	}
-	c.mu.Unlock()
 	return c.Conn.Close()
 }
 

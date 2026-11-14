@@ -1400,8 +1400,8 @@ class Reqcove:
         name = self.resolve_sni.get((data.context.client.id, data.conn.address))
         if name:
             data.conn.sni = name
-        # grpc-swift offers ALPN grpc-exp before h2, and Google's front ends
-        # (demo.connectrpc.com) pick it. mitmproxy offers the server what the
+        # grpc-swift offers ALPN grpc-exp before h2, and some servers pick it
+        # (demo.connectrpc.com, tried). mitmproxy offers the server what the
         # client did, then gives the client the server's choice, and grpc-exp
         # is not HTTP to it: it reads the client's HTTP/2 as HTTP/1 and drops
         # the connection, the call failing. So the server is offered h2 without

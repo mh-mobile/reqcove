@@ -212,8 +212,8 @@ func TestGRPCE2E(t *testing.T) {
 	}
 }
 
-// TestGRPCExpE2E (REQCOVE_E2E=1): grpc-swift (1 and 2, both transports)
-// offers ALPN grpc-exp, h2, and Google's front ends (demo.connectrpc.com)
+// TestGRPCExpE2E (REQCOVE_E2E=1): grpc-swift (2, both transports; 1 by its
+// sources) offers ALPN grpc-exp, h2, and some servers (demo.connectrpc.com)
 // pick grpc-exp. The origin here prefers it too; the client dials as the exit
 // node does (eager: TLS to the server first) and speaks HTTP/2 whatever was
 // negotiated, as grpc-swift does. Without the addon's change, mitmproxy gives
