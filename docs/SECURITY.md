@@ -763,10 +763,9 @@ made meanwhile waits in the socket's queue for the next mitmdump; the devices'
 connections wait (15 seconds at most, then fail) until its addon says hello.
 Tests: while mitmdump is down, and after reqcove gave up on it, binding the
 port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
-Linux too); with real
-mitmproxy (from the lock and through uvx, macOS), the same while it restarts,
-and a request sent then is carried and recorded by the next mitmdump. Were the
-launcher's change missed (a mitmproxy that binds another way), its own bind
+Linux too); with real mitmproxy (from the lock and through uvx, macOS), the
+same while it restarts, and a request sent then is carried and recorded by
+the next mitmdump. Were the launcher's change missed (a mitmproxy that binds another way), its own bind
 fails on the held port and it exits before its hello, never ready: tried with
 mitmproxy 12.3.1 and the change made too late (address already in use).
 Tried on macOS as the same user: binding 127.0.0.1 on the port fails even
