@@ -1463,8 +1463,10 @@ The main ones are in the [README](../README.md#limits). The rest:
   (and without `--allow-hosts` as well). QUIC on a port other than 443 goes on,
   unrecorded.
 - mitmproxy holds each WebSocket message until it is complete, and inflates a
-  compressed one (permessage-deflate) whole (from reading mitmproxy's code; no
-  compressed message has been tried), so one huge message can use a lot of
+  compressed one (permessage-deflate) whole (from reading mitmproxy's code;
+  compressed messages are recorded inflated and masked: an E2E test with Go's
+  client and server, not tried from iOS, whose servers so far refused it), so
+  one huge message can use a lot of
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
   minute after 5 restarts in a row, `run` stops with an error (exit status 1,

@@ -3,6 +3,7 @@ module github.com/mh-mobile/reqcove
 go 1.27.4
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/net v0.62.0
@@ -38,7 +39,6 @@ require (
 	github.com/axiomhq/hyperloglog v0.2.6 // indirect
 	github.com/benbjohnson/immutable v0.4.3 // indirect
 	github.com/bradfitz/reco v0.0.0-20260929154613-b883fbd17e3f // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/coreos/go-iptables v0.8.0 // indirect
 	github.com/creachadair/msync v0.10.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect

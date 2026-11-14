@@ -230,6 +230,8 @@ Found by a code review of v0.8.0; each test fails without its fix.
 
 ### Inside
 
+- An E2E test sends compressed WebSocket messages (permessage-deflate) through
+  mitmproxy: each is recorded inflated, with its inflated size, and masked.
 - A test measures how masking's time and allocations grow between two
   sizes 8 times apart (mostly 16 and 128 KiB for bodies, 64 and 512 KiB for
   headers and URLs; protobuf's below its caps), for 152 inputs
