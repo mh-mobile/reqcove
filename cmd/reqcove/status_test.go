@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,26 @@ func TestStatusCommand(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) }); !strings.Contains(out, "reqcove is not running") {
 		t.Errorf("after stop:\n%s", out)
+	}
+}
+
+// `reqcove status` shows the presets from capture_stats' presets and the ones
+// on from active_presets (not v0.6's names, removed in v1.0).
+func TestStatusCommandPresets(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := capture.NewStore(10, 1<<20)
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
+		return mcpserver.StatusOut{Node: exitnode.Status{Backend: "Running"}, Capture: map[string]any{"presets": []string{"mx", "staging"}},
+			ActivePresets: []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
+	if w := "presets:     2 (mx, staging); on: staging -> https://staging.example.com until 12:00:00"; !strings.Contains(out, w) {
+		t.Errorf("%q not in:\n%s", w, out)
 	}
 }
 
@@ -596,5 +617,12 @@ func TestPresetNames(t *testing.T) {
 	}
 	if presetsOff(nil) != "" || presetsOff([]string{"x"}) == "" {
 		t.Errorf("presetsOff")
+	}
+}
+
+// run reads capture_stats' presets, not v0.6's mock_presets (removed in v1.0).
+func TestStatsPresets(t *testing.T) {
+	if got := statsPresets(map[string]any{"presets": []string{"mx"}}); !slices.Equal(got, []string{"mx"}) {
+		t.Errorf("statsPresets: %v", got)
 	}
 }
