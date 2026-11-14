@@ -137,7 +137,9 @@ config read; an iPhone's requests recorded; no token or login URL in the log;
 `reqcove links` refused off a terminal; `links` and `login-url` gone after
 stop). Not tried yet: a start at login or after a reboot, sleep, whether
 macOS's Local Network privacy asks about a `run` not started from a terminal,
-and whether launchd's default background priority slows it.
+and whether launchd's default background priority slows it (with `brew
+services`; a sleep, a start at login and the Local Network prompt were tried
+with `reqcove service install`, below).
 
 ### Keep it running without Homebrew (`reqcove service install`)
 

@@ -66,7 +66,7 @@ reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew
 
 Linux では、Homebrew の `brew services` が同じ formula から systemd のユニットを作ります（Homebrew のドキュメントによる。試していません。`status` はサービスを表示しません）。Homebrew を使わないなら、次の節を見てください。
 
-確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。macOS 27 で formula から `brew services start` と `stop` を試しました（PATH から uv が見つかる、設定ファイルが読まれる、iPhone のリクエストが記録される、ログにトークンやログイン用の URL が入らない、ターミナルでないところでは `reqcove links` が断る、止めたあと `links` と `login-url` が消える）。ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、まだ試していません。
+確認状況：設定ファイルの読み方と、断るフラグはユニットテストで確認しました。macOS 27 で formula から `brew services start` と `stop` を試しました（PATH から uv が見つかる、設定ファイルが読まれる、iPhone のリクエストが記録される、ログにトークンやログイン用の URL が入らない、ターミナルでないところでは `reqcove links` が断る、止めたあと `links` と `login-url` が消える）。ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS のローカルネットワークの許可を求められるか、launchd の既定の優先度で遅くならないかは、`brew services` ではまだ試していません（スリープ、ログイン時の起動、ローカルネットワークの許可は、下の `reqcove service install` で試しました）。
 
 ### Homebrew なしで常駐させる（`reqcove service install`）
 
