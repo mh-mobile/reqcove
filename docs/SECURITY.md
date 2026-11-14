@@ -292,8 +292,11 @@ So "delete the directory" above means each of them.
   (by its content type), an object's field with an unquoted name
   (`{accessToken: "…"}`, `{pin: 1234}`; a lone `code` as in JSON) has its
   string, template literal or number value masked, with comments around its
-  name and colon, and a string going on past a line's end after a backslash.
-  Not caught: a name written with character references (`&#99;ode`), a
+  name and colon (two at most, of 80 bytes or less each: unbounded, they made
+  masking quadratic), and a string going on past a line's end after a
+  backslash. Not caught: a longer comment or more between a name and its
+  value, a quoted name (`{'accessToken': '…'}`), an assignment
+  (`x.accessToken = "…"`), a name written with character references (`&#99;ode`), a
   template literal holding another (masked up to that one), a secret in a
   tag's text other than a `<textarea>`'s, or under an innocent name; a
   script's text that a browser reads past its first `</script>`
@@ -540,7 +543,8 @@ request names, and one set on a response only to that host's response: when
 no `map_remote` or `resolve` sends the request on, the rules apply only if
 the address dialled is the Host as the app sent it (read before any rule), or
 over HTTPS that Host is the TLS name mitmproxy checks the server's
-certificate for, or its addresses, as this computer looks them up, include
+certificate for (not through `--upstream-proxy`: mitmproxy then checks the
+proxy's certificate, and the server's is the proxy's to check), or its addresses, as this computer looks them up, include
 it. Nor do they apply to such a request when a rule changes its Host: a
 rule's own Host would vouch for itself (a token rule for the Host, then one
 setting Host to the address dialled), and where a request goes is for
@@ -554,7 +558,10 @@ response rule's value from it; a server without a certificate for the name
 asked gets no request (mitmproxy's own check); a request to its Host's
 address, and one a `resolve` rule sends on, get them, both ways. Names are
 compared in IDNA's ASCII form (HTTP/2's `:authority` comes decoded, SNI
-does not; tested on mitmproxy's own made flows, not over the network). Each
+does not; tested on mitmproxy's own made flows, not over the network); a
+Host with İ, ı, ſ or K (as such or in `xn--` form) gets no rules, as `~d`,
+case-insensitive, matches it to an ASCII name it is not (`mysıte.com` to
+`mysite.com`; tested the same way). Each
 name is looked up on a thread of its own, one lookup at a time per name, 16
 names at most at once, and its answer kept 30 seconds: a stalled resolver
 leaves the loop's executor free and the process able to exit (tested in

@@ -17,7 +17,9 @@
   goes on as the app sent it, without the rules, its response as the server
   sent it, and their `rewrites` say so; a request to its host's own address
   (as this computer looks the name up), or over HTTPS to its TLS name, keeps
-  them. The Host checked is the app's, read before any rule; a
+  them (the TLS name not through `--upstream-proxy`, where mitmproxy checks
+  the proxy's certificate; a Host with İ, ı, ſ or K, which `~d` matches to an
+  ASCII name, never). The Host checked is the app's, read before any rule; a
   `modify_headers` rule that changes `Host` is no longer applied to a
   request nothing sends elsewhere (nor are the request's other header
   rules): use `map_remote` to change where it goes. When this computer's
@@ -38,8 +40,8 @@
   and attributes named so (`data-auth-token`), and a `<textarea>`'s text;
   comments and scripts' text read only to their end, so a quote in them
   hides no field after them; in pages and JavaScript, object fields with
-  unquoted secret names (`{accessToken: "…"}`, comments around them, strings
-  over lines, template literals). Up to v0.8 these
+  unquoted secret names (`{accessToken: "…"}`, up to two short comments
+  around them, strings over lines, template literals). Up to v0.8 these
   reached the tools unmasked. `hmac`, `verifier` (`oauth_verifier`), `privkey`
   and `mnemonic` count as secret names now. Tests, and new shapes in the fuzz
   test; what it does not catch is in docs/SECURITY.md.

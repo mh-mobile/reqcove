@@ -389,6 +389,18 @@ def _ip(s):
     return getattr(a, "ipv4_mapped", None) or a
 
 
+# Characters Python's re.IGNORECASE matches to an ASCII letter: İ ı ſ K.
+CASE_FOLDS_TO_ASCII = "\u0130\u0131\u017f\u212a"
+
+
+def _unicode(s):
+    """A host name with its xn-- labels decoded, as ~d reads it."""
+    try:
+        return s.encode("ascii").decode("idna") if s.isascii() else s
+    except UnicodeError:
+        return s
+
+
 def _idna(s):
     """A host name as SNI carries it (lowercase, IDNA's ASCII form, no final
     dot: HTTP/2's :authority comes decoded), or None for one with no such
@@ -1545,8 +1557,8 @@ class Reqcove:
         r = flow.request
         name, dialled, sent = r.pretty_host, (r.data.host, r.data.port), r.headers.copy()
         done = self._rewrite_request(flow, rules, mocks)
-        if flow.response is not None or (r.data.host, r.data.port) != dialled:
-            return done  # answered here, or sent where a rule says
+        if flow.response is not None or (r.data.host, r.data.port) != dialled or any(d.startswith("resolve") for d in done):
+            return done  # answered here, or sent where a rule says (resolve's address can be the one dialled)
         flow.metadata["reqcove_named"] = (name, dialled[0])  # _goes_to_host decides it, once
         if r.headers.fields == sent.fields:
             return done
@@ -1575,13 +1587,16 @@ class Reqcove:
         app sent it), or one of its addresses as this computer looks them up,
         or, over HTTPS, name is the TLS name mitmproxy checks the server's
         certificate for. Names are compared in IDNA's ASCII form."""
+        if any(c in _unicode(name) for c in CASE_FOLDS_TO_ASCII):
+            return False  # ~d matches it case-insensitively to an ASCII name it is not (mysıte.com to mysite.com)
         name = _idna(name)
         if name is None:
             return False
         if name == _idna(dialled) or _ip(name) is not None and _ip(name) == _ip(dialled):
             return True
-        # mitmproxy verifies the server's certificate for this name (ssl_insecure is off).
-        if flow.request.scheme == "https" and name == _idna(flow.server_conn.sni or flow.client_conn.sni or ""):
+        # mitmproxy verifies the server's certificate for this name (ssl_insecure is off);
+        # through --upstream-proxy, the proxy's only: the server's is the proxy's to check.
+        if flow.request.scheme == "https" and not self.upstream and name == _idna(flow.server_conn.sni or flow.client_conn.sni or ""):
             return True
         want = _ip(dialled)
         if want is None or _ip(name) is not None:
@@ -1618,7 +1633,7 @@ class Reqcove:
     def _look_up(self, loop, fut, name):
         try:
             found = frozenset(_ip(i[4][0]) for i in socket.getaddrinfo(name, None, type=socket.SOCK_STREAM))
-        except (OSError, ValueError):  # a bad IDNA name's UnicodeError is a ValueError
+        except Exception:  # OSError; a bad IDNA name's UnicodeError; anything else: no addresses, the slot freed all the same
             found = frozenset()
 
         def settle():

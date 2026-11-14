@@ -534,6 +534,8 @@ rules = addon.load_rules(p)
 calls, release, never = [], threading.Event(), threading.Event()
 def lookup(name, *a, **kw):  # this computer's resolver, stalled until release
     calls.append(name)
+    if name == "boom.example":
+        raise RuntimeError("not an OSError")
     (never if name == "stuck.example" else release).wait()
     return [(2, 1, 6, "", ("198.51.100.9" if name.startswith(("n", "same")) else "203.0.113.7", 0))]
 socket.getaddrinfo = lookup
@@ -571,6 +573,26 @@ async def checks():
     assert await applied(a, f), "an IDN's :authority and its SNI"
     assert not await applied(a, flow("bücher.example", "https", "xn--mnchen-3ya.example", h2=True)), "another IDN's SNI"
     assert not await applied(a, flow("bad\udcff.example", "https", None)), "a name with no IDNA form"
+    # A name ~d would match to an ASCII one it is not (mysıte.com, re.IGNORECASE), its own certificate or not.
+    assert not await applied(a, flow("xn--myste-p4a.com", "https", "xn--myste-p4a.com", h2=True)), "a dotless i"
+    # Through --upstream-proxy, mitmproxy checks the proxy's certificate, not the server's: the TLS name vouches for nothing.
+    a.upstream = ("127.0.0.1", 8080)
+    assert not await applied(a, flow("victim.example", "https", "victim.example")), "the TLS name through an upstream proxy"
+    a.upstream = None
+    assert await applied(a, flow("victim.example", "https", "victim.example")), "the TLS name"
+    # resolve sends it where the user says, the address dialled too.
+    q = Path(tempfile.mkdtemp()) / "r.yaml"
+    q.write_text('modify_headers:\n  - "|~q|X-Token|v"\nresolve:\n  - "r.example=198.51.100.9"\n')
+    f = flow("r.example")
+    await a._rewrite_sent(f, addon.load_rules(q))
+    assert f.request.headers.get("X-Token") == "v", "resolve to the address dialled"
+    # A lookup failing with anything frees its slot.
+    assert not await applied(a, flow("boom.example"))
+    for _ in range(50):
+        if not a.looking:
+            break
+        await asyncio.sleep(0.02)
+    assert not a.looking, a.looking
     loop = asyncio.get_running_loop()
     addon.NAME_LOOKUP_SECONDS = 0.3
     release.clear()

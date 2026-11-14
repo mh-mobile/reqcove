@@ -233,8 +233,10 @@ var scriptFieldRE = regexp.MustCompile(`([{,]` + jsGap + `)([A-Za-z_$][A-Za-z0-9
 	`-?[0-9][0-9.eE+-]*)`)
 
 const (
-	jsGap    = `(?:\s|/\*(?s:.)*?\*/|//[^\n]*\n)*` // spaces and comments
-	jsEscape = `\\(?:\r\n|(?s:.))`                 // one, a line's end (a continuation) included
+	// spaces and at most two comments of 80 bytes or less: an unbounded one
+	// runs on to the input's end at every field (quadratic on 64 KiB)
+	jsGap    = `\s*(?:(?:/\*(?s:.){0,80}?\*/|//[^\n]{0,80}\n)\s*){0,2}`
+	jsEscape = `\\(?:\r\n|(?s:.))` // one, a line's end (a continuation) included
 )
 
 // maskScript masks the values of such fields whose names are secret, as
