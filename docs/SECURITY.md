@@ -264,16 +264,26 @@ So "delete the directory" above means each of them.
   rule above, a lone `code` included as in forms (an OAuth `form_post`'s
   hidden `code` and `id_token`, Rails' `authenticity_token`, ASP.NET's
   `__RequestVerificationToken`, `<meta name="csrf-token">`), has its `value`
-  and `content` masked, and an attribute secret by its own name
-  (`data-auth-token`) its value, as XML's. A tag cut by the head's end has
-  its `value` and `content` masked whatever its name, which may come after
-  them. In HTML and in JavaScript (by its content type), an object's field
-  with an unquoted name (`{accessToken: "…"}`, `{pin: 1234}`; a lone `code`
-  as in JSON) has its string or number value masked. Not caught: a name
-  written with character references (`&#99;ode`), a template literal's
-  value, a secret in a tag's text (`<textarea>`) or under an innocent name;
-  SAML's `SAMLResponse` field passes, as in a form. The text masking applies
-  on top. (Tests and the fuzz test, cut anywhere.)
+  and `content` masked, a `<textarea>` so named its text, and an attribute
+  secret by its own name (`data-auth-token`) its value, as XML's. A tag cut
+  by the head's end has its `value` and `content` masked whatever its name,
+  which may come after them (a secret `<textarea>` cut, its text to the end).
+  A comment, and the text of `<script>`, `<style>`, `<textarea>`, `<title>`
+  and the other elements whose text is no markup, is read up to its end only:
+  a quote or a `<` in it (a script's `"<a x='"`) does not make the tags after
+  it read as an attribute's value. Tags inside are still read (a
+  commented-out field, HTML in a script's string). In HTML and in JavaScript
+  (by its content type), an object's field with an unquoted name
+  (`{accessToken: "…"}`, `{pin: 1234}`; a lone `code` as in JSON) has its
+  string, template literal or number value masked, with comments around its
+  name and colon, and a string going on past a line's end after a backslash.
+  Not caught: a name written with character references (`&#99;ode`), a
+  template literal holding another (masked up to that one), a secret in a
+  tag's text other than a `<textarea>`'s, or under an innocent name; a
+  script's text that a browser reads past its first `</script>`
+  (`<script><!--<script>`) ends there here. SAML's `SAMLResponse` field
+  passes, as in a form. The text masking applies on top. (Tests and the fuzz
+  test, cut anywhere.)
 - gRPC: response trailers are masked as headers are; metadata ending in `-bin`
   (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
   1 KiB, as other header values are (by shapes and URLs: a free-text
@@ -510,16 +520,31 @@ reaches the log as control characters (tests).
 A request's Host is the app's to write, and mitmproxy connects where the app
 dialled whatever it says, while rules (`~d`) read the Host. So since v1.0 a
 header a rule sets (`modify_headers`, presets too) goes only to the host the
-request names: when no `map_remote` or `resolve` sends the request on, it
-applies only if the address dialled is the Host, or over HTTPS the Host is the
-TLS name mitmproxy checks the server's certificate for, or the Host's
-addresses, as this computer looks them up, include it. Otherwise the request
-goes on as the app sent it, its rewrites saying the rule was not applied
-(`explain_rules` names the condition). Tested with real mitmproxy: a stand-in
-server dialled with another host's Host gets no rule's value, over plain HTTP
-and over HTTPS with a valid certificate for its own name; a server without a
-certificate for the name asked gets no request (mitmproxy's own check); a
-request to its Host's address, and one a `resolve` rule sends on, get it. Up
+request names, and one set on a response only to that host's response: when
+no `map_remote` or `resolve` sends the request on, the rules apply only if
+the address dialled is the Host as the app sent it (read before any rule), or
+over HTTPS that Host is the TLS name mitmproxy checks the server's
+certificate for, or its addresses, as this computer looks them up, include
+it. Nor do they apply to such a request when a rule changes its Host: a
+rule's own Host would vouch for itself (a token rule for the Host, then one
+setting Host to the address dialled), and where a request goes is for
+`map_remote` and `resolve` to change. Otherwise the request goes on as the
+app sent it, and its response as the server sent it, their rewrites saying
+the rules were not applied (`explain_rules` names the condition). Tested with
+real mitmproxy: a stand-in server dialled with another host's Host gets no
+rule's value, over plain HTTP and over HTTPS with a valid certificate for its
+own name, nor with a rule setting Host to its address, and the app gets no
+response rule's value from it; a server without a certificate for the name
+asked gets no request (mitmproxy's own check); a request to its Host's
+address, and one a `resolve` rule sends on, get them, both ways. Names are
+compared in IDNA's ASCII form (HTTP/2's `:authority` comes decoded, SNI
+does not; tested on mitmproxy's own made flows, not over the network). Each
+name is looked up on a thread of its own, one lookup at a time per name, 16
+names at most at once, and its answer kept 30 seconds: a stalled resolver
+leaves the loop's executor free and the process able to exit (tested in
+mitmproxy's Python with a lookup that never answers, not in a running
+mitmdump), and a request whose Host takes over 3 seconds, or comes while
+16 names are being looked up, goes without the rules. Up
 to v0.8, any app on a carried device, an allowed LAN address or any user of
 this computer through `--local-proxy` could have a rule's header sent to its
 own server so (reproduced with mitmproxy 12.3.1 through its SOCKS5 port; the
