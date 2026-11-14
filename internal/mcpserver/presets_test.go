@@ -279,7 +279,10 @@ func TestProxyNeverResendsAWrite(t *testing.T) {
 			return res, err
 		}
 	})
-	// The next write reaches run (dialled again), not the dropped session.
+	// The next write reaches run (dialled again), not the dropped session: a
+	// read first, which the proxy may resend, so it has dialled again before
+	// the write (else the write can go to the session being dropped).
+	callText(t, cs, "list_markers", nil)
 	got, isErr = callText(t, cs, "add_marker", map[string]any{"text": "tap"})
 	if n := len(st.Markers(0)); !isErr || !strings.Contains(got, "call list_markers to see") || n != 1 {
 		t.Errorf("add_marker: %q %v, %d markers", got, isErr, n)
