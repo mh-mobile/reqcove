@@ -108,24 +108,33 @@
 ### Added
 
 - A connection to an allowed host that mitmproxy carries as raw TCP, not
-  read as HTTP (once decrypted, for TLS: an ALPN name it does not know, a
-  server that speaks first, bytes that do not look like HTTP; and, from
-  reading mitmproxy's code, what a request upgrades to with a `101` other
-  than a WebSocket), is recorded as a connection: up to v0.8 nothing showed
-  it, and grpc-swift's calls on the iPhone left nothing at all (below).
+  read as HTTP, is recorded as a connection: up to v0.8 nothing showed it,
+  and grpc-swift's calls on the iPhone left nothing at all (below).
+  mitmproxy does so (once decrypted, for TLS) with an ALPN name it does not
+  know when the server speaks first or the client's bytes do not look like
+  HTTP (otherwise it reads HTTP/1), with bytes that do not look like HTTP,
+  and for what a request upgrades to with a `101` other than a WebSocket,
+  over plain HTTP too, where the connection is named by the request's host
+  (each tried with mitmproxy 12.3.1, 2026-11-15; two by the E2E tests below).
   `list_passthrough` lists it with `reason: raw_tcp` (every row now has
   `reason`: `pass_hosts` or `raw_tcp`), with the protocol the client got
   (`alpn_negotiated`) and the bytes relayed each way (inside TLS, for TLS),
-  never the bytes themselves; `capture_stats` counts it (`raw_tcp`, and `raw_tcp_hosts`
-  by device and host), and `status`' next steps name its hosts for its
-  device. A device with only such connections is no longer told it has no
-  traffic. `passed_through` and `list_devices`' `passthroughs` still count
-  `--pass-hosts` connections only. E2E test with real mitmproxy (an unknown
-  ALPN from a server that speaks first), which fails without the change, and
-  unit tests; not tried on an iPhone. Connections mitmproxy passes through
-  itself (Apple's hosts, hosts outside `--allow-hosts`, a connection it
-  knows by its address only) still leave nothing (from reading mitmproxy
-  12.3.1's code; docs/SECURITY.md).
+  never the bytes themselves; at most 1000 are kept, apart from the
+  `--pass-hosts` connections, which they cannot push out. `capture_stats`
+  counts it (`raw_tcp`, and `raw_tcp_hosts`, the busiest 30 by device and
+  host), `list_devices` per device (`raw_tcp`; a device with only such
+  connections is listed), and `status`' next steps name its hosts for its
+  device. A device with only such connections, in LAN mode too, is no longer
+  told it has no traffic, however many devices and hosts there are.
+  `passed_through` and `list_devices`' `passthroughs` still count
+  `--pass-hosts` connections only. E2E tests with real mitmproxy (an unknown
+  ALPN from a server that speaks first; plain HTTP upgraded with a `101`),
+  which fail without the change, and unit tests; not tried on an iPhone.
+  Connections mitmproxy passes through itself (Apple's hosts, hosts outside
+  `--allow-hosts`, a connection it knows by its address only) still leave
+  nothing (from reading mitmproxy 12.3.1's code), nor do a few others
+  (HTTP/2 coalescing onto a sibling host's connection, Encrypted Client
+  Hello: tried with mitmproxy 12.3.1, 2026-11-15; docs/SECURITY.md).
 
 ### Fixed
 
@@ -214,6 +223,14 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   event from a connection takes, in order, so such a body held up what came
   after it (from reading code). Found by the growth test (Inside), which
   fails without the fix.
+- Plain HTTP whose `Host` ends in the root's dot (`curl
+  http://api.example.com./`) passed through undecrypted and unrecorded,
+  though the host was allowed (up to v0.8): mitmproxy's `allow_hosts`
+  patterns did not take the dot. They do now, and a flow's host is recorded
+  without it, so a host filter finds it; over HTTPS, such a request was
+  recorded with the dot, which the filter missed (tried with mitmproxy
+  12.3.1, 2026-11-15). Unit test, and an E2E test with real mitmproxy, which
+  fails without the fix (found by a review of the v1.0 changes).
 - A grpc-swift call (2, both transports; 1 offers the same, from its
   sources) to a server that picks ALPN `grpc-exp` (Connect's demo server
   does) failed through Reqcove, unrecorded (up to v0.8): grpc-swift offers `grpc-exp`
@@ -227,7 +244,10 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   so mitmproxy, not knowing `grpc-exp`, carried the connection as raw TCP,
   decrypted but not read as HTTP: nothing was recorded, no flow, TLS failure
   or count. E2E test, which fails without the fix. gRPC-core, grpc-java and
-  grpc-go offer `h2` only (from their sources).
+  grpc-go offer `h2` only (from their sources). A server that takes only
+  `grpc-exp`, not `h2`, would now fail such a call, being offered no
+  `grpc-exp` when the client offers `h2` too (from reading code; no such
+  server was found).
 - A connection whose first bytes were too few for mitmproxy to read the
   name was passed through undecrypted and unrecorded, for an allowed host
   too (up to v0.8): mitmproxy decides on the first bytes it reads, and with
@@ -239,9 +259,13 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   of an HTTP request, 1, 2, 3, 10 or 14 bytes, short of `HTTP/`). Now such a first write is held, at
   most a second, and sent with what follows, on every way to mitmproxy
   (the exit node, the Remote Proxy, the LAN proxy, `--local-proxy`: they
-  share one dial). E2E test through the LAN proxy, which fails without the
-  fix; the other ways from reading code. Whether an iPhone app's connection
-  ever comes that short was not seen.
+  share one dial). Bytes that cannot begin a request line (a method's first
+  three bytes are letters, and no control byte but tab and CR follows), and
+  what the client sends once the server has spoken first, go at once; if
+  what was held cannot be sent, the connection is closed, never the rest
+  sent without it (unit tests). E2E test through the LAN proxy, which fails
+  without the fix; the other ways from reading code. Whether an iPhone app's
+  connection ever comes that short was not seen.
 
 ### For people
 

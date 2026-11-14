@@ -49,6 +49,7 @@ type DeviceInfo struct {
 	Flows        int    `json:"flows"`
 	TLSFailures  int    `json:"tls_failures"`
 	Passthroughs int    `json:"passthroughs"`         // --pass-hosts connections kept
+	RawTCP       int    `json:"raw_tcp"`              // connections kept that mitmproxy carried as raw TCP
 	FirstSeen    string `json:"first_seen,omitempty"` // its first request or connection this run (kept when its records are not)
 	LastSeen     string `json:"last_seen,omitempty"`  // newest request start
 }
@@ -83,8 +84,10 @@ func (s *Store) Devices() []DeviceInfo {
 	}
 	for _, p := range s.passes {
 		if p.device != "" {
-			if !p.raw {
-				get(p.device).Passthroughs++
+			if d := get(p.device); p.raw {
+				d.RawTCP++
+			} else {
+				d.Passthroughs++
 			}
 			last[p.device] = max(last[p.device], p.start)
 		}

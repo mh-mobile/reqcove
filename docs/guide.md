@@ -444,28 +444,41 @@ Tried: on an iPhone. That a pass host's decrypted requests go through
 ### Connections not read as HTTP (raw TCP)
 
 mitmproxy picks how to read a connection to an allowed host (once
-decrypted, for TLS). One it does not take for HTTP (an ALPN name it does not
-know, a server that speaks first, bytes that do not look like HTTP) it
-carries as raw TCP, and so what a request upgrades to with a `101` other
-than a WebSocket (from reading mitmproxy 12.3.1's code; the request itself
-is a flow): the app works, but what the connection carries is not recorded
-as flows. Reqcove records the connection instead: `list_passthrough` lists
-it with `reason: raw_tcp` (host, server, times, the protocols the client
-offered and the one it got, bytes each way, inside TLS for TLS; never the
-bytes themselves), `capture_stats` counts it
-(`raw_tcp`, and `raw_tcp_hosts` by device and host), and `reqcove status`
-names its hosts in the next steps. grpc-swift's calls on the iPhone went so
+decrypted, for TLS). One it does not take for HTTP it carries as raw TCP:
+an ALPN name it does not know when the server speaks first or the client's
+bytes do not look like HTTP (otherwise it reads it as HTTP/1, which fails
+for a client speaking another protocol), bytes that do not look like HTTP,
+and what a request upgrades to with a `101` other than a WebSocket (the
+request itself is a flow). The app works, but what the connection carries
+is not recorded as flows. Reqcove records the connection instead:
+`list_passthrough` lists it with `reason: raw_tcp` (host, server, times, the
+protocols the client offered and the one it got, bytes each way, inside TLS
+for TLS; never the bytes themselves), `capture_stats` counts it (`raw_tcp`,
+and `raw_tcp_hosts` by device and host, the busiest 30), `list_devices`
+counts it per device (`raw_tcp`), and `reqcove status` names its hosts in
+the next steps. At most 1000 such connections are kept, apart from the
+`--pass-hosts` ones (a unit test). grpc-swift's calls on the iPhone went so
 before Reqcove offered the server `h2` ([gRPC](#grpc)).
 
-Not caught: connections mitmproxy passes through itself fire none of its
-hooks, so nothing of them is recorded or counted (from reading mitmproxy
-12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and a
-connection mitmproxy knows by its address only (TLS without SNI, plain TCP
-on port 80 that is not HTTP), unless `--allow-hosts` names the address.
+Not caught, nothing recorded or counted (more in
+[SECURITY](SECURITY.md#what-is-recorded)): connections mitmproxy passes
+through itself, which fire none of its hooks: Apple's hosts, hosts outside
+`--allow-hosts`, and a connection mitmproxy knows by its address only (TLS without SNI; plain TCP
+whose first bytes do not name an allowed host as mitmproxy reads them, such
+as h2c, a server that speaks first, HTTP/1.0 without `Host`), unless
+`--allow-hosts` names the address; an allowed host's HTTP/2 requests riding
+a connection the app opened for a sibling name outside the list that shares
+its certificate (allow both: `*.example.com`); TLS with Encrypted Client
+Hello, whose outer name is the provider's. That they fire no hooks is from
+reading mitmproxy 12.3.1's code; each case was tried with mitmproxy 12.3.1
+on 2026-11-15, none on an iPhone.
 
-Tried: by an E2E test (real mitmproxy: an unknown ALPN from a server that
+Tried: by E2E tests (real mitmproxy: an unknown ALPN from a server that
 speaks first, recorded with its sizes, the next HTTPS request recorded as
-before); not on an iPhone.
+before; plain HTTP upgraded with a `101`, its request a flow and the
+connection after it a record named by the request's host); an unknown ALPN
+with HTTP/1 bytes, or with other bytes to a server that waits, and a `101`
+over TLS, with mitmproxy 12.3.1 on 2026-11-15; not on an iPhone.
 
 ### gRPC
 
@@ -542,7 +555,10 @@ Connect's demo server, through a relay that dials mitmproxy as the exit node
 does (both transports, the CA given as the trust root), by an E2E test, and
 on an iPhone (iOS 27.3, both transports). Before, on the iPhone, the server's
 HTTP/2 settings came first and mitmproxy carried the calls as raw TCP,
-unrecorded ([raw TCP](#connections-not-read-as-http-raw-tcp)).
+unrecorded ([raw TCP](#connections-not-read-as-http-raw-tcp)). A server
+that takes only `grpc-exp`, not `h2`, would fail such a call through
+Reqcove, as it is offered no `grpc-exp` when the client offers `h2` too
+(from reading code; no such server was found).
 
 ### Android
 

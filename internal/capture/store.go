@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -173,7 +174,7 @@ type Store struct {
 	heldBytes     int
 	hello         event
 	tlsFailures   []TLSFailure
-	passes        []*passthrough          // --pass-hosts and raw TCP connections, oldest first, at most maxPasses
+	passes        []*passthrough          // --pass-hosts and raw TCP connections, oldest first, at most maxPasses of each
 	passByConn    map[string]*passthrough // the open ones
 	passCount     int                     // --pass-hosts connections seen, evicted included
 	rawCount      int                     // raw TCP connections seen, evicted included
@@ -395,9 +396,18 @@ func (s *Store) Apply(line []byte) {
 		} else {
 			s.passCount++
 		}
-		if len(s.passes) > maxPasses {
-			delete(s.passByConn, s.passes[0].conn)
-			s.passes = s.passes[1:]
+		kept, oldest := 0, 0
+		for i, q := range s.passes {
+			if q.raw == p.raw {
+				if kept == 0 {
+					oldest = i
+				}
+				kept++
+			}
+		}
+		if kept > maxPasses {
+			delete(s.passByConn, s.passes[oldest].conn)
+			s.passes = slices.Delete(s.passes, oldest, oldest+1)
 		}
 		return
 	case "pass_close":
@@ -450,7 +460,7 @@ func (s *Store) Apply(line []byte) {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		s.seenLocked(e.Device, e.TS)
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(e.Host), e.Path, e.HTTPVersion
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(strings.TrimSuffix(e.Host, ".")), e.Path, e.HTTPVersion // the root's dot: found by the name
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)

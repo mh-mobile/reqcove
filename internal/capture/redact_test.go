@@ -242,6 +242,15 @@ func TestHTMLUnquotedScheme(t *testing.T) {
 		`<input name=password value=Bearer PlaceholderBearer9876>`,
 		`<b data-token=Bearer PlaceholderBearer9876>x</b>`,
 		`<input value=Bearer PlaceholderBearer9876`,
+		// v1.0's last reviews: an unquoted value ending in a scheme took the next
+		// attribute as its credential (#99's order), and with it the name.
+		`<input class=csrf-token name=password value=PlaceholderBearer9876>`,
+		`<input class=js-token name=authenticity_token value=PlaceholderBearer9876>`,
+		`<input class=basic name=password value=PlaceholderBearer9876>`,
+		`<input class=token name=password value=PlaceholderBearer9876>`,
+		`<input placeholder=Token name=api_key value=PlaceholderBearer9876>`,
+		`<meta property=bearer name=csrf-token content=PlaceholderBearer9876>`,
+		`<input name=password class=token value=Bearer PlaceholderBearer9876>`, // the skipped match's end is past "Bearer"
 	} {
 		for _, ct := range []string{"text/html", ""} {
 			body := in

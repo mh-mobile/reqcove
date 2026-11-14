@@ -195,6 +195,7 @@ func TestMaskingLinear(t *testing.T) {
 		{"html textareas", html, rep(``, `<textarea name="password">`, ``), red, 0},
 		{"html text", html, rep(``, `a < b `, `<input name="csrf" value="x">`), red, 0},
 		{"html tags cut", html, rep(``, `<a`, ``), "", 0},
+		{"html schemes before attributes", html, rep(`<input `, `class=token a=bbbbbbbb `, `name=password value=Bearer abcdefgh123>`), red, 0},
 		{"html script fields", html, rep(`<script>`, `{a:"x",`, `accessToken:"y"}</script>`), red, 0},
 		// Scripts' objects; the comment units are #84's review's (7 s on 64 KiB before jsGap's bound).
 		{"js fields", js, rep(``, `{a:"x",`, `accessToken:"y"}`), red, 0},

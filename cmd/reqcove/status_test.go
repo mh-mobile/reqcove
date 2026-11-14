@@ -496,14 +496,16 @@ func TestRefusedHostsStep(t *testing.T) {
 
 // An allowed host's connections carried as raw TCP: a step for their device
 // naming them, not on another device's page; a device with only those is not
-// told it has no traffic.
+// told it has no traffic, even when its hosts are not among the busiest that
+// raw_tcp_hosts lists (its own count says).
 func TestRawTCPStep(t *testing.T) {
 	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
-	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}}
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, RawTCP: 2}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}, {ID: "c", Name: "watch", Carried: true, RawTCP: 5}}
 	stats := map[string]any{"state": "ready", "raw_tcp_hosts": []capture.RawHost{{Device: "a", Host: "grpc.example.com", Connections: 2, ALPN: []string{"grpc-exp"}}}}
 	got := strings.Join(nextSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices), "\n")
 	if !strings.Contains(got, "iphone's connections to grpc.example.com (connections: 2; ALPN grpc-exp) were carried as raw TCP, not read as HTTP") ||
-		!strings.Contains(got, "list_passthrough") || strings.Contains(got, "no traffic from iphone") {
+		!strings.Contains(got, "list_passthrough") || strings.Contains(got, "no traffic from iphone") ||
+		strings.Contains(got, "no traffic from watch") || !strings.Contains(got, "watch's connections to allowed hosts (connections: 5) were carried as raw TCP") {
 		t.Errorf("steps:\n%s", got)
 	}
 	if got := strings.Join(pageSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices, "b"), "\n"); strings.Contains(got, "grpc.example.com") {

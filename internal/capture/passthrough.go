@@ -8,8 +8,9 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// maxPasses bounds the --pass-hosts and raw TCP connections kept, as TLS
-// failures are.
+// maxPasses bounds the --pass-hosts connections kept, as TLS failures are,
+// and the raw TCP ones apart: an app's many raw connections do not push the
+// pass hosts' out, nor the reverse.
 const maxPasses = 1000
 
 type passthrough struct {

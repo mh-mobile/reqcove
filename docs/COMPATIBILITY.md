@@ -59,9 +59,9 @@ On this computer (`reqcove mcp`, and `run`'s socket), 19 tools:
 
 Over `--mcp-http`, the first twelve (`status` to `capture_stats`), never the
 preset, rule and marker tools; its `status` has no `active_presets` or
-`active_presets_error`. Its server answers at `/mcp`, on port 8090 unless
-`--mcp-http` names another, with `Authorization: Bearer` and the token in
-`mcp-token` (the state directory, below).
+`active_presets_error`. Its server answers at `/mcp`, on the node's port
+8090, with `Authorization: Bearer` and the token in `mcp-token` (the state
+directory, below).
 
 Removed in v1.0.0, deprecated since v0.8.0 (v0.6's names):
 
