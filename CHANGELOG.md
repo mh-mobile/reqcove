@@ -24,7 +24,8 @@
   request nothing sends elsewhere (nor are the request's other header
   rules): use `map_remote` to change where it goes. When this computer's
   lookup of a CDN's name differs from the device's, the rules can be left out
-  of a real request: a `resolve` rule for the name avoids it. E2E tests with
+  of a real request: a `resolve` rule for the name avoids it (not through
+  `--upstream-proxy`, which takes no `resolve`). E2E tests with
   real mitmproxy: a stand-in server gets no rule's value (nor an active
   preset's), over plain HTTP and over HTTPS, nor with a rule setting `Host`
   to its address, and the app gets no response rule's value from it;
@@ -52,7 +53,8 @@
   services.
 - Over `--mcp-http`, `capture_stats` and `status` no longer carry `resolve`'s
   rules (a name and the address it is sent to) nor the upstream proxy's
-  address, as docs/SECURITY.md said (a test).
+  address, as docs/SECURITY.md said (a test). A `resolve` line that fails to
+  load can still be named in `rules_error` (docs/SECURITY.md).
 - With masking off (`--no-redact`), every tool answer with flows in it
   (`get_flow`, `list_flows`, `search_flows`, `wait_for_flows`, `summarize`,
   `list_ws_messages`, `diff_flows`) says so in `note`, as the `--ui` page
@@ -229,13 +231,14 @@ Found by a code review of v0.8.0; each test fails without its fix.
 ### Inside
 
 - A test measures how masking's time and allocations grow between two
-  sizes 4 times apart (mostly 16 and 64 KiB for bodies, 64 and 256 KiB for
-  headers and URLs; protobuf's below its caps, 1 to 8 KiB), for 152 inputs
+  sizes 8 times apart (mostly 16 and 128 KiB for bodies, 64 and 512 KiB for
+  headers and URLs; protobuf's below its caps), for 152 inputs
   built to be slow for its regexps and loops: each content type a body is
   masked differently for (JSON, forms, text, none, HTML, JavaScript, XML,
   GraphQL, multipart, protobuf with and without `--proto`, gRPC frames),
   headers, URLs, WebSocket messages, error text and `Apply` as a whole; more
-  than 9 times fails. It catches the two this
+  than 24 times fails (CI's shared machines vary up to about 3 times; a run
+  over 2 s fails at once). It catches the two this
   version's reviews found (script comments, folded multipart headers: checked
   by putting them back). Under the race detector, which distorts both
   measures, only the inputs that caught one run (those two and the
@@ -269,7 +272,10 @@ Found by a code review of v0.8.0; each test fails without its fix.
   request to another server is no longer applied on its own, nor are that
   request's other header rules (its `rewrites` say so): write a `map_remote`
   rule, or `resolve`, for where the request should go
-  ([guide](docs/guide.md#rules---rules)). A script that reads
+  ([guide](docs/guide.md#rules---rules)). A header rule for a plain-HTTP
+  host, or for any host through `--upstream-proxy`, applies only when this
+  computer's lookup of the Host includes the address the device dialled; its
+  `rewrites` say when it did not. A script that reads
   `reqcove status --json` gets nothing on stdout and exit status 1 while no
   run answers, where it got text.
 

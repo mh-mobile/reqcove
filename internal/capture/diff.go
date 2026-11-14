@@ -178,7 +178,7 @@ func (d *differ) body(prefix string, a, b Body, ha, hb [][2]string) BodyDiff {
 		r.Result, r.Note = "not_compared", "a body was not kept (dropped on the way to reqcove)"
 		return r
 	case d.redact && (!checkable(a, ha) || !checkable(b, hb)):
-		r.Result, r.Note = "not_compared", "not text, so not checked for secrets: not compared (reqcove run --no-redact compares it)"
+		r.Result, r.Note = "not_compared", "not text, so not checked for secrets: not compared (not compared while masking is on)"
 		return r
 	case d.redact && (strings.HasPrefix(a.View, "multipart") || strings.HasPrefix(b.View, "multipart")) && string(a.Head) == string(b.Head) &&
 		mpHidden.MatchString(string(a.Head)):
