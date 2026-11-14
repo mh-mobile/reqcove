@@ -5,16 +5,21 @@
 What comes after the README's four steps. Each section ends with what was
 tried and what was not.
 
-1. [Set up](#set-up)
-2. [Read the traffic with an agent](#read-the-traffic-with-an-agent)
-3. [Look at the flows yourself](#look-at-the-flows-yourself)
-4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps)
-5. [Change where requests go](#change-where-requests-go)
-6. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security)
+1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
+2. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
+3. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
+4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
+5. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
+6. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
+7. [Run it as a service](#run-it-as-a-service): [`brew services`](#keep-it-running-brew-services) · [`reqcove service install`](#keep-it-running-without-homebrew-reqcove-service-install)
+8. [Containers](#containers)
+9. [Troubleshooting](#troubleshooting)
+10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security)
 
 ## Set up
 
-The four steps are in the [README](../README.md#use).
+Installing is in the [README](../README.md#install), and so are the four
+steps of a first run ([Use](../README.md#use)).
 
 ### First start
 
@@ -45,16 +50,6 @@ skipped (an empty answer); it starts nothing and removes nothing:
   terminal. It prints no login URL: `reqcove links` does.
 - Ctrl-C stops it at the question it is on; what was written stays.
 
-Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
-Ctrl-C at the first question in a terminal (it ended at once, nothing written);
-on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
-installed the skill, printed the commands, and `service install` ran with that
-file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over ssh with a terminal, 2026-11-14): found
-uvx in `~/.local/bin`, wrote `~/.config/reqcove/config` (0600, its directory
-0700), said no agent was found in that home for the skill (none was there),
-printed `reqcove service install`, and refused off a terminal. Not tried:
-`brew services` with the file setup wrote.
-
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 
@@ -71,11 +66,15 @@ the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
 - To skip the approval for new nodes, add an auto-approver to the tailnet
   policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
 
-### Use one CA on two computers
-
-The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
-(it holds the private key) into `~/.reqcove/` on the other computer, with
-reqcove stopped there, or before its first run.
+Tried, for `reqcove setup`: unit tests (answers fed in, a temporary home and Homebrew prefix), and
+Ctrl-C at the first question in a terminal (it ended at once, nothing written);
+on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
+installed the skill, printed the commands, and `service install` ran with that
+file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over ssh with a terminal, 2026-11-14): found
+uvx in `~/.local/bin`, wrote `~/.config/reqcove/config` (0600, its directory
+0700), said no agent was found in that home for the skill (none was there),
+printed `reqcove service install`, and refused off a terminal. Not tried:
+`brew services` with the file setup wrote.
 
 ### Stop, restart, update
 
@@ -94,134 +93,11 @@ reqcove stopped there, or before its first run.
 
 Tried: a restart under a Claude Code session.
 
-### Keep it running (`brew services`)
+### Use one CA on two computers
 
-To have `run` start at login, put its flags, one a line, in a file and let
-`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
-node has no internet; turn the exit node off before it sleeps.
-
-```sh
-mkdir -p "$(brew --prefix)/etc/reqcove"
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
-chmod 600 "$(brew --prefix)/etc/reqcove/config"
-brew services start reqcove
-reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
-reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
-```
-
-- `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
-  quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home; give
-  paths in full or from `~/`, as a service starts in `/`). The
-  command line's come after them: a flag given once is the command line's, a
-  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload`, `--lan` and
-  `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
-  the command line. The file must be yours and readable by you only (`chmod
-  600`): it may hold `--mask-values` patterns. One `--config` only.
-- A missing or refused file ends the service once (`brew services` shows an
-  error); it is not started again in a loop. Nor is it after any other end:
-  `brew services restart reqcove` (also after `brew upgrade reqcove`).
-  Nothing is read unless named.
-- The log is `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in the
-  state directory grows too; neither is rotated (by launchd or by reqcove):
-  truncate them now and then. Neither carries a login URL or a token: `reqcove
-  links` prints them, in your terminal.
-- A `run` in your terminal on the same state finds it in use: `brew services
-  stop reqcove` first.
-- `run` keeps the Mac from idle sleep while it runs
-  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
-  from closing the lid or choosing Sleep.
-
-Linux: Homebrew's `brew services` makes a systemd unit from the same formula
-(from Homebrew's documentation, not tried; `status` names no service there).
-Without Homebrew, see the next section.
-
-Tried: the config file's parsing and refusals (unit tests); `brew services
-start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
-config read; an iPhone's requests recorded; no token or login URL in the log;
-`reqcove links` refused off a terminal; `links` and `login-url` gone after
-stop). Not tried yet: a start at login or after a reboot, sleep, whether
-macOS's Local Network privacy asks about a `run` not started from a terminal,
-and whether launchd's default background priority slows it (with `brew
-services`; a sleep, a start at login and the Local Network prompt were tried
-with `reqcove service install`, below).
-
-### Keep it running without Homebrew (`reqcove service install`)
-
-With the release's binary or one built from source (with Homebrew, use
-`brew services` above), `reqcove service install` does the same: a
-LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
-a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). It
-runs this binary (its full path) with `run --config FILE`, starts it now and
-at each login, and is not started again when it ends (as `brew services`).
-
-```sh
-mkdir -p ~/.config/reqcove
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
-chmod 600 ~/.config/reqcove/config
-reqcove service install       # --config FILE for another file, --state DIR for another state
-reqcove links                 # the login URL, the first time (after a minute)
-reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
-reqcove service restart       # after it ended, or after a change to the file
-reqcove service uninstall     # stops it and removes the file
-```
-
-- The file is `~/.config/reqcove/config` unless `--config` names another,
-  read as for `brew services` (above). Install refuses a missing file (saying
-  how to write one), one that is not yours or that others can read, and
-  `--no-redact`, `--web`, `--rules-reload` or `--lan` in it; `--allow-hosts
-  '*'` there is refused when `run` starts (the service then ends once). A
-  `--state` in the file is the state directory (in full or from `~/`). The
-  state directory must be empty, new or reqcove's (as for `run`).
-- Once `run` ends (an error, a refused file, `kill`), it stays down until the
-  next login: `reqcove service restart` starts it again (`launchctl kickstart
-  -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
-  reqcove`; tried on Linux only).
-- Refused while Homebrew's service is there (its file or loaded:
-  `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
-  `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
-  Homebrew's code, not tried): two services would fight over the state
-  directory. Refused too for Homebrew's own binary, whose path (in its
-  Cellar) `brew upgrade` removes: run `reqcove setup`, which writes the
-  file Homebrew's service reads, then `brew services start reqcove` (a unit
-  test). Installed already: `reqcove service restart` to start it again;
-  `reqcove service uninstall`, then install again, to change its flags on
-  the command line or after moving the binary.
-- The log: `service.log` in the state directory on macOS (not rotated:
-  truncate it now and then, as `mitmproxy.log`; `service install` makes it
-  0600 before launchd opens it, which would make it 0644: unit test only, not
-  tried with launchd), `journalctl --user -u
-  reqcove` on Linux. It prints no login URL or token, nor does
-  `service install`: `reqcove links` does, in your terminal.
-- `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
-  `/opt/homebrew/bin`, `/usr/local/bin` and the system's; elsewhere, give
-  `--uvx /full/path/uvx` in the file.
-- To stop it until the next login: `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`,
-  or `systemctl --user stop reqcove`; `reqcove status` says which.
-- Linux: a user unit runs while you are logged in. Without
-  `loginctl enable-linger $USER`, systemd stops it when your last session
-  ends, and starts it again at the next login (tried over ssh: it stopped
-  within 15 seconds of the last logout). With linger it kept running after
-  the logout (tried), and it starts at boot before any login (from systemd's
-  documentation; no reboot tried).
-
-Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
-the refusals and the launchctl and systemctl commands it would run (unit
-tests, which never run them). On macOS (2026-11-14): `service install` wrote
-the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
-node recorded; no login URL or token in `service.log`), `reqcove status` named
-the service, `service uninstall` stopped it and removed the file; after a
-sleep it kept running, and after a reboot it started at login by itself (an
-iPhone recorded, no alert at login). macOS asked for Local Network access,
-before and after the sleep (allowed both times; its list shows each build at
-another path as its own entry). On Ubuntu 24.04.5 LTS (arm64, a tart VM,
-2026-11-14), with a new `--state` and setup's file: `service install` wrote
-the unit and started `run` (uvx found on the unit's `PATH`; the node waiting
-for a login, not logged in to a tailnet), `reqcove status` named
-`reqcove.service`, `journalctl --user -u reqcove` showed its log with no login
-URL or token, `service restart` started it again after a `kill` and after
-`systemctl --user stop reqcove`, and `service uninstall` stopped it and removed
-the unit. Not tried yet: `service restart` on macOS; on Linux, a node logged
-in to a tailnet, a device recorded through it, a reboot.
+The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
+(it holds the private key) into `~/.reqcove/` on the other computer, with
+reqcove stopped there, or before its first run.
 
 ### Undo everything (`reqcove cleanup`)
 
@@ -701,102 +577,6 @@ exit node, and names are looked up here.
 Tried on an iPhone: Safari's requests were recorded, and sites outside
 `--allow-hosts` opened as before.
 
-### Without Tailscale: LAN mode (`--lan`)
-
-`reqcove run --lan` starts no tailnet node: Reqcove listens as an HTTP proxy
-on this computer's address on the LAN, and an iPhone on the same network sets
-its Wi-Fi proxy to it. The exit node stays the main way: it carries everything
-the phone sends, over cellular too, and needs nothing from the network it is
-on. LAN mode is for when Tailscale is not an option.
-
-```sh
-reqcove run --lan --allow-hosts api.example.com
-```
-
-1. run prints where it listens: the address of the default route's interface
-   (`--lan-interface en0` picks another; a VPN's tunnel is refused) and
-   `--proxy-port`, 8080 by default.
-2. On the iPhone: Settings, Wi-Fi, (i) by the network, Configure Proxy,
-   Manual: that server and port, Authentication off.
-3. Its first connection is refused, and run logs its address. Allow it on this
-   computer: answer run's question (`Allow ADDR? [y/N]`, asked while run is the
-   terminal's foreground job), or run `reqcove lan allow ADDR` in a terminal.
-   `reqcove lan list` shows the allowed addresses and when each was allowed;
-   `reqcove lan deny ADDR` takes one back. These commands refuse to run off a
-   terminal: they are not for an agent.
-4. The CA: open `http://mitm.it` with the proxy set, once per device, as with
-   the exit node. Anyone else on the LAN can swap plain HTTP, so run's ready
-   block also names the CA file, to send by AirDrop instead, and prints the
-   CA's SHA-256 to compare as iOS shows it (lowercase pairs, `ab 90 7e …`):
-   on the iPhone, Settings, General, VPN & Device Management, the profile,
-   More Details (checked on iOS 27.3, 2026-11-14: it matched). Not checked:
-   AirDrop of that file.
-
-The records name the device `lan:ADDR`; the tools' `device` filter and
-`reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
-last request this run. `reqcove status` (and the `status` tool, as
-`mode: "lan"`) shows where it listens, the allowed addresses and the ones
-refused this run: the 50 last seen, and how many more (`refused_more`), as
-anyone on the network can add to them (the list behind them holds up to
-10,000 and is emptied when it fills).
-
-There is no password. Who may use the proxy is decided on this computer, by
-address, as in Charles Proxy (its documentation describes an access control
-list, and a dialog for a new address). What that means:
-
-- An allowed entry is an address, not a device: whoever has that address later
-  is allowed too. The list is kept in the state directory (`lan-allowed`), so
-  an address stays allowed on another network with the same prefix (a café's
-  192.168.1.0/24 as your home's). Use `reqcove lan list` and `lan deny` when
-  done. Not checked: whether an iPhone keeps the same private Wi-Fi address
-  on a network over time.
-- Through this computer, an allowed address reaches the internet from your
-  address, on ports 80 and 443 only, and private hosts named exactly in
-  `--allow-hosts` (no `*`), those behind this computer's VPN included. Never
-  this computer, link-local addresses, or the network the proxy is on, even by
-  an exact name. Its requests to the allowed hosts are recorded.
-- `map_remote` and `resolve` targets in `--rules` are dialled by mitmproxy,
-  outside these checks: a rule sending an allowed host to a server on this
-  computer serves the LAN clients' requests there too.
-- `lan deny` refuses new connections within two seconds, but HTTPS tunnels
-  already open go on until they close.
-- Use it on a network you trust, and stop it when done.
-
-Other differences from the exit node:
-
-- Ports 80 and 443 only: a development server on this computer or on the same
-  Wi-Fi (Metro on 8081, say) is refused while the proxy is set. Not checked:
-  whether iOS skips the proxy for local addresses.
-- Names are looked up with this computer's resolver, `/etc/hosts` first: a
-  name it maps to 127.0.0.1 is refused.
-- Apps that ignore the Wi-Fi proxy go straight out, and are not recorded.
-- What blocks it: client isolation on the Wi-Fi (guest networks often have
-  it), VLANs between the iPhone and this computer, an MDM profile, a managed
-  firewall. Not checked: whether the macOS firewall asks to accept connections
-  for `reqcove`.
-- `--lan` is refused in `--config`, so it never runs as a service.
-  `--device`, `--ui`, `--mcp-http`, `--hostname` and `--dns` do not go with it
-  (they are the tailnet node's); `--local-proxy` and `--web` (on this computer
-  only) do.
-- If this computer's address changes on the same network, run listens on the
-  new one. If it moves to another network, run stops listening and says so in
-  its log and `reqcove status`; a restart listens on the new network.
-
-Tried by tests: the proxy on the loopback interface with real mitmproxy
-(HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
-and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
-2026-11-14): its first request refused, allowed at run's question, then
-Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
-`reqcove lan deny` stopped it, `lan allow` again let it through. On Ubuntu
-24.04.5 LTS (arm64, a tart VM, 2026-11-14), with curl from the Mac running the
-VM, on tart's network (no iPhone): run listened on the VM's address, refused
-the first request and asked; once allowed with `reqcove lan allow`, plain HTTP
-and HTTPS (`curl --cacert` with the CA file the ready block names, its SHA-256
-matching) went through to an allowed host and were recorded as `lan:ADDR`
-(`reqcove status --json`, `reqcove har`); port 22 was refused, and `lan deny`
-refused it again. Not tried: a change of network; an iPhone with a Linux
-computer.
-
 ### Another Mac
 
 A Mac named with `--device` that chooses the exit node in the Tailscale app is
@@ -838,6 +618,35 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
+#### Connect elsewhere (`resolve`)
+
+`resolve` connects elsewhere and leaves the request as it is, for a staging
+server or a new load balancer:
+
+```yaml
+resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
+  - "shop.example.com=203.0.113.10"
+  - "auth.example.com=192.168.1.20:8443"
+```
+
+- Requests for the name go to that IPv4 address, this computer and the LAN
+  included. `Host`, SNI and the recorded URL stay the same, and TLS is still
+  checked against the name: the server needs a certificate for it (a local
+  HTTPS server without one gets a 502). Plain HTTP is not checked.
+- Without a port, the request's is used (the app's, 80 or 443, or the
+  `map_remote` URL's). After a `map_remote`, the name is its new URL's host,
+  which is then the SNI too.
+- The name is still looked up (by the phone, or by this computer for the Remote
+  Proxy) and the real server connected first: a name that does not resolve
+  publicly, or a server that refuses connections, cannot be redirected.
+- Each name must be in `--allow-hosts` and have its own address or port:
+  mitmproxy reuses a connection by address.
+- Refused: `0.0.0.0/8`, link-local (cloud metadata), multicast, Tailscale's
+  100.100.100.100 ([SECURITY](SECURITY.md#rules---rules)), and `resolve`
+  together with `--upstream-proxy`.
+
+#### Answer a request here (`mock`)
+
 `mock` answers a request here, with what you write, and the request is not sent
 to the server (for HTTPS, mitmproxy may have connected to it already, to read
 its certificate): to see how the app takes an expired session or an empty list.
@@ -878,6 +687,20 @@ rules refused (a bad status, a line break in a header, a missing file, a host
 outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
 GraphQL operation of the GitHub app mocked while its others, on the same
 connection, reached GitHub.
+
+#### When the file is read (`--rules-reload`)
+
+The file is read when mitmproxy starts: with `run`, and when reqcove restarts
+it. `--rules-reload` reads it again once a change has settled, for requests
+that start after it; one under way keeps the rules it started with.
+
+- A file that does not load leaves the earlier rules in place, and `run` and
+  `reqcove status` say why; but if mitmproxy restarts meanwhile, `run` stops on
+  it, as at start.
+- Whatever can write the file (an agent included) can then change where the
+  devices' requests go, without you restarting anything.
+
+From reading code: a change is read within about two seconds.
 
 #### Add a mock from your terminal (`reqcove mock add`)
 
@@ -978,6 +801,8 @@ agent turning presets on over MCP): a 503 once, then the app's retry reached
 the server; an 8 s delay; a close, which CFNetwork did not retry by itself (the
 app's own retry was closed too); a 401 on login.
 
+#### `map_remote`, `modify_headers` and `resolve` presets
+
 Since v0.7, a `map_remote`, `modify_headers` or `resolve` rule can be a preset
 too: write it as a mapping with `rule:` (the rule as before) and `preset:`. It
 does nothing until an agent turns it on, for at most 5 minutes each time, as a
@@ -1046,43 +871,6 @@ answer, the row listed it; off: the server's own), and a mock preset with
 `resolve` or a `modify_headers` preset. From reading code: rules apply when a request starts, so a
 WebSocket, a stream or a long upload begun while a `map_remote` or `resolve`
 preset was on stays with its target after the preset is off.
-
-`resolve` connects elsewhere and leaves the request as it is, for a staging
-server or a new load balancer:
-
-```yaml
-resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
-  - "shop.example.com=203.0.113.10"
-  - "auth.example.com=192.168.1.20:8443"
-```
-
-- Requests for the name go to that IPv4 address, this computer and the LAN
-  included. `Host`, SNI and the recorded URL stay the same, and TLS is still
-  checked against the name: the server needs a certificate for it (a local
-  HTTPS server without one gets a 502). Plain HTTP is not checked.
-- Without a port, the request's is used (the app's, 80 or 443, or the
-  `map_remote` URL's). After a `map_remote`, the name is its new URL's host,
-  which is then the SNI too.
-- The name is still looked up (by the phone, or by this computer for the Remote
-  Proxy) and the real server connected first: a name that does not resolve
-  publicly, or a server that refuses connections, cannot be redirected.
-- Each name must be in `--allow-hosts` and have its own address or port:
-  mitmproxy reuses a connection by address.
-- Refused: `0.0.0.0/8`, link-local (cloud metadata), multicast, Tailscale's
-  100.100.100.100 ([SECURITY](SECURITY.md#rules---rules)), and `resolve`
-  together with `--upstream-proxy`.
-
-The file is read when mitmproxy starts: with `run`, and when reqcove restarts
-it. `--rules-reload` reads it again once a change has settled, for requests
-that start after it; one under way keeps the rules it started with.
-
-- A file that does not load leaves the earlier rules in place, and `run` and
-  `reqcove status` say why; but if mitmproxy restarts meanwhile, `run` stops on
-  it, as at start.
-- Whatever can write the file (an agent included) can then change where the
-  devices' requests go, without you restarting anything.
-
-From reading code: a change is read within about two seconds.
 
 #### Why a rule did or did not apply (`list_rules`, `explain_rules`)
 
@@ -1165,6 +953,281 @@ certificate was not trusted). With a proxy other than Burp on this computer,
 `run` still asks its listener for `/cert` at start, which fails there and
 changes nothing. Not tried: other proxies. From reading code:
 other protocols going straight to their servers.
+
+## Without Tailscale: LAN mode (`--lan`)
+
+`reqcove run --lan` starts no tailnet node: Reqcove listens as an HTTP proxy
+on this computer's address on the LAN, and an iPhone on the same network sets
+its Wi-Fi proxy to it. The exit node stays the main way: it carries everything
+the phone sends, over cellular too, and needs nothing from the network it is
+on. LAN mode is for when Tailscale is not an option.
+
+```sh
+reqcove run --lan --allow-hosts api.example.com
+```
+
+1. run prints where it listens: the address of the default route's interface
+   (`--lan-interface en0` picks another; a VPN's tunnel is refused) and
+   `--proxy-port`, 8080 by default.
+2. On the iPhone: Settings, Wi-Fi, (i) by the network, Configure Proxy,
+   Manual: that server and port, Authentication off.
+3. Its first connection is refused, and run logs its address. Allow it on this
+   computer: answer run's question (`Allow ADDR? [y/N]`, asked while run is the
+   terminal's foreground job), or run `reqcove lan allow ADDR` in a terminal.
+   `reqcove lan list` shows the allowed addresses and when each was allowed;
+   `reqcove lan deny ADDR` takes one back. These commands refuse to run off a
+   terminal: they are not for an agent.
+4. The CA: open `http://mitm.it` with the proxy set, once per device, as with
+   the exit node. Anyone else on the LAN can swap plain HTTP, so run's ready
+   block also names the CA file, to send by AirDrop instead, and prints the
+   CA's SHA-256 to compare as iOS shows it (lowercase pairs, `ab 90 7e …`):
+   on the iPhone, Settings, General, VPN & Device Management, the profile,
+   More Details (checked on iOS 27.3, 2026-11-14: it matched). Not checked:
+   AirDrop of that file.
+
+The records name the device `lan:ADDR`; the tools' `device` filter and
+`reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
+last request this run. `reqcove status` (and the `status` tool, as
+`mode: "lan"`) shows where it listens, the allowed addresses and the ones
+refused this run: the 50 last seen, and how many more (`refused_more`), as
+anyone on the network can add to them (the list behind them holds up to
+10,000 and is emptied when it fills).
+
+There is no password. Who may use the proxy is decided on this computer, by
+address, as in Charles Proxy (its documentation describes an access control
+list, and a dialog for a new address). What that means:
+
+- An allowed entry is an address, not a device: whoever has that address later
+  is allowed too. The list is kept in the state directory (`lan-allowed`), so
+  an address stays allowed on another network with the same prefix (a café's
+  192.168.1.0/24 as your home's). Use `reqcove lan list` and `lan deny` when
+  done. Not checked: whether an iPhone keeps the same private Wi-Fi address
+  on a network over time.
+- Through this computer, an allowed address reaches the internet from your
+  address, on ports 80 and 443 only, and private hosts named exactly in
+  `--allow-hosts` (no `*`), those behind this computer's VPN included. Never
+  this computer, link-local addresses, or the network the proxy is on, even by
+  an exact name. Its requests to the allowed hosts are recorded.
+- `map_remote` and `resolve` targets in `--rules` are dialled by mitmproxy,
+  outside these checks: a rule sending an allowed host to a server on this
+  computer serves the LAN clients' requests there too.
+- `lan deny` refuses new connections within two seconds, but HTTPS tunnels
+  already open go on until they close.
+- Use it on a network you trust, and stop it when done.
+
+Other differences from the exit node:
+
+- Ports 80 and 443 only: a development server on this computer or on the same
+  Wi-Fi (Metro on 8081, say) is refused while the proxy is set. Not checked:
+  whether iOS skips the proxy for local addresses.
+- Names are looked up with this computer's resolver, `/etc/hosts` first: a
+  name it maps to 127.0.0.1 is refused.
+- Apps that ignore the Wi-Fi proxy go straight out, and are not recorded.
+- What blocks it: client isolation on the Wi-Fi (guest networks often have
+  it), VLANs between the iPhone and this computer, an MDM profile, a managed
+  firewall. Not checked: whether the macOS firewall asks to accept connections
+  for `reqcove`.
+- `--lan` is refused in `--config`, so it never runs as a service.
+  `--device`, `--ui`, `--mcp-http`, `--hostname` and `--dns` do not go with it
+  (they are the tailnet node's); `--local-proxy` and `--web` (on this computer
+  only) do.
+- If this computer's address changes on the same network, run listens on the
+  new one. If it moves to another network, run stops listening and says so in
+  its log and `reqcove status`; a restart listens on the new network.
+
+Tried by tests: the proxy on the loopback interface with real mitmproxy
+(HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
+and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
+2026-11-14): its first request refused, allowed at run's question, then
+Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
+`reqcove lan deny` stopped it, `lan allow` again let it through. On Ubuntu
+24.04.5 LTS (arm64, a tart VM, 2026-11-14), with curl from the Mac running the
+VM, on tart's network (no iPhone): run listened on the VM's address, refused
+the first request and asked; once allowed with `reqcove lan allow`, plain HTTP
+and HTTPS (`curl --cacert` with the CA file the ready block names, its SHA-256
+matching) went through to an allowed host and were recorded as `lan:ADDR`
+(`reqcove status --json`, `reqcove har`); port 22 was refused, and `lan deny`
+refused it again. Not tried: a change of network; an iPhone with a Linux
+computer.
+
+## Run it as a service
+
+Two ways to have `run` start at login: Homebrew's `brew services` for a brew
+install, and `reqcove service install` for the release's binary or one built
+from source. `--lan` is refused in both ([LAN mode](#without-tailscale-lan-mode---lan)).
+
+### Keep it running (`brew services`)
+
+To have `run` start at login, put its flags, one a line, in a file and let
+`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
+node has no internet; turn the exit node off before it sleeps.
+
+```sh
+mkdir -p "$(brew --prefix)/etc/reqcove"
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
+chmod 600 "$(brew --prefix)/etc/reqcove/config"
+brew services start reqcove
+reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
+reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
+```
+
+- `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
+  quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home; give
+  paths in full or from `~/`, as a service starts in `/`). The
+  command line's come after them: a flag given once is the command line's, a
+  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload`, `--lan` and
+  `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
+  the command line. The file must be yours and readable by you only (`chmod
+  600`): it may hold `--mask-values` patterns. One `--config` only.
+- A missing or refused file ends the service once (`brew services` shows an
+  error); it is not started again in a loop. Nor is it after any other end:
+  `brew services restart reqcove` (also after `brew upgrade reqcove`).
+  Nothing is read unless named.
+- The log is `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in the
+  state directory grows too; neither is rotated (by launchd or by reqcove):
+  truncate them now and then. Neither carries a login URL or a token: `reqcove
+  links` prints them, in your terminal.
+- A `run` in your terminal on the same state finds it in use: `brew services
+  stop reqcove` first.
+- `run` keeps the Mac from idle sleep while it runs
+  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
+  from closing the lid or choosing Sleep.
+
+Linux: Homebrew's `brew services` makes a systemd unit from the same formula
+(from Homebrew's documentation, not tried; `status` names no service there).
+Without Homebrew, see the next section.
+
+Tried: the config file's parsing and refusals (unit tests); `brew services
+start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
+config read; an iPhone's requests recorded; no token or login URL in the log;
+`reqcove links` refused off a terminal; `links` and `login-url` gone after
+stop). Not tried yet: a start at login or after a reboot, sleep, whether
+macOS's Local Network privacy asks about a `run` not started from a terminal,
+and whether launchd's default background priority slows it (with `brew
+services`; a sleep, a start at login and the Local Network prompt were tried
+with `reqcove service install`, below).
+
+### Keep it running without Homebrew (`reqcove service install`)
+
+With the release's binary or one built from source (with Homebrew, use
+`brew services` above), `reqcove service install` does the same: a
+LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
+a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). It
+runs this binary (its full path) with `run --config FILE`, starts it now and
+at each login, and is not started again when it ends (as `brew services`).
+
+```sh
+mkdir -p ~/.config/reqcove
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
+chmod 600 ~/.config/reqcove/config
+reqcove service install       # --config FILE for another file, --state DIR for another state
+reqcove links                 # the login URL, the first time (after a minute)
+reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
+reqcove service restart       # after it ended, or after a change to the file
+reqcove service uninstall     # stops it and removes the file
+```
+
+- The file is `~/.config/reqcove/config` unless `--config` names another,
+  read as for `brew services` (above). Install refuses a missing file (saying
+  how to write one), one that is not yours or that others can read, and
+  `--no-redact`, `--web`, `--rules-reload` or `--lan` in it; `--allow-hosts
+  '*'` there is refused when `run` starts (the service then ends once). A
+  `--state` in the file is the state directory (in full or from `~/`). The
+  state directory must be empty, new or reqcove's (as for `run`).
+- Once `run` ends (an error, a refused file, `kill`), it stays down until the
+  next login: `reqcove service restart` starts it again (`launchctl kickstart
+  -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
+  reqcove`; tried on Linux only).
+- Refused while Homebrew's service is there (its file or loaded:
+  `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
+  `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
+  Homebrew's code, not tried): two services would fight over the state
+  directory. Refused too for Homebrew's own binary, whose path (in its
+  Cellar) `brew upgrade` removes: run `reqcove setup`, which writes the
+  file Homebrew's service reads, then `brew services start reqcove` (a unit
+  test). Installed already: `reqcove service restart` to start it again;
+  `reqcove service uninstall`, then install again, to change its flags on
+  the command line or after moving the binary.
+- The log: `service.log` in the state directory on macOS (not rotated:
+  truncate it now and then, as `mitmproxy.log`; `service install` makes it
+  0600 before launchd opens it, which would make it 0644: unit test only, not
+  tried with launchd), `journalctl --user -u
+  reqcove` on Linux. It prints no login URL or token, nor does
+  `service install`: `reqcove links` does, in your terminal.
+- `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
+  `/opt/homebrew/bin`, `/usr/local/bin` and the system's; elsewhere, give
+  `--uvx /full/path/uvx` in the file.
+- To stop it until the next login: `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`,
+  or `systemctl --user stop reqcove`; `reqcove status` says which.
+- Linux: a user unit runs while you are logged in. Without
+  `loginctl enable-linger $USER`, systemd stops it when your last session
+  ends, and starts it again at the next login (tried over ssh: it stopped
+  within 15 seconds of the last logout). With linger it kept running after
+  the logout (tried), and it starts at boot before any login (from systemd's
+  documentation; no reboot tried).
+
+Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
+the refusals and the launchctl and systemctl commands it would run (unit
+tests, which never run them). On macOS (2026-11-14): `service install` wrote
+the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
+node recorded; no login URL or token in `service.log`), `reqcove status` named
+the service, `service uninstall` stopped it and removed the file; after a
+sleep it kept running, and after a reboot it started at login by itself (an
+iPhone recorded, no alert at login). macOS asked for Local Network access,
+before and after the sleep (allowed both times; its list shows each build at
+another path as its own entry). On Ubuntu 24.04.5 LTS (arm64, a tart VM,
+2026-11-14), with a new `--state` and setup's file: `service install` wrote
+the unit and started `run` (uvx found on the unit's `PATH`; the node waiting
+for a login, not logged in to a tailnet), `reqcove status` named
+`reqcove.service`, `journalctl --user -u reqcove` showed its log with no login
+URL or token, `service restart` started it again after a `kill` and after
+`systemctl --user stop reqcove`, and `service uninstall` stopped it and removed
+the unit. Not tried yet: `service restart` on macOS; on Linux, a node logged
+in to a tailnet, a device recorded through it, a reboot.
+
+## Containers
+
+`reqcove run` runs in a container too (Docker, or Podman). The steps, what is
+different there and what was checked are on their own page:
+[Reqcove in a container](container.md). What this guide says about containers:
+
+- An agent on another device: `--mcp-http` is the same flag there, with no
+  port to publish ([Agents on other devices](#agents-on-other-devices---mcp-http)).
+- The login URL and the links: off a terminal (`docker logs`), `run` does not
+  print them; `reqcove links` does ([First start](#first-start)).
+- Security: [a container](SECURITY.md#in-a-container).
+
+## Troubleshooting
+
+Start with `reqcove status`: it says what reqcove is doing, and the next steps
+(an agent has the `status` tool). Then, by what you see:
+
+| What you see | Where it is explained |
+|---|---|
+| `run` started, but something is left to do: the login, Tailnet Lock, the exit node's approval | [First start](#first-start) |
+| The login URL or a link with its token is not shown (a service, `docker logs`) | `reqcove links`: [First start](#first-start) |
+| The iPhone's DNS stays stuck after `run` stopped | [Stop, restart, update](#stop-restart-update) |
+| The agent's tools answer that reqcove is not running, or the records are empty after a restart | [Stop, restart, update](#stop-restart-update) |
+| The tools say the versions differ, or `reqcove status` says the skill is from another version | [Stop, restart, update](#stop-restart-update), [the skill](#teach-the-agent-the-skill-reqcove-init) |
+| Traffic is carried, but nothing is recorded | `--allow-hosts` in [Options](#options) |
+| An app's requests fail, and `reqcove status` names its hosts (certificate pinning) | [Apps that pin certificates](#apps-that-pin-certificates---pass-hosts) |
+| An Android app refuses the CA | [Android](#android) |
+| A gRPC app's calls show as TLS failures | [gRPC](#grpc) |
+| With `--local-proxy`: apps on this computer cannot connect after `kill -9` or a crash, or an allowed host breaks in an app here | [The iOS Simulator](#the-ios-simulator---local-proxy) |
+| A rule did not apply | [Why a rule did or did not apply](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) |
+| A rules file does not load, or a change to it is not taken | [When the file is read](#when-the-file-is-read---rules-reload) |
+| With `--upstream-proxy`: requests wait, or HTTPS through the proxy fails | [An upstream proxy](#an-upstream-proxy---upstream-proxy) |
+| In mitmweb: the devices' HTTP(S) stopped, or a bookmark asks for the token | [In mitmweb](#in-mitmweb---web) |
+| Over `--mcp-http`: a device is refused, calls get `429`, or Grok Bot's settings show the connector with an error | [Agents on other devices](#agents-on-other-devices---mcp-http) |
+| LAN mode: the iPhone's first connection is refused, something blocks it, or a development server on another port is refused | [LAN mode](#without-tailscale-lan-mode---lan) |
+| An iPhone on the exit node has no internet while the Mac sleeps | [Keep it running (`brew services`)](#keep-it-running-brew-services) |
+| A service ended and did not start again, or a `run` in your terminal finds the state in use | [Run it as a service](#run-it-as-a-service) |
+| The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
+| reqcove restarts mitmproxy, or `run` stops after restarts in a row | [Limits](#limits) (a huge WebSocket message), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches) |
+| IPv6, QUIC, phone calls | [Limits](#limits) |
+
+This section only points to the others: what was tried, and what was not, is
+said there.
 
 ## Options
 
