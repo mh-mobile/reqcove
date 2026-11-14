@@ -304,7 +304,9 @@ func TestMaskingLinear(t *testing.T) {
 	allocOnly := map[string]bool{"graphql nested lists": true}
 	// measure: the least time and allocation of its runs; it stops after a run
 	// that took over stop (0: none), so a broken build fails in seconds, not
-	// in the minutes a quadratic 128 KiB takes over every run and retry.
+	// in the minutes a quadratic 128 KiB takes over every run and retry. stop
+	// is a time, not a ratio: one slow run on CI (74 ms for 5) has the ratio a
+	// quadratic input has, and only the least of the runs tells them apart.
 	measure := func(run func(string) string, s string, loops int, stop time.Duration) (time.Duration, uint64) {
 		d, a := time.Duration(math.MaxInt64), uint64(math.MaxUint64)
 		for range runs {
@@ -346,9 +348,10 @@ func TestMaskingLinear(t *testing.T) {
 		for try := 1; ; try++ {
 			ts, as := measure(c.run, small, loops, 0)
 			timeBound, allocBound := 24*ts+50*time.Microsecond, 24*as+64*kb // the slack: what is too small to count
-			tl, al := measure(c.run, large, loops, 2*timeBound)
+			tooSlow := slow * 2 * time.Second * time.Duration(loops)        // masking 128 KiB that long stalls recording, whatever the ratio
+			tl, al := measure(c.run, large, loops, tooSlow)
 			slowTime, copies := !allocOnly[c.name] && tl > timeBound, al > allocBound
-			clear := slowTime && tl > 2*timeBound || copies && al > 2*allocBound // well past it: no noise, no retry
+			clear := tl > tooSlow || copies && al > 2*allocBound // no noise makes either: no retry
 			t.Logf("%-40s time x%.1f (%v), allocated x%.1f (%d KiB)", c.name, float64(tl)/float64(ts), tl/time.Duration(loops), float64(al)/float64(max(as, 1)), al/uint64(loops)/kb)
 			if !slowTime && !copies {
 				break
