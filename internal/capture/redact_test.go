@@ -389,16 +389,23 @@ func TestFourthReview(t *testing.T) {
 }
 
 // Comments between a script's key and value stay linear: unclosed ones, and
-// chains of them (#84's review: 7 s on 64 KiB).
+// chains of them (#84's review: 7 s on 64 KiB). Told by how the time grows
+// with the size (4 times the input: about 4 times the time, 16 if quadratic),
+// as the race detector and CI's machines change the time itself.
 func TestMaskScriptCommentsLinear(t *testing.T) {
-	start := time.Now()
-	for _, unit := range []string{"{/*x,a:1", "{//x,a:1", "{a:/*,b:1", "/*,/*,a:1*/"} {
-		for _, ct := range []string{"application/javascript", "text/html"} {
-			maskBody([]byte(strings.Repeat(unit, 16<<10/len(unit))), ct, false) // 16 KiB: 3.6 s in all, quadratic; 60 ms linear
+	run := func(n int) time.Duration {
+		start := time.Now()
+		for _, unit := range []string{"{/*x,a:1", "{//x,a:1", "{a:/*,b:1", "/*,/*,a:1*/"} {
+			for _, ct := range []string{"application/javascript", "text/html"} {
+				maskBody([]byte(strings.Repeat(unit, n/len(unit))), ct, false)
+			}
 		}
+		return time.Since(start)
 	}
-	if d := time.Since(start); d > slow*time.Second {
-		t.Errorf("took %v", d)
+	run(1 << 10) // warm up
+	small, large := run(8<<10), run(32<<10)
+	if large > 9*small {
+		t.Errorf("8 KiB took %v, 32 KiB %v: grows faster than the size", small, large)
 	}
 }
 
