@@ -14,7 +14,7 @@ tried and what was not.
 7. [Run it as a service](#run-it-as-a-service): [`brew services`](#keep-it-running-brew-services) · [`reqcove service install`](#keep-it-running-without-homebrew-reqcove-service-install)
 8. [Containers](#containers)
 9. [Troubleshooting](#troubleshooting)
-10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security)
+10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security) · [Compatibility](COMPATIBILITY.md)
 
 ## Set up
 
