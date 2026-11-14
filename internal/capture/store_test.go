@@ -243,15 +243,16 @@ func TestMetadataMasked(t *testing.T) {
 	ev(map[string]any{"ev": "tls_failed", "conn": "c1", "sni": host, "msg": "refused"})
 	ev(map[string]any{"ev": "pass_open", "conn": "c2", "sni": passHost, "alpn": []string{tok}, "ts": 1})
 	ev(map[string]any{"ev": "pass_close", "conn": "c2", "ts_end": 2, "msg": "reset by " + tok})
+	ev(map[string]any{"ev": "pass_open", "conn": "c3", "sni": host, "raw": true, "alpn": []string{tok}, "alpn_negotiated": tok, "ts": 1})
 	v, err := st.Get("r", true)
 	if err != nil {
 		t.Fatal("the flow was not recorded (its scope checked with the masked host?)")
 	}
 	tls, pass := st.TLSFailures(Filter{Limit: 10}), st.Passthroughs(Filter{Limit: 10})
-	if len(tls) != 1 || len(pass) != 1 {
+	if len(tls) != 1 || len(pass) != 2 {
 		t.Fatalf("not recorded: tls %+v pass %+v", tls, pass)
 	}
-	b, _ := json.Marshal([]any{v, tls, pass})
+	b, _ := json.Marshal([]any{v, tls, pass, st.Stats()["raw_tcp_hosts"]})
 	if strings.Contains(string(b), tok[3:]) {
 		t.Errorf("a token left: %s", b)
 	}

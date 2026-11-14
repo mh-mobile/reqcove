@@ -84,7 +84,8 @@ Each tool's fields:
 - These values keep their meaning: `status`' `mode` (`tailnet`, `lan`),
   `capture_stats`' `state` (`starting`, `ready`, `restarting`, `failed`), a
   preset's `kind` (`mock`, `map_remote`, `modify_headers`, `resolve`), a marker's
-  `source` (`cli`, `mcp`). A minor release may add a value (a new mode, say).
+  `source` (`cli`, `mcp`), a `list_passthrough` connection's `reason`
+  (`pass_hosts`, `raw_tcp`). A minor release may add a value (a new mode, say).
 - A field that holds text written for people (`next_steps`, `note`, `msg`,
   error fields such as `list_rules`' and `explain_rules`' `rules_error`, and
   `active_presets_error`) stays; its wording is not stable.
@@ -112,7 +113,8 @@ exits 1, saying why on stderr (unit test). Its fields:
 
 Its documented fields: `flows`, `flows_with_truncated_bodies`, `evicted`,
 `checkpoint`, `oldest_flow`, `newest_flow`, `max_flows`, `max_bytes`, `state`,
-`started`, `redacting`, `out_of_scope`, `passed_through`, `refused_hosts`,
+`started`, `redacting`, `out_of_scope`, `passed_through`, `raw_tcp`,
+`raw_tcp_hosts`, `refused_hosts`,
 `pass_hosts`, `mitmproxy`, `python` (their versions), `presets`, `rules_loaded`
 (once a rules file was taken), and, while masking is on, `mask_names` and
 `mask_values` (the matches per name and per pattern number). The others are

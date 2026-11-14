@@ -190,6 +190,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 - Apps that pin certificates refuse Reqcove's; see [`--pass-hosts`](docs/guide.md#apps-that-pin-certificates---pass-hosts).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
+- A connection mitmproxy does not read as HTTP (an ALPN it does not know, another protocol) is recorded as a connection only: what it carries has no flows. See [raw TCP](docs/guide.md#connections-not-read-as-http-raw-tcp).
 - IPv6 is refused and QUIC dropped (except to Apple); apps fall back to IPv4 and TCP.
 - The phone cannot reach this computer or its LAN directly; a rule can send an
   allowed host's requests there.

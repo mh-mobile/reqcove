@@ -38,8 +38,10 @@ type event struct {
 	FromClient  bool        `json:"from_client"`
 	Conn        string      `json:"conn"`
 	SNI         string      `json:"sni"`
-	Server      string      `json:"server"` // pass_open: where the connection went
-	ALPN        []string    `json:"alpn"`   // pass_open: what the client offered
+	Server      string      `json:"server"`          // pass_open: where the connection went
+	ALPN        []string    `json:"alpn"`            // pass_open: what the client offered
+	Raw         bool        `json:"raw"`             // pass_open: carried as raw TCP (not read as HTTP), not a --pass-hosts host's
+	ALPNNeg     string      `json:"alpn_negotiated"` // pass_open, raw: the protocol the client got
 	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
@@ -171,9 +173,10 @@ type Store struct {
 	heldBytes     int
 	hello         event
 	tlsFailures   []TLSFailure
-	passes        []*passthrough          // --pass-hosts connections, oldest first, at most maxPasses
+	passes        []*passthrough          // --pass-hosts and raw TCP connections, oldest first, at most maxPasses
 	passByConn    map[string]*passthrough // the open ones
-	passCount     int                     // all seen, evicted included
+	passCount     int                     // --pass-hosts connections seen, evicted included
+	rawCount      int                     // raw TCP connections seen, evicted included
 	addonDropped  [2]int64                // bodies, events
 	badLines      int64
 	maskFailed    int64 // lines masking panicked on (counted in badLines too)
@@ -376,15 +379,22 @@ func (s *Store) Apply(line []byte) {
 		}
 		return
 	case "pass_open":
-		if !s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI) { // passed through for an allowed --pass-hosts host only: checked here too
+		switch {
+		case e.Raw && !s.allow.Match(e.SNI): // raw TCP of a host recorded as flows only: checked here too
+			return
+		case !e.Raw && (!s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI)): // passed through for an allowed --pass-hosts host only
 			s.outOfScope++
 			return
 		}
-		p := &passthrough{conn: e.Conn, device: e.Device, host: s.mask(e.SNI), server: e.Server, alpn: e.ALPN, start: e.TS}
+		p := &passthrough{conn: e.Conn, device: e.Device, host: s.mask(e.SNI), server: e.Server, alpn: e.ALPN, start: e.TS, raw: e.Raw, alpnNeg: e.ALPNNeg}
 		s.seenLocked(e.Device, e.TS)
 		s.passes = append(s.passes, p)
 		s.passByConn[e.Conn] = p
-		s.passCount++
+		if e.Raw {
+			s.rawCount++
+		} else {
+			s.passCount++
+		}
 		if len(s.passes) > maxPasses {
 			delete(s.passByConn, s.passes[0].conn)
 			s.passes = s.passes[1:]
@@ -522,6 +532,7 @@ func (s *Store) maskEvent(e *event) {
 		for i := range e.ALPN {
 			e.ALPN[i] = s.mask(e.ALPN[i])
 		}
+		e.ALPNNeg = s.mask(e.ALPNNeg)
 	case "error", "tls_failed", "pass_close":
 		e.Msg = s.maskError(e.Msg)
 	case "done":

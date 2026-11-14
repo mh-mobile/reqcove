@@ -153,6 +153,12 @@ Before saying something was not sent, check:
   decrypted anyway: say so to the user. A connection is not a request (it
   may carry many or none); there are no URLs or contents. Never say what was
   requested, that a request was not sent, nor that it succeeded.
+- `list_passthrough` also lists, with `reason: raw_tcp`, an allowed host's
+  connections that mitmproxy carried as raw TCP, not read as HTTP (an ALPN
+  it does not know, `alpn_negotiated`, not HTTP at all, or what an HTTP
+  request upgraded to): what they carry has no flows, so an allowed host with
+  none may still have been used. `capture_stats.raw_tcp` counts them, and `next_steps` names their
+  hosts. The same rules apply: a connection, no contents.
 - Pinning checked after the handshake (the app connects, then quits without a
   request) shows nowhere, neither as a failure nor as a flow.
 - Only TCP ports 80 and 443 go through mitmproxy; QUIC falls back to TCP.

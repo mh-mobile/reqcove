@@ -105,6 +105,28 @@
   (from reading its code). `reqcove status` still reads the old fields from a
   v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
 
+### Added
+
+- A connection to an allowed host that mitmproxy carries as raw TCP, not
+  read as HTTP (once decrypted, for TLS: an ALPN name it does not know, a
+  server that speaks first, bytes that do not look like HTTP; and, from
+  reading mitmproxy's code, what a request upgrades to with a `101` other
+  than a WebSocket), is recorded as a connection: up to v0.8 nothing showed
+  it, and grpc-swift's calls on the iPhone left nothing at all (below).
+  `list_passthrough` lists it with `reason: raw_tcp` (every row now has
+  `reason`: `pass_hosts` or `raw_tcp`), with the protocol the client got
+  (`alpn_negotiated`) and the bytes relayed each way (inside TLS, for TLS),
+  never the bytes themselves; `capture_stats` counts it (`raw_tcp`, and `raw_tcp_hosts`
+  by device and host), and `status`' next steps name its hosts for its
+  device. A device with only such connections is no longer told it has no
+  traffic. `passed_through` and `list_devices`' `passthroughs` still count
+  `--pass-hosts` connections only. E2E test with real mitmproxy (an unknown
+  ALPN from a server that speaks first), which fails without the change, and
+  unit tests; not tried on an iPhone. Connections mitmproxy passes through
+  itself (Apple's hosts, hosts outside `--allow-hosts`, a connection it
+  knows by its address only) still leave nothing (from reading mitmproxy
+  12.3.1's code; docs/SECURITY.md).
+
 ### Fixed
 
 Found by a code review of v0.8.0, the last two while looking into a test app's grpc-swift calls on the iPhone; each test fails without its fix.
@@ -200,9 +222,12 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   server is now offered `h2` without `grpc-exp`; the call goes on and is
   recorded. Tried with grpc-swift 2 on this Mac against Connect's demo
   server, through a relay that dials mitmproxy as the exit node does (both
-  transports, the CA given as the trust root); not on an iPhone. E2E test,
-  which fails without the fix. gRPC-core, grpc-java and grpc-go offer `h2`
-  only (from their sources).
+  transports, the CA given as the trust root), and on an iPhone (iOS 27.3,
+  both transports): grpc-swift's calls on the iPhone are now recorded. There, before the fix, the server's HTTP/2 settings came first,
+  so mitmproxy, not knowing `grpc-exp`, carried the connection as raw TCP,
+  decrypted but not read as HTTP: nothing was recorded, no flow, TLS failure
+  or count. E2E test, which fails without the fix. gRPC-core, grpc-java and
+  grpc-go offer `h2` only (from their sources).
 - A connection whose first bytes were too few for mitmproxy to read the
   name was passed through undecrypted and unrecorded, for an allowed host
   too (up to v0.8): mitmproxy decides on the first bytes it reads, and with

@@ -144,14 +144,28 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			steps = append(steps, s)
 		}
 	}
+	raw, _ := stats["raw_tcp_hosts"].([]capture.RawHost)
 	for _, d := range devices {
+		var hosts []string
+		for _, r := range raw {
+			if r.Device == d.ID {
+				h := fmt.Sprintf("%s (connections: %d", r.Host, r.Connections)
+				if len(r.ALPN) > 0 {
+					h += "; ALPN " + strings.Join(r.ALPN, " ")
+				}
+				hosts = append(hosts, h+")")
+			}
+		}
+		if len(hosts) > 0 {
+			steps = append(steps, fmt.Sprintf("%s's connections to %s were carried as raw TCP, not read as HTTP: a protocol mitmproxy does not take for HTTP (an ALPN name it does not know, not HTTP at all, or one an HTTP request upgraded to), so what they carry is not recorded as flows. list_passthrough lists them (reason raw_tcp: host, protocols, sizes; never their contents)", cmp.Or(d.Name, d.ID), strings.Join(hosts, ", ")))
+		}
 		if d.ID == exitnode.Local.ID {
 			if d.TLSFailures > 0 && d.Flows == 0 {
 				steps = append(steps, fmt.Sprintf("the local proxy's apps refuse every certificate so far: trust the CA %q (iOS Simulator: xcrun simctl keychain booted add-root-cert; this Mac: security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db; with mitmproxy/mitmproxy-ca-cert.pem in the state directory), unless the app pins its certificates", ca.Name))
 			}
 			continue // not a phone: no exit node to turn on
 		}
-		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && d.Passthroughs == 0 && node.ExitApproved {
+		if d.Carried && d.TLSFailures == 0 && d.Flows == 0 && d.Passthroughs == 0 && len(hosts) == 0 && node.ExitApproved {
 			// The PeerAPI port stays the same across restarts (derived from the IP), but a device
 			// that tried DNS while reqcove was down can stay DNS-dead (tailscale/tailscale#20870).
 			steps = append(steps, fmt.Sprintf("no traffic from %s yet: turn on its exit node (%s). If it is on and sites do not load, turn the exit node off and on again: its DNS can stay stuck after reqcove was down", d.Name, node.Node))

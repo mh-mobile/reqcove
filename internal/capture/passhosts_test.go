@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -210,6 +211,106 @@ func TestPassHosts(t *testing.T) {
 	}
 }
 
+// TestRawTCPE2E (REQCOVE_E2E=1): a client on an allowed host gets an ALPN
+// mitmproxy does not know from a server that speaks first (as an HTTP/2
+// server's SETTINGS did for grpc-swift's grpc-exp on the iPhone). mitmproxy
+// decrypts it, then carries it as raw TCP: no flow, no TLS failure. It is
+// listed as a connection (reason raw_tcp, its protocols, the bytes relayed
+// inside TLS) and counted (raw_tcp), and the next HTTPS request is recorded
+// as before. Without the addon's tcp_start, nothing at all is recorded.
+func TestRawTCPE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "http") }))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.Config.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){
+		"x-reqcove-test": func(_ *http.Server, c *tls.Conn, _ http.Handler) { // a greeting, then one echo
+			io.WriteString(c, "HELLO\n")
+			b := make([]byte, 4)
+			if _, err := io.ReadFull(c, b); err == nil {
+				c.Write(b)
+			}
+		},
+	}
+	srv.TLS = &tls.Config{NextProtos: []string{"x-reqcove-test", "http/1.1"}}
+	srv.StartTLS()
+	defer srv.Close()
+	caFile := filepath.Join(t.TempDir(), "origin.pem")
+	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600)
+	h, err := tryHarness(t, ctx, []string{"*.example.com"}, func(c *Config) { c.trustCA = caFile })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _ := os.ReadFile(filepath.Join(h.confdir, "mitmproxy-ca-cert.pem"))
+	mitm := x509.NewCertPool()
+	mitm.AppendCertsFromPEM(ca)
+	p := pinClient{h: h, addr: srv.Listener.Addr().String()}
+
+	raw, err := p.dial(ctx, "dev") // an address, as the exit node dials
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := tls.Client(raw, &tls.Config{ServerName: "raw.example.com", NextProtos: []string{"x-reqcove-test"}, RootCAs: mitm})
+	tc.SetDeadline(time.Now().Add(20 * time.Second))
+	if err := tc.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := tc.ConnectionState().NegotiatedProtocol; got != "x-reqcove-test" {
+		t.Fatalf("ALPN: %q", got)
+	}
+	greeting := make([]byte, 6) // read before writing: the server speaks first
+	if _, err := io.ReadFull(tc, greeting); err != nil || string(greeting) != "HELLO\n" {
+		t.Fatalf("greeting: %q %v", greeting, err)
+	}
+	io.WriteString(tc, "ping")
+	echo, _ := io.ReadAll(tc)
+	tc.Close()
+	if string(echo) != "ping" {
+		t.Fatalf("echo: %q", echo)
+	}
+	pt := waitPass(h.c.Store, "raw.example.com", true)
+	if len(pt) != 1 || pt[0].Reason != "raw_tcp" || pt[0].Open || pt[0].Device != "dev" || pt[0].Server != p.addr ||
+		pt[0].ALPN != "x-reqcove-test" || !slices.Equal(pt[0].ALPNOffered, []string{"x-reqcove-test"}) ||
+		pt[0].BytesUp != 4 || pt[0].BytesDown != 10 || pt[0].Time == "" || pt[0].End == "" {
+		t.Fatalf("raw record: %+v", pt)
+	}
+	if h.stat("raw_tcp") != 1 || h.stat("passed_through") != 0 {
+		t.Errorf("raw_tcp %d, passed_through %d", h.stat("raw_tcp"), h.stat("passed_through"))
+	}
+	if r, _ := h.stats()["raw_tcp_hosts"].([]RawHost); len(r) != 1 || r[0].Host != "raw.example.com" || r[0].Device != "dev" {
+		t.Errorf("raw_tcp_hosts: %+v", r)
+	}
+	if flows, _ := h.c.Store.List(Filter{Host: "raw.example.com", Limit: 10}); len(flows) != 0 {
+		t.Errorf("a flow: %+v", flows)
+	}
+	if fs := h.c.Store.TLSFailures(Filter{Limit: 10}); len(fs) != 0 {
+		t.Errorf("TLS failures: %+v", fs)
+	}
+	// HTTPS to an allowed host goes on as before, recorded.
+	hc := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{
+		DialContext:     func(ctx context.Context, _, _ string) (net.Conn, error) { return p.dial(ctx, "dev") },
+		TLSClientConfig: &tls.Config{RootCAs: mitm}, DisableKeepAlives: true,
+	}}
+	r, err := hc.Get("https://web.example.com/after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if string(b) != "http" {
+		t.Errorf("HTTPS: %q", b)
+	}
+	if v := h.doneFlow("/after", false); v.Status != 200 {
+		t.Errorf("the flow: %+v", v.Flow)
+	}
+	if h.stat("raw_tcp") != 1 {
+		t.Errorf("raw_tcp after HTTPS: %d", h.stat("raw_tcp"))
+	}
+}
+
 // --pass-hosts: as --allow-hosts' syntax, not "*"; Match leaves them out,
 // Allowed keeps them in; spaces around the hosts are fine.
 func TestWithPass(t *testing.T) {
@@ -357,5 +458,42 @@ func TestPassReviewCases(t *testing.T) {
 		if r.Host == "mitm.it" || r.Host == "api.x.com" {
 			t.Errorf("suggested %s", r.Host)
 		}
+	}
+}
+
+// An allowed host's connection mitmproxy decrypted but carried as raw TCP
+// (not read as HTTP): listed with reason raw_tcp and the protocol the client
+// got, counted apart from --pass-hosts (passed_through, a device's
+// passthroughs), and only for a host recorded as flows.
+func TestRawTCP(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	allow, _ := ParseAllowHosts([]string{"*.example.com"})
+	allow, _ = allow.WithPass([]string{"pinned.example.com"})
+	st.SetScope(allow, true)
+	ev := func(s string) { st.Apply([]byte(`{"v":2,` + s + `}`)) }
+	ev(`"ev":"pass_open","conn":"c1","device":"d","sni":"grpc.example.com","raw":true,"alpn":["grpc-exp","h2"],"alpn_negotiated":"grpc-exp","server":"203.0.113.1:443","ts":1794000000`)
+	ev(`"ev":"pass_open","conn":"c2","device":"d","sni":"other.org","raw":true,"ts":1794000000`)          // outside --allow-hosts
+	ev(`"ev":"pass_open","conn":"c3","device":"d","sni":"pinned.example.com","raw":true,"ts":1794000000`) // a pass host's
+	ev(`"ev":"pass_open","conn":"c4","device":"d","sni":"pinned.example.com","ts":1794000000`)            // passed through
+	// c1 is open too, but no --pass-hosts connection.
+	if n := st.Stats()["passed_through_open"]; n != 1 {
+		t.Errorf("passed_through_open %v", n)
+	}
+	ev(`"ev":"pass_close","conn":"c1","ts_end":1794000002,"up":10,"down":20`)
+	p := st.Passthroughs(Filter{Limit: 10})
+	if len(p) != 2 || p[0].Reason != "pass_hosts" || p[0].ALPN != "" || !p[0].Open ||
+		p[1].Reason != "raw_tcp" || p[1].Host != "grpc.example.com" || p[1].ALPN != "grpc-exp" || !slices.Equal(p[1].ALPNOffered, []string{"grpc-exp", "h2"}) ||
+		p[1].Server != "203.0.113.1:443" || p[1].Open || p[1].BytesUp != 10 || p[1].BytesDown != 20 {
+		t.Fatalf("connections: %+v", p)
+	}
+	s := st.Stats()
+	if s["raw_tcp"] != 1 || s["passed_through"] != 1 {
+		t.Errorf("raw_tcp %v passed_through %v", s["raw_tcp"], s["passed_through"])
+	}
+	if r := s["raw_tcp_hosts"].([]RawHost); len(r) != 1 || r[0].Device != "d" || r[0].Host != "grpc.example.com" || r[0].Connections != 1 || !slices.Equal(r[0].ALPN, []string{"grpc-exp"}) {
+		t.Errorf("raw_tcp_hosts: %+v", r)
+	}
+	if d := st.Devices(); len(d) != 1 || d[0].Passthroughs != 1 {
+		t.Errorf("devices: %+v", d)
 	}
 }

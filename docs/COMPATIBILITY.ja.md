@@ -52,7 +52,7 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 
 - 入力：`run` が示すツール一覧の入力スキーマにあるフィールドです。新しい入力は、省略できるものとしてだけマイナーリリースで増えます。メジャーバージョンの間、入力を削除したり、必須にしたり、意味を変えたりはしません。
 - 出力：`run` が示すツール一覧の出力スキーマにあるフィールドと、`status` と `capture_stats`（スキーマで中身を決めていないもの）については下に挙げたフィールドです。新しいフィールドはマイナーリリースで増えることがあるので、エージェントは知らないフィールドを無視してください。メジャーバージョンの間、フィールドを削除したり意味を変えたりはしません。
-- 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
+- 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`）、`list_passthrough` の接続の `reason`（`pass_hosts`、`raw_tcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
 - 人が読む文を入れるフィールド（`next_steps`、`note`、`msg`、`list_rules` と `explain_rules` の `rules_error` や、`active_presets_error` などのエラーのフィールド）はなくなりませんが、文面は変わりえます。
 
 #### `status` と `reqcove status --json`
@@ -65,7 +65,7 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 
 #### `capture_stats`
 
-ドキュメントにあるフィールド：`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）。それ以外は[変わりえます](#変わりうるもの)。
+ドキュメントにあるフィールド：`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）。それ以外は[変わりえます](#変わりうるもの)。
 
 ### ルールファイル（`--rules`）
 

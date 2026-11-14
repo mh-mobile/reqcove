@@ -151,6 +151,23 @@ remove it:
   `--rules` (from reading code). A pass
   host on Apple's list is passed by mitmproxy itself and leaves no record (a
   test); `run` warns.
+- A connection to an allowed host that mitmproxy carries as raw TCP, not
+  read as HTTP (once decrypted, for TLS: an ALPN name it does not know, a
+  server that speaks first, bytes that do not look like HTTP; and what a
+  request upgrades to with a `101` other than a WebSocket, whose request is a
+  flow, from reading mitmproxy 12.3.1's code), has no flow for what it
+  carries. Only the connection is recorded, in `list_passthrough` with
+  `reason: raw_tcp`: the host the client named (its SNI, or the address), the
+  server's address, start and end, the protocols the client offered and the
+  one it got, and the bytes relayed each way (inside TLS, for TLS); never the
+  bytes themselves (an E2E test). The
+  record is checked against `--allow-hosts` and `--pass-hosts` again, so a
+  host outside the first or in the second leaves nothing (a test). Not
+  caught: connections mitmproxy passes through itself fire none of its
+  hooks, so nothing of them is recorded or counted (from reading mitmproxy
+  12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and
+  connections mitmproxy knows by their address only (TLS without SNI, plain
+  TCP on port 80 that is not HTTP), unless `--allow-hosts` names the address.
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
   return them. A header, query
   parameter or body field is secret by its name: a name containing token,
@@ -183,7 +200,7 @@ remove it:
   as `#/callback?access_token=`; a URL inside another parameter; bodies; error
   messages), as is a URL's password (`https://user:…@host`) and the response's
   reason text. A credential's shape is masked also in a host (a flow's `host`,
-  an SNI), a method, the ALPN names a pass-through connection offered, a body's
+  an SNI), a method, the ALPN names a connection in `list_passthrough` offered or got, a body's
   `Content-Encoding` and the notes that quote it; the scope is checked with the
   host as sent (a test). Raw bytes that mitmproxy quotes in an error message
   (`b'…'`) are masked whole. `--no-redact` turns this off.
