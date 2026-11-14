@@ -457,9 +457,8 @@ func TestSOCKSDialTimeout(t *testing.T) {
 }
 
 // TestDialWaitsForReady: a SOCKS dial goes to the port only once ready says
-// mitmproxy is up; while it is not, nothing reaches whoever holds the port
-// (another local process, after mitmproxy died), and the dial fails after
-// socksHold. Direct dials do not wait.
+// mitmproxy is up; while it is not, nothing reaches the port, and the dial
+// fails after socksHold. Direct dials do not wait.
 func TestDialWaitsForReady(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
