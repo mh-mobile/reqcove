@@ -673,9 +673,11 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
   GET (HEAD, OPTIONS, DELETE) without a length is answered when its stream
   ends with its headers, as GETs with no body do; one that sends a body anyway
   gets a 502, recorded as an error, and its body is not held (until v0.8.0 it
-  was held whole in memory). Tested with Go's HTTP/2 client; how mitmproxy
-  tells a stream's end is from reading its code, and iPhone apps have not been
-  tried.
+  was held whole in memory). Tested with Go's HTTP/2 client through
+  mitmproxy. macOS's URLSession, tried against a test server without
+  mitmproxy, ends a GET's and a HEAD's stream with their headers and gives
+  DELETE and OPTIONS a length of 0, so none is refused; iPhone apps have not
+  been tried. How mitmproxy tells a stream's end is from reading its code.
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 

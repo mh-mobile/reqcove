@@ -35,7 +35,9 @@
   mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
   recorded as an error, and its body is not held; one with no body is
   answered as before. Tested with Go's HTTP/2 client and real mitmproxy (an
-  endless body gets its 502 at once); iPhone apps not tried.
+  endless body gets its 502 at once). macOS's URLSession sends none of these
+  with an open stream (tried against a test server, without mitmproxy);
+  iPhone apps not tried.
 
 ### For people
 
