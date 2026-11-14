@@ -818,3 +818,115 @@ func TestPyCommand(t *testing.T) {
 		t.Errorf("other spec: %s %q", bin, args)
 	}
 }
+
+// TestCutBodies (REQCOVE_E2E=1): a flow that fails mid-body keeps the head
+// that came, and its size, not final; a request body that had ended stays
+// final when the response is cut after it.
+func TestCutBodies(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	h := startHarness(t, ctx, []string{"127.0.0.1"})
+	part := strings.Repeat("came before the cut. ", 200) // 4200 bytes, all in one write: no periodic flush
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		if r.URL.Path != "/cut" {
+			return
+		}
+		c, buf, _ := w.(http.Hijacker).Hijack()
+		fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 100000\r\n\r\n%s", part)
+		buf.Flush()
+		c.Close()
+	}))
+	defer srv.Close()
+	hc := h.client("cut-device")
+
+	if resp, err := hc.Post(srv.URL+"/cut", "text/plain", strings.NewReader("sent whole")); err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	v := h.doneFlow("/cut", true)
+	if v.State != "error" || v.RespBody.Size != int64(len(part)) || v.RespBody.Final || v.RespBodyText != part {
+		t.Errorf("cut response: state=%s body=%+v head=%d bytes", v.State, v.RespBody, len(v.RespBodyText))
+	}
+	if !v.ReqBody.Final || v.ReqBodyText != "sent whole" {
+		t.Errorf("the request body that had ended: %+v %q", v.ReqBody, v.ReqBodyText)
+	}
+
+	// An upload the client gives up on.
+	conn, err := hc.Transport.(*http.Transport).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /upload HTTP/1.1\r\nHost: %s\r\nContent-Type: text/plain\r\nContent-Length: 100000\r\n\r\n%s", srv.Listener.Addr(), part)
+	time.Sleep(200 * time.Millisecond) // mitmproxy reads it before the close
+	conn.Close()
+	v = h.doneFlow("/upload", true)
+	if v.State != "error" || v.ReqBody.Size != int64(len(part)) || v.ReqBody.Final || v.ReqBodyText != part {
+		t.Errorf("cut upload: state=%s body=%+v head=%d bytes", v.State, v.ReqBody, len(v.ReqBodyText))
+	}
+}
+
+// TestConcatenatedBodies (REQCOVE_E2E=1): a gzip body of several members and
+// a zstd body of several frames are decoded whole, zero padding after a gzip
+// member skipped (as gzip.decompress does); past maxMembers the head stops,
+// cut.
+func TestConcatenatedBodies(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	h := startHarness(t, ctx, []string{"127.0.0.1"})
+	gz := func(s string) []byte {
+		var b bytes.Buffer
+		w := gzip.NewWriter(&b)
+		w.Write([]byte(s))
+		w.Close()
+		return b.Bytes()
+	}
+	zs := func(s string) []byte { return pyCompress(t, "zstd", "data = b'"+s+"'") }
+	cat := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	empty := bytes.Repeat(gz(""), 2000)
+	cases := []struct {
+		name, enc string
+		parts     [][]byte // written one by one, a moment apart: mitmproxy gets them as chunks of their own
+		want      string
+		cut       bool
+	}{
+		{"gzip", "gzip", [][]byte{cat(gz("first member, "), gz("second member"))}, "first member, second member", false},
+		{"gzip-split", "gzip", [][]byte{gz("first member, "), gz("second member")}, "first member, second member", false},
+		{"gzip-padded", "gzip", [][]byte{cat(gz("first member, "), []byte{0, 0}, gz("second member"), []byte{0, 0, 0})}, "first member, second member", false},
+		{"zstd", "zstd", [][]byte{cat(zs("first frame, "), zs("second frame"))}, "first frame, second frame", false},
+		{"zstd-split", "zstd", [][]byte{zs("first frame, "), zs("second frame")}, "first frame, second frame", false},
+		{"gzip-many", "gzip", [][]byte{cat(empty, gz("past the bound"))}, "", true},
+	}
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	hc := h.client("cat-device")
+	for _, c := range cases {
+		mux.HandleFunc("/cat/"+c.name, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Encoding", c.enc)
+			for _, p := range c.parts {
+				w.Write(p)
+				w.(http.Flusher).Flush()
+				time.Sleep(100 * time.Millisecond)
+			}
+		})
+		resp, err := hc.Get(srv.URL + "/cat/" + c.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		v := h.doneFlow("/cat/"+c.name, true)
+		b := v.RespBody
+		if !b.Decoded || b.Note != "" || v.RespBodyText != c.want || b.Truncated != c.cut || b.Size != int64(len(cat(c.parts...))) {
+			t.Errorf("%s: head %q, body %+v", c.name, v.RespBodyText, b)
+		}
+	}
+}

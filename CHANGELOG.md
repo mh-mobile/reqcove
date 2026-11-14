@@ -15,6 +15,33 @@
   host, SNI, method, ALPN name or `Content-Encoding` and the notes quoting
   them (found by a code review; unit tests, and the fuzz test for the line).
 
+### Fixed
+
+Found by a code review of v0.8.0; each test fails without its fix.
+
+- A flow that fails mid-body keeps the head that came and its size, not
+  final; before, what came in its last second was left out (size 0 for a
+  body cut within a second). Tested with real mitmproxy (HTTP/1.1): a
+  response the server cuts, an upload the client gives up on; an SSE stream
+  that ends in an error goes the same way (from reading code).
+- A gzip body of several members and a zstd body of several frames are
+  decoded whole (up to the head's bound, as before). Before, gzip stopped
+  after its first member, and zstd too, or, when the next frame came in a
+  chunk of its own, gave a decode error and hid the head. Zero padding after
+  a gzip member is skipped, as Python's gzip does; other bytes after a member
+  are now a decode error (the head is not handed out), where they were
+  ignored. Past 1024 members or frames the head stops, cut: each costs
+  mitmproxy CPU. Test with real mitmproxy.
+- Through mitmproxy, a client that is done sending (a half-close, `nc -N`)
+  gets the answer still to come; before, the connection was closed both ways
+  and the answer cut. Unit test of the exit node with a SOCKS5 server; the
+  Remote Proxy's `CONNECT` dials the same way (from reading code).
+- When mitmdump exits, the lines it left in reqcove's socket are read before
+  its open flows are closed (for at most 2 s): before, a request among them
+  stayed open for good and the addon's counters were counted twice. Test
+  with a stand-in mitmdump (`addon_dropped_events`; the other counters come
+  the same way, from reading code).
+
 ### Removed
 
 - v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,

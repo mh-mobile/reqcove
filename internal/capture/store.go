@@ -225,7 +225,9 @@ func (s *Store) helloCount() int64 {
 
 // mitmdumpExited closes the flows the dead process left open and keeps its
 // counters, since the next process counts from zero.
-// ponytail: lines still buffered from the dead process can land after this; they only reopen nothing (orphans count).
+// supervise calls it once the dead process's lines are read, or after drainWait.
+// ponytail: a line read past drainWait (a child of mitmdump outside its group
+// holding the socket) still lands after this: a request in it stays open.
 func (s *Store) mitmdumpExited(why string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
