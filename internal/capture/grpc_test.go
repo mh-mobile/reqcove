@@ -236,6 +236,7 @@ func TestGRPCExpE2E(t *testing.T) {
 		w.Write([]byte(grpcFrame1(0, "\x0a\x02ok")))
 		w.Header().Set("Grpc-Status", "0")
 	}))
+	//lint:ignore SA1019 x/net's server is what maps another ALPN name (grpc-exp) to HTTP/2 here
 	if err := http2.ConfigureServer(srv.Config, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +266,7 @@ func TestGRPCExpE2E(t *testing.T) {
 	if p := tc.ConnectionState().NegotiatedProtocol; p != "h2" {
 		t.Errorf("ALPN to the app: %q, want h2", p)
 	}
+	//lint:ignore SA1019 HTTP/2 over the TLS conn this test made and checked (its ALPN), not one a transport dials
 	cc, err := (&http2.Transport{}).NewClientConn(tc)
 	if err != nil {
 		t.Fatal(err)
