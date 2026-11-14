@@ -38,3 +38,4 @@ __pycache__/
 
 # 上流への issue と PR の下書き（出す前にユーザーが確かめる）
 /docs/upstream/
+/cmd/reqcove/reqcove
