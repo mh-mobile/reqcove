@@ -41,6 +41,9 @@
   (`get_flow`, `list_flows`, `search_flows`, `wait_for_flows`, `summarize`,
   `list_ws_messages`, `diff_flows`) says so in `note`, as the `--ui` page
   shows a badge (a test).
+- LAN mode refuses this computer's other networks before letting Apple's
+  17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
+  neighbours were reachable (found by a code review; unit test).
 
 ### Removed
 
