@@ -49,7 +49,11 @@ Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
 Ctrl-C at the first question in a terminal (it ended at once, nothing written);
 on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
 installed the skill, printed the commands, and `service install` ran with that
-file. Not tried: `brew services` with the file setup wrote; Linux.
+file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over ssh with a terminal, 2026-11-14): found
+uvx in `~/.local/bin`, wrote `~/.config/reqcove/config` (0600, its directory
+0700), said no agent was found in that home for the skill (none was there),
+printed `reqcove service install`, and refused off a terminal. Not tried:
+`brew services` with the file setup wrote.
 
 `run` prints what is left to do, and `reqcove status` repeats it: log in with
 the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
@@ -171,7 +175,7 @@ reqcove service uninstall     # stops it and removes the file
 - Once `run` ends (an error, a refused file, `kill`), it stays down until the
   next login: `reqcove service restart` starts it again (`launchctl kickstart
   -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
-  reqcove`; not tried).
+  reqcove`; tried on Linux only).
 - Refused while Homebrew's service is there (its file or loaded:
   `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
   `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
@@ -193,8 +197,12 @@ reqcove service uninstall     # stops it and removes the file
   `--uvx /full/path/uvx` in the file.
 - To stop it until the next login: `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`,
   or `systemctl --user stop reqcove`; `reqcove status` says which.
-- Linux: a user unit starts at login; at boot, before any login, only after
-  `loginctl enable-linger $USER` (from systemd's documentation, not tried).
+- Linux: a user unit runs while you are logged in. Without
+  `loginctl enable-linger $USER`, systemd stops it when your last session
+  ends, and starts it again at the next login (tried over ssh: it stopped
+  within 15 seconds of the last logout). With linger it kept running after
+  the logout (tried), and it starts at boot before any login (from systemd's
+  documentation; no reboot tried).
 
 Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
 the refusals and the launchctl and systemctl commands it would run (unit
@@ -205,8 +213,15 @@ the service, `service uninstall` stopped it and removed the file; after a
 sleep it kept running, and after a reboot it started at login by itself (an
 iPhone recorded, no alert at login). macOS asked for Local Network access,
 before and after the sleep (allowed both times; its list shows each build at
-another path as its own entry). Not tried yet:
-`service restart`; Linux.
+another path as its own entry). On Ubuntu 24.04.5 LTS (arm64, a tart VM,
+2026-11-14), with a new `--state` and setup's file: `service install` wrote
+the unit and started `run` (uvx found on the unit's `PATH`; the node waiting
+for a login, not logged in to a tailnet), `reqcove status` named
+`reqcove.service`, `journalctl --user -u reqcove` showed its log with no login
+URL or token, `service restart` started it again after a `kill` and after
+`systemctl --user stop reqcove`, and `service uninstall` stopped it and removed
+the unit. Not tried yet: `service restart` on macOS; on Linux, a node logged
+in to a tailnet, a device recorded through it, a reboot.
 
 ### Undo everything (`reqcove cleanup`)
 
@@ -772,8 +787,15 @@ Tried by tests: the proxy on the loopback interface with real mitmproxy
 and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
 2026-11-14): its first request refused, allowed at run's question, then
 Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
-`reqcove lan deny` stopped it, `lan allow` again let it through. Not tried: a
-change of network.
+`reqcove lan deny` stopped it, `lan allow` again let it through. On Ubuntu
+24.04.5 LTS (arm64, a tart VM, 2026-11-14), with curl from the Mac running the
+VM, on tart's network (no iPhone): run listened on the VM's address, refused
+the first request and asked; once allowed with `reqcove lan allow`, plain HTTP
+and HTTPS (`curl --cacert` with the CA file the ready block names, its SHA-256
+matching) went through to an allowed host and were recorded as `lan:ADDR`
+(`reqcove status --json`, `reqcove har`); port 22 was refused, and `lan deny`
+refused it again. Not tried: a change of network; an iPhone with a Linux
+computer.
 
 ### Another Mac
 
