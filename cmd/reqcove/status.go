@@ -218,6 +218,8 @@ func status(ctx context.Context, args []string) error {
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
 	switch {
+	case *asJSON && (errors.Is(err, errNotRunning) || errors.Is(err, errStarting)):
+		return err // nothing on stdout: no status tool answered, and --json prints only its JSON
 	case errors.Is(err, errNotRunning):
 		return offlineStatus(*state, *uvx)
 	case errors.Is(err, errStarting):

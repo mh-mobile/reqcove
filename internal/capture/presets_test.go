@@ -361,11 +361,17 @@ func (endless) Read(p []byte) (int, error) {
 // origin (through the upstream proxy) when no mock answers it after all; one
 // that sends a body anyway gets a 502 at once, recorded, and its body is
 // never held in memory (mitmproxy buffered all of it, with no end, until
-// v0.8.0).
+// v0.8.0). Both with an upstream proxy (mitmproxy connects lazily) and
+// without (it connects to the server first, as most runs do).
 func TestHTTP2BodyOfUnknownLength(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
 	}
+	t.Run("upstream", func(t *testing.T) { http2BodyOfUnknownLength(t, true) })
+	t.Run("direct", func(t *testing.T) { http2BodyOfUnknownLength(t, false) })
+}
+
+func http2BodyOfUnknownLength(t *testing.T, viaUpstream bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	var reached atomic.Int64
@@ -390,9 +396,19 @@ func TestHTTP2BodyOfUnknownLength(t *testing.T) {
 map_local:
   - "|//%[2]s/local/|files"
 `, srv.URL, srv.Listener.Addr().String())), 0o600)
-	up := startUpstream(t) // its CA setting is how mitmproxy trusts the test server
-	defer up.ln.Close()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.Upstream, c.UpstreamCA, c.Rules = up.ln.Addr().String(), caFile, rules })
+	var up *upstreamProxy
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
+		c.Rules = rules
+		if viaUpstream {
+			up = startUpstream(t) // its CA setting is how mitmproxy trusts the test server
+			c.Upstream, c.UpstreamCA = up.ln.Addr().String(), caFile
+		} else {
+			c.trustCA = caFile
+		}
+	})
+	if up != nil {
+		defer up.ln.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +456,7 @@ map_local:
 	if st, b := get("/graphql", nil); st != 200 || b != "origin /graphql" || reached.Load() != 1 {
 		t.Errorf("held, then sent on: %d %q (the origin got %d)", st, b, reached.Load())
 	}
-	if want := "CONNECT " + srv.Listener.Addr().String(); !slices.Contains(up.all(), want) {
+	if want := "CONNECT " + srv.Listener.Addr().String(); up != nil && !slices.Contains(up.all(), want) {
 		t.Errorf("not through the upstream proxy: %q, want %q", up.all(), want)
 	}
 }

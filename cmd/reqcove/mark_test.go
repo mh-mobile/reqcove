@@ -120,7 +120,19 @@ func TestStatusWhileStarting(t *testing.T) {
 	if err := sendMark(context.Background(), io.Discard, dir, "x"); err == nil || !strings.Contains(err.Error(), "starting") {
 		t.Errorf("mark: %v", err)
 	}
+	// --json prints the status tool's JSON or nothing: here an error, stdout empty.
+	jsonStatus := func() (string, error) {
+		var err error
+		out := captureStdout(t, func() error { err = status(context.Background(), []string{"--state", dir, "--json"}); return nil })
+		return out, err
+	}
+	if out, err := jsonStatus(); out != "" || err == nil || !strings.Contains(err.Error(), "starting") {
+		t.Errorf("status --json while starting: %q, %v", out, err)
+	}
 	unlock()
+	if out, err := jsonStatus(); out != "" || err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("status --json, not running: %q, %v", out, err)
+	}
 	if out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) }); !strings.Contains(out, "reqcove is not running") {
 		t.Errorf("status once the lock is free:\n%s", out)
 	}
