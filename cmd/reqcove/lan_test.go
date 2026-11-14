@@ -254,6 +254,10 @@ func TestStatusLAN(t *testing.T) {
 	if !strings.Contains(steps, "not allowed: 192.168.1.40") || !strings.Contains(steps, "no traffic from lan:192.168.1.23 yet") {
 		t.Errorf("steps:\n%s", steps)
 	}
+	// One with only raw TCP connections has traffic.
+	if steps := strings.Join(statusOut(s, ready, allow, capture.CA{}, []capture.DeviceInfo{{ID: "lan:192.168.1.23", Carried: true, RawTCP: 1}}).NextSteps, "\n"); strings.Contains(steps, "no traffic") {
+		t.Errorf("raw TCP only:\n%s", steps)
+	}
 	s.LAN.Listen, s.LAN.Stopped = "", "en0 is on another network now"
 	if steps := strings.Join(statusOut(s, ready, allow, capture.CA{}, devs).NextSteps, "\n"); !strings.Contains(steps, "not listening: en0 is on another network now") {
 		t.Errorf("stopped:\n%s", steps)

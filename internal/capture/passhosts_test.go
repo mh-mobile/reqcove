@@ -548,7 +548,12 @@ func TestRawTCP(t *testing.T) {
 	if r := s["raw_tcp_hosts"].([]RawHost); len(r) != 1 || r[0].Device != "d" || r[0].Host != "grpc.example.com" || r[0].Connections != 1 || !slices.Equal(r[0].ALPN, []string{"grpc-exp"}) {
 		t.Errorf("raw_tcp_hosts: %+v", r)
 	}
-	if d := st.Devices(); len(d) != 1 || d[0].Passthroughs != 1 {
+	if d := st.Devices(); len(d) != 1 || d[0].Passthroughs != 1 || d[0].RawTCP != 1 {
 		t.Errorf("devices: %+v", d)
+	}
+	// A device with raw TCP connections only, not carried now: listed all the same.
+	ev(`"ev":"pass_open","conn":"c5","device":"r","sni":"grpc.example.com","raw":true,"ts":1794000003`)
+	if d := st.Devices(); len(d) != 2 || d[1].ID != "r" || d[1].RawTCP != 1 || d[1].Passthroughs != 0 || d[1].LastSeen == "" {
+		t.Errorf("raw TCP only: %+v", d)
 	}
 }
