@@ -33,16 +33,18 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	if isXML(contentType, s) { // by names first; the text masking below still applies
 		s = maskXML(s, request)
 	}
+	// A GraphQL document as the body (application/graphql, or shaped like
+	// one); those in JSON strings are found by maskJSON.
+	s, isDoc := maskGraphQLDoc(s, request)
+	s = maskJSON(s, request, 0)
+	// After JSON's: a tag's masked value can take a quote JSON's reading
+	// keys on ({"html": "<b data-token=x\"", "password": …} as text/html).
 	if html {
 		s = maskHTML(s)
 	}
 	if html || isScript(contentType) {
 		s = maskScript(s, request)
 	}
-	// A GraphQL document as the body (application/graphql, or shaped like
-	// one); those in JSON strings are found by maskJSON.
-	s, isDoc := maskGraphQLDoc(s, request)
-	s = maskJSON(s, request, 0)
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
@@ -659,6 +661,9 @@ func secretKind(name string, loneCode bool) bool {
 		everyday = everyday || everydayWords[w]
 	}
 	for _, w := range words {
+		if w == "auth0" { // the Auth0 service's name (Auth0-Client, auth0Client), not auth
+			continue
+		}
 		if w = strings.TrimRight(w, "0123456789"); !shortSecretWords[w] { // key1, pin2: the word with a number after it
 			continue
 		}
@@ -760,12 +765,21 @@ func maskCookies(v, sep string, oneCookie bool) string {
 var cookieJoinRE = regexp.MustCompile(`,[ \t]*[^=;, \t]+=`)
 
 // maskSetCookie masks each cookie of a Set-Cookie value, its attributes kept.
+// Only a comma among a cookie's attributes starts another: one before its
+// first ; may be its value's (v1,QUJD…==), so cookies joined with no
+// attributes are masked as one value.
 func maskSetCookie(v string) string {
 	var b strings.Builder
-	last := 0
+	last, semi := 0, strings.IndexByte(v, ';')
 	for _, m := range cookieJoinRE.FindAllStringIndex(v, -1) {
+		if semi < 0 || semi > m[0] {
+			continue
+		}
 		b.WriteString(maskCookies(v[last:m[0]], ";", true) + ",")
 		last = m[0] + 1
+		if semi = strings.IndexByte(v[last:], ';'); semi >= 0 {
+			semi += last
+		}
 	}
 	b.WriteString(maskCookies(v[last:], ";", true))
 	return b.String()

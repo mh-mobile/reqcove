@@ -76,13 +76,16 @@
   them (found by a code review; unit tests, and the fuzz test for the line).
 - Masking catches more cookies and names: a cookie value without a name after
   the first (`Cookie: theme=dark; <a JWT>` kept the JWT), and each cookie of
-  a `Set-Cookie` line joining several with commas (only the first was masked;
-  an `Expires` date's comma is not a cookie's); `name=value` lines in a text
+  a `Set-Cookie` line joining several with commas after another's attributes
+  (only the first was masked; an `Expires` date's comma is not a cookie's,
+  nor one before a cookie's first `;`, which may be its value's:
+  `v1,QUJD…==`); `name=value` lines in a text
   body or a WebSocket message (a `.env` file's `API_KEY=…`, `export` too) and
   a form body ending with a newline, whose secrets were kept; and a short
-  secret word with a number after it (`key1`, `pin2`) and `primaryKey`, which
-  were not secret (found by a code review; unit tests, an E2E test for the
-  joined `Set-Cookie`, and the fuzz test for the `.env` line).
+  secret word with a number after it (`key1`, `pin2`; not `auth0`, a
+  service's name) and `primaryKey`, which were not secret (found by a code
+  review; unit tests, an E2E test for the joined `Set-Cookie`, and the fuzz
+  test for the `.env` line).
 
 ### Removed
 

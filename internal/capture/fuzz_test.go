@@ -13,7 +13,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 36 // a shape with no case of its own is the default one
+const fuzzShapes = 37 // a shape with no case of its own is the default one
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
 // the secret: XML masking never panics on it, and a secret element and
@@ -103,6 +103,8 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: /* c */ '`+secret+`'};</script>`, "text/html")
 	case 35: // a script's string continued on the next line
 		return pre(`var c = {note: "`+filler+`", `, "idToken: \"x\\\n"+secret+"\"};", "application/javascript")
+	case 36: // a JSON body labelled HTML: a tag's unquoted value runs over its string's end
+		return pre(`{"html":"`+filler+`<b data-token=x\"",`, ` "password":"`+secret+`"}`, "text/html")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
