@@ -337,3 +337,47 @@ func TestFourthReview(t *testing.T) {
 		t.Errorf("cut b'…': %.120q", got)
 	}
 }
+
+// TestMaskHTML: an HTML page's secrets live in its tags (an OAuth form_post's
+// hidden fields, CSRF tokens in forms and meta tags) and its scripts' objects;
+// the text masking alone missed them all.
+func TestMaskHTML(t *testing.T) {
+	for _, c := range []struct {
+		name, ctype, in string
+		gone, keep      []string
+	}{
+		{"OAuth form_post", "text/html; charset=utf-8",
+			`<form method="post" action="https://app.example/cb"><input type="hidden" name="code" value="S3CRET-1"/><input type="hidden" name="state" value="st-42"><input type=hidden name=id_token value=S3CRET-2><input name='access_token' value='S3CRET-3'></form>`,
+			[]string{"S3CRET-1", "S3CRET-2", "S3CRET-3"}, []string{`name="state" value="st-42"`, `name="code" value="[redacted]"`, `action="https://app.example/cb"`}},
+		{"CSRF tokens", "text/html",
+			`<meta name="csrf-token" content="S3CRET-4"><input type="hidden" name="authenticity_token" value="S3CRET-5"><input name="__RequestVerificationToken" type="hidden" value="S3CRET-6"><meta property="og:title" content="Shop">`,
+			[]string{"S3CRET-4", "S3CRET-5", "S3CRET-6"}, []string{`content="Shop"`}},
+		{"value before the name, id, own name", "text/html",
+			`<input value="S3CRET-7" type="hidden" name="csrf"><input id="session_key" value="S3CRET-8"><div data-auth-token="S3CRET-9" class="x"></div><input name="email" value="a@example.com">`,
+			[]string{"S3CRET-7", "S3CRET-8", "S3CRET-9"}, []string{`value="a@example.com"`, `class="x"`}},
+		{"a tag cut before its name", "text/html", `<p>hi</p><input type="hidden" value="S3CRET-10" na`,
+			[]string{"S3CRET-10"}, []string{"<p>hi</p>"}},
+		{"a value cut", "text/html", `<input type="hidden" name="code" value="S3CRET-11ab`, []string{"S3CRET-11"}, nil},
+		{"by its start, no type", "", `<!DOCTYPE html><html><input name="code" value="S3CRET-12"></html>`, []string{"S3CRET-12"}, nil},
+		{"a script's object", "text/html",
+			`<script>window.__INIT__ = {user: "u", accessToken: "S3CRET-13", refresh_token: 'S3CRET-14', pin: 1234, code: 404, esc: "a\"b"};</script>`,
+			[]string{"S3CRET-13", "S3CRET-14", "1234"}, []string{`user: "u"`, `code: 404`, `accessToken: "[redacted]"`, `refresh_token: '[redacted]'`, `esc: "a\"b"`}},
+		{"a script's string cut", "application/javascript", `var c = {idToken: "S3CRET-15`, []string{"S3CRET-15"}, nil},
+		{"new names", "application/json", `{"oauth_verifier":"S3CRET-16","hmac":"S3CRET-17","privkey":"S3CRET-18","mnemonic":"S3CRET-19","x":"y"}`,
+			[]string{"S3CRET-16", "S3CRET-17", "S3CRET-18", "S3CRET-19"}, []string{`"x":"y"`}},
+		{"text stays", "text/html", `<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`, nil,
+			[]string{`<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`}},
+	} {
+		got := string(maskBody([]byte(c.in), c.ctype, false))
+		for _, g := range c.gone {
+			if strings.Contains(got, g) {
+				t.Errorf("%s: %q survived: %s", c.name, g, got)
+			}
+		}
+		for _, k := range c.keep {
+			if !strings.Contains(got, k) {
+				t.Errorf("%s: %q was lost: %s", c.name, k, got)
+			}
+		}
+	}
+}
