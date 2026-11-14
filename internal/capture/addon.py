@@ -1332,6 +1332,11 @@ class Reqcove:
         # Connect now, not on the first flow: reqcove waits for this hello
         # before it advertises the exit node. The writer says hello again on
         # every reconnect.
+        # The SOCKS5 listener accepts only from now (mitm.py): proxyauth=any,
+        # so before this addon is loaded nothing would check the password.
+        serve = getattr(sys.modules.get("__main__"), "serve_socks", None)
+        if serve:
+            serve()
         self.put_event(self._hello())
         if ctx.options.reqcove_control and self.control_server is None:
             self.control_server = asyncio.get_running_loop().create_task(self._serve_control(ctx.options.reqcove_control))

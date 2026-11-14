@@ -10,9 +10,13 @@
   local user's process could take the port, and with it the SOCKS password and
   the devices' connections, before the first mitmdump bound it and in the
   milliseconds between a mitmdump's death and reqcove noticing it. A
-  connection made while mitmdump is down waits for the next one. Tests: binding the port fails while mitmdump is down (unit,
-  and with real mitmproxy); a request sent then is recorded by the next
-  mitmdump (real mitmproxy). SECURITY.md says what is covered and what not.
+  connection made while mitmdump is down waits for the next one, which accepts
+  only once its addon, the one that checks the SOCKS password, is loaded.
+  Tests: binding the port fails while mitmdump is down (unit, and with real
+  mitmproxy); a request sent then is recorded by the next mitmdump, and one
+  with a wrong password is refused, nothing carried or recorded (real
+  mitmproxy; the test fails if mitmdump accepts before the addon is loaded,
+  its loading delayed by hand). SECURITY.md says what is covered and what not.
 
 ### For agents
 

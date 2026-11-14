@@ -762,6 +762,17 @@ again (visible in `ps`) while the port stays held, so no other process can take
 127.0.0.1 on that port in between, nor before the first mitmdump. A connection
 made meanwhile waits in the socket's queue for the next mitmdump; the devices'
 connections wait (15 seconds at most, then fail) until its addon says hello.
+mitmproxy runs with `proxyauth=any` and only reqcove's addon checks the
+password, so a connection queued there must not be read before the addon is
+loaded: the launcher has mitmproxy make its server on the socket without
+accepting, and the addon starts accepting when it is loaded, just before its
+hello. Tested with real mitmproxy (through uvx, macOS): two connections queued
+while mitmdump is down, with a wrong password sent all at once and step by
+step, are refused, and nothing they ask for is carried or recorded. With the
+launcher accepting at once and the addon's loading delayed 1.5 seconds (by
+hand), both were accepted and the test fails; without that delay, mitmproxy
+(12.3.1) happened to load the addon before reading the first connection, and
+refused them too.
 Tests: while mitmdump is down, and after reqcove gave up on it, binding the
 port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
 Linux too); with real mitmproxy (from the lock and through uvx, macOS), the
