@@ -127,11 +127,20 @@ func TestMultipartReview(t *testing.T) {
 		mpBody("Content-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nbefore\r\n--XyZabc\r\n\r\n" + S),
 		mpBody("Content-Disposition: form-data; name=\"x\"\r\nCookie: sid=" + S + "\r\n\r\nplain"),
 		mpBody("Content-Disposition: form-data; name=\"x\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(`{"password":"`+S+`"}`))),
+		// v0.8.0 review: folded headers are read unfolded; a part naming no field or file shows no content
+		mpBody("Content-Disposition: form-data;\r\n name=\"password\"\r\n\r\n" + S),
+		mpBody("Content-Disposition: form-data; name=\"x\"\r\nCookie: a=1\r\n ; b=" + S + "\r\n\r\nplain"),
+		mpBody("Content-Disposition: form-data\r\n\r\n" + S),
+		mpBody(" Content-Disposition: form-data; name=\"password\"\r\n\r\n" + S),
 	} {
 		got := string(renderMultipart([]byte(body), "XyZ", true, false))
 		if leak(got, S) != "" || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(`{"password":"`))) {
 			t.Errorf("%q\n->\n%s", body, got)
 		}
+	}
+	// Unfolded, a field's name reads and its content shows.
+	if got := string(renderMultipart([]byte(mpBody("Content-Disposition: form-data;\r\n\tname=\"note\"\r\n\r\nhello")), "XyZ", true, false)); !strings.Contains(got, "name=\"note\"\r\n\r\nhello") {
+		t.Errorf("folded disposition: %q", got)
 	}
 	// Two uploads whose files differ at the same size are never the same.
 	s := NewStore(10, 1<<20)

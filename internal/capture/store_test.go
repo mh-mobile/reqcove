@@ -222,3 +222,39 @@ func TestRulesEvent(t *testing.T) {
 		t.Errorf("told %q", told)
 	}
 }
+
+// The v0.8.0 review: what the addon copies from the headers, the URL and the
+// TLS handshake into a record is masked as it is stored, after the scope is
+// checked with the value as sent.
+func TestMetadataMasked(t *testing.T) {
+	const tok = "sk-aaaaaaaaaaaaaaaaaaaa"
+	host := tok + ".example.com"
+	passHost := tok + ".pass.example.com"
+	allow, _ := ParseAllowHosts([]string{host, passHost}) // exactly these: a masked one is out of scope
+	allow, _ = allow.WithPass([]string{passHost})
+	st := NewStore(10, 1<<20)
+	st.SetScope(allow, true)
+	ev := func(m map[string]any) { st.Apply(line(t, m)) }
+	ev(map[string]any{"ev": "request", "id": "r", "host": host, "url": "https://" + host + "/", "method": tok, "http_version": tok,
+		"headers": [][2]string{{"Host", host}, {"Content-Encoding", tok}}})
+	ev(map[string]any{"ev": "body", "id": "r", "dir": "request", "head": b64("hello"), "size": 5, "final": true,
+		"encoding": tok, "note": `cannot decode Content-Encoding "` + tok + `"`})
+	ev(map[string]any{"ev": "tls_failed", "conn": "c1", "sni": host, "msg": "refused"})
+	ev(map[string]any{"ev": "pass_open", "conn": "c2", "sni": passHost, "alpn": []string{tok}, "ts": 1})
+	ev(map[string]any{"ev": "pass_close", "conn": "c2", "ts_end": 2, "msg": "reset by " + tok})
+	v, err := st.Get("r", true)
+	if err != nil {
+		t.Fatal("the flow was not recorded (its scope checked with the masked host?)")
+	}
+	tls, pass := st.TLSFailures(Filter{Limit: 10}), st.Passthroughs(Filter{Limit: 10})
+	if len(tls) != 1 || len(pass) != 1 {
+		t.Fatalf("not recorded: tls %+v pass %+v", tls, pass)
+	}
+	b, _ := json.Marshal([]any{v, tls, pass})
+	if strings.Contains(string(b), tok[3:]) {
+		t.Errorf("a token left: %s", b)
+	}
+	if v.Host != "[redacted].example.com" || v.ReqBody.Encoding != "[redacted]" {
+		t.Errorf("host %q encoding %q", v.Host, v.ReqBody.Encoding)
+	}
+}

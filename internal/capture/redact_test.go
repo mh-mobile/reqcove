@@ -24,7 +24,7 @@ func TestMaskBody(t *testing.T) {
 		{"form", "application/x-www-form-urlencoded; charset=UTF-8", `grant_type=authorization_code&code=S3CRET-6&client_secret=S3CRET-7&redirect_uri=x`,
 			[]string{"S3CRET-6", "S3CRET-7"}, []string{"grant_type=authorization_code", "redirect_uri=x"}},
 		{"shapes anywhere in text", "text/plain",
-			"auth: Bearer S3CRET8abcdefgh jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRET9sigsig key AKIAS3CRETS3CRETABCD gh ghp_S3CRET0123456789012345678901234567 sk-S3CRETaaaaaaaaaaaaaaaaaa",
+			"auth: Bearer S3CRET8abcdefgh\njwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRET9sigsig key AKIAS3CRETS3CRETABCD gh ghp_S3CRET0123456789012345678901234567 sk-S3CRETaaaaaaaaaaaaaaaaaa",
 			[]string{"S3CRET8", "S3CRET9", "AKIAS3CRET", "ghp_S3CRET", "sk-S3CRET"}, []string{"auth: Bearer [redacted]"}},
 		{"run-together and acronym names", "application/json", `{"accesstoken":"S3CRET-10","APIToken":"S3CRET-11","verification_code":"S3CRET-12","token_type":"Bearer","error_code":"E1"}`,
 			[]string{"S3CRET-10", "S3CRET-11", "S3CRET-12"}, []string{`"token_type":"Bearer"`, `"error_code":"E1"`}},
@@ -186,6 +186,46 @@ func TestSecondReviewLeaks(t *testing.T) {
 }
 
 // A crafted value nested many times over cannot make masking slow.
+// The v0.8.0 review: escapes that hide a credential's shape (\t, \r, \/),
+// in a cut string too, and a secret-named line with a token in its value.
+func TestV080ReviewBodies(t *testing.T) {
+	suffix := `","note":"Basic\tdXNlcjpwYXNzd29yZA==`
+	at64K := `{"pad":"` + strings.Repeat("a", 64<<10-len(`{"pad":"`)-len(suffix)) + suffix
+	for in, secrets := range map[string][]string{
+		`{"note":"Basic\tdXNlcjpwYXNzd29yZA=="}`:           {"dXNlcjpwYXNzd29yZA"},
+		`{"note":"Basic YWJj\/ZGVmZ2hpamtsbW5vcA=="}`:      {"ZGVmZ2hpamtsbW5vcA"},
+		`["Basic\rdXNlcjpwYXNzd29yZA=="]`:                  {"dXNlcjpwYXNzd29yZA"},
+		`{"a":1,"note":"Basic\tdXNlcjpwYXNzd29yZA==`:       {"dXNlcjpwYXNzd29yZA"},
+		`{"a":1,"note":"\x Basic\tdXNlcjpwYXNzd29yZA==`:    {"dXNlcjpwYXNzd29yZA"}, // cut, and not JSON
+		`{"d":"{\"n\":\"Basic\\tdXNlcjpwYXNzd29yZA==\"}"}`: {"dXNlcjpwYXNzd29yZA"},
+		at64K: {"dXNlcjpwYXNzd29yZA"},
+		"password: plainSecret123 Bearer OtherToken456": {"plainSecret123", "OtherToken456"},
+	} {
+		got := string(maskBody([]byte(in), "", true))
+		for _, s := range secrets {
+			if leak(got, s) != "" {
+				t.Errorf("%s left in %.200q", s, got[max(0, len(got)-200):])
+			}
+		}
+	}
+	// What the line keeps: its name, and a scheme only when the value is that credential alone.
+	for in, want := range map[string]string{
+		"password: plainSecret123 Bearer OtherToken456": "password: [redacted]",
+		"authorization: Bearer OtherToken456  ":         "authorization: Bearer [redacted]",
+		"auth: Basic dXNlcjpwYXNzd29yZA== extra":        "auth: [redacted]",
+	} {
+		if got := string(maskBody([]byte(in), "text/plain", true)); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+	// Escaped strings with nothing to mask are left as they were written.
+	for _, in := range []string{`{"url":"https:\/\/h.example\/a\/b?x=1","t":"a\tb"}`, `["line\r\nnext"]`} {
+		if got := string(maskBody([]byte(in), "application/json", true)); got != in {
+			t.Errorf("%q -> %q", in, got)
+		}
+	}
+}
+
 func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
 	start := time.Now()
