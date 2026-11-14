@@ -160,10 +160,17 @@ Found by a code review of v0.8.0; each test fails without its fix.
   `map_local` may answer, that sent a body anyway had all of it held in
   mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
   recorded as an error, and its body is not held; one with no body is
-  answered as before. Tested with Go's HTTP/2 client and real mitmproxy (an
-  endless body gets its 502 at once). macOS's URLSession sends none of these
+  answered as before, as is one whose stream ends with an empty DATA frame
+  instead of with its headers (Go's client does, for a body of unknown
+  length that turns out empty). Tested with Go's HTTP/2 client and real
+  mitmproxy (an endless body, or a single byte, gets its 502 at once; an
+  empty DATA frame, the answer). macOS's URLSession sends none of these
   with an open stream (tried against a test server, without mitmproxy);
-  iPhone apps not tried.
+  iPhone apps not tried. A client that sends the headers and then waits
+  gets its 502 at its first body byte, and with a mitmproxy other than
+  12.3.1 (another `--mitmproxy-spec`), a stream still open after its
+  headers gets the 502 at once, empty DATA frame or not (both from reading
+  code).
 
 ### For people
 
