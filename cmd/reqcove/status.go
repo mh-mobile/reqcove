@@ -160,7 +160,7 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 			hosts = append(hosts, fmt.Sprintf("allowed hosts (connections: %d)", d.RawTCP))
 		}
 		if len(hosts) > 0 {
-			steps = append(steps, fmt.Sprintf("%s's connections to %s were carried as raw TCP, not read as HTTP: a protocol mitmproxy does not take for HTTP (an ALPN name it does not know, not HTTP at all, or one an HTTP request upgraded to), so what they carry is not recorded as flows. list_passthrough lists them (reason raw_tcp: host, protocols, sizes; never their contents)", cmp.Or(d.Name, d.ID), strings.Join(hosts, ", ")))
+			steps = append(steps, fmt.Sprintf("%s's connections to %s were carried as raw TCP, not read as HTTP: a protocol mitmproxy does not take for HTTP (an ALPN name it does not know, when the server spoke first or the client's bytes did not look like HTTP; not HTTP at all; or what an HTTP request upgraded to), so what they carry is not recorded as flows. list_passthrough lists them (reason raw_tcp: host, protocols, sizes; never their contents)", cmp.Or(d.Name, d.ID), strings.Join(hosts, ", ")))
 		}
 		if d.ID == exitnode.Local.ID {
 			if d.TLSFailures > 0 && d.Flows == 0 {
