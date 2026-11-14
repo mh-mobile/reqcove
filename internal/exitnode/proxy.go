@@ -41,9 +41,56 @@ type remoteProxy struct {
 	plainN atomic.Int64
 
 	failed failLog // repeated failures, logged once a minute
+
+	tunnelsMu sync.Mutex
+	tunnels   map[netip.Addr]int // CONNECT tunnels open (or dialing), by client address
 }
 
 const maxPlain = 256
+
+// A client (one address: the local proxy's are all 127.0.0.1) keeps at most
+// maxTunnels CONNECT tunnels open; a tunnel with no bytes either way for
+// tunnelIdle is closed. Vars for tests.
+var (
+	maxTunnels = 256
+	tunnelIdle = 15 * time.Minute
+)
+
+// holdTunnel counts one more tunnel for addr, unless it has maxTunnels.
+func (rp *remoteProxy) holdTunnel(addr netip.Addr) bool {
+	rp.tunnelsMu.Lock()
+	defer rp.tunnelsMu.Unlock()
+	if rp.tunnels[addr] >= maxTunnels {
+		return false
+	}
+	if rp.tunnels == nil {
+		rp.tunnels = map[netip.Addr]int{}
+	}
+	rp.tunnels[addr]++
+	return true
+}
+
+func (rp *remoteProxy) releaseTunnel(addr netip.Addr) {
+	rp.tunnelsMu.Lock()
+	defer rp.tunnelsMu.Unlock()
+	if rp.tunnels[addr]--; rp.tunnels[addr] <= 0 {
+		delete(rp.tunnels, addr)
+	}
+}
+
+// idleConn notes when bytes last came from it, for a tunnel's idle close.
+type idleConn struct {
+	net.Conn
+	last *atomic.Int64
+}
+
+func (c idleConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
 
 // logFailure logs a failed request, the first of its kind at once, then the
 // same again (client address, method, host:port, error) at most once a
@@ -197,6 +244,14 @@ func (rp *remoteProxy) toWeb(hostport string) bool {
 }
 
 func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip.AddrPort, dev Device) {
+	if !rp.holdTunnel(src.Addr()) { // before the dial: dials waiting count too
+		err := fmt.Errorf("%d tunnels open from this client already", maxTunnels)
+		rp.logFailure(src, "CONNECT", r.Host, err)
+		http.Error(w, "reqcove: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer rp.releaseTunnel(src.Addr())
+	idle := tunnelIdle
 	var out net.Conn
 	var err error
 	if rp.toWeb(r.Host) {
@@ -235,10 +290,30 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 			return
 		}
 	}
+	// Closed when no bytes came either way for tunnelIdle: a WebSocket or an
+	// event stream that talks stays open. Only the read sides are wrapped (pipe
+	// half-closes the write side it is given).
+	var last atomic.Int64
+	var ended atomic.Bool
+	last.Store(time.Now().UnixNano())
+	var check func()
+	check = func() {
+		if ended.Load() {
+			return
+		}
+		if wait := idle - time.Since(time.Unix(0, last.Load())); wait > 0 {
+			time.AfterFunc(wait, check)
+			return
+		}
+		c.Close()
+		out.Close()
+	}
+	time.AfterFunc(idle, check)
+	defer ended.Store(true)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go pipe(&wg, out, c)
-	go pipe(&wg, c, out)
+	go pipe(&wg, out, idleConn{c, &last})
+	go pipe(&wg, c, idleConn{out, &last})
 	wg.Wait()
 }
 

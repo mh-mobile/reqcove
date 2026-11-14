@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func line(t *testing.T, m map[string]any) []byte {
@@ -209,7 +210,7 @@ func TestRulesEvent(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	st.Apply(line(t, map[string]any{"ev": "hello", "mitmproxy": "12.3.1", "rules": map[string]int{"map_remote": 1}}))
 	var told []string
-	st.SetRulesLog(func(r map[string]int, _, _ []string, problem string) {
+	st.SetRulesLog(func(r map[string]int, _, _ []string, _ map[string]string, problem string) {
 		told = append(told, fmt.Sprintf("%v %s", r, problem))
 	})
 	st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 2}, "rules_error": ""}))
@@ -256,5 +257,30 @@ func TestMetadataMasked(t *testing.T) {
 	}
 	if v.Host != "[redacted].example.com" || v.ReqBody.Encoding != "[redacted]" {
 		t.Errorf("host %q encoding %q", v.Host, v.ReqBody.Encoding)
+	}
+}
+
+// The rules log is called with the store unlocked: run's calls the store
+// (PresetTargets), which hung every record and tool for good (v0.7.0-v0.8.0).
+// It is handed the presets' targets too.
+func TestRulesLogUnlocked(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	var got string
+	st.SetRulesLog(func(_ map[string]int, _, presets []string, targets map[string]string, _ string) {
+		got = fmt.Sprint(presets, targets, st.PresetTargets(), st.Stats()["rules"])
+	})
+	done := make(chan struct{})
+	go func() {
+		st.Apply(line(t, map[string]any{"ev": "rules", "rules": map[string]int{"map_remote": 1}, "presets": []string{"staging"},
+			"preset_targets": map[string]string{"staging": "https://staging.example"}}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Apply of a rules event did not return: the rules log ran under the store's lock")
+	}
+	if want := "[staging] map[staging:https://staging.example] map[staging:https://staging.example] map[map_remote:1]"; got != want {
+		t.Errorf("told %q, want %q", got, want)
 	}
 }

@@ -259,8 +259,6 @@ func isText(b []byte) bool {
 	return utf8.Valid(b) && !bytes.Contains(b, []byte{0})
 }
 
-// PresetTargets are the map_remote and resolve presets' targets, by name, for
-// run's terminal (not capture_stats: a remote agent reads that).
 // RulesLoaded is when the --rules file was last taken (zero: never).
 func (s *Store) RulesLoaded() time.Time {
 	s.mu.Lock()
@@ -268,6 +266,8 @@ func (s *Store) RulesLoaded() time.Time {
 	return s.rulesLoaded
 }
 
+// PresetTargets are the map_remote and resolve presets' targets, by name, for
+// run's terminal (not capture_stats: a remote agent reads that).
 func (s *Store) PresetTargets() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
