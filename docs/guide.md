@@ -49,7 +49,7 @@ Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
 Ctrl-C at the first question in a terminal (it ended at once, nothing written);
 on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
 installed the skill, printed the commands, and `service install` ran with that
-file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over `ssh -t`, 2026-11-14): found
+file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over ssh with a terminal, 2026-11-14): found
 uvx in `~/.local/bin`, wrote `~/.config/reqcove/config` (0600, its directory
 0700), said no agent was found in that home for the skill (none was there),
 printed `reqcove service install`, and refused off a terminal. Not tried:

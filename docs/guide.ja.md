@@ -25,7 +25,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - 起動のしかた：Homebrew で入れた場合は `brew services start reqcove`、それ以外は `reqcove service install`、またはターミナルで `reqcove run --config FILE` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
 - Ctrl-C を押すと、その質問のところで止まります。それまでに書いたものは残ります。
 
-試したこと：単体テスト（答えを流し込み、一時的なホームディレクトリと Homebrew の prefix で実行）と、ターミナルで最初の質問のときに Ctrl-C を押すこと（すぐに終わり、何も書かれませんでした）と、macOS での実行（2026-11-14：uvx を見つけ、ファイルを書き（0600、ディレクトリは 0700）、Skill を入れ、コマンドを表示し、そのファイルで `service install` が動きました）。Ubuntu 24.04.5 LTS（arm64、tart の VM、`ssh -t` で、2026-11-14）でも試しました：`~/.local/bin` の uvx を見つけ、`~/.config/reqcove/config` を書き（0600、ディレクトリは 0700）、Skill はそのホームにエージェントが見つからないと表示し（実際にありませんでした）、`reqcove service install` を表示し、ターミナルでないときは断りました。試していないこと：setup が書いたファイルでの `brew services`。
+試したこと：単体テスト（答えを流し込み、一時的なホームディレクトリと Homebrew の prefix で実行）と、ターミナルで最初の質問のときに Ctrl-C を押すこと（すぐに終わり、何も書かれませんでした）と、macOS での実行（2026-11-14：uvx を見つけ、ファイルを書き（0600、ディレクトリは 0700）、Skill を入れ、コマンドを表示し、そのファイルで `service install` が動きました）。Ubuntu 24.04.5 LTS（arm64、tart の VM、ターミナル付きの ssh で、2026-11-14）でも試しました：`~/.local/bin` の uvx を見つけ、`~/.config/reqcove/config` を書き（0600、ディレクトリは 0700）、Skill はそのホームにエージェントが見つからないと表示し（実際にありませんでした）、`reqcove service install` を表示し、ターミナルでないときは断りました。試していないこと：setup が書いたファイルでの `brew services`。
 
 残っている手順は `run` が表示し、`reqcove status` でも確認できます。表示された URL でログインし、tailnet が Tailnet Lock を使っていればノードに署名し、Exit Node を承認します。
 
