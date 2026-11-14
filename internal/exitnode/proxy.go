@@ -507,10 +507,12 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 	return c, err
 }
 
-// holdWait bounds how long holdConn keeps a first write back; maxHeld, how much.
+// holdWait bounds how long holdConn keeps a first write back; maxHeld, how
+// much. holdTimer runs f after holdWait and gives its Stop (tests run f by hand).
 var (
-	holdWait = time.Second
-	maxHeld  = 64 << 10
+	holdWait  = time.Second
+	maxHeld   = 64 << 10
+	holdTimer = func(f func()) func() bool { return time.AfterFunc(holdWait, f).Stop }
 )
 
 // holdConn is a SOCKS connection to mitmproxy. mitmproxy (12.3.1) decides on
@@ -521,13 +523,15 @@ var (
 // unrecorded, for good (tried: a first write of 1 or 2 bytes of a
 // ClientHello; of an HTTP request, 1, 2, 3, 10 or 14 bytes, short of "HTTP/"). So a
 // first write that is less of either is held and joined with the next ones,
-// until there is enough, holdWait passes or maxHeld is held.
+// until there is enough, holdWait passes, maxHeld is held or the server
+// speaks (mitmproxy has decided then: a reply to its greeting goes at once).
 type holdConn struct {
 	net.Conn
-	mu    sync.Mutex
-	held  []byte
-	timer *time.Timer
-	sent  atomic.Bool
+	mu   sync.Mutex
+	held []byte
+	stop func() bool // holdTimer's, once something is held
+	sent atomic.Bool // what was held went: the rest goes as it comes
+	err  error       // what was held did not go: every later write fails (the request's start is lost)
 }
 
 func (c *holdConn) Write(p []byte) (int, error) {
@@ -536,14 +540,17 @@ func (c *holdConn) Write(p []byte) (int, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sent.Load() { // holdWait passed meanwhile
+	switch {
+	case c.err != nil:
+		return 0, c.err
+	case c.sent.Load(): // holdWait passed meanwhile, or the server spoke
 		return c.Conn.Write(p)
 	}
 	b := append(c.held, p...)
 	if short(b) {
 		c.held = b
-		if c.timer == nil {
-			c.timer = time.AfterFunc(holdWait, c.flush)
+		if c.stop == nil {
+			c.stop = holdTimer(func() { c.flush() })
 		}
 		return len(p), nil
 	}
@@ -553,28 +560,49 @@ func (c *holdConn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// send writes b, all that was held and more, and holds nothing after. With c.mu.
+// send writes b, all that was held and more, and holds nothing after. On an
+// error the connection is closed: no writer may be waiting for it (holdWait,
+// the server's first bytes), and nothing can go right on it now. With c.mu.
 func (c *holdConn) send(b []byte) error {
-	if c.timer != nil {
-		c.timer.Stop()
+	if c.stop != nil {
+		c.stop()
 	}
 	c.held = nil
-	_, err := c.Conn.Write(b)
+	if len(b) > 0 {
+		if _, c.err = c.Conn.Write(b); c.err != nil {
+			c.Conn.Close()
+			return c.err
+		}
+	}
 	c.sent.Store(true)
-	return err
+	return nil
 }
 
-func (c *holdConn) flush() {
+// flush sends what is held, if it was not sent already.
+func (c *holdConn) flush() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.sent.Load() && len(c.held) > 0 {
-		c.send(c.held) // an error shows on the next Write
+	if !c.sent.Load() && c.err == nil {
+		c.send(c.held)
 	}
+	return c.err
+}
+
+// Read: once the server sent something (one that speaks first), mitmproxy
+// has decided on the connection: nothing more is held.
+func (c *holdConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 && !c.sent.Load() {
+		c.flush()
+	}
+	return n, err
 }
 
 // CloseWrite sends what is held first: pipe half-closes when the client does.
 func (c *holdConn) CloseWrite() error {
-	c.flush()
+	if err := c.flush(); err != nil {
+		return err
+	}
 	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return cw.CloseWrite()
 	}
@@ -582,7 +610,9 @@ func (c *holdConn) CloseWrite() error {
 }
 
 // short says b, a connection's first bytes, is less than mitmproxy needs of a
-// TLS record or an HTTP/1 request line (holdConn).
+// TLS record or an HTTP/1 request line (holdConn). Bytes that cannot start a
+// request line (a method of letters, then no control byte but tab and CR;
+// UTF-8 in a path is held) go at once.
 func short(b []byte) bool {
 	switch {
 	case len(b) == 0:
@@ -590,7 +620,12 @@ func short(b []byte) bool {
 	case b[0] == 0x16: // a TLS handshake record: 0x16 0x03, then the version's minor
 		return len(b) < 3 && (len(b) < 2 || b[1] == 0x03)
 	case 'A' <= b[0] && b[0] <= 'Z': // a method
-		return len(b) < maxHeld && bytes.IndexByte(b, '\n') < 0 && !bytes.Contains(b, []byte("HTTP/"))
+		for i, x := range b {
+			if i < 3 && !('A' <= x && x <= 'Z' || 'a' <= x && x <= 'z') || x < 0x20 && x != '\t' && x != '\r' || x == 0x7f {
+				return false
+			}
+		}
+		return len(b) < maxHeld && !bytes.Contains(b, []byte("HTTP/"))
 	}
 	return false
 }
