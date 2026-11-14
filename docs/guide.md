@@ -455,8 +455,11 @@ is not recorded as flows. Reqcove records the connection instead:
 protocols the client offered and the one it got, bytes each way, inside TLS
 for TLS; never the bytes themselves), `capture_stats` counts it (`raw_tcp`,
 and `raw_tcp_hosts` by device and host, the busiest 30), `list_devices`
-counts it per device (`raw_tcp`), and `reqcove status` names its hosts in
-the next steps. At most 1000 such connections are kept, apart from the
+counts it per device (`raw_tcp`), `reqcove status` names its hosts in
+the next steps, and `list_flows`, `search_flows`, `summarize` and
+`wait_for_flows` with a host filter naming such a host say so in `note`
+(tried through `--local-proxy` with `openssl s_client -alpn grpc-exp`
+to demo.connectrpc.com, 2026-11-15; the note by a unit test). At most 1000 such connections are kept, apart from the
 `--pass-hosts` ones (a unit test). grpc-swift's calls on the iPhone went so
 before Reqcove offered the server `h2` ([gRPC](#grpc)).
 

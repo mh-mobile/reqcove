@@ -117,7 +117,9 @@
   over plain HTTP too, where the connection is named by the request's host
   (each tried with mitmproxy 12.3.1, 2026-11-15; two by the E2E tests below).
   `list_passthrough` lists it with `reason: raw_tcp` (every row now has
-  `reason`: `pass_hosts` or `raw_tcp`), with the protocol the client got
+  `reason`: `pass_hosts` or `raw_tcp`; a host filter naming such a host in
+  `list_flows`, `search_flows`, `summarize` or `wait_for_flows` says so in
+  `note`), with the protocol the client got
   (`alpn_negotiated`) and the bytes relayed each way (inside TLS, for TLS),
   never the bytes themselves; at most 1000 are kept, apart from the
   `--pass-hosts` connections, which they cannot push out. `capture_stats`
