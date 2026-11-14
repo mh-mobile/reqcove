@@ -412,6 +412,54 @@ func TestResolverTriesEveryUpstream(t *testing.T) {
 	}
 }
 
+// TestSOCKSDialTimeout: mitmproxy answers SOCKS only once connected upstream
+// (75 s on macOS for a black-holed address, tried), so a SOCKS dial gives up
+// after dialTimeout, as a direct one does, and says which destination did not
+// answer, or that the client left, rather than x/net's read timeout on the
+// local port.
+func TestSOCKSDialTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // a SOCKS port that never answers
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	defer func(d time.Duration) { dialTimeout = d }(dialTimeout)
+	dialTimeout = 200 * time.Millisecond
+	dst := netip.MustParseAddrPort("192.0.2.1:443")
+	dial := func(ctx context.Context) error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := dialVia(ctx, socks, "dev", ln.Addr().String(), "pw", nil, dst)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("a SOCKS dial waited past dialTimeout")
+			return nil
+		}
+	}
+	if err := dial(context.Background()); err == nil || err.Error() != "192.0.2.1:443 did not answer within 200ms (through mitmproxy)" {
+		t.Errorf("timeout: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background()) // the client leaves first (a request's context is canceled)
+	defer cancel()
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if err := dial(ctx); err == nil || err.Error() != "the client left before 192.0.2.1:443 answered (through mitmproxy)" {
+		t.Errorf("client left: %v", err)
+	}
+}
+
 // TestDialWaitsForReady: a SOCKS dial goes to the port only once ready says
 // mitmproxy is up; while it is not, nothing reaches whoever holds the port
 // (another local process, after mitmproxy died), and the dial fails after
