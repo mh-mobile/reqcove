@@ -275,21 +275,21 @@ func logCapture(o *runOpts, cap *capture.Capture, upstreamCAFile string) {
 // each time it is taken again.
 func logRules(o *runOpts, cap *capture.Capture, s map[string]any) {
 	log.Printf("rules from %s: %v", o.rules, s["rules"])
-	logPresets := func(names []string) {
+	logPresets := func(names []string, targets map[string]string) {
 		if len(names) > 0 {
-			log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, cap.Store.PresetTargets()), ", "))
+			log.Printf("presets (off until an agent turns one on, for at most 5 minutes; -> where one sends requests while on): %s", strings.Join(presetNames(names, targets), ", "))
 		}
 	}
-	logPresets(statsPresets(s))
+	logPresets(statsPresets(s), cap.Store.PresetTargets())
 	if o.rulesReload {
 		log.Printf("--rules-reload: %s is taken again whenever it changes", o.rules)
-		cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, problem string) {
+		cap.Store.SetRulesLog(func(r map[string]int, resolve, presets []string, targets map[string]string, problem string) {
 			if problem != "" {
 				log.Printf("--rules: %s does not load (%s); the rules before it still apply%s", o.rules, problem, presetsOff(presets))
 				return
 			}
 			log.Printf("rules from %s, again: %v%s", o.rules, r, presetsOff(presets))
-			logPresets(presets)
+			logPresets(presets, targets)
 			if len(resolve) > 0 {
 				log.Printf("resolve: %s", strings.Join(resolve, ", "))
 			}
