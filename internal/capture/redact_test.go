@@ -412,7 +412,7 @@ func TestV080OpusReview(t *testing.T) {
 	}
 
 	// key as one word, a number after it too; primary is no everyday word.
-	for _, n := range []string{"primaryKey", "PrimaryKey", "primary_key", "key1", "Key2", "apiKey2", "pin1", "x-key-2"} {
+	for _, n := range []string{"primaryKey", "PrimaryKey", "primary_key", "key1", "Key2", "apiKey2", "pin1", "x-key-2", "http2_key", "iso3166_code", "state2_key"} {
 		if !secretName(n) {
 			t.Errorf("%s not secret", n)
 		}

@@ -628,12 +628,11 @@ func secretKind(name string, loneCode bool) bool {
 	}
 	words := nameWords(name)
 	everyday := false
-	for i, w := range words {
-		words[i] = strings.TrimRight(w, "0123456789") // key1, pin2: the word with a number after it
-		everyday = everyday || everydayWords[words[i]]
+	for _, w := range words {
+		everyday = everyday || everydayWords[w]
 	}
 	for _, w := range words {
-		if !shortSecretWords[w] {
+		if w = strings.TrimRight(w, "0123456789"); !shortSecretWords[w] { // key1, pin2: the word with a number after it
 			continue
 		}
 		switch {
