@@ -142,7 +142,7 @@ func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string, tt
 				continue
 			}
 			tty.flush()
-			fmt.Fprintf(out, "LAN client %v wants to send through this Mac (its requests to the allowed hosts are recorded). Allow %v? [y/N] ", a, a)
+			fmt.Fprintf(out, "LAN client %v wants to send through this computer (its requests to the allowed hosts are recorded). Allow %v? [y/N] ", a, a)
 			// A new reader each time: nothing read ahead outlives the question.
 			ans, err := bufio.NewReader(in).ReadString('\n')
 			if errors.Is(err, io.EOF) && ans == "" {
@@ -370,7 +370,7 @@ func wordsAndFlags(args []string) (words, flags []string) {
 
 func lanIn(in, out *os.File, state, sub, arg, use string) error {
 	if !isTerminal(in) || !isTerminal(out) {
-		return errors.New("reqcove lan runs only in a terminal: it decides who may send through this Mac. Run it in your own terminal")
+		return errors.New("reqcove lan runs only in a terminal: it decides who may send through this computer. Run it in your own terminal")
 	}
 	switch sub {
 	case "list":
@@ -399,7 +399,7 @@ func lanIn(in, out *os.File, state, sub, arg, use string) error {
 			return err
 		}
 		if added {
-			fmt.Fprintf(out, "%v allowed: it may send through this Mac in LAN mode, and its requests to the allowed hosts are recorded (a running run takes it within seconds)\n", addr)
+			fmt.Fprintf(out, "%v allowed: it may send through this computer in LAN mode, and its requests to the allowed hosts are recorded (a running run takes it within seconds)\n", addr)
 		} else {
 			fmt.Fprintf(out, "%v was allowed already\n", addr)
 		}

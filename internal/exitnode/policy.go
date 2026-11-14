@@ -61,7 +61,7 @@ func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
 	case !d.Is4():
 		return reject, "IPv6 is not carried"
 	case d.IsLoopback(), d.IsUnspecified(), slices.Contains(p.local, d):
-		return reject, "this Mac"
+		return reject, "this computer"
 	case d.IsLinkLocalUnicast():
 		return reject, "a link-local address"
 	case p.network.Contains(d):
@@ -71,7 +71,7 @@ func decideLAN(p *policy, dst netip.AddrPort, exact bool) (verdict, string) {
 	}
 	inPrivate := slices.ContainsFunc(private, func(pfx netip.Prefix) bool { return pfx.Contains(d) })
 	if !inPrivate && slices.ContainsFunc(p.onLink, func(pfx netip.Prefix) bool { return pfx.Contains(d) }) {
-		return reject, "a network of this Mac" // a LAN numbered from public space is still a LAN
+		return reject, "a network of this computer" // a LAN numbered from public space is still a LAN
 	}
 	if inPrivate && !exact {
 		return reject, "a private address: only an exact --allow-hosts name (no *) may lead there"
