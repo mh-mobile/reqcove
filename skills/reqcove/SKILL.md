@@ -14,7 +14,9 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
 ## Rules
 
 - Never start, stop or restart `reqcove run`, nor run `reqcove cleanup` (it
-  can put the system's proxy settings back). The commands you may run:
+  can put the system's proxy settings back) or `reqcove service install`,
+  `service restart` or `service uninstall` (they start and stop `run`: a
+  restart or an uninstall empties the records). The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock
   add --print` when the user asks.
 - `activate_preset` and `activate_mock` change what the device gets, and a

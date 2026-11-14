@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：初期段階です**（v0.6）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
+> **開発状況：初期段階です**（v0.7）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
 
 ## 必要なもの
 
@@ -110,7 +110,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 
 ### Tailscale を使わずに（LAN モード）
 
-同じネットワークなら、Tailscale なしで、iPhone がこのコンピュータを Wi-Fi のプロキシとして使うこともできます。`reqcove run --lan --allow-hosts api.example.com` を実行し、iPhone の Wi-Fi のプロキシ設定（手動）に `run` が表示するアドレスとポートを入力して、このコンピュータで iPhone のアドレスを許可します（`run` が質問するか、`reqcove lan allow ADDR`）。Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありません。許可したアドレスはこのコンピュータを通して通信できます。自宅の Wi-Fi の iPhone（iOS 27.3）で試しました。届く先とつながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。
+同じネットワークなら、Tailscale なしで、iPhone がこのコンピュータを Wi-Fi のプロキシとして使うこともできます。`reqcove run --lan --allow-hosts api.example.com` を実行し、iPhone の Wi-Fi のプロキシ設定（手動）に `run` が表示するアドレスとポートを入力して、このコンピュータで iPhone のアドレスを許可します（`run` が質問するか、`reqcove lan allow ADDR`）。続いて、デバイスごとに 1 回、CA を信頼します。プロキシを設定した状態で `http://mitm.it` を開くか、`run` が表示する CA のファイルを AirDrop で送り、`run` が表示する SHA-256 とプロファイルの「詳細」の値を照合します。インストールと信頼は上の手順 3 と同じです。Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありません。許可したアドレスはこのコンピュータを通して通信できます。自宅の Wi-Fi の iPhone（iOS 27.3）で試しました。届く先とつながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。
 
 ## セキュリティ
 

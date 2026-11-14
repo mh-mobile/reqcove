@@ -2,7 +2,7 @@
 
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.6.
+come from reading code rather than from a test say so. It describes v0.7.
 
 ## Trust
 
@@ -313,7 +313,7 @@ login (from reading code).
 
 ## Prompt injection
 
-Reqcove's tools read (the one exception, [mock presets](#mock-presets), turns
+Reqcove's tools read (the one exception, [presets](#mock-presets), turns
 on only what you wrote), but an agent that reads them may also hold other
 tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
@@ -345,9 +345,11 @@ request still goes where the connection went). User-Agents in lists and summarie
 are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
 `diff_flows` that are not plain names are quoted (`$["a.b"]`).
 The MCP tools read, with one exception: an agent can turn on, for at most 5
-minutes each time (no cap on turning it on again), a mock you marked as a
-preset ([Mock presets](#mock-presets)); `add_marker` writes too, but only a
-marker in Reqcove's memory. No tool
+minutes each time (no cap on turning it on again), a rule you marked as a
+preset: a mock ([Mock presets](#mock-presets)), or since v0.7 a `map_remote`,
+`modify_headers` or `resolve` rule, which changes what requests carry or where they go
+([map_remote, modify_headers and resolve presets](#map_remote-modify_headers-and-resolve-presets));
+`add_marker` writes too, but only a marker in Reqcove's memory. No tool
 writes or changes a rule; with no presets, nothing an agent calls changes
 traffic. (`--rules` are yours, from a file, at start.)
 
@@ -650,8 +652,9 @@ Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
 other computers: the token is what tells them apart. Whatever the tools answer
 then reaches that device and its model provider (for Grok Bot, xAI's cloud),
 and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp` but the preset ones and
-`list_rules` and `explain_rules`, which `--mcp-http`'s own server does not have
+The tools are the same as over `reqcove mcp` but the preset ones,
+`list_rules` and `explain_rules`, and the marker tools (`add_marker`,
+`list_markers`), which `--mcp-http`'s own server does not have
 (a test), and give the same masked records.
 `run` logs each tool call over HTTP with the calling device and the tool's
 name (not its arguments), and each request with no token or a wrong one.
@@ -781,8 +784,9 @@ known), from releases before a fixed date (`--exclude-newer`). CI
 checks that the lock matches the launcher and audits it for known
 vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
 mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
-overrides it to 6.6, which fixes them (Reqcove's `--web` test passes with it;
-mitmproxy's own tests were not run).
+overrides it, and pins 6.6.1: 6.6 fixed those three, and 6.6 itself has
+CVE-2026-126347 (Reqcove's `--web` test passes with 6.6.1; mitmproxy's own
+tests were not run).
 
 ## The exit node's DNS
 

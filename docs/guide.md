@@ -174,7 +174,10 @@ reqcove service uninstall     # stops it and removes the file
   `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
   `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
   Homebrew's code, not tried): two services would fight over the state
-  directory. Installed already: `reqcove service restart` to start it again;
+  directory. Refused too for Homebrew's own binary, whose path (in its
+  Cellar) `brew upgrade` removes: run `reqcove setup`, which writes the
+  file Homebrew's service reads, then `brew services start reqcove` (a unit
+  test). Installed already: `reqcove service restart` to start it again;
   `reqcove service uninstall`, then install again, to change its flags on
   the command line or after moving the binary.
 - The log: `service.log` in the state directory on macOS (not rotated:
@@ -216,8 +219,9 @@ at the next login, which makes the state directory anew: stop it first
 `claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
 this computer the [MCP tools](#mcp-tools). They read, and secrets are
 masked as they arrive; the one change they can make is to turn on, for at most
-5 minutes each time (no cap on turning it on again), a mock you marked as a
-[preset](#presets-an-agent-can-turn-on)
+5 minutes each time (no cap on turning it on again), a rule you marked as a
+[preset](#presets-an-agent-can-turn-on): a mock, or since v0.7 a `map_remote`,
+`modify_headers` or `resolve` rule, which changes what requests carry or where they go
 (with none, they only read; over `--mcp-http`, never), and they can put a
 [marker](#mark-a-moment-reqcove-mark), which changes nothing on the device
 ([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
@@ -713,7 +717,9 @@ The records name the device `lan:ADDR`; the tools' `device` filter and
 `reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
 last request this run. `reqcove status` (and the `status` tool, as
 `mode: "lan"`) shows where it listens, the allowed addresses and the ones
-refused this run (up to 10,000: the list is emptied when it fills).
+refused this run: the 50 last seen, and how many more (`refused_more`), as
+anyone on the network can add to them (the list behind them holds up to
+10,000 and is emptied when it fills).
 
 There is no password. Who may use the proxy is decided on this computer, by
 address, as in Charles Proxy (its documentation describes an access control

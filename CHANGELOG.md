@@ -4,6 +4,83 @@
 
 ### For people
 
+- `run --lan`: LAN mode without Tailscale, an HTTP proxy on this computer's
+  LAN address for the client addresses you allow (`reqcove lan allow ADDR`,
+  or run's question), recorded as `lan:ADDR`; ports 80 and 443 only, private
+  hosts only for exact `--allow-hosts` names, never this computer or its own
+  network. Refused in `--config`. The ready block says what to enter on the
+  iPhone, who is allowed, and the CA's file and SHA-256 (plain HTTP on a LAN
+  can be swapped); `reqcove status` shows the allowed addresses and the
+  refused ones (the 50 last seen, and how many more; unit tests). README, the
+  guide and SECURITY have a section. Tried with an iPhone on a home Wi-Fi
+  (iOS 27.3): allowed, recorded, denied.
+- Presets of `map_remote`, `modify_headers` (requests only) and `resolve`: a
+  rule written as `{rule: "…", preset: NAME}` applies only while an agent turns
+  it on, for at most 5 minutes each time, as mock presets. A `map_remote`
+  preset sends the app's requests, cookies and tokens to its target: SECURITY
+  has a section on what that allows. Targets are shown in the ready block, the
+  log, `list_presets` and (the ones on) `reqcove status`; a request a preset
+  would send outside its target gets a 502; refused at load: a target that cannot be shown,
+  with a user or password, or plain `http://` beyond this computer and the LAN.
+  `capture_stats.rules` and run's "rules from FILE" log count them in their
+  kind, as they count mock presets (a test with mitmproxy's Python).
+  Tried on an iPhone (LAN mode): a `map_remote` preset to a dev server on this
+  Mac. Not tried on an iPhone: `resolve` and `modify_headers` presets.
+- `reqcove setup`: the first run, in a terminal only. It checks uv (printing
+  how to install it), asks for the device and the hosts to record and writes
+  them to the file the service reads, `~/.config/reqcove/config` or, for a
+  brew install, Homebrew's `etc/reqcove/config` (0600; an existing file is
+  shown and kept unless you say to replace it, then kept as `config.old`; `*`
+  and refused flags never written), adds the skill as `reqcove init` does if
+  you say so, prints `claude mcp add reqcove -- reqcove mcp`, and says how to
+  start (`brew services`, `reqcove service install`, or `run --config` in a
+  terminal). It starts nothing and prints no login URL; Ctrl-C stops it. README
+  starts with it; the guide's First start has the details; the Homebrew
+  formula's caveats name it. Unit tests, Ctrl-C in a terminal, and a run on
+  macOS. Not tried on Linux.
+- `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
+  Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
+  user unit (Linux) running `run --config ~/.config/reqcove/config` (or
+  `--config FILE`); the log in the state directory's `service.log` (macOS) or
+  journald. Refused while Homebrew's service is there; for Homebrew's own
+  binary, whose path `brew upgrade` removes (it names `reqcove setup`, then
+  `brew services start reqcove`; a unit test); and for a config file
+  missing, readable by others, or with `--no-redact`, `--web`,
+  `--rules-reload` or `--lan`. `reqcove status` names it and says how to stop it. The
+  guide has a section. Tried on macOS: install (an iPhone recorded), a sleep,
+  a start at login after a reboot, and uninstall. Not tried yet: `service
+  restart`, Linux.
+- `list_rules` and `explain_rules`: an agent can list the `--rules` file's
+  rules (never their filters, values or bodies) and say which of them apply to
+  a request, and why one did not (For agents has the details).
+- `reqcove mark [TEXT]` puts a marker among the records (a time and a
+  checkpoint to read from), in your terminal only; agents put theirs with
+  `add_marker`. At most 80 characters on one line, masked; at most 100 per
+  source (`cli`, `mcp`: the channel, not proof); in memory only. It gives up
+  after 5 seconds when `run` takes the connection but does not answer
+  (stopped with Ctrl-Z; a unit test). The guide has a section. `add_marker`
+  used from Claude Code during an iPhone sitting; `reqcove mark` not tried by
+  hand.
+- `reqcove mock add --rules FILE --url URL …` adds a mock to a rules file,
+  keeping the file's text, comments and order; refused when `mock:` is not the
+  last block or is in flow style. The whole file is checked first by the
+  addon's loader (by the running `run`, with its hosts, else by mitmproxy's
+  Python, hosts unchecked) and written at once, its mode kept. In your
+  terminal only (a help, not a guarantee); `--print` shows the mock without
+  writing. The guide has a section. Tried with the tests, not by hand.
+- XML bodies (`text/xml`, `application/xml`, `application/*+xml` such as
+  SOAP) are masked by names: an element or attribute whose local name
+  (`wsse:Password`) is one JSON's keys are masked by, the element's whole
+  content (CDATA and child elements too), a SAML `Assertion` whole (a bearer
+  credential), and in a plist the value after a secret `<key>`. Changed in
+  place, the rest as it came; a head cut inside a secret element is masked to
+  its end; no DTD is read. The text masking still applies on top. SECURITY
+  lists the limits. Tests and an E2E test with a SOAP request.
+
+- mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
+  v0.6.0's lock has tornado 6.6: updating to v0.7.0 is the fix. tornado is
+  mitmweb's server (`--web`; from reading code). Reqcove's `--web` test passes
+  with 6.6.1.
 - The guide says RoamRun works alongside `--local-proxy` (tried with RoamRun
   0.12.0 and its PR #253: doctor, and a bridge over the tailnet to Ready).
 - LAN mode prints the CA's SHA-256 as iOS shows it (`ab 90 7e …`) and where:
@@ -18,91 +95,56 @@
   in their commands when `reqcove` on `PATH` is not it.
 - `reqcove service install` (macOS) makes `service.log` 0600 (launchd made it
   0644). Unit test only.
-
-- `reqcove setup`: the first run, in a terminal only. It checks uv (printing
-  how to install it), asks for the device and the hosts to record and writes
-  them to the file the service reads, `~/.config/reqcove/config` or, for a
-  brew install, Homebrew's `etc/reqcove/config` (0600; an existing file is
-  shown and kept unless you say to replace it, then kept as `config.old`; `*`
-  and refused flags never written), adds the skill as `reqcove init` does if
-  you say so, prints `claude mcp add reqcove -- reqcove mcp`, and says how to
-  start (`brew services`, `reqcove service install`, or `run --config` in a
-  terminal). It starts nothing and prints no login URL; Ctrl-C stops it. README
-  starts with it; the guide's First start has the details. Unit tests,
-  Ctrl-C in a terminal, and a run on macOS. Not tried on Linux.
-- mitmproxy's lock takes tornado 6.6.1: 6.6 has CVE-2026-126347 (pip-audit).
-- `reqcove service install` (`service restart`, `service uninstall`): `run` at login without
-  Homebrew, as `brew services` does, from a LaunchAgent (macOS) or a systemd
-  user unit (Linux) running `run --config ~/.config/reqcove/config` (or
-  `--config FILE`); the log in the state directory's `service.log` (macOS) or
-  journald. Refused while Homebrew's service is there, and for a config file
-  missing, readable by others, or with `--no-redact`, `--web`,
-  `--rules-reload` or `--lan`. `reqcove status` names it and says how to stop it. The
-  guide has a section. Tried on macOS: install (an iPhone recorded), a sleep,
-  a start at login after a reboot, and uninstall. Not tried yet: `service
-  restart`, Linux.
 - `--local-proxy` also keeps the tailnet's IPv6 range (`fd7a:115c:a1e0::/48`)
   out of the proxy, as its IPv4 range already was.
 - The guide shows which Reqcove tools to allow by name in Claude Code's
   settings, with the preset tools under `ask`; says that Claude Code's `!`
   gets nothing from `reqcove links` (tried), and that `status` over
   `--mcp-http` has no `active_mock_presets`.
-- `run --lan`: LAN mode without Tailscale, an HTTP proxy on this computer's
-  LAN address for the client addresses you allow (`reqcove lan allow ADDR`,
-  or run's question), recorded as `lan:ADDR`; ports 80 and 443 only, private
-  hosts only for exact `--allow-hosts` names, never this computer or its own
-  network. Refused in `--config`. The ready block says what to enter on the
-  iPhone, who is allowed, and the CA's file and SHA-256 (plain HTTP on a LAN
-  can be swapped); `reqcove status` shows the allowed and refused addresses.
-  README, the guide and SECURITY have a section. Tried with an iPhone on a
-  home Wi-Fi (iOS 27.3): allowed, recorded, denied.
-- Presets of `map_remote`, `modify_headers` (requests only) and `resolve`: a
-  rule written as `{rule: "…", preset: NAME}` applies only while an agent turns
-  it on, for at most 5 minutes each time, as mock presets. A `map_remote`
-  preset sends the app's requests, cookies and tokens to its target: SECURITY
-  has a section on what that allows. Targets are shown in the ready block, the
-  log, `list_presets` and (the ones on) `reqcove status`; a request a preset
-  would send outside its target gets a 502; refused at load: a target that cannot be shown,
-  with a user or password, or plain `http://` beyond this computer and the LAN.
-  Tried on an iPhone (LAN mode): a `map_remote` preset to a dev server on this
-  Mac. Not tried on an iPhone: `resolve` and `modify_headers` presets.
-- XML bodies (`text/xml`, `application/xml`, `application/*+xml` such as
-  SOAP) are masked by names: an element or attribute whose local name
-  (`wsse:Password`) is one JSON's keys are masked by, the element's whole
-  content (CDATA and child elements too), a SAML `Assertion` whole (a bearer
-  credential), and in a plist the value after a secret `<key>`. Changed in
-  place, the rest as it came; a head cut inside a secret element is masked to
-  its end; no DTD is read. The text masking still applies on top. SECURITY
-  lists the limits. Tests and an E2E test with a SOAP request.
-- `reqcove mark [TEXT]` puts a marker among the records (a time and a
-  checkpoint to read from), in your terminal only; agents put theirs with
-  `add_marker`. At most 80 characters on one line, masked; at most 100 per
-  source (`cli`, `mcp`: the channel, not proof); in memory only. The guide has
-  a section. `add_marker` used from Claude Code during an iPhone sitting;
-  `reqcove mark` not tried by hand.
-- `reqcove mock add --rules FILE --url URL …` adds a mock to a rules file,
-  keeping the file's text, comments and order; refused when `mock:` is not the
-  last block or is in flow style. The whole file is checked first by the
-  addon's loader (by the running `run`, with its hosts, else by mitmproxy's
-  Python, hosts unchecked) and written at once, its mode kept. In your
-  terminal only (a help, not a guarantee); `--print` shows the mock without
-  writing. The guide has a section. Tried with the tests, not by hand.
+- SECURITY's promise of what the tools can change names every kind of preset,
+  not mocks only; the README's LAN paragraph says how to trust the CA.
+
+### Upgrading from v0.6
+
+- `list_mock_presets`, `activate_mock` and `deactivate_mock` stay, for mocks
+  only: `list_presets`, `activate_preset` and `deactivate_preset` take the
+  other kinds.
+- `status`'s `active_mock_presets` holds the presets on of every kind, each
+  with `kind`; `list_mock_presets` leaves out fields that do not apply
+  instead of giving `null`.
+- Flows gain `presets`, `status` gains `mode` and (in LAN mode) `lan`, and
+  `list_devices` gains `first_seen`.
+- If you allowed `"mcp__reqcove"` wholesale in Claude Code, that now also
+  allows `activate_preset` (a `map_remote` preset sends the app's requests
+  and credentials to its target) and `add_marker`: allow the read tools by
+  name instead (the guide lists them).
+- Run `reqcove init` (or `reqcove setup`) again to update the skill.
+- Homebrew: `brew trust --formula mh-mobile/tap/reqcove`, then
+  `brew upgrade reqcove`.
 
 ### For agents
 
+- `reqcove mcp` dials `run` again once its connection ends (`run` stopped),
+  so the first call after a restart reaches the new `run` instead of failing
+  on the dead session; its note after a restart says markers are gone too
+  and every preset is off.
+- The skill and the server's instructions: never run `reqcove service` (it
+  starts and stops `run`).
 - The skill: never run `reqcove mock add`; with `--print`, only when the user
   asks.
-
 - The skill's rules example has a mock preset (`preset:`, `description:`,
   `delay_ms`).
 - `status` has `mode` (`tailnet` or `lan`) and, in LAN mode, `lan` (where it
   listens, the allowed addresses and when, in local time with milliseconds as
-  the other times, those refused this run, up to 10,000);
+  the other times, and those refused this run: the 50 last seen, with
+  `refused_more` for the rest);
   `list_devices` has `first_seen`. The skill and the server's instructions:
   never run `reqcove lan`.
 - `list_presets`, `activate_preset`, `deactivate_preset` for presets of every
   kind (`kind`); `list_mock_presets`, `activate_mock`, `deactivate_mock` take
-  mocks only. A flow lists the presets that changed or answered it in
+  mocks only, and when mitmproxy does not answer in time they point to
+  `list_mock_presets`, not `list_presets` (which a v0.6 `reqcove mcp` lacks).
+  A flow lists the presets that changed or answered it in
   `presets`; `status`'s `active_mock_presets` has every kind, with `kind`.
   `list_mock_presets` leaves out fields that do not apply (a method of any:
   no `method`) instead of `null`.
