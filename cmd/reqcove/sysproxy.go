@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/mh-mobile/reqcove/internal/capture"
 )
 
 // withSystemProxy, on macOS with the local proxy on, points the system's web
@@ -318,4 +320,34 @@ func macTrustCommand(pem string) string {
 // macUntrustCommand removes the CA, by its fingerprint, and the trust in it.
 func macUntrustCommand(sha256 string) string {
 	return "security delete-certificate -t -Z " + strings.ReplaceAll(sha256, ":", "") + " " + loginKeychain
+}
+
+// logLocalProxy says what --local-proxy records and how to point apps at it;
+// on macOS it also adds the CA to the booted iOS Simulators.
+func logLocalProxy(state string, allow capture.HostRules, caSHA256 string) {
+	localAddr := fmt.Sprintf("127.0.0.1:%d", localProxyPort)
+	caPEM := filepath.Join(state, "mitmproxy", "mitmproxy-ca-cert.pem")
+	trusted := macTrusts(caPEM)
+	switch {
+	case allow.All && trusted:
+		log.Print("WARN: --local-proxy with --allow-hosts '*', and this computer trusts Reqcove's CA: every HTTPS site its apps open (but Apple's) is decrypted and recorded")
+	case allow.All:
+		log.Print("WARN: --local-proxy with --allow-hosts '*': every HTTPS site this computer's apps open is decrypted, and fails in those that do not trust Reqcove's CA (Safari here, say)")
+	}
+	if runtime.GOOS == "darwin" {
+		if trusted {
+			log.Printf("this Mac trusts Reqcove's CA: its own browsers' requests to the allowed hosts are decrypted and recorded too, as \"local\" (to stop: %s)", macUntrustCommand(caSHA256))
+		}
+		localCA = caPEM // nextSteps says how to trust it, while this Mac does not
+		log.Printf("local proxy on %s, recorded as the device \"local\"", localAddr)
+		if sims, err := trustInSimulators(caPEM); err != nil {
+			log.Printf("WARN: the CA into the iOS Simulator: %v", err)
+		} else if len(sims) > 0 {
+			log.Printf("CA added to the booted iOS Simulators: %s (one booted later: xcrun simctl keychain booted add-root-cert %s)", strings.Join(sims, ", "), shellWord(caPEM))
+		} else {
+			log.Printf("no iOS Simulator booted: once one is, xcrun simctl keychain booted add-root-cert %s", shellWord(caPEM))
+		}
+	} else {
+		log.Printf("local proxy on %s: point apps at it (HTTPS_PROXY=http://%s HTTP_PROXY=http://%s NO_PROXY=localhost,127.0.0.1) and have them trust the CA %s (docs/guide.md, The iOS Simulator, has the commands); recorded as the device \"local\"", localAddr, localAddr, localAddr, caPEM)
+	}
 }
