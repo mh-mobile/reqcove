@@ -37,22 +37,11 @@ func markIn(ctx context.Context, in, out *os.File, state, text string) error {
 }
 
 func sendMark(ctx context.Context, w io.Writer, state, text string) error {
-	// Bounded as reqcove mcp bounds it: a run stopped with Ctrl-Z takes the
-	// connection but never answers.
-	hctx, cancel := context.WithTimeout(ctx, mcpserver.Handshake)
-	defer cancel()
-	var d net.Dialer
-	conn, err := d.DialContext(hctx, "unix", filepath.Join(state, "mcp.sock"))
-	if err != nil {
+	cs, err := dialRun(ctx, state, mcpserver.MarkClient)
+	if errors.Is(err, errNotRunning) {
 		return fmt.Errorf("reqcove is not running (%s): nothing to mark", state)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: mcpserver.MarkClient, Version: version}, nil).Connect(hctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
-	if err != nil {
-		conn.Close()
-		if hctx.Err() != nil && ctx.Err() == nil {
-			return fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): nothing marked", state, mcpserver.Handshake)
-		}
-		return err
+	} else if err != nil {
+		return fmt.Errorf("%w: nothing marked", err)
 	}
 	defer cs.Close()
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "add_marker", Arguments: map[string]any{"text": text}})
@@ -75,4 +64,36 @@ func sendMark(ctx context.Context, w io.Writer, state, text string) error {
 	}
 	fmt.Fprintf(w, "marker %d at %s\n", out.ID, out.Time)
 	return nil
+}
+
+var (
+	errNotRunning = errors.New("reqcove is not running")
+	errStarting   = errors.New("reqcove is starting, or stopping")
+)
+
+// dialRun connects to the running reqcove's MCP socket as client, the
+// handshake bounded as reqcove mcp bounds it: a run stopped with Ctrl-Z takes
+// the connection but never answers. No socket to connect to: errNotRunning,
+// or errStarting while a run holds the state's lock (it serves the socket
+// once mitmproxy is up, up to 2 minutes; and stops serving it first).
+func dialRun(ctx context.Context, state, client string) (*mcp.ClientSession, error) {
+	hctx, cancel := context.WithTimeout(ctx, mcpserver.Handshake)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(hctx, "unix", filepath.Join(state, "mcp.sock"))
+	if err != nil {
+		if stateHeld(state) {
+			return nil, fmt.Errorf("%w (%s): its tools are not up (mitmproxy starts first, and the first start downloads it): try again in a moment", errStarting, state)
+		}
+		return nil, errNotRunning
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: client, Version: version}, nil).Connect(hctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
+	if err != nil {
+		conn.Close()
+		if hctx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?)", state, mcpserver.Handshake)
+		}
+		return nil, err
+	}
+	return cs, nil
 }

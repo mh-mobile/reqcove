@@ -832,7 +832,13 @@ vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
 mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
 overrides it, and pins 6.6.1: 6.6 fixed those three, and 6.6 itself has
 CVE-2026-126347 (Reqcove's `--web` test passes with 6.6.1; mitmproxy's own
-tests were not run).
+tests were not run). Through a `--uvx` wrapper, the default mitmproxy gets the
+lock's override too, with tornado from the lock's date: 6.6.1 (tried on
+2026-11-14 with uv 0.13.4: the other packages came at the lock's versions,
+and the `--web` tests passed), its hashes unchecked; up to v0.8.0 it got 6.5.10. Another
+`--mitmproxy-spec` gets the tornado its mitmproxy asks for, without the
+override (from reading code): for mitmproxy 12.3.1, 6.5.10 (tried), whose
+vulnerabilities are in mitmweb's server, which `--web` runs.
 
 ## The exit node's DNS
 

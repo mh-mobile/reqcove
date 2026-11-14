@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -266,4 +267,14 @@ func lockState(dir string) (func(), error) {
 		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or a service: stop it first, such as with brew services stop reqcove or reqcove service uninstall)", dir)
 	}
 	return func() { f.Close() }, nil
+}
+
+// stateHeld reports whether a run holds dir's lock (lockState), making no file.
+func stateHeld(dir string) bool {
+	f, err := os.Open(filepath.Join(dir, "lock"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return errors.Is(syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB), syscall.EWOULDBLOCK)
 }
