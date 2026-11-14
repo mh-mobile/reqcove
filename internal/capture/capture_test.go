@@ -205,6 +205,9 @@ func TestEndToEnd(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "a=1")
 		w.Header().Add("Set-Cookie", "b=2")
+		if r.URL.Path == "/joined-cookies" { // one line joining two cookies: recorded as sent, each masked
+			w.Header().Add("Set-Cookie", "c=1; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, d=s3cret; HttpOnly")
+		}
 		if r.URL.Path == "/many-headers" { // a site can send many: the record keeps a bounded number
 			for i := range 600 {
 				w.Header().Add(fmt.Sprintf("X-H%d", i), "v")
@@ -235,21 +238,26 @@ func TestEndToEnd(t *testing.T) {
 	}
 	t.Logf("%d requests through mitmdump in %v", n, time.Since(sendStart).Round(10*time.Millisecond))
 	// A secret query value is masked as it arrives.
-	if resp, err := hc.Get(backend.URL + "/login?user=u&token=abc123"); err == nil {
-		resp.Body.Close()
+	for _, p := range []string{"/login?user=u&token=abc123", "/joined-cookies"} {
+		if resp, err := hc.Get(backend.URL + p); err == nil {
+			resp.Body.Close()
+		}
 	}
 
-	h.waitFlows(n + 1)
+	h.waitFlows(n + 2)
 	s := h.stats()
 	t.Logf("stats: %v", s)
-	if h.stat("flows") != n+1 || h.stat("addon_dropped_bodies") != 0 || h.stat("addon_dropped_events") != 0 || h.stat("orphan_updates") != 0 || h.stat("bad_lines") != 0 {
-		t.Errorf("want %d flows and no drops, got %v", n+1, s)
+	if h.stat("flows") != n+2 || h.stat("addon_dropped_bodies") != 0 || h.stat("addon_dropped_events") != 0 || h.stat("orphan_updates") != 0 || h.stat("bad_lines") != 0 {
+		t.Errorf("want %d flows and no drops, got %v", n+2, s)
 	}
 	if s["brotli_decode"] != true {
 		t.Errorf("hello: brotli decoding off (%v)", s["brotli"])
 	}
 	if login := h.doneFlow("/login", false); strings.Contains(login.URL, "abc123") || !strings.Contains(login.URL, "user=u") {
 		t.Errorf("token not masked as it arrived: %q", login.URL)
+	}
+	if j := h.doneFlow("/joined-cookies", false); !slices.Contains(j.RespHeaders, [2]string{"Set-Cookie", "c=[redacted]; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, d=[redacted]; HttpOnly"}) {
+		t.Errorf("joined Set-Cookie: %q", j.RespHeaders)
 	}
 	v := h.doneFlow(fmt.Sprintf("/r%d", n-1), true)
 	if v.Conn == "" {
