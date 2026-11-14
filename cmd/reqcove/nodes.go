@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -256,20 +257,37 @@ func claimState(dir string) error {
 const stateMarker = ".reqcove-state"
 
 // lockState makes sure only one reqcove uses the state directory: two tsnet
-// processes with the same node key would fight.
+// processes with the same node key would fight. It tries for a second: a
+// status, har or mark asking whether a run is starting (stateHeld), and a
+// cleanup, hold the lock for a moment.
 func lockState(dir string) (func(), error) {
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	path := filepath.Join(dir, "lock")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(10 * time.Millisecond) {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if !errors.Is(err, syscall.EWOULDBLOCK) || time.Now().After(deadline) {
+			break
+		}
+	}
+	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("another reqcove is using %s (a run in another terminal, or a service: stop it first, such as with brew services stop reqcove or reqcove service uninstall)", dir)
+	}
+	// A cleanup --delete-state that held it meanwhile took the file away: its lock locks nothing.
+	held, err := f.Stat()
+	now, nowErr := os.Stat(path)
+	if err != nil || nowErr != nil || !os.SameFile(held, now) {
+		f.Close()
+		return nil, fmt.Errorf("%s was deleted while this reqcove waited for its lock", dir)
 	}
 	return func() { f.Close() }, nil
 }
 
 // stateHeld reports whether a run holds dir's lock (lockState), making no file.
+// It holds the lock shared for a moment, which lockState waits out.
 func stateHeld(dir string) bool {
 	f, err := os.Open(filepath.Join(dir, "lock"))
 	if err != nil {

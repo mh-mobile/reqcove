@@ -31,6 +31,7 @@ import socket
 import sys
 import threading
 import time
+import types
 import urllib.parse
 import zlib
 from pathlib import Path
@@ -57,6 +58,7 @@ for _name in ("tornado.access", "tornado.application", "tornado.general"):
     logging.getLogger(_name).addFilter(_NoWebToken())
 from mitmproxy.net import check
 from mitmproxy.net.tls import starts_like_tls_record
+from mitmproxy.proxy.layers import http as http_layer
 from mitmproxy.proxy.layers import tcp as tcp_layer
 from mitmproxy.proxy.layers.tls import parse_client_hello
 from mitmproxy.utils import strutils
@@ -257,9 +259,39 @@ RULE_SETTINGS = ("keep_host_header",)  # reqcove's own: map_remote keeps the app
 MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
 # Where a request is held while only its stream's end can say it has no body
 # (HTTP/2 without a length): server_connect refuses it, so if a body comes after
-# all, mitmproxy's start at streaming it fails there (a 502), never on to a server.
+# all, mitmproxy's start at streaming it (_start_held) fails there (a 502),
+# never on to a server.
 HOLD = ("reqcove-hold.invalid", 1)
 HOLD_REFUSED = "reqcove: a body came with this request of unknown length that a mock or map_local may answer: refused, not held in memory"
+_start_request_stream = http_layer.HttpStream.start_request_stream
+
+
+def _start_held(self):
+    """mitmproxy's HttpStream.start_request_stream, for a request at HOLD: it
+    connects only once a body byte comes. A client can end a bodyless stream
+    with an empty DATA frame instead of with its headers (Go's does, for a body
+    of unknown length that turns out empty): that one is answered, as one
+    that ended with its headers is."""
+    if "reqcove_hold" not in self.flow.metadata:
+        yield from _start_request_stream(self)
+        return
+    self.client_state = types.MethodType(_held, self)
+
+
+def _held(self, event):
+    if isinstance(event, http_layer.RequestData):
+        if not event.data:
+            return  # an empty DATA frame: no body yet
+        yield from _start_request_stream(self)  # to HOLD: refused, a 502; the body goes nowhere
+    else:  # its end (or trailers): no body after all, on to request() as one that ended with its headers
+        self.client_state = self.state_consume_request_body
+    yield from self.client_state(event)
+
+
+# The HttpStream read for this: another mitmproxy gives such a stream the 502.
+# A new lock's mitmproxy: read it again, then change the version (TestHTTP2EmptyDataEnd fails until then).
+if mitmproxy_version.VERSION == "12.3.1":
+    http_layer.HttpStream.start_request_stream = _start_held
 
 
 def _parse_rule(kind, spec, base):
@@ -1499,7 +1531,8 @@ class Reqcove:
             if small is None and (mocks or any(m.matches(flow) for m in rules["map_local"].replacements)):
                 # HTTP/2 without a length: mitmproxy streams it only if a body
                 # follows the headers (it alone knows the stream's end), and then
-                # to HOLD. One that ended with them goes on to request(), as below.
+                # to HOLD once a body byte comes (_start_held). One that ended
+                # with them, or with an empty DATA frame, goes on to request().
                 flow.metadata["reqcove_hold"] = (r.data.host, r.data.port)
                 r.data.host, r.data.port = HOLD
                 r.stream = True

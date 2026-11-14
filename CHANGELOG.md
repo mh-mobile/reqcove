@@ -143,6 +143,10 @@ Found by a code review of v0.8.0; each test fails without its fix.
 - `reqcove status`, while `run` starts (mitmproxy first, up to 2 minutes) or
   stops, said reqcove was not running and how to start it: it says it is
   starting, or stopping, as do `reqcove har` and `reqcove mark` (unit test).
+  To tell, they hold the state's lock for a moment, as `reqcove cleanup`
+  does: a `run` taking it then (a service starting while a script polls
+  `status`) waits that out, up to a second, instead of exiting with
+  "another reqcove is using" (unit test).
 - `reqcove status` and `reqcove har`, against a `run` stopped with Ctrl-Z,
   waited forever: they give up after 5 seconds, as `reqcove mark` and
   `reqcove mcp` do (unit test).
@@ -162,10 +166,17 @@ Found by a code review of v0.8.0; each test fails without its fix.
   `map_local` may answer, that sent a body anyway had all of it held in
   mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
   recorded as an error, and its body is not held; one with no body is
-  answered as before. Tested with Go's HTTP/2 client and real mitmproxy (an
-  endless body gets its 502 at once). macOS's URLSession sends none of these
+  answered as before, as is one whose stream ends with an empty DATA frame
+  instead of with its headers (Go's client does, for a body of unknown
+  length that turns out empty). Tested with Go's HTTP/2 client and real
+  mitmproxy (an endless body, or a single byte, gets its 502 at once; an
+  empty DATA frame, the answer). macOS's URLSession sends none of these
   with an open stream (tried against a test server, without mitmproxy);
-  iPhone apps not tried.
+  iPhone apps not tried. A client that sends the headers and then waits
+  gets its 502 at its first body byte, and with a mitmproxy other than
+  12.3.1 (another `--mitmproxy-spec`), a stream still open after its
+  headers gets the 502 at once, empty DATA frame or not (both from reading
+  code).
 - Masking an Apple plist whose `<key>` text comes in many pieces (split by
   comments, CDATA or child elements) copied the text so far at each piece,
   so its time and memory grew with the square of its size (up to v0.8):
