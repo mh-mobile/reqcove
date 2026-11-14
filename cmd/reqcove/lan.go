@@ -13,9 +13,11 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -420,4 +422,25 @@ func lanIn(in, out *os.File, state, sub, arg, use string) error {
 	}
 	fmt.Fprintf(out, "%v denied: a running run refuses its new connections within seconds (those open go on until they close)\n", addr)
 	return nil
+}
+
+// lanConfig is LAN mode's config for the exit node; on a terminal, run asks
+// about the clients it refuses.
+func lanConfig(ctx context.Context, iface, state string, allow capture.HostRules) (*exitnode.LAN, error) {
+	name, _, err := exitnode.LANAddr(iface) // before anything starts: a VPN's tunnel, or no network
+	if err != nil {
+		return nil, err
+	}
+	lanCfg := &exitnode.LAN{Interface: name, Allowed: lanAddrs(state), AllowCmd: withState("reqcove lan allow", state)}
+	for _, h := range allow.Hosts {
+		if !strings.Contains(h, "*") {
+			lanCfg.Names = append(lanCfg.Names, h)
+		}
+	}
+	if isTerminal(os.Stdin) {
+		signal.Ignore(syscall.SIGTTIN) // a read from the background fails instead of stopping run
+		fd := int(os.Stdin.Fd())
+		lanCfg.Refused = lanAsker(ctx, os.Stdin, os.Stderr, state, lanTTY{foreground: func() bool { return ttyForeground(fd) }, flush: func() { ttyFlushInput(fd) }})
+	}
+	return lanCfg, nil
 }
