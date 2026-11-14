@@ -460,7 +460,7 @@ func (s *Store) Apply(line []byte) {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		s.seenLocked(e.Device, e.TS)
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(e.Host), e.Path, e.HTTPVersion
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(strings.TrimSuffix(e.Host, ".")), e.Path, e.HTTPVersion // the root's dot: found by the name
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)

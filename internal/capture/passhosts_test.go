@@ -366,6 +366,40 @@ func TestRawTCPE2E(t *testing.T) {
 	}
 }
 
+// TestTrailingDotHostE2E (REQCOVE_E2E=1): plain HTTP whose Host ends in the
+// root's dot (curl http://api.example.com./) is decrypted and recorded, under
+// the name without it: a host filter finds it. mitmproxy's allow_hosts did not
+// take the dot, so it passed through unrecorded.
+func TestTrailingDotHostE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer srv.Close()
+	h, err := tryHarness(t, ctx, []string{"*.example.com"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := (pinClient{h: h, addr: srv.Listener.Addr().String()}).dial(ctx, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(20 * time.Second))
+	io.WriteString(c, "GET /dot HTTP/1.1\r\nHost: api.example.com.\r\nConnection: close\r\n\r\n")
+	if r, err := http.ReadResponse(bufio.NewReader(c), nil); err != nil || r.StatusCode != 200 {
+		t.Fatalf("response: %v %v", r, err)
+	}
+	if v := h.doneFlow("/dot", false); v.Host != "api.example.com" {
+		t.Errorf("host %q", v.Host)
+	}
+	if fs, _ := h.c.Store.List(Filter{Host: "api.example.com", Limit: 10}); len(fs) != 1 {
+		t.Errorf("by its host: %+v", fs)
+	}
+}
+
 // --pass-hosts: as --allow-hosts' syntax, not "*"; Match leaves them out,
 // Allowed keeps them in; spaces around the hosts are fine.
 func TestWithPass(t *testing.T) {
