@@ -104,6 +104,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), sigs...)
 	defer stop()
+	if os.Args[1] == "run" {
+		// A write to a closed stdout or stderr fails instead of killing run (Go
+		// kills on EPIPE there unless SIGPIPE is notified: os/signal): with
+		// `run … 2>&1 | tee`, Ctrl-C stops tee too, and run must still put the
+		// system proxy back.
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
+	}
 	var err error
 	if c, ok := commands[os.Args[1]]; ok {
 		err = c(ctx, os.Args[2:])

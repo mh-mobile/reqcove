@@ -9,8 +9,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"log"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -262,19 +264,63 @@ func TestRestoreSkipsGoneServices(t *testing.T) {
 	}
 }
 
-// withSystemProxy puts the settings back however what it wraps ends.
+// withSystemProxy puts the settings back however what it wraps ends, before
+// it logs anything: a write to stderr can wait, or (before SIGPIPE was
+// notified) end run.
 func TestWithSystemProxy(t *testing.T) {
 	state := t.TempDir()
 	corp := webProxy{true, "proxy.corp", "3128"}
 	proxies := map[string]webProxy{"webproxy|Wi-Fi": corp}
 	fakeNetworksetup(t, proxies, "")
 	var during webProxy
-	err := withSystemProxy(state, true, func() error { during = proxies["webproxy|Wi-Fi"]; return errors.New("port 8082 busy") })
+	var ended bool
+	var logged []webProxy // the proxy as each line after f is logged
+	defer log.SetOutput(log.Writer())
+	log.SetOutput(writerFunc(func(b []byte) (int, error) {
+		if ended {
+			logged = append(logged, proxies["webproxy|Wi-Fi"])
+		}
+		return len(b), nil
+	}))
+	err := withSystemProxy(state, true, func() error {
+		during, ended = proxies["webproxy|Wi-Fi"], true
+		return errors.New("port 8082 busy")
+	})
 	if err == nil || proxies["webproxy|Wi-Fi"] != corp {
 		t.Errorf("after: %v %+v", err, proxies["webproxy|Wi-Fi"])
 	}
-	if want := runtime.GOOS == "darwin"; (during.Port == "8082") != want {
-		t.Errorf("during, on %s: %+v", runtime.GOOS, during)
+	if want := runtime.GOOS == "darwin"; (during.Port == "8082") != want || want && len(logged) == 0 {
+		t.Errorf("during, on %s: %+v; logged %d lines after", runtime.GOOS, during, len(logged))
+	}
+	for i, p := range logged {
+		if p != corp {
+			t.Errorf("line %d after f logged with the proxy %+v, not back yet", i, p)
+		}
+	}
+}
+
+// run whose stderr is a pipe no one reads any more (`run … 2>&1 | tee`, tee
+// stopped by the same Ctrl-C) is not killed by its next write (SIGPIPE): it
+// must go on to put the system proxy back. Here the write is the usage of a
+// flag it does not know, after which it exits 2.
+func TestRunSurvivesClosedStderr(t *testing.T) {
+	if os.Getenv("REQCOVE_TEST_MAIN") != "" {
+		os.Args = []string{"reqcove", "run", "--no-such-flag"}
+		main()
+		return
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunSurvivesClosedStderr$")
+	cmd.Env = append(os.Environ(), "REQCOVE_TEST_MAIN=1")
+	cmd.Stderr = w
+	err = cmd.Run()
+	w.Close()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
+		t.Errorf("run with its stderr closed: %v, want exit status 2", err)
 	}
 }
 
