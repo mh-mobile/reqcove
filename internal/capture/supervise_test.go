@@ -21,7 +21,9 @@ import (
 
 // fakeMitmdump stands in for `uvx ... mitmdump`: it says hello (and leaves
 // one flow open), then lives until killed. From run number dieFrom on, it
-// exits at once instead.
+// exits at once instead. FAKE_LATE: run 1 leaves a line that is read only
+// after it died (a child outside its group writes it), as one still in the
+// socket is.
 const fakeMitmdump = `#!/usr/bin/env python3
 import json, os, socket, sys, time
 d = os.environ["FAKE_DIR"]
@@ -34,10 +36,21 @@ s = socket.socket(socket.AF_UNIX); s.connect(path)
 hello = {"ev": "hello", "mitmproxy": "fake", "dropped_bodies": 2}
 if n >= 2:
     hello["rules_error"] = os.environ.get("FAKE_RULES_ERROR", "")
+late = os.environ.get("FAKE_LATE") and n == 1
 for m in (hello,
           {"ev": "request", "id": "open%d" % n, "host": "h"}):
     m["v"] = 2
+    if late:
+        m["dropped_events"] = 1
     s.sendall((json.dumps(m) + "\n").encode())
+parent = os.getpid()
+if late and os.fork() == 0:
+    os.setsid()
+    while os.getppid() == parent:
+        time.sleep(0.01)
+    time.sleep(0.3)
+    s.sendall((json.dumps({"v": 2, "ev": "request", "id": "late", "host": "h", "dropped_events": 1}) + "\n").encode())
+    os._exit(0)
 time.sleep(600)
 `
 
@@ -111,6 +124,34 @@ func TestRestartsMitmdump(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(c.cfg.Dir, f)); err == nil {
 			t.Errorf("%s left in the state directory after Stop", f)
 		}
+	}
+}
+
+// TestLateLinesOfDeadMitmdump: the lines a dead mitmdump left in its socket
+// are read before its flows are closed: a request among them is closed too,
+// and the counters they carry are counted once.
+func TestLateLinesOfDeadMitmdump(t *testing.T) {
+	t.Setenv("FAKE_LATE", "1")
+	c, kill := startFake(t, 1000)
+	defer c.Stop()
+	kill(1)
+	waitState(t, c, "ready", 1)
+	var f FlowView
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var err error
+		if f, err = c.Store.Get("late", false); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the late line never landed")
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // a close that would come after it
+	if f, _ = c.Store.Get("late", false); f.State != "error" || !strings.Contains(f.Error, "mitmdump exited") {
+		t.Errorf("a request read after its mitmdump died: %+v", f.Flow)
+	}
+	if got := c.Store.Stats()["addon_dropped_events"]; got != int64(1) {
+		t.Errorf("addon_dropped_events = %v, want the dead run's 1 once", got)
 	}
 }
 

@@ -113,6 +113,13 @@ def _headers(h):
     return out, ""
 
 
+# ponytail: gzip members or zstd frames decoded in one body. Each new one copies
+# the rest of its chunk (zlib's unused_data), so many empty ones would cost
+# CPU on mitmproxy's loop; past this the head stops, cut. Raise it if a real
+# body needs more.
+MAX_MEMBERS = 1024
+
+
 class _Decoder:
     """Incrementally decodes one content-encoding with a bounded output."""
 
@@ -128,22 +135,42 @@ class _Decoder:
         elif enc not in ("", "identity"):
             raise ValueError("cannot decode Content-Encoding " + json.dumps(enc))  # quoted: the site's text
         self.raw_deflate_tried = False
+        self.members, self.capped = 1, False
 
     def feed(self, data, limit):
         if self.d is None:
             return data[:limit]
         if self.enc == "br":
             return self.d.process(data, output_buffer_limit=limit)
-        if self.enc == "zstd":
-            return self.d.decompress(data, max_length=limit)
-        try:
-            return self.d.decompress(data, limit)
-        except zlib.error:
-            if self.enc == "deflate" and not self.raw_deflate_tried:
-                self.raw_deflate_tried = True  # some servers send raw deflate
-                self.d = zlib.decompressobj(-15)
+        if self.enc == "deflate":
+            try:
                 return self.d.decompress(data, limit)
-            raise
+            except zlib.error:
+                if not self.raw_deflate_tried:
+                    self.raw_deflate_tried = True  # some servers send raw deflate
+                    self.d = zlib.decompressobj(-15)
+                    return self.d.decompress(data, limit)
+                raise
+        # gzip and zstd: a body can be several members (frames), one after another,
+        # each read by a decompressor of its own.
+        out = b""
+        while len(out) < limit:
+            if self.d.eof:
+                data = self.d.unused_data + data
+                if self.enc != "zstd":
+                    data = data.lstrip(b"\0")  # zero padding after a member, skipped as gzip.decompress does
+                if not data:
+                    break
+                if self.members == MAX_MEMBERS:
+                    self.capped = True
+                    break
+                self.members += 1
+                self.d = zstd.ZstdDecompressor() if self.enc == "zstd" else zlib.decompressobj(47)
+            out += self.d.decompress(data, limit - len(out))
+            data = b""
+            if not self.d.eof:
+                break
+        return out
 
 
 class _Head:
@@ -162,6 +189,7 @@ class _Head:
         self.encoding = headers.get("content-encoding", "").strip().lower()[:64]
         self.note = ""
         self.sent_len = -1
+        self.sent_size = 0
         self.last_flush = time.monotonic()
         try:
             if "," in self.encoding:
@@ -187,7 +215,7 @@ class _Head:
                     self.head += out[:room]
                 except Exception as e:
                     self.decoding, self.note = False, ("decode error: " + str(e))[:SHORT]
-                if len(self.head) >= self.limit:
+                if len(self.head) >= self.limit or self.dec and self.dec.capped:
                     self.truncated = True
                     self.decoding = False  # stop decoding once the head is full
                     self._send()
@@ -202,11 +230,18 @@ class _Head:
             pass  # never break the flow
         return data  # always bytes; b"" at the end
 
+    def flush(self):
+        """The flow failed: what came of the body since the last send, not final
+        (one that had ended was sent final, with this size)."""
+        if self.size != self.sent_size:
+            self.sent_len = -1  # sent even with the head as it was: its size is not
+            self._send()
+
     def _send(self, final=False):
         self.last_flush = time.monotonic()
         if len(self.head) == self.sent_len and not final:
             return
-        self.sent_len = len(self.head)
+        self.sent_len, self.sent_size = len(self.head), self.size
         self.addon.put_body({
             "v": VERSION, "ev": "body", "id": self.flow_id, "dir": self.dir,
             "head": bytes(self.head), "size": self.size, "final": final,
@@ -1825,6 +1860,9 @@ class Reqcove:
             return
         if ev := flow.metadata.pop("reqcove_pending", None):
             self.put_event(ev)  # it failed before its body was in: recorded as it came
+        for m in (flow.request, flow.response):  # a body cut off: the head that came, and its size
+            if m is not None and isinstance(m.stream, _Head):
+                m.stream.flush()
         msg = flow.error.msg[:SHORT]
         if flow.metadata.get("reqcove_close"):
             msg = "closed by a mock (fault: close)" + (f", preset {flow.metadata['reqcove_preset']}" if flow.metadata.get("reqcove_preset") else "")
