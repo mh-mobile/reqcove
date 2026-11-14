@@ -712,7 +712,8 @@ address:
   fills and is emptied: then once more, and run asks again (tests). Each
   request on a kept connection is checked again, so a `reqcove lan deny`
   refuses new requests within two seconds; an HTTPS tunnel already open goes
-  on until it closes.
+  on until it closes, or until no bytes went either way for 15 minutes. An
+  address keeps at most 256 tunnels open at once (tests, with smaller values).
 - The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
   each was allowed). They change through `reqcove lan allow|deny`, or through
   run's question on its own terminal. The `lan` commands refuse to run unless

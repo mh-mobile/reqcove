@@ -1108,7 +1108,8 @@ list, and a dialog for a new address). What that means:
   outside these checks: a rule sending an allowed host to a server on this
   computer serves the LAN clients' requests there too.
 - `lan deny` refuses new connections within two seconds, but HTTPS tunnels
-  already open go on until they close.
+  already open go on until they close (or are idle for 15 minutes:
+  [Limits](#limits)).
 - Use it on a network you trust, and stop it when done.
 
 Other differences from the exit node:
@@ -1445,6 +1446,13 @@ The main ones are in the [README](../README.md#limits). The rest:
   reachable from this computer at that moment (tried with an address that
   never answers; why the two such lines seen with real apps were slow is not
   known).
+- Through the Remote Proxy, LAN mode and `--local-proxy`, a client (one
+  address; with `--local-proxy`, all of this computer's apps together) keeps
+  at most 256 tunnels (CONNECT: HTTPS, WebSockets) open: the next one gets a
+  503 until one closes. A tunnel with no bytes either way for 15 minutes is
+  closed; a WebSocket or an event stream that keeps talking stays open (tested
+  with 2 tunnels and 300 ms). The exit node's own connections have neither
+  limit (from reading code).
 - Phone calls through the exit node have not been tried.
 - Limits of one feature are in its section: [`--ui`](#on-the-iphone---ui),
   [`--web`](#in-mitmweb---web), [`--local-proxy`](#the-ios-simulator---local-proxy),
