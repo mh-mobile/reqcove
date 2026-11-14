@@ -1,8 +1,10 @@
 # Reqcove's security model
 
+[日本語](SECURITY.ja.md)
+
 Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
 says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v0.7.
+come from reading code rather than from a test say so. It describes v0.8.
 
 ## Trust
 
@@ -319,7 +321,7 @@ tools: a shell, file writes, the network, other MCP servers. Text a site
 wrote into a record can try to steer it into using those (send a cookie
 somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
 own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's read tools by name (not `activate_mock` or `activate_preset`) without allowing shell commands or
+in Claude Code, allow Reqcove's read tools by name (not `activate_preset` or the deprecated `activate_mock`) without allowing shell commands or
 network tools along with them, and keep its permission prompts for the rest;
 in Codex, keep its sandbox (by default without network, from its
 documentation, not tried) and approvals. An agent that only
@@ -367,8 +369,9 @@ it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 ## Mock presets
 
 A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
-turns it on with `activate_preset` or `activate_mock` (`list_presets`,
-`deactivate_preset`; the `*_mock` tools take mocks only). Since v0.7 a
+turns it on with `activate_preset` (`list_presets`, `deactivate_preset`), or
+v0.6's `activate_mock`, which takes mocks only (it and the other v0.6 tools
+are deprecated, removed in v1.0). Since v0.7 a
 `map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
 [below](#map_remote-modify_headers-and-resolve-presets), it can send requests
 elsewhere.
@@ -414,8 +417,8 @@ allowed host runs in Safari with that host's cookies, as any mock does).
 - An end is checked on two clocks, so a computer that slept past it does not
   leave one on (a test). One answer already waiting out its `delay_ms` still
   goes out after the preset is turned off.
-- `list_mock_presets` gives what each matches and its status, delay or fault,
-  never its body or header values.
+- `list_presets` (and the deprecated `list_mock_presets`) gives what each
+  matches and its status, delay or fault, never its body or header values.
 
 ### map_remote, modify_headers and resolve presets
 
@@ -453,7 +456,7 @@ carry, while it is on: not only what the app gets.
   regex or a header's value. A flow a preset changed lists it in `presets`; the
   skill and the server's instructions tell agents never to report such a
   flow's answer as the usual server's.
-- `activate_mock` takes mocks only (a test): a v0.6 client that allowed it
+- `activate_mock` (deprecated, removed in v1.0) takes mocks only (a test): a v0.6 client that allowed it
   without a prompt does not get these. `activate_preset` is new, not marked
   read-only, and asked about by clients that ask before such tools; a client
   that allowed `"mcp__reqcove"` wholesale allows it too.
@@ -752,19 +755,42 @@ stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
 
 mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
 start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device. When
-mitmdump dies, reqcove starts it again on the same port (visible in `ps`), and
-meanwhile another user's process on this computer could take the port. The
-devices' connections then wait (15 seconds at most, then fail) until the new
-mitmdump's addon says hello, which mitmproxy (12.3.1) does only once it
-listens: one that cannot bind the port exits first, and is started again.
-Tests: while another process holds the port, the restarted mitmdump never
-becomes ready, and comes back once the port is free; while it is not ready, no
-connection is sent to the port. One gap remains, from reading code: between
-mitmdump's death and reqcove noticing it (milliseconds), a connection can
-still be sent to the free port; whoever took it in that moment would get the
-SOCKS password and that connection: plain HTTP readable, HTTPS not. On a
-computer shared with users you do not trust, keep that in mind.
+another local process can neither use the proxy nor pose as a device. reqcove
+binds the port itself, once per `run`, and hands the listening socket to each
+mitmdump it starts: mitmproxy (12.3.1) has no option for that, so reqcove's
+launcher (`mitm.py`, also used with another `--mitmproxy-spec`) has it serve on
+that socket instead of binding its own. When mitmdump dies, reqcove starts it
+again (visible in `ps`) while the port stays held, so no other process can take
+127.0.0.1 on that port in between, nor before the first mitmdump. A connection
+made meanwhile waits in the socket's queue for the next mitmdump; the devices'
+connections wait (15 seconds at most, then fail) until its addon says hello.
+mitmproxy runs with `proxyauth=any` and only reqcove's addon checks the
+password, so a connection queued there must not be read before the addon is
+loaded: the launcher has mitmproxy make its server on the socket without
+accepting, and the addon starts accepting when it is loaded, just before its
+hello. Tested with real mitmproxy (through uvx, macOS): two connections queued
+while mitmdump is down, with a wrong password sent all at once and step by
+step, are refused, and nothing they ask for is carried or recorded. With the
+launcher accepting at once and the addon's loading delayed 1.5 seconds (by
+hand), both were accepted and the test fails; without that delay, mitmproxy
+(12.3.1) happened to load the addon before reading the first connection, and
+refused them too.
+Tests: while mitmdump is down, and after reqcove gave up on it, binding the
+port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
+Linux too); with real mitmproxy (from the lock and through uvx, macOS), the
+same while it restarts, and a request sent then is carried and recorded by
+the next mitmdump. Were the launcher's change missed (a mitmproxy that binds
+another way), its own bind fails on the held port and it exits before its
+hello, never ready: tried with mitmproxy 12.3.1 and the change made too late
+(address already in use).
+Tried on macOS as the same user: binding 127.0.0.1 on the port fails even
+with SO_REUSEADDR and SO_REUSEPORT; binding 0.0.0.0 on it works with
+SO_REUSEADDR, but connections to 127.0.0.1 still reach the more specific
+socket, reqcove's, as they did before. Another user was not tried: as both
+kernels document it (not checked here), a second socket gets that address
+only if both set SO_REUSEPORT (on Linux, only for the same user), which
+reqcove's never does. Not covered: processes of your own user, which can read
+the password file anyway, and root.
 
 The state directory is checked itself, not the directories above it. Keep it
 (and `--state`) under directories only you can write: someone who can rename

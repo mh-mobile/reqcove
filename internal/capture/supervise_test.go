@@ -2,6 +2,8 @@ package capture
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -214,60 +217,192 @@ func TestStartStopsStaleMitmdump(t *testing.T) {
 	}
 }
 
-// TestPortTakenWhileDown (REQCOVE_E2E=1): another process takes the SOCKS
-// port while mitmdump is down. The restarted mitmproxy cannot bind, exits
-// before its addon says hello (errorcheck), and so is never ready: WaitReady
-// holds, and dials never go to the port's new owner. Once the port is free
-// again, mitmdump comes back and records.
-func TestPortTakenWhileDown(t *testing.T) {
+// A harness whose test process died without its Cleanup (a -timeout panic)
+// leaves its mitmdump group running: the next harness stops it and removes
+// its directory, but leaves a live test process's alone.
+func TestReapOrphans(t *testing.T) {
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := os.MkdirTemp("/tmp", fmt.Sprintf("rcvt-%d-", gone.Process.Pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(orphan) })
+	live, err := os.MkdirTemp("/tmp", fmt.Sprintf("rcvt-%d-", os.Getpid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(live) })
+	cmd := exec.Command("/bin/sh", "-c", "sleep 600; true", "fake-uv", "reqcove_socket="+filepath.Join(orphan, "ingest.sock"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	done := make(chan struct{})
+	go func() { cmd.Wait(); close(done) }()
+	os.WriteFile(filepath.Join(orphan, "mitmdump.pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+	reapOrphans()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Error("the orphaned mitmdump still runs")
+	}
+	if exists(orphan) {
+		t.Error("the orphan's directory is left")
+	}
+	if !exists(live) {
+		t.Error("removed the directory of a test process that still runs")
+	}
+}
+
+// TestPortHeldWhileDown: while mitmdump is down (restarting, then given
+// up), no other process can bind its SOCKS port: reqcove holds it. Stop
+// frees it.
+func TestPortHeldWhileDown(t *testing.T) {
+	c, kill := startFake(t, 2) // the first run works, every restart dies
+	kill(1)
+	for done := false; !done; {
+		select {
+		case <-c.Done():
+			done = true
+		case <-time.After(time.Millisecond):
+		}
+		if l, err := net.Listen("tcp", c.SocksAddr); err == nil {
+			l.Close()
+			t.Fatalf("bound the SOCKS port while mitmdump was %v", c.Store.Stats()["state"])
+		}
+	}
+	c.Stop()
+	l, err := net.Listen("tcp", c.SocksAddr)
+	if err != nil {
+		t.Fatalf("SOCKS port still held after Stop: %v", err)
+	}
+	l.Close()
+}
+
+// TestPortHeldAcrossRestart (REQCOVE_E2E=1): with real mitmproxy (12.3.1),
+// the restarted mitmdump serves on the socket reqcove holds: while it is
+// down no other process can bind the port, a request sent then waits in
+// the queue and is carried and recorded by the next mitmdump. A connection
+// queued then with a wrong SOCKS password is refused, not carried: mitmproxy
+// runs with proxyauth=any and only the addon checks the password, so the
+// next mitmdump must not read it before its addon is loaded (mitm.py).
+func TestPortHeldAcrossRestart(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.RestartDelay = 300 * time.Millisecond })
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) { c.RestartDelay = time.Second })
 	if err != nil {
 		t.Fatal(err)
 	}
+	var wrongHits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/wrong") {
+			wrongHits.Add(1)
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
 	b, _ := os.ReadFile(filepath.Join(h.c.cfg.Dir, "mitmdump.pid"))
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if pid == 0 {
 		t.Fatal("no mitmdump.pid")
 	}
 	syscall.Kill(-pid, syscall.SIGKILL)
-	var squatter net.Listener
-	for deadline := time.Now().Add(10 * time.Second); squatter == nil; time.Sleep(time.Millisecond) {
-		if squatter, err = net.Listen("tcp", h.c.SocksAddr); err != nil && time.Now().After(deadline) {
-			t.Fatalf("taking the port: %v", err)
+	for deadline := time.Now().Add(10 * time.Second); h.c.Store.Stats()["state"] == "ready"; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("mitmdump never went down")
 		}
 	}
-	// Hold it across a few attempts (300 ms, 600 ms and 1.2 s apart, about a
-	// second each), short of supervise giving up (5).
-	for until := time.Now().Add(4 * time.Second); time.Now().Before(until); time.Sleep(10 * time.Millisecond) {
-		if s := h.c.Store.Stats()["state"]; s == "ready" || s == "failed" {
-			t.Fatalf("%s while another process holds its port", s)
-		}
-		wctx, wcancel := context.WithTimeout(ctx, 20*time.Millisecond)
-		err := h.c.WaitReady(wctx)
-		wcancel()
+	// First in the queue: what the next mitmdump accepts before anything else.
+	intruders := []<-chan string{wrongPassword(t, h.c.SocksAddr, srv.Listener.Addr().String(), true), wrongPassword(t, h.c.SocksAddr, srv.Listener.Addr().String(), false)}
+	if st := h.c.Store.Stats()["state"]; st == "ready" {
+		t.Fatal("mitmdump was ready again before the wrong passwords were queued")
+	}
+	got := make(chan error, 1)
+	go func() {
+		r, err := h.client("dev").Get(srv.URL + "/queued")
 		if err == nil {
-			t.Fatal("WaitReady returned while another process holds its port")
+			r.Body.Close()
+		}
+		got <- err
+	}()
+	for until := time.Now().Add(500 * time.Millisecond); time.Now().Before(until); time.Sleep(time.Millisecond) {
+		if l, err := net.Listen("tcp", h.c.SocksAddr); err == nil {
+			l.Close()
+			t.Fatalf("bound the SOCKS port while mitmdump was %v", h.c.Store.Stats()["state"])
 		}
 	}
-	squatter.Close()
-	wctx, wcancel := context.WithTimeout(ctx, time.Minute)
-	defer wcancel()
-	if err := h.c.WaitReady(wctx); err != nil {
-		t.Fatalf("after the port was freed: %v (%v)", err, h.c.Store.Stats())
+	if err := <-got; err != nil {
+		t.Fatalf("request sent while mitmdump was down: %v (%v)", err, h.c.Store.Stats())
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
-	defer srv.Close()
-	r, err := h.client("dev").Get(srv.URL + "/back")
+	waitState(t, h.c, "ready", 1) // the new mitmdump may serve it just before its hello
+	for i, c := range intruders {
+		if bad := <-c; bad != "" {
+			t.Errorf("wrong password (pipelined: %v): %s", i == 0, bad)
+		}
+	}
+	h.doneFlow("/queued", false)
+	if n := wrongHits.Load(); n != 0 {
+		t.Errorf("the server got %d requests sent with a wrong password", n)
+	}
+	if _, ok := h.findFlow("/wrong", false); ok {
+		t.Error("a request sent with a wrong password was recorded")
+	}
+}
+
+// wrongPassword dials the SOCKS port now and, in the background, offers a
+// wrong password, then asks for target and GET /wrong: all at once
+// (pipelined) or each after its answer. It sends "" if the password was
+// refused or the connection closed, else what went wrong.
+func wrongPassword(t *testing.T, socks, target string, pipelined bool) <-chan string {
+	conn, err := net.Dial("tcp", socks)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Body.Close()
-	h.doneFlow("/back", false)
+	t.Cleanup(func() { conn.Close() })
+	host, port, _ := net.SplitHostPort(target)
+	p, _ := strconv.Atoi(port)
+	auth := append(append([]byte{1, 8}, "intruder"...), append([]byte{5}, "wrong"...)...)
+	req := append(append([]byte{5, 1, 0, 1}, net.ParseIP(host).To4()...), byte(p>>8), byte(p))
+	req = append(req, "GET /wrong HTTP/1.1\r\nHost: "+target+"\r\n\r\n"...)
+	out := make(chan string, 1)
+	go func() {
+		conn.SetDeadline(time.Now().Add(time.Minute))
+		if pipelined {
+			conn.Write(append(append([]byte{5, 1, 2}, auth...), req...))
+			b := make([]byte, 4)
+			n, err := io.ReadAtLeast(conn, b, 4) // the answers to the greeting and the password
+			switch {
+			case n == 4 && b[2] == 1 && b[3] == 0:
+				out <- fmt.Sprintf("accepted: % x", b)
+			case errors.Is(err, os.ErrDeadlineExceeded):
+				out <- fmt.Sprintf("neither refused nor closed in a minute: % x", b[:n])
+			default:
+				out <- ""
+			}
+			return
+		}
+		b := make([]byte, 2)
+		conn.Write([]byte{5, 1, 2})
+		if _, err := io.ReadFull(conn, b); err != nil {
+			out <- fmt.Sprintf("no answer to the greeting: %v", err) // the next mitmdump should answer it
+			return
+		}
+		conn.Write(auth)
+		if _, err := io.ReadFull(conn, b); err == nil && b[0] == 1 && b[1] == 0 {
+			conn.Write(req)
+			out <- "accepted"
+			return
+		}
+		out <- ""
+	}()
+	return out
 }
 
 // TestHostNotAHost (REQCOVE_E2E=1): a request whose Host is not a host name

@@ -2,8 +2,8 @@
 
 [日本語](container.ja.md)
 
-Reqcove runs in a container too (Docker; Podman should take the same
-commands): uv, Python, mitmproxy and the CA's private key stay inside it, and
+Reqcove runs in a container too (Docker, or Podman with the same commands:
+[with Podman](#with-podman)): uv, Python, mitmproxy and the CA's private key stay inside it, and
 removing the container and its volume cleans up. One container per environment
 gives several exit nodes on one machine, each closed in.
 
@@ -23,7 +23,7 @@ ends it cleanly. By hand on OrbStack: logging in to a tailnet from a container
 CA installed; GitHub's app recorded), `reqcove mcp` through `docker run -i`
 answering an MCP client, `docker exec … reqcove har`, and `--mcp-http` read by
 Grok Bot; Claude Code (`claude -p`) through `docker run -i` read `status`.
-**Not tried yet**: Linux hosts by hand, Podman.
+**Not tried yet**: Linux hosts by hand. Podman: [below](#with-podman).
 
 ## 1. Build the image
 
@@ -89,12 +89,42 @@ Times in the records carry the container's time zone, UTC by default.
   them until the container is removed. A token stays valid until its file in
   the volume is deleted. `--log-opt max-size=10m` bounds the log.
 - `localhost` in `--rules` and `--upstream-proxy` is the container itself; the
-  host is `host.docker.internal` on Docker Desktop and OrbStack (not tried). Bind
+  host is `host.docker.internal` on Docker Desktop and OrbStack (not tried),
+  and on Podman ([below](#with-podman)). Bind
   a folder for `--rules` (`-v ./rules:/rules:ro`, then `--rules /rules/x.yaml`),
   and the same for `--proto`.
-- The commands `run` prints (`claude mcp add … reqcove mcp`, `reqcove status`)
-  are the host's; use the forms above.
+- `run` prints the agent command above with `podman run` under Podman (it
+  looks for `/run/.containerenv`) and `docker run` under Docker
+  (`/.dockerenv`); with neither, `docker run` and a note to use `podman run`
+  under Podman (unit tests; not tried under Podman). Its other commands
+  (`reqcove status`) are the host's: `docker exec $NAME …` as above.
 - Over a VM's network the tailnet may relay more (DERP); speed was not measured.
+
+## With Podman
+
+Tried with Podman 6.2.0 on macOS, 2026-11-14 (arm64; `podman machine init`
+with its defaults: libkrun, rootless, Fedora 44 with SELinux enforcing). Write
+`podman` for `docker` in the commands above; nothing else is needed (no
+`--cap-add`, no rootful machine). Start the machine first
+(`podman machine start`), stop it after.
+
+- **Checked**: `CONTAINER=podman scripts/container-smoke.sh` passes, with every
+  check listed at the top (`podman stop` exits 0); `podman build -t reqcove .`
+  (the image is `localhost/reqcove`, and `reqcove` finds it); step 2 with the
+  network, up to the login: `podman exec $NAME reqcove status` says
+  `NeedsLogin` and what is left, and `podman exec $NAME reqcove har` answers;
+  a `--rules` folder of the Mac bound with `-v ./rules:/rules:ro` is read
+  (`:z` was not needed, SELinux enforcing); `host.containers.internal` and
+  `host.docker.internal` both reach a server on the Mac's `127.0.0.1` (from
+  a plain container, not through `--rules` or `--upstream-proxy`).
+- **Not tried on Podman**: logging in, an iPhone through it, an agent added
+  with `claude mcp add … podman run -i …` (MCP through
+  `podman run -i --volumes-from` only by the smoke script), `reqcove links`,
+  `--mcp-http`, a Linux host, a rootful machine. `run --lan` in a container
+  was not tried with Docker or Podman.
+- The machine's default log driver is journald. `--log-opt max-size=10m` is
+  accepted, but Podman's documentation says it bounds `--log-driver k8s-file`
+  logs (from the docs, not checked).
 
 ## Several environments
 

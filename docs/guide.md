@@ -5,73 +5,90 @@
 What comes after the README's four steps. Each section ends with what was
 tried and what was not.
 
-1. [Set up](#set-up)
-2. [Read the traffic with an agent](#read-the-traffic-with-an-agent)
-3. [Look at the flows yourself](#look-at-the-flows-yourself)
-4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps)
-5. [Change where requests go](#change-where-requests-go)
-6. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security)
+1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
+2. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [allow the tools](#allow-the-tools) · [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
+3. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
+4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
+5. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
+6. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
+7. [Run it as a service](#run-it-as-a-service): [`brew services`](#keep-it-running-brew-services) · [`reqcove service install`](#keep-it-running-without-homebrew-reqcove-service-install)
+8. [Containers](#containers)
+9. [Troubleshooting](#troubleshooting)
+10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security)
 
 ## Set up
 
-The four steps are in the [README](../README.md#use).
+Installing is in the [README](../README.md#install), and so are the four
+steps of a first run ([Use](../README.md#use)).
 
 ### First start
 
-`reqcove setup` walks through the first run, in a terminal only (it refuses
-when its input or output is not one, as from an agent). Each step can be
-skipped (an empty answer); it starts nothing and removes nothing:
+Run `reqcove setup` in a terminal: it walks through the first run. It refuses
+when its input or output is not a terminal, as from an agent. Skip any step
+with an empty answer. It starts nothing and removes nothing.
 
-- uv: says where `uvx` is, or how to install it (it installs nothing).
-- The device and the hosts: writes `--device` and `--allow-hosts`, quoted, to
-  the file the service reads: `~/.config/reqcove/config` (`reqcove service
-  install`'s), or for a brew install (this binary under `Cellar/reqcove/`)
-  Homebrew's `$(brew --prefix)/etc/reqcove/config` (`brew services`'). 0600,
-  its directory 0700 when new; checked as `run` reads it before it takes the
-  file's place. `*` and a name starting with `-` are asked again; a pasted URL
-  keeps its host only. No hosts yet: once `run` runs, `reqcove status` (or an
-  agent's `summarize`) lists the hosts the iPhone reached. An existing file is
-  shown and kept unless you answer `y`; then it is replaced whole, and the old
-  one kept as `config.old` (0600; its other flags, such as `--rules`, are
-  there to copy back). A path that is not a plain file is left alone.
-- The agent: adds the skill as `reqcove init` does, if you answer `y`, and
-  prints `claude mcp add reqcove -- reqcove mcp` (it runs no agent command).
-  When `reqcove` on `PATH` is not this binary (none, or another one), the
-  commands it prints name this binary by its full path instead (as `service
-  install`'s do).
-- How to start: `brew services start reqcove` for a brew install, else
+- **uv**: it says where `uvx` is, or how to install it. It installs nothing.
+- **The device and the hosts**: it writes `--device` and `--allow-hosts`,
+  quoted, to the file the service reads.
+  - The file is `~/.config/reqcove/config` (`reqcove service install`'s). For
+    a brew install (this binary under `Cellar/reqcove/`), it is Homebrew's
+    `$(brew --prefix)/etc/reqcove/config` (`brew services`').
+  - It is 0600, and its directory 0700 when new. Before it takes the file's
+    place, it is checked as `run` reads it.
+  - `*` and a name starting with `-` are asked again. A pasted URL keeps its
+    host only.
+  - No hosts yet: once `run` runs, `reqcove status` (or an agent's
+    `summarize`) lists the hosts the iPhone reached.
+  - An existing file is shown, and kept unless you answer `y`. Then it is
+    replaced whole, and the old one is kept as `config.old` (0600): its other
+    flags, such as `--rules`, are there to copy back.
+  - A path that is not a plain file is left alone.
+- **The agent**: if you answer `y`, it adds the skill as `reqcove init` does.
+  It prints `claude mcp add reqcove -- reqcove mcp`, and runs no agent
+  command. When `reqcove` on `PATH` is not this binary (none, or another
+  one), the commands it prints name this binary by its full path instead, as
+  those of `service install` do.
+- **How to start**: `brew services start reqcove` for a brew install, else
   `reqcove service install`; or `reqcove run --config FILE` in a terminal.
-  `--lan` is not kept in a file: `reqcove run --lan --allow-hosts HOSTS` in a
-  terminal. It prints no login URL: `reqcove links` does.
-- Ctrl-C stops it at the question it is on; what was written stays.
+  `--lan` is not kept in a file: in a terminal,
+  `reqcove run --lan --allow-hosts HOSTS`. It prints no login URL:
+  `reqcove links` does.
+- **Ctrl-C** stops it at the question it is on. What was written stays.
 
-Tried: unit tests (answers fed in, a temporary home and Homebrew prefix), and
+`run` prints what is left to do, and `reqcove status` repeats it:
+
+1. Log in with the URL.
+2. Sign the node, if the tailnet uses Tailnet Lock.
+3. Approve the exit node.
+
+About the login URL and the links:
+
+- **Where they are shown.** The login URL, and the `--ui`, `--web` and
+  `--mcp-http` links with their tokens, are shown on `run`'s terminal only.
+  They are not in its log lines (with `--verbose` either; until `run` learns
+  the login URL, it is recognised by its usual shapes) nor in the MCP tools.
+  Whoever opens the login URL first puts the node in their own tailnet
+  ([SECURITY](SECURITY.md#the-login-url)).
+- **To see them again**, run `reqcove links` in your terminal. It prints them
+  with QR codes, and mitmweb's link on this computer and the CA's too. It
+  refuses when its output is not a terminal (Claude Code's `!` gets nothing
+  either: tried).
+- **Off a terminal** (a service, `docker logs`), `run` prints
+  "`reqcove links` prints it" in their place.
+- **While `run` runs**, they are kept in `login-url` and `links` (0600) in
+  the state directory.
+- **To skip the approval** for new nodes, add an auto-approver to the tailnet
+  policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
+
+Tried, for `reqcove setup`: unit tests (answers fed in, a temporary home and Homebrew prefix), and
 Ctrl-C at the first question in a terminal (it ended at once, nothing written);
 on macOS (2026-11-14): found uvx, wrote the file (0600, its directory 0700),
 installed the skill, printed the commands, and `service install` ran with that
-file. Not tried: `brew services` with the file setup wrote; Linux.
-
-`run` prints what is left to do, and `reqcove status` repeats it: log in with
-the URL, sign the node if the tailnet uses Tailnet Lock, approve the exit node.
-
-- The login URL, and the `--ui`, `--web` and `--mcp-http` links with their
-  tokens, are shown on `run`'s terminal only, not in its log lines (`--verbose`
-  too; the login URL by its usual shapes until `run` learns it,
-  [SECURITY](SECURITY.md#the-login-url)) or the MCP tools. Whoever opens the login URL first puts the
-  node in their own tailnet ([SECURITY](SECURITY.md#the-login-url)).
-- `reqcove links` prints them again (and mitmweb's link on this computer, the
-  CA's), with QR codes, in your terminal (it refuses
-  when its output is not a terminal: Claude Code's `!` gets nothing either, tried). Off a terminal (a service, `docker logs`),
-  `run` prints "`reqcove links` prints it" in their place. While `run` runs they
-  are kept in `login-url` and `links` (0600) in the state directory.
-- To skip the approval for new nodes, add an auto-approver to the tailnet
-  policy: `"autoApprovers": {"exitNode": ["you@example.com"]}`.
-
-### Use one CA on two computers
-
-The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
-(it holds the private key) into `~/.reqcove/` on the other computer, with
-reqcove stopped there, or before its first run.
+file. On Ubuntu 24.04.5 LTS (arm64, a tart VM, over ssh with a terminal, 2026-11-14): found
+uvx in `~/.local/bin`, wrote `~/.config/reqcove/config` (0600, its directory
+0700), said no agent was found in that home for the skill (none was there),
+printed `reqcove service install`, and refused off a terminal. Not tried:
+`brew services` with the file setup wrote.
 
 ### Stop, restart, update
 
@@ -90,156 +107,57 @@ reqcove stopped there, or before its first run.
 
 Tried: a restart under a Claude Code session.
 
-### Keep it running (`brew services`)
+### Use one CA on two computers
 
-To have `run` start at login, put its flags, one a line, in a file and let
-`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
-node has no internet; turn the exit node off before it sleeps.
-
-```sh
-mkdir -p "$(brew --prefix)/etc/reqcove"
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
-chmod 600 "$(brew --prefix)/etc/reqcove/config"
-brew services start reqcove
-reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
-reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
-```
-
-- `--config FILE` takes `run`'s flags, one a line (`#` starts a comment;
-  quote as a shell would: `--device "Taro's iPhone"`; `~/` is your home; give
-  paths in full or from `~/`, as a service starts in `/`). The
-  command line's come after them: a flag given once is the command line's, a
-  repeatable one adds up. `--no-redact`, `--web`, `--rules-reload`, `--lan` and
-  `--allow-hosts '*'` (also from an `@FILE`) are refused there: they stay on
-  the command line. The file must be yours and readable by you only (`chmod
-  600`): it may hold `--mask-values` patterns. One `--config` only.
-- A missing or refused file ends the service once (`brew services` shows an
-  error); it is not started again in a loop. Nor is it after any other end:
-  `brew services restart reqcove` (also after `brew upgrade reqcove`).
-  Nothing is read unless named.
-- The log is `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in the
-  state directory grows too; neither is rotated (by launchd or by reqcove):
-  truncate them now and then. Neither carries a login URL or a token: `reqcove
-  links` prints them, in your terminal.
-- A `run` in your terminal on the same state finds it in use: `brew services
-  stop reqcove` first.
-- `run` keeps the Mac from idle sleep while it runs
-  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
-  from closing the lid or choosing Sleep.
-
-Linux: Homebrew's `brew services` makes a systemd unit from the same formula
-(from Homebrew's documentation, not tried; `status` names no service there).
-Without Homebrew, see the next section.
-
-Tried: the config file's parsing and refusals (unit tests); `brew services
-start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
-config read; an iPhone's requests recorded; no token or login URL in the log;
-`reqcove links` refused off a terminal; `links` and `login-url` gone after
-stop). Not tried yet: a start at login or after a reboot, sleep, whether
-macOS's Local Network privacy asks about a `run` not started from a terminal,
-and whether launchd's default background priority slows it (with `brew
-services`; a sleep, a start at login and the Local Network prompt were tried
-with `reqcove service install`, below).
-
-### Keep it running without Homebrew (`reqcove service install`)
-
-With the release's binary or one built from source (with Homebrew, use
-`brew services` above), `reqcove service install` does the same: a
-LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
-a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). It
-runs this binary (its full path) with `run --config FILE`, starts it now and
-at each login, and is not started again when it ends (as `brew services`).
-
-```sh
-mkdir -p ~/.config/reqcove
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
-chmod 600 ~/.config/reqcove/config
-reqcove service install       # --config FILE for another file, --state DIR for another state
-reqcove links                 # the login URL, the first time (after a minute)
-reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
-reqcove service restart       # after it ended, or after a change to the file
-reqcove service uninstall     # stops it and removes the file
-```
-
-- The file is `~/.config/reqcove/config` unless `--config` names another,
-  read as for `brew services` (above). Install refuses a missing file (saying
-  how to write one), one that is not yours or that others can read, and
-  `--no-redact`, `--web`, `--rules-reload` or `--lan` in it; `--allow-hosts
-  '*'` there is refused when `run` starts (the service then ends once). A
-  `--state` in the file is the state directory (in full or from `~/`). The
-  state directory must be empty, new or reqcove's (as for `run`).
-- Once `run` ends (an error, a refused file, `kill`), it stays down until the
-  next login: `reqcove service restart` starts it again (`launchctl kickstart
-  -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user restart
-  reqcove`; not tried).
-- Refused while Homebrew's service is there (its file or loaded:
-  `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
-  `sh.brew.reqcove.service`, `homebrew.reqcove.service`, names from reading
-  Homebrew's code, not tried): two services would fight over the state
-  directory. Refused too for Homebrew's own binary, whose path (in its
-  Cellar) `brew upgrade` removes: run `reqcove setup`, which writes the
-  file Homebrew's service reads, then `brew services start reqcove` (a unit
-  test). Installed already: `reqcove service restart` to start it again;
-  `reqcove service uninstall`, then install again, to change its flags on
-  the command line or after moving the binary.
-- The log: `service.log` in the state directory on macOS (not rotated:
-  truncate it now and then, as `mitmproxy.log`; `service install` makes it
-  0600 before launchd opens it, which would make it 0644: unit test only, not
-  tried with launchd), `journalctl --user -u
-  reqcove` on Linux. It prints no login URL or token, nor does
-  `service install`: `reqcove links` does, in your terminal.
-- `PATH` is uvx's directory where you installed it, then `~/.local/bin`,
-  `/opt/homebrew/bin`, `/usr/local/bin` and the system's; elsewhere, give
-  `--uvx /full/path/uvx` in the file.
-- To stop it until the next login: `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`,
-  or `systemctl --user stop reqcove`; `reqcove status` says which.
-- Linux: a user unit starts at login; at boot, before any login, only after
-  `loginctl enable-linger $USER` (from systemd's documentation, not tried).
-
-Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
-the refusals and the launchctl and systemctl commands it would run (unit
-tests, which never run them). On macOS (2026-11-14): `service install` wrote
-the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
-node recorded; no login URL or token in `service.log`), `reqcove status` named
-the service, `service uninstall` stopped it and removed the file; after a
-sleep it kept running, and after a reboot it started at login by itself (an
-iPhone recorded, no alert at login). macOS asked for Local Network access,
-before and after the sleep (allowed both times; its list shows each build at
-another path as its own entry). Not tried yet:
-`service restart`; Linux.
+The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
+(it holds the private key) into `~/.reqcove/` on the other computer. Do it
+with reqcove stopped there, or before its first run.
 
 ### Undo everything (`reqcove cleanup`)
 
 `reqcove cleanup` lists the steps; with `--delete-state` it deletes the state
-directory. Remove the CA's profile from the iPhone first
-([SECURITY](SECURITY.md#the-cas-private-key)). A service starts `run` again
-at the next login, which makes the state directory anew: stop it first
-(`brew services stop reqcove`, or `reqcove service uninstall`).
+directory. First:
+
+- Remove the CA's profile from the iPhone
+  ([SECURITY](SECURITY.md#the-cas-private-key)).
+- Stop a service (`brew services stop reqcove`, or
+  `reqcove service uninstall`). Otherwise it starts `run` again at the next
+  login, which makes the state directory anew.
 
 ## Read the traffic with an agent
 
-`claude mcp add reqcove -- reqcove mcp` (the README's step 4) gives an agent on
-this computer the [MCP tools](#mcp-tools). They read, and secrets are
-masked as they arrive; the one change they can make is to turn on, for at most
-5 minutes each time (no cap on turning it on again), a rule you marked as a
-[preset](#presets-an-agent-can-turn-on): a mock, or since v0.7 a `map_remote`,
-`modify_headers` or `resolve` rule, which changes what requests carry or where they go
-(with none, they only read; over `--mcp-http`, never), and they can put a
-[marker](#mark-a-moment-reqcove-mark), which changes nothing on the device
-([what masking does not find](SECURITY.md#what-is-recorded)). For Codex:
-`codex mcp add reqcove -- reqcove mcp` (`run` prints both).
+Run `claude mcp add reqcove -- reqcove mcp` (the README's step 4): it gives an
+agent on this computer the [MCP tools](#mcp-tools). For Codex:
+`codex mcp add reqcove -- reqcove mcp`. `run` prints both.
 
-Allowing the tools: the tools that read are marked read-only (`readOnlyHint`),
-which a client may use to ask less (not checked with any client);
-the ones that turn presets on and off (`activate_preset`, `deactivate_preset`,
-`activate_mock`, `deactivate_mock`) are not, nor is `add_marker` (a write to
-Reqcove's memory only). Claude Code asks before a tool
-it has not been allowed. Allow the read tools by name
-(`"mcp__reqcove__list_flows"` and so on) rather than `"mcp__reqcove"`, which
-also allows those (`activate_mock` since v0.6, `activate_preset`, which can
-send requests to a server you wrote in a preset, since v0.7; from Claude
-Code's documentation, not tried here). For example, in `.claude/settings.json` (the form is from
-Claude Code's documentation; not tried here):
+What the tools can do:
+
+- **Read.** Secrets are masked as they arrive
+  ([what masking does not find](SECURITY.md#what-is-recorded)).
+- **Turn on a preset**: the one change they can make. A
+  [preset](#presets-an-agent-can-turn-on) is a rule you marked as one: a mock,
+  or since v0.7 a `map_remote`, `modify_headers` or `resolve` rule, which
+  changes what requests carry or where they go. It is on for at most 5 minutes
+  each time, with no cap on turning it on again. With no preset, the tools
+  only read. Over `--mcp-http`, they never turn one on.
+- **Put a [marker](#mark-a-moment-reqcove-mark)**, which changes nothing on
+  the device.
+
+### Allow the tools
+
+- The tools that read are marked read-only (`readOnlyHint`). A client may use
+  that to ask less (not checked with any client).
+- Not marked read-only: the tools that turn presets on and off
+  (`activate_preset`, `deactivate_preset`, and v0.6's `activate_mock`,
+  `deactivate_mock`, deprecated), and `add_marker` (a write to Reqcove's memory only).
+- Claude Code asks before a tool it has not been allowed. Allow the read tools
+  by name (`"mcp__reqcove__list_flows"` and so on), not `"mcp__reqcove"`:
+  that also allows the ones not marked read-only (`activate_mock` since v0.6;
+  since v0.7 `activate_preset`, which can send requests to a server you wrote
+  in a preset). From Claude Code's documentation, not tried here.
+
+For example, in `.claude/settings.json` (the form is from Claude Code's
+documentation; not tried here):
 
 ```json
 {
@@ -248,22 +166,28 @@ Claude Code's documentation; not tried here):
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
-    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
-            "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
+              "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__list_mock_presets"],
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset",
+            "mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
   }
 }
 ```
 
-Codex asks before each call
-([over HTTP](#agents-on-other-devices---mcp-http) too). Once allowed, an agent
-reads without asking, also from a `run` started with `--no-redact`; the skill
-and the server's instructions still tell it to stop and ask then. Allow
-Reqcove's tools, not shell commands or network tools along with them: text a
-site wrote into a record can try to steer an agent into using those
-([SECURITY](SECURITY.md#prompt-injection)).
+Its v0.6 entries, last in each list (`list_mock_presets`, `activate_mock`,
+`deactivate_mock`), are deprecated, removed in v1.0.
+
+What to know:
+
+- Codex asks before each call
+  ([over HTTP](#agents-on-other-devices---mcp-http) too).
+- Once allowed, an agent reads without asking, also from a `run` started with
+  `--no-redact`. The skill and the server's instructions still tell it to stop
+  and ask then.
+- Allow Reqcove's tools, not shell commands or network tools along with them:
+  text a site wrote into a record can try to steer an agent into using those
+  ([SECURITY](SECURITY.md#prompt-injection)).
 
 ### Teach the agent: the skill (`reqcove init`)
 
@@ -291,8 +215,8 @@ tools only. Not tried: Gemini CLI, Copilot CLI.
 
 ### Mark a moment (`reqcove mark`)
 
-Before you tap something on the iPhone, `reqcove mark "tap Pay"` in your
-terminal puts a marker among the records; an agent reads them with
+Before you tap something on the iPhone, run `reqcove mark "tap Pay"` in your
+terminal: it puts a marker among the records. An agent reads the markers with
 `list_markers` (oldest first, `since` to narrow). An agent puts its own with
 `add_marker` before it acts, or when you say "now I tap X". `add_marker`
 returns `id`, `time` (for `since` in `list_flows` and the other tools, and for
@@ -326,21 +250,26 @@ cloud computer joins your tailnet through Tailscale's OAuth apps):
 reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 ```
 
-`run` serves the same tools over HTTP on the node, but the preset ones
-(`list_presets`, `activate_preset`, `deactivate_preset`, `list_mock_presets`,
-`activate_mock`, `deactivate_mock`), the rule ones (`list_rules`,
-`explain_rules`) and the marker ones (`add_marker`, `list_markers`), and prints the URL,
-`http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header to give the agent,
-`Authorization: Bearer <token>` (`reqcove links` prints them again; off a
-terminal, only it).
+`run` serves the same tools over HTTP on the node, all but these:
 
-- **Grok Bot**: Connect apps › Tailscale, to join your tailnet (under Tailnet
-  Lock, sign its device). Then Connect apps › Add a custom connector: type
-  Remote HTTPS (an `http://` tailnet URL works there; WireGuard encrypts it),
-  the URL as server URL, header key `Authorization`, value
-  `Bearer <token>`. Its settings show the connector with an error and no tools
-  (it reaches the tailnet from its chats only): ask it in a chat. To copy the
-  value unseen: `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`.
+- the preset ones: `list_presets`, `activate_preset`, `deactivate_preset`, and
+  the deprecated `list_mock_presets`, `activate_mock`, `deactivate_mock`;
+- the rule ones: `list_rules`, `explain_rules`;
+- the marker ones: `add_marker`, `list_markers`.
+
+It prints the URL, `http://reqcove.<tailnet>.ts.net:8090/mcp`, and the header
+to give the agent, `Authorization: Bearer <token>`. `reqcove links` prints
+them again; off a terminal, only `reqcove links` does.
+
+- **Grok Bot**:
+  1. Connect apps › Tailscale, to join your tailnet. Under Tailnet Lock, sign
+     its device.
+  2. Connect apps › Add a custom connector. Type: Remote HTTPS (an `http://`
+     tailnet URL works there; WireGuard encrypts it). Server URL: the URL.
+     Header key: `Authorization`. Value: `Bearer <token>`. To copy the value
+     unseen: `printf 'Bearer %s' "$(cat ~/.reqcove/mcp-token)" | pbcopy`.
+  3. Ask it in a chat. Its settings show the connector with an error and no
+     tools: it reaches the tailnet from its chats only.
 - **Claude Code** on another computer (the header stays in `~/.claude.json`):
   `claude mcp add --transport http reqcove-remote http://reqcove.<tailnet>.ts.net:8090/mcp --header "Authorization: Bearer <token>"`
 - **Codex** on another computer, the token in that variable:
@@ -498,27 +427,35 @@ Tried: on an iPhone. That a pass host's decrypted requests go through
 
 ### gRPC
 
-A gRPC call is a flow: its path names the method (`/pkg.Service/Method`), and
-rows and `summarize` show its status (`grpc_status`: `0` is OK, `16`
-UNAUTHENTICATED, …; `pending` until its trailers come), read from the response
-headers when there is no message (a trailers-only answer, the usual error),
-else from the trailers (HTTP/2's, or gRPC-Web's last frame when the kept head
-holds it: a body over 64 KiB loses it). `grpc_message` is decoded and masked
-(with `--no-redact`, as sent). Trailers are searched, compared by `diff_flows`
-and written to a HAR's comment. A body's note counts its messages and their sizes;
-JSON ones (`application/grpc+json`, `connect+json`) are handed out one a line,
-masked as JSON, protobuf ones as below; a Connect stream's last frame (its
-error, its trailers: JSON) as `[end of stream]`, masked as JSON. A Connect
-stream's outcome is in that frame, not in `grpc_status` (by a test only). Metadata ending in
-`-bin` (binary) shows its size only.
+A gRPC call is a flow. Its path names the method (`/pkg.Service/Method`).
+
+- **Status**: rows and `summarize` show `grpc_status` (`0` is OK, `16`
+  UNAUTHENTICATED, …; `pending` until its trailers come). It is read from the
+  response headers when there is no message (a trailers-only answer, the
+  usual error), else from the trailers: HTTP/2's, or gRPC-Web's last frame
+  when the kept head holds it (a body over 64 KiB loses it).
+- **`grpc_message`** is decoded and masked (with `--no-redact`, as sent).
+- **Trailers** are searched, compared by `diff_flows` and written to a HAR's
+  comment.
+- **Messages**: a body's note counts its messages and their sizes. JSON ones
+  (`application/grpc+json`, `connect+json`) are handed out one a line, masked
+  as JSON; protobuf ones as below.
+- **A Connect stream**: its last frame (its error, its trailers: JSON) is
+  handed out as `[end of stream]`, masked as JSON. The stream's outcome is in
+  that frame, not in `grpc_status` (by a test only).
+- **Metadata** ending in `-bin` (binary) shows its size only.
 
 Protobuf bodies (gRPC's messages, and `application/x-protobuf` and the like)
 are not text, so reqcove hands out its own rendering of them, marked by the
-body's `view`. Without a schema it is the structure only: field numbers,
-types and lengths, `string(12)` for a string (never its text), and numbers in
-responses (in requests only those under 128, such as enums and booleans; a
-larger one, such as a code sent as a number, shows its byte count; a PIN under
-128 shows too):
+body's `view`. Without a schema it is the structure only:
+
+- field numbers, types and lengths;
+- `string(12)` for a string, never its text;
+- numbers in responses. In requests, only numbers under 128 (such as enums
+  and booleans): a PIN under 128 shows too. A larger one, such as a code sent
+  as a number, shows its byte count.
+
+For example:
 
 ```
 1: 150
@@ -528,19 +465,24 @@ larger one, such as a code sent as a number, shows its byte count; a PIN under
 }
 ```
 
-With `--proto FILE`, your compiled schema (`protoc --descriptor_set_out=FILE
---include_imports`), a message whose type is known is shown as JSON with its
-field names and masked by name, as JSON is: the type comes from the method
-its path names (gRPC, gRPC-Web, Connect, Twirp: `/pkg.Service/Method`, the
-input in a request, the output in a response) or from `messageType` in the
-content type. `bytes` fields show their length; fields the schema does not
-have, their structure. With `--no-redact`, protobuf bodies are kept as they
-came.
+Give `--proto FILE` your compiled schema
+(`protoc --descriptor_set_out=FILE --include_imports`). A message whose type
+is known is then shown as JSON with its field names, and masked by name, as
+JSON is.
+
+- The type comes from the method its path names (gRPC, gRPC-Web, Connect,
+  Twirp: `/pkg.Service/Method`; the input in a request, the output in a
+  response), or from `messageType` in the content type.
+- `bytes` fields show their length; fields the schema does not have, their
+  structure.
+
+With `--no-redact`, protobuf bodies are kept as they came.
 
 Apps built on gRPC-core (Google's SDKs among them) trust their own list of
 CAs, not the ones the iPhone trusts, so their calls show as TLS failures (from
-gRPC's mailing list, not tried); so do apps whose gRPC library is told whose
+gRPC's mailing list, not tried). So do apps whose gRPC library is told whose
 certificates to trust, unless a debug build trusts Reqcove's CA (not tried).
+
 Tried: on an iPhone, a test app calling Connect's demo server through
 URLSession (the system's trust, the CA installed) over Connect, gRPC-Web and
 gRPC, with `--proto` (statuses from the trailers and from gRPC-Web's last
@@ -684,103 +626,15 @@ exit node, and names are looked up here.
 Tried on an iPhone: Safari's requests were recorded, and sites outside
 `--allow-hosts` opened as before.
 
-### Without Tailscale: LAN mode (`--lan`)
-
-`reqcove run --lan` starts no tailnet node: Reqcove listens as an HTTP proxy
-on this computer's address on the LAN, and an iPhone on the same network sets
-its Wi-Fi proxy to it. The exit node stays the main way: it carries everything
-the phone sends, over cellular too, and needs nothing from the network it is
-on. LAN mode is for when Tailscale is not an option.
-
-```sh
-reqcove run --lan --allow-hosts api.example.com
-```
-
-1. run prints where it listens: the address of the default route's interface
-   (`--lan-interface en0` picks another; a VPN's tunnel is refused) and
-   `--proxy-port`, 8080 by default.
-2. On the iPhone: Settings, Wi-Fi, (i) by the network, Configure Proxy,
-   Manual: that server and port, Authentication off.
-3. Its first connection is refused, and run logs its address. Allow it on this
-   computer: answer run's question (`Allow ADDR? [y/N]`, asked while run is the
-   terminal's foreground job), or run `reqcove lan allow ADDR` in a terminal.
-   `reqcove lan list` shows the allowed addresses and when each was allowed;
-   `reqcove lan deny ADDR` takes one back. These commands refuse to run off a
-   terminal: they are not for an agent.
-4. The CA: open `http://mitm.it` with the proxy set, once per device, as with
-   the exit node. Anyone else on the LAN can swap plain HTTP, so run's ready
-   block also names the CA file, to send by AirDrop instead, and prints the
-   CA's SHA-256 to compare as iOS shows it (lowercase pairs, `ab 90 7e …`):
-   on the iPhone, Settings, General, VPN & Device Management, the profile,
-   More Details (checked on iOS 27.3, 2026-11-14: it matched). Not checked:
-   AirDrop of that file.
-
-The records name the device `lan:ADDR`; the tools' `device` filter and
-`reqcove har --device lan:ADDR` take that name, and `list_devices` gives its first and
-last request this run. `reqcove status` (and the `status` tool, as
-`mode: "lan"`) shows where it listens, the allowed addresses and the ones
-refused this run: the 50 last seen, and how many more (`refused_more`), as
-anyone on the network can add to them (the list behind them holds up to
-10,000 and is emptied when it fills).
-
-There is no password. Who may use the proxy is decided on this computer, by
-address, as in Charles Proxy (its documentation describes an access control
-list, and a dialog for a new address). What that means:
-
-- An allowed entry is an address, not a device: whoever has that address later
-  is allowed too. The list is kept in the state directory (`lan-allowed`), so
-  an address stays allowed on another network with the same prefix (a café's
-  192.168.1.0/24 as your home's). Use `reqcove lan list` and `lan deny` when
-  done. Not checked: whether an iPhone keeps the same private Wi-Fi address
-  on a network over time.
-- Through this computer, an allowed address reaches the internet from your
-  address, on ports 80 and 443 only, and private hosts named exactly in
-  `--allow-hosts` (no `*`), those behind this computer's VPN included. Never
-  this computer, link-local addresses, or the network the proxy is on, even by
-  an exact name. Its requests to the allowed hosts are recorded.
-- `map_remote` and `resolve` targets in `--rules` are dialled by mitmproxy,
-  outside these checks: a rule sending an allowed host to a server on this
-  computer serves the LAN clients' requests there too.
-- `lan deny` refuses new connections within two seconds, but HTTPS tunnels
-  already open go on until they close.
-- Use it on a network you trust, and stop it when done.
-
-Other differences from the exit node:
-
-- Ports 80 and 443 only: a development server on this computer or on the same
-  Wi-Fi (Metro on 8081, say) is refused while the proxy is set. Not checked:
-  whether iOS skips the proxy for local addresses.
-- Names are looked up with this computer's resolver, `/etc/hosts` first: a
-  name it maps to 127.0.0.1 is refused.
-- Apps that ignore the Wi-Fi proxy go straight out, and are not recorded.
-- What blocks it: client isolation on the Wi-Fi (guest networks often have
-  it), VLANs between the iPhone and this computer, an MDM profile, a managed
-  firewall. Not checked: whether the macOS firewall asks to accept connections
-  for `reqcove`.
-- `--lan` is refused in `--config`, so it never runs as a service.
-  `--device`, `--ui`, `--mcp-http`, `--hostname` and `--dns` do not go with it
-  (they are the tailnet node's); `--local-proxy` and `--web` (on this computer
-  only) do.
-- If this computer's address changes on the same network, run listens on the
-  new one. If it moves to another network, run stops listening and says so in
-  its log and `reqcove status`; a restart listens on the new network.
-
-Tried by tests: the proxy on the loopback interface with real mitmproxy
-(HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
-and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
-2026-11-14): its first request refused, allowed at run's question, then
-Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
-`reqcove lan deny` stopped it, `lan allow` again let it through. Not tried: a
-change of network.
-
 ### Another Mac
 
 A Mac named with `--device` that chooses the exit node in the Tailscale app is
 recorded as an iPhone is ([the steps](another-mac.md)). With Homebrew's
 open-source `tailscaled` the exit node shows as on, but that Mac's traffic does
-not go through it. Tried with a macOS 27 VM. Not tried: that Mac's iOS
-Simulator (it should go through with the Mac's own traffic, once it trusts
-Reqcove's CA).
+not go through it.
+
+Tried with a macOS 27 VM. Not tried: that Mac's iOS Simulator (it should go
+through with the Mac's own traffic, once it trusts Reqcove's CA).
 
 ## Change where requests go
 
@@ -807,16 +661,64 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_local` answers only requests whose body is at most 1 MiB and of known
   length; others go on to the real destination (the record says so). An HTTP/2
   GET without a length is answered too, and a body sent with it anyway is held
-  whole in memory. Apps and web pages on a `--device` device (or, with
-  `--local-proxy`, on this computer) can be the senders, to a host a rule matches: a
-  very large body can run mitmproxy out of memory (reqcove restarts it), and the
-  devices' traffic stalls meanwhile.
+  whole in memory. The senders can be apps and web pages on a `--device`
+  device (or, with `--local-proxy`, on this computer), to a host a rule
+  matches. A very large body can run mitmproxy out of memory (reqcove restarts
+  it), and the devices' traffic stalls meanwhile.
 - Read someone else's rules file before using it: rules can send your apps'
   requests, cookies and tokens included, wherever they say.
 
-`mock` answers a request here, with what you write, and the request is not sent
-to the server (for HTTPS, mitmproxy may have connected to it already, to read
-its certificate): to see how the app takes an expired session or an empty list.
+Tried with the E2E tests (real mitmproxy): `map_remote` with a POST body, a
+POST not yet ended and SSE (both reach the other end as they stream), with
+`keep_host_header`; `map_local` for a GET and a POST, and a 2 MiB body sent on
+to the origin instead; `modify_headers` both ways; a request outside
+`--allow-hosts` left alone; the rules' values kept out of the records; the
+refusals at load. Not in these tests: an HTTP/2 GET without a length to
+`map_local`, a body large enough to run mitmproxy out of memory.
+
+#### Connect elsewhere (`resolve`)
+
+`resolve` connects elsewhere and leaves the request as it is, for a staging
+server or a new load balancer:
+
+```yaml
+resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
+  - "shop.example.com=203.0.113.10"
+  - "auth.example.com=192.168.1.20:8443"
+```
+
+- Requests for the name go to that IPv4 address, this computer and the LAN
+  included. `Host`, SNI and the recorded URL stay the same, and TLS is still
+  checked against the name: the server needs a certificate for it (a local
+  HTTPS server without one gets a 502). Plain HTTP is not checked.
+- Without a port, the request's is used (the app's, 80 or 443, or the
+  `map_remote` URL's). After a `map_remote`, the name is its new URL's host,
+  which is then the SNI too.
+- The name is still looked up (by the phone, or by this computer for the Remote
+  Proxy) and the real server connected first: a name that does not resolve
+  publicly, or a server that refuses connections, cannot be redirected.
+- Each name must be in `--allow-hosts` and have its own address or port:
+  mitmproxy reuses a connection by address.
+- Refused: `0.0.0.0/8`, link-local (cloud metadata), multicast, Tailscale's
+  100.100.100.100 ([SECURITY](SECURITY.md#rules---rules)), and `resolve`
+  together with `--upstream-proxy`.
+
+Tried with the E2E tests (real mitmproxy): plain HTTP sent to the rule's
+address with the app's `Host`, the record saying where it went; `resolve` after
+a `map_remote`; over TLS, the target asked for the name (SNI) and a 502 for a
+certificate not trusted; the refusals at load (cloud metadata,
+100.100.100.100, a name as the target, shared addresses, a host outside
+`--allow-hosts`, with `--upstream-proxy`). Tried: a server with a trusted
+certificate for another name gets a 502 ([SECURITY](SECURITY.md#rules---rules)).
+A `resolve` preset was not tried on an iPhone
+([below](#map_remote-modify_headers-and-resolve-presets)).
+
+#### Answer a request here (`mock`)
+
+`mock` answers a request here, with what you write: use it to see how the app
+takes an expired session or an empty list. The request is not sent to the
+server (for HTTPS, mitmproxy may have connected to it already, to read its
+certificate).
 
 ```yaml
 mock:                           # Reqcove's own; the first that matches answers, before map_remote and map_local
@@ -828,25 +730,28 @@ mock:                           # Reqcove's own; the first that matches answers,
     body_file: feed.json        # relative to the rules file
 ```
 
-- `url` matches the URL the app sent without its query, exactly (the host in
-  any case), or, ending in `*` after a path (`https://api.example.com/v1/*`),
-  any URL that starts with the rest. It takes no query, fragment, user or
-  default port (refused: it would never match). `method` and `operation` (a GraphQL
-  operation: `operationName`, Apollo's `X-APOLLO-OPERATION-NAME` header, or the
-  document's first named operation) are optional. The host must be in
+- **`url`** matches the URL the app sent, without its query, exactly (the host
+  in any case). Ending in `*` after a path (`https://api.example.com/v1/*`),
+  it matches any URL that starts with the rest. It takes no query, fragment,
+  user or default port (refused: it would never match). The host must be in
   `--allow-hosts` and not in `--pass-hosts`.
-- `status` is 100 to 599 (200 if left out); a body is at most 1 MiB, inline or
-  in a file, and none goes with `HEAD`, 204 or 304. `Cache-Control: no-store`
-  is added unless you set one. Request `modify_headers` rules apply before
-  the match, response ones still apply.
-- A request a mock may answer (its method and URL match) is held whole until
-  its body is in: one whose length is over 1 MiB, or a POST of unknown length,
-  goes on unanswered, its `rewrites` saying `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
+- **`method`** and **`operation`** are optional. `operation` is a GraphQL
+  operation: `operationName`, Apollo's `X-APOLLO-OPERATION-NAME` header, or
+  the document's first named operation.
+- **The answer**: `status` is 100 to 599 (200 if left out). A body is at most
+  1 MiB, inline or in a file, and none goes with `HEAD`, 204 or 304.
+  `Cache-Control: no-store` is added unless you set one.
+- **With `modify_headers`**: request rules apply before the match, response
+  ones still apply.
+- **What is held**: a request a mock may answer (its method and URL match) is
+  held whole until its body is in. One whose length is over 1 MiB, or a POST
+  of unknown length, goes on unanswered, its `rewrites` saying
+  `mock: skipped, …`. As with `map_local`, a GET (HEAD, OPTIONS, DELETE)
   without a length is held too, and over HTTP/2 a body sent with it is kept
   whole in memory.
-- The record says so: `mocked: true` on its row, `rewrites` with the rule's
-  number and status (`mock[0]: 401`), a note in a HAR. `capture_stats` has
-  `rules_loaded`, when the file was last taken.
+- **The record** says so: `mocked: true` on its row, `rewrites` with the
+  rule's number and status (`mock[0]: 401`), a note in a HAR. `capture_stats`
+  has `rules_loaded`, when the file was last taken.
 
 Tried with the E2E tests (real mitmproxy): a 401 with headers for a POST, a
 GraphQL operation from the body, a prefix, HEAD, the server never reached, and
@@ -854,6 +759,23 @@ rules refused (a bad status, a line break in a header, a missing file, a host
 outside `--allow-hosts`). On an iPhone: a 401 for Safari (httpbin.org), and one
 GraphQL operation of the GitHub app mocked while its others, on the same
 connection, reached GitHub.
+
+#### When the file is read (`--rules-reload`)
+
+The file is read when mitmproxy starts: with `run`, and when reqcove restarts
+it.
+
+With `--rules-reload`, it is read again once a change has settled. The new
+rules are for requests that start after that; one under way keeps the rules it
+started with.
+
+- A file that does not load leaves the earlier rules in place, and `run` and
+  `reqcove status` say why. But if mitmproxy restarts meanwhile, `run` stops
+  on it, as at start.
+- Whatever can write the file (an agent included) can then change where the
+  devices' requests go, without you restarting anything.
+
+From reading code: a change is read within about two seconds.
 
 #### Add a mock from your terminal (`reqcove mock add`)
 
@@ -865,28 +787,29 @@ reqcove mock add --rules rules.yaml --url https://api.example.com/v1/login \
   --body '{"error":"expired"}'
 ```
 
-- The other flags: `--operation NAME`, `--body-file PATH` (from where you type
-  it; written as a full path), `--delay-ms N`, `--fault close`, `--preset NAME`
-  and `--description TEXT`.
-- It adds the mock as the last of `mock:`'s items and keeps the rest of the
-  file as it was (comments and order too); a file without `mock:` gets one at
-  its end. It refuses a file whose `mock:` is not its last block, or is in flow
-  style (`mock: []`), and says how to fix it. A new file is made `0600`; an
-  existing one keeps its mode, replaced at once (a temp file beside it, renamed).
+- **The other flags**: `--operation NAME`, `--body-file PATH` (from where you
+  type it; written as a full path), `--delay-ms N`, `--fault close`,
+  `--preset NAME` and `--description TEXT`.
+- **Where it writes**: it adds the mock as the last of `mock:`'s items and
+  keeps the rest of the file as it was (comments and order too). A file
+  without `mock:` gets one at its end. A new file is made `0600`; an existing
+  one keeps its mode, replaced at once (a temp file beside it, renamed).
+- **What it refuses**: a file whose `mock:` is not its last block, or is in
+  flow style (`mock: []`), saying how to fix it; a header name given twice.
   If the file changes while it is checked (your editor saved it), nothing is
-  written: run it again. A header name given twice is refused.
-- Before writing, the whole file as it would be is checked by the addon's own
-  loader: by the running `reqcove run` (the same `--state`), with its
-  `--allow-hosts` and `--pass-hosts`, or, when none is running, by mitmproxy's
-  Python from the lock (`--uvx PATH`), which leaves the hosts unchecked.
-  Refused, it says why (never a rule's text) and writes nothing.
-- Then it says when the mock takes effect: at once when run has
+  written: run it again.
+- **The check**: before writing, the whole file as it would be is checked by
+  the addon's own loader. The running `reqcove run` (the same `--state`) does
+  it, with its `--allow-hosts` and `--pass-hosts`. When none is running,
+  mitmproxy's Python from the lock does (`--uvx PATH`), which leaves the hosts
+  unchecked. Refused, it says why (never a rule's text) and writes nothing.
+- **When it takes effect**: it says so after writing. At once when run has
   `--rules-reload` (which also turns every preset that is on off), else when
   you restart run.
-- It runs only in a terminal (stdin and stdout, as `reqcove mark`): a help
-  against an agent running it unasked, not a guarantee (an agent with a shell
-  can give it one, and can edit the file anyway). `--print` shows the mock as YAML without writing or
-  checking anything, in a terminal or not.
+- **Only in a terminal** (stdin and stdout, as `reqcove mark`): a help against
+  an agent running it unasked, not a guarantee (an agent with a shell can give
+  it one, and can edit the file anyway). `--print` shows the mock as YAML
+  without writing or checking anything, in a terminal or not.
 
 Tried with the tests: the YAML for values with quotes, line breaks, `#`, `: `,
 control characters and other scripts, read back as given by the addon's loader;
@@ -918,9 +841,11 @@ mock:
     fault: close                    # no answer: HTTP/1 closes the connection, HTTP/2 resets the stream
 ```
 
-- The tools: `list_mock_presets`, `activate_mock(name, minutes, times)` (at
+- The tools: `list_presets`, `activate_preset(name, minutes, times)` (at
   most 5 minutes, 5 if left out; with `times`, at most 20 requests, then off),
-  `deactivate_mock(name)`. Only an agent on this computer has them (`reqcove
+  `deactivate_preset(name)`. v0.6's `list_mock_presets`, `activate_mock` and
+  `deactivate_mock` do the same for mocks only: deprecated, removed in v1.0.
+  Only an agent on this computer has them (`reqcove
   mcp` and `run`'s socket); never over `--mcp-http`.
 - A preset that is on answers before other mocks; one that is off is no mock at
   all. One preset is on per match (method, URL and operation): turning on
@@ -952,6 +877,8 @@ agent turning presets on over MCP): a 503 once, then the app's retry reached
 the server; an 8 s delay; a close, which CFNetwork did not retry by itself (the
 app's own retry was closed too); a 401 on login.
 
+#### `map_remote`, `modify_headers` and `resolve` presets
+
 Since v0.7, a `map_remote`, `modify_headers` or `resolve` rule can be a preset
 too: write it as a mapping with `rule:` (the rule as before) and `preset:`. It
 does nothing until an agent turns it on, for at most 5 minutes each time, as a
@@ -969,8 +896,8 @@ resolve:
 
 - The tools: `list_presets` (every kind, with `kind`), `activate_preset(name,
   minutes)`, `deactivate_preset(name)`. `list_mock_presets`, `activate_mock`
-  and `deactivate_mock` stay, for mocks only: an agent allowed `activate_mock`
-  in v0.6 cannot turn on these. `times` is for mocks only; the others are on
+  and `deactivate_mock` stay, for mocks only, until v1.0 (deprecated): an agent
+  allowed `activate_mock` in v0.6 cannot turn on these. `times` is for mocks only; the others are on
   for a time.
 - While on, a `map_remote` preset sends the matching requests, with the app's
   cookies, tokens and bodies, to its target; `resolve` connects its name to its
@@ -982,16 +909,18 @@ resolve:
   `map_remote` preset's target (scheme and host), a `modify_headers` preset's
   header name (never its value), a `resolve` preset's name and address; never
   a filter or a regex.
-- Refused at load: a `map_remote` preset whose replacement does not start with
-  `http://` or `https://`, a host and `/` (its target could not be shown), has
-  a user or password, takes its host from the request (`\1`), goes to a
-  link-local address, or is plain `http://` to anything but this computer or a
-  LAN address (`localhost`, `*.local`, a private address); a request whose
-  rewritten URL would be outside the target shown (a regex that matched inside
-  the URL) gets a 502 instead; a `modify_headers` preset on responses (`~s`);
-  a preset in `map_local`; a plain rule with the same match as a preset
-  (`map_remote`: the same filter and regex; `modify_headers`: the same filter
-  and header).
+- Refused at load:
+  - a `map_remote` preset whose replacement does not start with `http://` or
+    `https://`, a host and `/` (its target could not be shown), has a user or
+    password, takes its host from the request (`\1`), goes to a link-local
+    address, or is plain `http://` to anything but this computer or a LAN
+    address (`localhost`, `*.local`, a private address);
+  - a `modify_headers` preset on responses (`~s`);
+  - a preset in `map_local`;
+  - a plain rule with the same match as a preset (`map_remote`: the same
+    filter and regex; `modify_headers`: the same filter and header).
+- Not sent, and answered with a 502 instead: a request whose rewritten URL
+  would be outside the target shown (a regex that matched inside the URL).
 - One on per match, per kind: the same filter and regex (`map_remote`), the
   same filter and header (`modify_headers`), the same name (`resolve`). A
   `resolve` preset that is on comes before a plain `resolve` rule for its name;
@@ -1000,8 +929,11 @@ resolve:
 - Names are shared across kinds: a mock and a `resolve` preset cannot both be
   `staging`. The row lists every preset that changed or answered it in
   `presets` (`preset` stays the mock's that answered).
-- `reqcove status` and the `status` tool's `active_mock_presets` list every kind
-  that is on (with `kind`; the name stays until v1.0).
+- `reqcove status` and the `status` tool's `active_presets` list every kind
+  that is on (with `kind`; `active_presets_error` when mitmproxy did not say);
+  `capture_stats`' `presets` names every preset. v0.6's names, the same until
+  then (`active_mock_presets`, `active_mock_presets_error`, `mock_presets`), are
+  deprecated and removed in v1.0.
 
 Tried with the E2E tests (real mitmproxy, plain HTTP): a `map_remote`, a
 `modify_headers` and a `resolve` preset each change requests only while on, the
@@ -1018,65 +950,42 @@ answer, the row listed it; off: the server's own), and a mock preset with
 WebSocket, a stream or a long upload begun while a `map_remote` or `resolve`
 preset was on stays with its target after the preset is off.
 
-`resolve` connects elsewhere and leaves the request as it is, for a staging
-server or a new load balancer:
-
-```yaml
-resolve:                        # reqcove's: connect elsewhere, Host and SNI unchanged
-  - "shop.example.com=203.0.113.10"
-  - "auth.example.com=192.168.1.20:8443"
-```
-
-- Requests for the name go to that IPv4 address, this computer and the LAN
-  included. `Host`, SNI and the recorded URL stay the same, and TLS is still
-  checked against the name: the server needs a certificate for it (a local
-  HTTPS server without one gets a 502). Plain HTTP is not checked.
-- Without a port, the request's is used (the app's, 80 or 443, or the
-  `map_remote` URL's). After a `map_remote`, the name is its new URL's host,
-  which is then the SNI too.
-- The name is still looked up (by the phone, or by this computer for the Remote
-  Proxy) and the real server connected first: a name that does not resolve
-  publicly, or a server that refuses connections, cannot be redirected.
-- Each name must be in `--allow-hosts` and have its own address or port:
-  mitmproxy reuses a connection by address.
-- Refused: `0.0.0.0/8`, link-local (cloud metadata), multicast, Tailscale's
-  100.100.100.100 ([SECURITY](SECURITY.md#rules---rules)), and `resolve`
-  together with `--upstream-proxy`.
-
-The file is read when mitmproxy starts: with `run`, and when reqcove restarts
-it. `--rules-reload` reads it again once a change has settled, for requests
-that start after it; one under way keeps the rules it started with.
-
-- A file that does not load leaves the earlier rules in place, and `run` and
-  `reqcove status` say why; but if mitmproxy restarts meanwhile, `run` stops on
-  it, as at start.
-- Whatever can write the file (an agent included) can then change where the
-  devices' requests go, without you restarting anything.
-
-From reading code: a change is read within about two seconds.
-
 #### Why a rule did or did not apply (`list_rules`, `explain_rules`)
 
-An agent on this computer can read the rules without the file: `list_rules`
-gives each rule by kind and number (`mock[0]`, as `rewrites` names them), its
-preset and whether it is on, and only what is derived from it: a mock's match
-and answer, a `map_remote` target's scheme and host (`path only` when the
-replacement is a path, `not shown` when it does not write the host out), a
-`modify_headers` header name and direction (`request` for `~q`, `response` for
-`~s`, else `both`), a `resolve` name and address; a `map_local` rule's number
-only. Never a filter, a regex, a header value, a body or a file's path.
+An agent on this computer can read the rules without the file.
 
-`explain_rules` says why a request got, or would get, which rules: give it a
-flow's id, or a method and URL (and a GraphQL operation). It answers the scope
-first (a host not in `--allow-hosts`, or in `--pass-hosts`, gets no rule), then
-runs the request path's own code on a request it makes up and never sends:
-`rewrites` as the record would say them, `mocked`, `mapped_to`, the presets on
-now that apply, and `if_turned_on`, what each preset that is off would do. A
-filter that reads headers, a body or the response (`~h`, `~b`, `~t`, `~c`…)
-cannot be told from a method and URL: that rule is counted as not matching and
-listed in `cannot_tell`. With a flow's id, `recorded` is what the flow got; the
-rules, or a preset's state, may have changed since. It uses no preset's count
-and turns none on or off.
+`list_rules` gives each rule by kind and number (`mock[0]`, as `rewrites`
+names them), its preset and whether it is on, and only what is derived from
+the rule:
+
+| Kind | What `list_rules` gives |
+|---|---|
+| `mock` | its match and answer |
+| `map_remote` | its target's scheme and host (`path only` when the replacement is a path, `not shown` when it does not write the host out) |
+| `modify_headers` | its header name and direction (`request` for `~q`, `response` for `~s`, else `both`) |
+| `resolve` | its name and address |
+| `map_local` | the rule's number only |
+
+Never a filter, a regex, a header value, a body or a file's path.
+
+`explain_rules` says why a request got, or would get, which rules. Give it a
+flow's id, or a method and URL (and a GraphQL operation).
+
+1. It answers the scope first: a host not in `--allow-hosts`, or in
+   `--pass-hosts`, gets no rule.
+2. Then it runs the request path's own code on a request it makes up and
+   never sends. It returns `rewrites` as the record would say them, `mocked`,
+   `mapped_to`, the presets on now that apply, and `if_turned_on`: what each
+   preset that is off would do.
+
+What to know:
+
+- A filter that reads headers, a body or the response (`~h`, `~b`, `~t`,
+  `~c`…) cannot be told from a method and URL: that rule is counted as not
+  matching, and listed in `cannot_tell`.
+- With a flow's id, `recorded` is what the flow got. The rules, or a preset's
+  state, may have changed since.
+- It uses no preset's count, and turns none on or off.
 
 Tried with the E2E tests (real mitmproxy, plain HTTP): no filter, regex,
 header value, body or path in `list_rules` (marker strings); an out-of-scope
@@ -1137,6 +1046,296 @@ certificate was not trusted). With a proxy other than Burp on this computer,
 changes nothing. Not tried: other proxies. From reading code:
 other protocols going straight to their servers.
 
+## Without Tailscale: LAN mode (`--lan`)
+
+`reqcove run --lan` starts no tailnet node: Reqcove listens as an HTTP proxy
+on this computer's address on the LAN, and an iPhone on the same network sets
+its Wi-Fi proxy to it. The exit node stays the main way: it carries everything
+the phone sends, over cellular too, and needs nothing from the network it is
+on. LAN mode is for when Tailscale is not an option.
+
+```sh
+reqcove run --lan --allow-hosts api.example.com
+```
+
+1. run prints where it listens: the address of the default route's interface
+   (`--lan-interface en0` picks another; a VPN's tunnel is refused) and
+   `--proxy-port`, 8080 by default.
+2. On the iPhone: Settings, Wi-Fi, (i) by the network, Configure Proxy,
+   Manual: that server and port, Authentication off.
+3. Allow the iPhone on this computer. Its first connection is refused, and run
+   logs its address. Answer run's question (`Allow ADDR? [y/N]`, asked while
+   run is the terminal's foreground job), or run `reqcove lan allow ADDR` in a
+   terminal.
+4. Trust the CA, once per device: open `http://mitm.it` with the proxy set, as
+   with the exit node. Anyone else on the LAN can swap plain HTTP, so run's
+   ready block also names the CA file, to send by AirDrop instead, and prints
+   the CA's SHA-256 to compare as iOS shows it (lowercase pairs,
+   `ab 90 7e …`). On the iPhone it is under Settings, General, VPN & Device
+   Management, the profile, More Details (checked on iOS 27.3, 2026-11-14: it
+   matched). Not checked: AirDrop of that file.
+
+`reqcove lan list` shows the allowed addresses and when each was allowed;
+`reqcove lan deny ADDR` takes one back. The `reqcove lan` commands refuse to
+run off a terminal: they are not for an agent.
+
+In the records and in `reqcove status`:
+
+- The records name the device `lan:ADDR`. The tools' `device` filter and
+  `reqcove har --device lan:ADDR` take that name, and `list_devices` gives its
+  first and last request this run.
+- `reqcove status` (and the `status` tool, as `mode: "lan"`) shows where it
+  listens, the allowed addresses and the ones refused this run. Of the refused
+  ones it shows the 50 last seen, and how many more (`refused_more`), as
+  anyone on the network can add to them. The list behind them holds up to
+  10,000 and is emptied when it fills.
+
+There is no password. Who may use the proxy is decided on this computer, by
+address, as in Charles Proxy (its documentation describes an access control
+list, and a dialog for a new address). What that means:
+
+- An allowed entry is an address, not a device: whoever has that address later
+  is allowed too. The list is kept in the state directory (`lan-allowed`), so
+  an address stays allowed on another network with the same prefix (a café's
+  192.168.1.0/24 as your home's). Use `reqcove lan list` and `lan deny` when
+  done. Not checked: whether an iPhone keeps the same private Wi-Fi address
+  on a network over time.
+- Through this computer, an allowed address reaches the internet from your
+  address, on ports 80 and 443 only, and private hosts named exactly in
+  `--allow-hosts` (no `*`), those behind this computer's VPN included. Never
+  this computer, link-local addresses, or the network the proxy is on, even by
+  an exact name. Its requests to the allowed hosts are recorded.
+- `map_remote` and `resolve` targets in `--rules` are dialled by mitmproxy,
+  outside these checks: a rule sending an allowed host to a server on this
+  computer serves the LAN clients' requests there too.
+- `lan deny` refuses new connections within two seconds, but HTTPS tunnels
+  already open go on until they close.
+- Use it on a network you trust, and stop it when done.
+
+Other differences from the exit node:
+
+- Ports 80 and 443 only: a development server on this computer or on the same
+  Wi-Fi (Metro on 8081, say) is refused while the proxy is set. Not checked:
+  whether iOS skips the proxy for local addresses.
+- Names are looked up with this computer's resolver, `/etc/hosts` first: a
+  name it maps to 127.0.0.1 is refused.
+- Apps that ignore the Wi-Fi proxy go straight out, and are not recorded.
+- What blocks it: client isolation on the Wi-Fi (guest networks often have
+  it), VLANs between the iPhone and this computer, an MDM profile, a managed
+  firewall. Not checked: whether the macOS firewall asks to accept connections
+  for `reqcove`.
+- `--lan` is refused in `--config`, so it never runs as a service.
+  `--device`, `--ui`, `--mcp-http`, `--hostname` and `--dns` do not go with it
+  (they are the tailnet node's); `--local-proxy` and `--web` (on this computer
+  only) do.
+- If this computer's address changes on the same network, run listens on the
+  new one. If it moves to another network, run stops listening and says so in
+  its log and `reqcove status`; a restart listens on the new network.
+
+Tried by tests: the proxy on the loopback interface with real mitmproxy
+(HTTP and HTTPS recorded as `lan:127.0.0.1`, `http://mitm.it` serving the CA),
+and the refusals above. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
+2026-11-14): its first request refused, allowed at run's question, then
+Safari's HTTPS to an allowed host decrypted and recorded as `lan:ADDR`;
+`reqcove lan deny` stopped it, `lan allow` again let it through. On Ubuntu
+24.04.5 LTS (arm64, a tart VM, 2026-11-14), with curl from the Mac running the
+VM, on tart's network (no iPhone): run listened on the VM's address, refused
+the first request and asked; once allowed with `reqcove lan allow`, plain HTTP
+and HTTPS (`curl --cacert` with the CA file the ready block names, its SHA-256
+matching) went through to an allowed host and were recorded as `lan:ADDR`
+(`reqcove status --json`, `reqcove har`); port 22 was refused, and `lan deny`
+refused it again. Not tried: a change of network; an iPhone with a Linux
+computer.
+
+## Run it as a service
+
+Two ways to have `run` start at login: Homebrew's `brew services` for a brew
+install, and `reqcove service install` for the release's binary or one built
+from source. `--lan` is refused in both ([LAN mode](#without-tailscale-lan-mode---lan)).
+
+### Keep it running (`brew services`)
+
+To have `run` start at login, put its flags, one a line, in a file and let
+`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
+node has no internet; turn the exit node off before it sleeps.
+
+```sh
+mkdir -p "$(brew --prefix)/etc/reqcove"
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
+chmod 600 "$(brew --prefix)/etc/reqcove/config"
+brew services start reqcove
+reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
+reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
+```
+
+- **The file**: `--config FILE` takes `run`'s flags, one a line.
+  - `#` starts a comment. Quote as a shell would: `--device "Taro's iPhone"`.
+    `~/` is your home. Give paths in full or from `~/`, as a service starts
+    in `/`.
+  - The command line's flags come after the file's: a flag given once is the
+    command line's, a repeatable one adds up.
+  - Refused in the file: `--no-redact`, `--web`, `--rules-reload`, `--lan`,
+    `--config` and `--allow-hosts '*'` (also from an `@FILE`). They stay on the command line.
+  - The file must be yours and readable by you only (`chmod 600`): it may
+    hold `--mask-values` patterns.
+  - One `--config` only. Nothing is read unless named.
+- **When it ends**: a missing or refused file ends the service once
+  (`brew services` shows an error); it is not started again in a loop. Nor is
+  it after any other end: run `brew services restart reqcove` (also after
+  `brew upgrade reqcove`).
+- **The logs**: `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in
+  the state directory, which grows too. Neither is rotated (by launchd or by
+  reqcove): truncate them now and then. Neither carries a login URL or a
+  token: `reqcove links` prints them, in your terminal.
+- **A `run` in your terminal** on the same state finds it in use: run
+  `brew services stop reqcove` first.
+- **Sleep**: `run` keeps the Mac from idle sleep while it runs
+  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
+  from closing the lid or choosing Sleep.
+
+Linux: Homebrew's `brew services` makes a systemd unit from the same formula
+(from Homebrew's documentation, not tried; `status` names no service there).
+Without Homebrew, see the next section.
+
+Tried: the config file's parsing and refusals (unit tests); `brew services
+start` and `stop` on macOS 27 with the formula (uv found on its PATH; the
+config read; an iPhone's requests recorded; no token or login URL in the log;
+`reqcove links` refused off a terminal; `links` and `login-url` gone after
+stop). Not tried yet: a start at login or after a reboot, sleep, whether
+macOS's Local Network privacy asks about a `run` not started from a terminal,
+and whether launchd's default background priority slows it (with `brew
+services`; a sleep, a start at login and the Local Network prompt were tried
+with `reqcove service install`, below).
+
+### Keep it running without Homebrew (`reqcove service install`)
+
+With the release's binary or one built from source, `reqcove service install`
+does the same. (With Homebrew, use `brew services` above.) It writes a
+LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
+a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). The
+service runs this binary (its full path) with `run --config FILE`. It starts
+now and at each login, and is not started again when it ends (as
+`brew services`).
+
+```sh
+mkdir -p ~/.config/reqcove
+printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
+chmod 600 ~/.config/reqcove/config
+reqcove service install       # --config FILE for another file, --state DIR for another state
+reqcove links                 # the login URL, the first time (after a minute)
+reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
+reqcove service restart       # after it ended, or after a change to the file
+reqcove service uninstall     # stops it and removes the file
+```
+
+- **The file** is `~/.config/reqcove/config` unless `--config` names another.
+  It is read as for `brew services` (above).
+  - Install refuses a missing file (saying how to write one), one that is not
+    yours or that others can read, and `--no-redact`, `--web`,
+    `--rules-reload`, `--lan` or `--config` in it.
+  - `--allow-hosts '*'` there is refused when `run` starts (the service then
+    ends once).
+  - A `--state` in the file is the state directory (in full or from `~/`).
+    The state directory must be empty, new or reqcove's (as for `run`).
+- **When it ends**: once `run` ends (an error, a refused file, `kill`), it
+  stays down until the next login. `reqcove service restart` starts it again
+  (`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or
+  `systemctl --user restart reqcove`; tried on Linux only).
+- **Refused while Homebrew's service is there** (its file or loaded:
+  `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
+  `sh.brew.reqcove.service`, `homebrew.reqcove.service`, the Linux names from
+  reading Homebrew's code, not tried): two services would fight over the
+  state directory.
+- **Refused for Homebrew's own binary**, whose path (in its Cellar)
+  `brew upgrade` removes. Run `reqcove setup`, which writes the file
+  Homebrew's service reads, then `brew services start reqcove` (a unit test).
+- **Installed already**: `reqcove service restart` starts it again. To change
+  its flags on the command line, or after moving the binary, run
+  `reqcove service uninstall`, then install again.
+- **The log**:
+  - macOS: `service.log` in the state directory. It is not rotated: truncate
+    it now and then, as `mitmproxy.log`. `service install` makes it 0600
+    before launchd opens it, which would make it 0644 (unit test only, not
+    tried with launchd).
+  - Linux: `journalctl --user -u reqcove`.
+  - It prints no login URL or token, nor does `service install`:
+    `reqcove links` does, in your terminal.
+- **`PATH`** is uvx's directory where you installed it, then `~/.local/bin`,
+  `/opt/homebrew/bin`, `/usr/local/bin` and the system's. Elsewhere, give
+  `--uvx /full/path/uvx` in the file.
+- **To stop it until the next login**:
+  `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or
+  `systemctl --user stop reqcove`. `reqcove status` says which.
+- **Linux**: a user unit runs while you are logged in. Without
+  `loginctl enable-linger $USER`, systemd stops it when your last session
+  ends, and starts it again at the next login (tried over ssh: it stopped
+  within 15 seconds of the last logout). With linger it kept running after
+  the logout (tried), and it starts at boot before any login (from systemd's
+  documentation; no reboot tried).
+
+Tried: the files written (paths with spaces, `&`, `<`, `%`, `$`, quotes),
+the refusals and the launchctl and systemctl commands it would run (unit
+tests, which never run them). On macOS (2026-11-14): `service install` wrote
+the LaunchAgent and started `run` with the file's flags (an iPhone on the exit
+node recorded; no login URL or token in `service.log`), `reqcove status` named
+the service, `service uninstall` stopped it and removed the file; after a
+sleep it kept running, and after a reboot it started at login by itself (an
+iPhone recorded, no alert at login). macOS asked for Local Network access,
+before and after the sleep (allowed both times; its list shows each build at
+another path as its own entry). On Ubuntu 24.04.5 LTS (arm64, a tart VM,
+2026-11-14), with a new `--state` and setup's file: `service install` wrote
+the unit and started `run` (uvx found on the unit's `PATH`; the node waiting
+for a login, not logged in to a tailnet), `reqcove status` named
+`reqcove.service`, `journalctl --user -u reqcove` showed its log with no login
+URL or token, `service restart` started it again after a `kill` and after
+`systemctl --user stop reqcove`, and `service uninstall` stopped it and removed
+the unit. Not tried yet: `service restart` on macOS; on Linux, a node logged
+in to a tailnet, a device recorded through it, a reboot.
+
+## Containers
+
+`reqcove run` runs in a container too (Docker, or Podman). The steps, what is
+different there and what was checked are on their own page:
+[Reqcove in a container](container.md). What this guide says about containers:
+
+- An agent on another device: `--mcp-http` is the same flag there, with no
+  port to publish ([Agents on other devices](#agents-on-other-devices---mcp-http)).
+- The login URL and the links: off a terminal (`docker logs`), `run` does not
+  print them; `reqcove links` does ([First start](#first-start)).
+- Security: [a container](SECURITY.md#in-a-container).
+
+## Troubleshooting
+
+Start with `reqcove status`: it says what reqcove is doing, and the next steps
+(an agent has the `status` tool). Then, by what you see:
+
+| What you see | Where it is explained |
+|---|---|
+| `run` started, but something is left to do: the login, Tailnet Lock, the exit node's approval | [First start](#first-start) |
+| The login URL or a link with its token is not shown (a service, `docker logs`) | `reqcove links`: [First start](#first-start) |
+| The iPhone's DNS stays stuck after `run` stopped | [Stop, restart, update](#stop-restart-update) |
+| The agent's tools answer that reqcove is not running, or the records are empty after a restart | [Stop, restart, update](#stop-restart-update) |
+| The tools say the versions differ, or `reqcove status` says the skill is from another version | [Stop, restart, update](#stop-restart-update), [the skill](#teach-the-agent-the-skill-reqcove-init) |
+| Traffic is carried, but nothing is recorded | `--allow-hosts` in [Options](#options) |
+| An app's requests fail, and `reqcove status` names its hosts (certificate pinning) | [Apps that pin certificates](#apps-that-pin-certificates---pass-hosts) |
+| An Android app refuses the CA | [Android](#android) |
+| A gRPC app's calls show as TLS failures | [gRPC](#grpc) |
+| With `--local-proxy`: apps on this computer cannot connect after `kill -9` or a crash, or an allowed host breaks in an app here | [The iOS Simulator](#the-ios-simulator---local-proxy) |
+| A rule did not apply | [Why a rule did or did not apply](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) |
+| A rules file does not load, or a change to it is not taken | [When the file is read](#when-the-file-is-read---rules-reload) |
+| With `--upstream-proxy`: requests wait, or HTTPS through the proxy fails | [An upstream proxy](#an-upstream-proxy---upstream-proxy) |
+| In mitmweb: the devices' HTTP(S) stopped, or a bookmark asks for the token | [In mitmweb](#in-mitmweb---web) |
+| Over `--mcp-http`: a device is refused, calls get `429`, or Grok Bot's settings show the connector with an error | [Agents on other devices](#agents-on-other-devices---mcp-http) |
+| LAN mode: the iPhone's first connection is refused, something blocks it, or a development server on another port is refused | [LAN mode](#without-tailscale-lan-mode---lan) |
+| An iPhone on the exit node has no internet while the Mac sleeps | [Keep it running (`brew services`)](#keep-it-running-brew-services) |
+| A service ended and did not start again, or a `run` in your terminal finds the state in use | [Run it as a service](#run-it-as-a-service) |
+| The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
+| reqcove restarts mitmproxy, or `run` stops after restarts in a row | [Limits](#limits) (a huge WebSocket message), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches) |
+| IPv6, QUIC, phone calls | [Limits](#limits) |
+
+This section only points to the others: what was tried, and what was not, is
+said there.
+
 ## Options
 
 `reqcove run`:
@@ -1162,15 +1361,16 @@ other protocols going straight to their servers.
 | `--no-redact` | keep secrets in the records |
 | `--mask-names a,b` | mask whatever has exactly this name too (any spelling: `clientRef` is also `client_ref` and `Client-Ref`, not `X-Client-Ref`): headers, parameters, JSON fields, GraphQL arguments, XML elements and attributes; `@FILE` too |
 | `--mask-values RE` | mask what this pattern (RE2) matches, wherever it is; repeat it, or `@FILE` (one a line: keeps a literal secret out of `ps`; write one as `\Q…\E`) |
-| `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s, and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
+| `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s (listed in `~/.reqcove/ca-copies`, so that `cleanup` of `~/.reqcove` names it), and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--allow-hosts '*'`); the file `chmod 600` |
+| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--config`, `--allow-hosts '*'`); the file `chmod 600` |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
 
-The other commands (all but `init` and `version` take `--state DIR` too):
+The other commands (all but `init`, `version`, `setup`, `service restart` and
+`service uninstall` take `--state DIR` too):
 
 | | |
 |---|---|
@@ -1182,6 +1382,8 @@ The other commands (all but `init` and `version` take `--state DIR` too):
 | `reqcove lan` | `allow ADDR`, `deny ADDR`, `list`: the addresses [LAN mode](#without-tailscale-lan-mode---lan) carries; only in a terminal |
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
+| `reqcove setup` | [the first run](#first-start): no flags; only in a terminal |
+| `reqcove service install` | `--config FILE`, `--state DIR`; then `reqcove service restart`, `reqcove service uninstall`: [run as a service without Homebrew](#keep-it-running-without-homebrew-reqcove-service-install) |
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
 | `reqcove version` | the version |
 
@@ -1210,13 +1412,13 @@ From reading code (the flags' help), not tried for this guide: `--proxy-port 0`,
 | `list_tls_failures` | handshakes a device refused: often certificate pinning, or a CA not trusted yet |
 | `list_passthrough` | connections to `--pass-hosts` hosts: host, server, times, bytes; no URLs or contents |
 | `capture_stats` | mitmproxy's state, the window the records cover, drops |
-| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_mock_presets`, with `kind`; not over `--mcp-http`, which has no preset tools) |
+| `status` | the mode (`tailnet` or `lan`, with the LAN addresses allowed and refused), whether everything is set up, and the next steps if not; the presets turned on, of every kind (`active_presets`, with `kind`; v0.6's `active_mock_presets`, the same, is deprecated, removed in v1.0; not over `--mcp-http`, which has no preset tools) |
 | `list_presets` | the [presets](#presets-an-agent-can-turn-on) in the `--rules` file, of every kind (`kind`): a mock's match and answer, a `map_remote` preset's target, a `modify_headers` preset's header name, a `resolve` preset's name and address; whether it is on, when it turns off. Never bodies, header values, filters or regexes. Not over `--mcp-http` |
 | `activate_preset` | turn a preset of any kind on, for at most 5 minutes (`minutes`; `times`, at most 20 requests, for a mock); returns `checkpoint` for `wait_for_flows` and the preset it turned off for the same match. Not over `--mcp-http` |
 | `deactivate_preset` | turn a preset off. Not over `--mcp-http` |
-| `list_mock_presets` | as `list_presets`, mocks only (v0.6). Not over `--mcp-http` |
-| `activate_mock` | as `activate_preset`, mocks only (v0.6): it never turns on a `map_remote`, `modify_headers` or `resolve` preset. Not over `--mcp-http` |
-| `deactivate_mock` | turn a mock preset off (v0.6). Not over `--mcp-http` |
+| `list_mock_presets` | deprecated, removed in v1.0: as `list_presets`, mocks only (v0.6). Not over `--mcp-http` |
+| `activate_mock` | deprecated, removed in v1.0: as `activate_preset`, mocks only (v0.6): it never turns on a `map_remote`, `modify_headers` or `resolve` preset. Not over `--mcp-http` |
+| `deactivate_mock` | deprecated, removed in v1.0: turn a mock preset off (v0.6). Not over `--mcp-http` |
 | `list_rules` | the `--rules` file's [rules](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) by kind and number, with their presets and what is derived from them (a mock's match and answer, a `map_remote` target, a `modify_headers` header name and direction, a `resolve` name and address); never filters, regexes, header values, bodies or paths. Not over `--mcp-http` |
 | `explain_rules` | why a flow (`flow_id`), or a method and URL, got or would get which rules: the scope, then the rewrites, a mock, the presets on and what one off would do; rules whose filter reads more than a method and URL in `cannot_tell`. Sends nothing, uses no preset's count. Not over `--mcp-http` |
 | `add_marker` | a [marker](#mark-a-moment-reqcove-mark) (`text`, at most 80 characters, one line, masked); returns `id`, `time` (for `since`) and `checkpoint` (for `wait_for_flows`' `after`). Changes nothing on the device. Not over `--mcp-http` |

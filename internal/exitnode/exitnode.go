@@ -287,6 +287,14 @@ func Run(ctx context.Context, cfg Config) error {
 // watch rebuilds the policy from the netmap every few seconds, so devices
 // that appear late (Tailnet Lock), join later or change IP are found, and
 // reports the node's status.
+// logCarrying logs whom the node carries traffic from: none (no client yet, or
+// the last one gone) logs nothing, rather than a line naming no one.
+func logCarrying(names map[string]string) {
+	if len(names) > 0 {
+		log.Printf("carrying traffic from %s", strings.Join(slices.Sorted(maps.Values(names)), ", "))
+	}
+}
+
 func watch(ctx context.Context, lc *local.Client, cfg Config) {
 	var lastProblems string
 	var steps settled
@@ -331,8 +339,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			ids := fmt.Sprint(names)
 			if ids != lastIDs {
 				lastIDs = ids
-				list := slices.Sorted(maps.Values(names))
-				log.Printf("carrying traffic from %s", strings.Join(list, ", "))
+				logCarrying(names)
 				if cfg.OnDevices != nil {
 					cfg.OnDevices(names)
 				}

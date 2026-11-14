@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：初期段階です**（v0.7）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
+> **開発状況：初期段階です**（v0.8）。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
 
 ## 必要なもの
 
@@ -106,6 +106,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 - [自分でフローを見る](docs/guide.ja.md#自分でフローを見る)：iPhone で、HAR ファイルで、mitmweb で
 - [iPhone アプリ以外のクライアントを記録する](docs/guide.ja.md#iphone-アプリ以外のクライアントを記録する)：証明書ピンニングをするアプリ、Android、iOS シミュレーター、Web アプリのバックエンド
 - [リクエストの行き先を変える](docs/guide.ja.md#リクエストの行き先を変える)：開発サーバーへ送る、別のプロキシに回す
+- [サービスとして動かす](docs/guide.ja.md#サービスとして動かす)、[うまくいかないとき](docs/guide.ja.md#うまくいかないとき)
 - [1 台で複数の Exit Node](docs/several-exit-nodes.ja.md)、[コンテナ](docs/container.ja.md)、[別の Mac をデバイスに](docs/another-mac.ja.md)
 
 ### Tailscale を使わずに（LAN モード）
@@ -120,7 +121,7 @@ uv があるかを確かめ、tailnet での iPhone の名前と記録するホ�
 - Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
 - LAN モード（`--lan`）にはパスワードがありません。このコンピュータで許可したアドレスは、このコンピュータを通って、あなたのアドレスからインターネット（80 番と 443 番ポート）と、`--allow-hosts` に完全な名前で書いたプライベートなホストに届きます。
 
-詳しくは [docs/SECURITY.md](docs/SECURITY.md) を見てください（英語）。
+詳しくは [docs/SECURITY.ja.md](docs/SECURITY.ja.md) を見てください。
 
 ## 制限事項
 

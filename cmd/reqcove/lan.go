@@ -13,9 +13,11 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -142,7 +144,7 @@ func lanAsker(ctx context.Context, in io.Reader, out io.Writer, state string, tt
 				continue
 			}
 			tty.flush()
-			fmt.Fprintf(out, "LAN client %v wants to send through this Mac (its requests to the allowed hosts are recorded). Allow %v? [y/N] ", a, a)
+			fmt.Fprintf(out, "LAN client %v wants to send through this computer (its requests to the allowed hosts are recorded). Allow %v? [y/N] ", a, a)
 			// A new reader each time: nothing read ahead outlives the question.
 			ans, err := bufio.NewReader(in).ReadString('\n')
 			if errors.Is(err, io.EOF) && ans == "" {
@@ -370,7 +372,7 @@ func wordsAndFlags(args []string) (words, flags []string) {
 
 func lanIn(in, out *os.File, state, sub, arg, use string) error {
 	if !isTerminal(in) || !isTerminal(out) {
-		return errors.New("reqcove lan runs only in a terminal: it decides who may send through this Mac. Run it in your own terminal")
+		return errors.New("reqcove lan runs only in a terminal: it decides who may send through this computer. Run it in your own terminal")
 	}
 	switch sub {
 	case "list":
@@ -399,7 +401,7 @@ func lanIn(in, out *os.File, state, sub, arg, use string) error {
 			return err
 		}
 		if added {
-			fmt.Fprintf(out, "%v allowed: it may send through this Mac in LAN mode, and its requests to the allowed hosts are recorded (a running run takes it within seconds)\n", addr)
+			fmt.Fprintf(out, "%v allowed: it may send through this computer in LAN mode, and its requests to the allowed hosts are recorded (a running run takes it within seconds)\n", addr)
 		} else {
 			fmt.Fprintf(out, "%v was allowed already\n", addr)
 		}
@@ -420,4 +422,25 @@ func lanIn(in, out *os.File, state, sub, arg, use string) error {
 	}
 	fmt.Fprintf(out, "%v denied: a running run refuses its new connections within seconds (those open go on until they close)\n", addr)
 	return nil
+}
+
+// lanConfig is LAN mode's config for the exit node; on a terminal, run asks
+// about the clients it refuses.
+func lanConfig(ctx context.Context, iface, state string, allow capture.HostRules) (*exitnode.LAN, error) {
+	name, _, err := exitnode.LANAddr(iface) // before anything starts: a VPN's tunnel, or no network
+	if err != nil {
+		return nil, err
+	}
+	lanCfg := &exitnode.LAN{Interface: name, Allowed: lanAddrs(state), AllowCmd: withState("reqcove lan allow", state)}
+	for _, h := range allow.Hosts {
+		if !strings.Contains(h, "*") {
+			lanCfg.Names = append(lanCfg.Names, h)
+		}
+	}
+	if isTerminal(os.Stdin) {
+		signal.Ignore(syscall.SIGTTIN) // a read from the background fails instead of stopping run
+		fd := int(os.Stdin.Fd())
+		lanCfg.Refused = lanAsker(ctx, os.Stdin, os.Stderr, state, lanTTY{foreground: func() bool { return ttyForeground(fd) }, flush: func() { ttyFlushInput(fd) }})
+	}
+	return lanCfg, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -434,4 +435,57 @@ func allowedAt(addrs ...string) func() map[netip.Addr]time.Time {
 		m[netip.MustParseAddr(a)] = time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
 	}
 	return func() map[netip.Addr]time.Time { return m }
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// No client yet (at start) and none left (after lan deny): no "carrying
+// traffic from " with nothing after it, but OnDevices still hears of it.
+func TestRunLANNoEmptyCarrying(t *testing.T) {
+	defer func(old func(string) (string, netip.Prefix, error), poll time.Duration) { lanAddr, lanPoll = old, poll }(lanAddr, lanPoll)
+	lanAddr = func(string) (string, netip.Prefix, error) { return "lo", netip.MustParsePrefix("127.0.0.1/8"), nil }
+	lanPoll = 20 * time.Millisecond
+	var logs lockedBuf
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	var allowed atomic.Pointer[map[netip.Addr]time.Time]
+	none, one := map[netip.Addr]time.Time{}, map[netip.Addr]time.Time{netip.MustParseAddr("127.0.0.1"): {}}
+	allowed.Store(&none)
+	var devices atomic.Int32
+	var seen atomic.Pointer[map[string]string]
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{ProxyPort: freePort(t), LAN: &LAN{Allowed: func() map[netip.Addr]time.Time { return *allowed.Load() }},
+			OnDevices: func(m map[string]string) { seen.Store(&m); devices.Add(1) }})
+	}()
+	waitFor(t, func() bool { return devices.Load() == 1 }, "the first devices")
+	allowed.Store(&one)
+	waitFor(t, func() bool { return devices.Load() == 2 }, "lan:127.0.0.1 allowed")
+	allowed.Store(&none)
+	waitFor(t, func() bool { return devices.Load() == 3 }, "lan:127.0.0.1 denied")
+	cancel()
+	<-done
+	if m := *seen.Load(); len(m) != 0 {
+		t.Errorf("devices after deny: %v", m)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "carrying traffic from lan:127.0.0.1\n") || strings.Contains(out, "carrying traffic from \n") {
+		t.Errorf("logs:\n%s", out)
+	}
 }

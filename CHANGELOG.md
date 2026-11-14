@@ -1,5 +1,94 @@
 # Changelog
 
+## v0.8.0 — 2026-11-14
+
+### For people
+
+- Security, on a computer shared with other users: up to v0.7, another
+  user's process could take mitmproxy's SOCKS5 port before the first mitmdump
+  bound it, or in the milliseconds between a mitmdump's death and reqcove
+  noticing it, and get the SOCKS password and the devices' connections sent
+  then: plain HTTP readable, HTTPS not (from reading code, as SECURITY.md
+  said). Now the port stays reqcove's for the whole `run`; nothing to change.
+  Tried on macOS as the same user (binding the port fails); another user: not
+  tried.
+  reqcove binds the port once per `run` and hands the socket to each mitmdump
+  (through its launcher, `mitm.py`, with another `--mitmproxy-spec` too),
+  which accepts only once its addon, the one that checks the SOCKS password,
+  is loaded. Tests: binding the port fails while mitmdump is down (unit, and
+  with real mitmproxy); a request sent then is recorded by the next mitmdump,
+  and one with a wrong password is refused, nothing carried or recorded (real
+  mitmproxy; the test fails if mitmdump accepts before the addon is loaded,
+  its loading delayed by hand). SECURITY.md says what is covered and what not.
+- Tried on a Linux host, Ubuntu 24.04.5 LTS (arm64, a tart VM, 2026-11-14):
+  `reqcove setup`, `service install` (a systemd user unit; its journal holds
+  no login URL or token), `status`, `service restart` and `uninstall`, and LAN
+  mode with curl from another computer (HTTP and HTTPS recorded, refused until
+  allowed, `lan deny`). The guide (EN, JA) says what was tried and what was
+  not, and that without `loginctl enable-linger` systemd stops the user unit
+  at the last logout (tried).
+- Containers with Podman 6.2.0 on macOS (rootless `podman machine`): the smoke
+  script passes, `run` up to the login, `--rules`, `host.containers.internal`
+  ([container](docs/container.md#with-podman)); not tried: a login, an iPhone, an agent.
+- docs/SECURITY.ja.md: the security model in Japanese, section for section
+  with SECURITY.md; README.ja.md and guide.ja.md link to it.
+- LAN mode's question and `lan` commands, and the refusals of this computer's
+  own addresses, say "this computer", not "this Mac" (seen on Linux).
+- Fixes from a try on Ubuntu 24.04 and with Podman (unit tests):
+  - `reqcove status` with no run says "not logged in yet" for a node that
+    started but never logged in (tsnet's state file holds no profile), not
+    "has logged in before".
+  - `run --lan` with another `--state` no longer suggests `--hostname`
+    (refused with `--lan`).
+  - No empty "carrying traffic from " line at LAN mode's start or after
+    `reqcove lan deny` of the last client; the exit node's same line goes
+    through the same check (not tried with a tailnet).
+  - The service's PATH (systemd unit, launchd plist) lists uvx's directory once
+    when it is `~/.local/bin`.
+  - In a container, `run` prints the agent command with `podman run` under
+    Podman (`/run/.containerenv`), `docker run` under Docker (`/.dockerenv`),
+    and with neither a note to use `podman run` under Podman; not tried under
+    Podman. docs/container.md said `run` printed the host's form of that
+    command, and its Podman section that it printed `docker run`; it did not.
+  - The guide's `--state` row names `~/.reqcove/ca-copies`, the list of the
+    directories its CA was copied into (as docs/SECURITY.md did).
+- The guide reorganised for reading; no claim changed. Its commands table
+  lists `reqcove setup` and `reqcove service`; its Rules and `resolve`
+  sections say what the E2E tests tried.
+
+### Upgrading from v0.7
+
+- Restart `reqcove run` with the new version (or `reqcove service restart`,
+  or `brew services restart reqcove`), then reconnect the agent's MCP server
+  once (`/mcp` in Claude Code).
+- Run `reqcove init` (or `reqcove setup`) again to update the skill.
+- Before v1.0: in permission lists, replace `mcp__reqcove__list_mock_presets`,
+  `mcp__reqcove__activate_mock` and `mcp__reqcove__deactivate_mock` with
+  `mcp__reqcove__list_presets`, `mcp__reqcove__activate_preset` and
+  `mcp__reqcove__deactivate_preset`; in scripts, read `active_presets` and
+  `presets` instead of `active_mock_presets` and `mock_presets`.
+
+### For agents
+
+- `status` (and `reqcove status --json`) has `active_presets`, the presets on
+  of every kind, each with `kind`, and `active_presets_error` when mitmproxy
+  did not say which; `capture_stats` has `presets`, every preset's name. They
+  hold what `active_mock_presets`, `active_mock_presets_error` and
+  `mock_presets` hold (unit tests). `reqcove status`, run's log and the ready
+  block read the new names; `reqcove status` against a v0.7 run not yet
+  restarted reads the old ones (unit test). The `status` and `capture_stats`
+  descriptions name the new fields and the old ones as deprecated (unit test).
+  The skill and the server's instructions name the `*_preset` tools first and
+  the v0.6 ones as deprecated.
+
+### Deprecated
+
+- v0.6's names, removed in v1.0: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`, `activate_preset`
+  and `deactivate_preset`; their descriptions say so, their behaviour is
+  unchanged), `status`' `active_mock_presets` and `active_mock_presets_error`,
+  and `capture_stats`' `mock_presets` (filled as before until then).
+
 ## v0.7.0 — 2026-11-14
 
 ### For people

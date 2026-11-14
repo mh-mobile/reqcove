@@ -241,12 +241,18 @@ func status(ctx context.Context, args []string) error {
 		Node      exitnode.Status       `json:"node"`
 		NextSteps []string              `json:"next_steps"`
 		Capture   map[string]any        `json:"capture"`
-		Active    []mcpserver.PresetOut `json:"active_mock_presets"` // every kind since v0.7 (kind says which)
-		ActiveErr string                `json:"active_mock_presets_error"`
-		Service   string                `json:"service"`
+		Active    []mcpserver.PresetOut `json:"active_presets"` // every kind (kind says which)
+		ActiveErr string                `json:"active_presets_error"`
+		// v0.7's names (a run not yet restarted): read when the new ones are absent.
+		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
+		OldActiveErr string                `json:"active_mock_presets_error"`
+		Service      string                `json:"service"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
+	}
+	if out.Active == nil && out.ActiveErr == "" {
+		out.Active, out.ActiveErr = out.OldActive, out.OldActiveErr
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
@@ -270,7 +276,11 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
-	if names, _ := c["mock_presets"].([]any); len(names) > 0 {
+	presets, ok := c["presets"]
+	if !ok {
+		presets = c["mock_presets"] // v0.7's name
+	}
+	if names, _ := presets.([]any); len(names) > 0 {
 		var on []string
 		for _, p := range out.Active {
 			s := p.Name
@@ -320,14 +330,26 @@ func offlineStatus(state, uvx string) error {
 	} else {
 		fmt.Println("  uv:    found")
 	}
-	if _, err := os.Stat(filepath.Join(state, "tsnet", "tailscaled.state")); err != nil {
+	switch b, err := os.ReadFile(filepath.Join(state, "tsnet", "tailscaled.state")); {
+	case err != nil:
 		fmt.Printf("  node:  never started here; `%s` will ask you to log in\n", withState("reqcove run", state))
-	} else {
+	case !loggedIn(b):
+		fmt.Printf("  node:  not logged in yet; `%s` will ask you to log in\n", withState("reqcove run", state))
+	default:
 		fmt.Println("  node:  has logged in before (state kept)")
 	}
 	printCA(os.Stdout, state, false)
 	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
 	return nil
+}
+
+// loggedIn reports whether tsnet's state file (a JSON object of base64 values)
+// holds a login profile: tsnet writes its machine key at the first start, the
+// profiles only once a login gave the node an ID; a logout empties them.
+func loggedIn(tailscaledState []byte) bool {
+	var keys map[string][]byte
+	var profiles map[string]json.RawMessage
+	return json.Unmarshal(tailscaledState, &keys) == nil && json.Unmarshal(keys["_profiles"], &profiles) == nil && len(profiles) > 0
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.

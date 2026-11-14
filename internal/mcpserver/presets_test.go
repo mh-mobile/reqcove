@@ -2,8 +2,10 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -283,5 +285,82 @@ func TestPresetToolKinds(t *testing.T) {
 		if k := f.kind.Load(); k != c.kind {
 			t.Errorf("%s passed kind %q, want %q", c.tool, k, c.kind)
 		}
+	}
+}
+
+// status's active_presets has every kind on now; active_mock_presets (v0.6's
+// name, removed in v1.0) the same until then, and so their errors.
+func TestStatusActivePresets(t *testing.T) {
+	var o StatusOut
+	o.SetActivePresets([]capture.Preset{{Name: "m", Kind: "mock", Active: true}, {Name: "s", Kind: "map_remote", Active: true}, {Name: "off", Kind: "mock"}}, nil)
+	var got map[string]any
+	b, _ := json.Marshal(o)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := got["active_presets"].([]any); len(a) != 2 || !reflect.DeepEqual(got["active_mock_presets"], got["active_presets"]) {
+		t.Errorf("active_presets %v, active_mock_presets %v", got["active_presets"], got["active_mock_presets"])
+	}
+	o = StatusOut{}
+	o.SetActivePresets(nil, errors.New("no answer"))
+	if o.PresetsError != "no answer" || o.MockPresetsError != o.PresetsError || o.ActivePresets != nil {
+		t.Errorf("errors: %q %q", o.PresetsError, o.MockPresetsError)
+	}
+}
+
+// The v0.6 tools say they go in v1.0, and what replaces them.
+func TestMockToolsDeprecated(t *testing.T) {
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := presetServer(&fakePresets{}).Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for tool, err := range cs.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		deprecated := strings.HasPrefix(tool.Description, "Deprecated, removed in v1.0: use list_presets / activate_preset / deactivate_preset.")
+		if old := tool.Name == mockPresets.list || tool.Name == mockPresets.activate || tool.Name == mockPresets.deactivate; old != deprecated {
+			t.Errorf("%s: %q", tool.Name, tool.Description)
+		} else if old {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("%d deprecated tools, want 3", n)
+	}
+}
+
+// status and capture_stats name the new fields and the v0.6 ones as deprecated.
+func TestDeprecatedFieldsDescribed(t *testing.T) {
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := New(storeWith("a"), func() StatusOut { return StatusOut{} }).Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"status":        "active_presets; active_mock_presets is the same list, deprecated, removed in v1.0",
+		"capture_stats": "presets; mock_presets the same, deprecated, removed in v1.0",
+	}
+	for tool, err := range cs.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w, ok := want[tool.Name]; ok {
+			if !strings.Contains(tool.Description, w) {
+				t.Errorf("%s: %q lacks %q", tool.Name, tool.Description, w)
+			}
+			delete(want, tool.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("tools not seen: %v", want)
 	}
 }

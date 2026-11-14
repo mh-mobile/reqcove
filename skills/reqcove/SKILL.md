@@ -1,6 +1,6 @@
 ---
 name: reqcove
-description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, wait_for_flows, get_flow, list_ws_messages, diff_flows, list_tls_failures, list_passthrough, list_devices, capture_stats, list_presets, activate_preset, deactivate_preset, list_mock_presets, activate_mock, deactivate_mock, list_rules, explain_rules, add_marker, list_markers) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, to turn on a preset the user wrote, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
+description: Read the HTTP(S) traffic of an iPhone (or this computer's iOS Simulator) that Reqcove records, with the reqcove MCP tools (status, summarize, list_flows, search_flows, wait_for_flows, get_flow, list_ws_messages, diff_flows, list_tls_failures, list_passthrough, list_devices, capture_stats, list_presets, activate_preset, deactivate_preset, list_mock_presets, activate_mock, deactivate_mock (deprecated, removed in v1.0), list_rules, explain_rules, add_marker, list_markers) — which requests an app sends, what failed and why, its headers and bodies, one app's traffic, TLS failures and certificate pinning. Use when the user mentions Reqcove, asks what the phone or an iOS app sends or why its requests fail, when a reqcove tool answers "not running" or finds no flows, to turn on a preset the user wrote, or to write a Reqcove --rules file (map_remote, map_local, modify_headers, resolve) or export a HAR.
 ---
 
 # Reqcove
@@ -19,7 +19,7 @@ terminal; you read its records through the reqcove MCP tools (`reqcove mcp`).
   restart or an uninstall empties the records). The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock
   add --print` when the user asks.
-- `activate_preset` and `activate_mock` change what the device gets, and a
+- `activate_preset` (and the deprecated `activate_mock`) changes what the device gets, and a
   `map_remote` preset where its requests and credentials go: see 5, Presets, first.
 - Read the records only through the reqcove MCP tools and those commands. If
   the tools are missing or do not connect, tell the user to add the MCP server,
@@ -184,7 +184,7 @@ mock:                                                     # answered here; the r
   - match: {url: "https://api.example.com/graphql", operation: Feed}  # a GraphQL operation
     body_file: feed.json
   - match: {method: GET, url: "https://api.example.com/v1/profile"}
-    preset: profile-slow                                  # only while an agent turns it on (activate_mock)
+    preset: profile-slow                                  # only while an agent turns it on (activate_preset)
     description: the profile loads slowly
     status: 200
     body_file: profile.json
@@ -231,8 +231,11 @@ tell them what you added and where.
    None: say the user can mark a rule in the `--rules` file with `preset: NAME`.
 2. `activate_preset` (`name`; for a mock, `times: 1` for "once"); keep its
    `checkpoint`. One preset is on per match, per kind: it says which it turned
-   off (`turned_off`). `activate_mock` and `list_mock_presets` are the same for
-   mocks only.
+   off (`turned_off`). `activate_mock`, `deactivate_mock` and
+   `list_mock_presets` are the same for mocks only: deprecated, removed in
+   v1.0; use `list_presets`, `activate_preset` and `deactivate_preset`. Read
+   `status`' `active_presets` and `capture_stats`' `presets`: `active_mock_presets`
+   and `mock_presets` hold the same, deprecated, removed in v1.0.
 3. Act (RoamRun, or ask the user to use the app).
 4. `wait_for_flows` with `after: checkpoint`; a flow a preset changed or
    answered lists it in `presets` (a mock's also in `preset`; a closed one's

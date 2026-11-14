@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
+	"github.com/mh-mobile/reqcove/internal/webui"
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/term"
 )
@@ -178,8 +181,66 @@ func (g *readyGate) ready(s exitnode.Status) bool {
 	return agreed
 }
 
-// statsPresets are capture_stats' preset names (mock_presets: every kind since v0.7).
+// statsPresets are capture_stats' preset names, of every kind.
 func statsPresets(stats map[string]any) []string {
-	n, _ := stats["mock_presets"].([]string)
+	n, _ := stats["presets"].([]string)
 	return n
+}
+
+// readyOnStatus is run's OnStatus: it keeps the node's status, and prints the
+// ready block and its QR codes once, when the node is ready.
+func readyOnStatus(o *runOpts, cap *capture.Capture, node *nodeState, user *userLinks, lanCfg *exitnode.LAN, page *webui.UI, mcpHandler http.Handler, uiToken, mcpToken, webAddr string) func(exitnode.Status) {
+	var shown bool
+	var gate readyGate
+	onStatus := func(s exitnode.Status) {
+		node.set(s)
+		user.status(s)
+		ip := firstIPv4(s.IPs)
+		if shown || ip == "" || !gate.ready(s) {
+			return
+		}
+		shown = true
+		// One block when ready, so what to do is not lost among the lines above.
+		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
+		var uiLink, webLink string
+		if page != nil {
+			uiLink = "http://" + ip + "/?k=" + uiToken
+		}
+		if webAddr != "" && !o.lanMode { // LAN mode: mitmweb on this computer only
+			webLink = nodeWebLink(cap.WebURL, webAddr, ip)
+		}
+		var mcpURL string
+		if mcpHandler != nil {
+			host := strings.TrimSuffix(s.Node, ".") // the MagicDNS name, as Grok Bot asks for
+			if host == "" {
+				host = ip
+			}
+			mcpURL = fmt.Sprintf("http://%s:%d/mcp", host, exitnode.MCPPort)
+		}
+		var ca string
+		if len(o.devices) > 0 || o.lanMode {
+			ca = "http://mitm.it"
+		}
+		shownUI, shownWeb, shownToken := user.ready(uiLink, webLink, cap.WebURL, mcpURL, mcpToken, ca)
+		var lanR *lanReady
+		caCaption := "CA (with the exit node on)"
+		if s.LAN != nil {
+			lanR = &lanReady{listen: s.LAN.Listen, allowed: s.LAN.Allowed, state: o.state, prompt: lanCfg.Refused != nil,
+				caSHA256: cap.CA.SHA256, caFile: filepath.Join(o.state, "mitmproxy", "mitmproxy-ca-cert.pem")}
+			caCaption = "CA (with the Wi-Fi proxy set)"
+		}
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, o.state, statusOut(s, cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(statsPresets(cap.Store.Stats()), cap.Store.PresetTargets()), lanR))
+		var codes []qrItem
+		if uiLink != "" {
+			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})
+		}
+		if webLink != "" {
+			codes = append(codes, qrItem{webLink, "--web (mitmweb, unmasked)"})
+		}
+		if len(o.devices) > 0 || o.lanMode {
+			codes = append(codes, qrItem{"http://mitm.it", caCaption})
+		}
+		printQRs(os.Stderr, codes...)
+	}
+	return onStatus
 }
