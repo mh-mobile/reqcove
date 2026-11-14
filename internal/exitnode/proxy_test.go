@@ -709,7 +709,8 @@ func (f *fakeConn) CloseWrite() error { f.halfShut = true; return nil }
 // connection and holdWait's timer run by hand: what each write to mitmproxy
 // held, not when TCP's reads cut it.
 func TestHoldConn(t *testing.T) {
-	defer func(f func(func()) func() bool) { holdTimer = f }(holdTimer)
+	orig := holdTimer
+	defer func() { holdTimer = orig }()
 	var fire func()
 	holdTimer = func(f func()) func() bool { fire = f; return func() bool { fire = nil; return true } }
 	pair := func() (*holdConn, *fakeConn) {
@@ -805,7 +806,7 @@ func TestHoldConn(t *testing.T) {
 	// The real timer, over TCP: what is held goes when holdWait passes.
 	defer func(w time.Duration) { holdWait = w }(holdWait)
 	holdWait = 50 * time.Millisecond
-	holdTimer = func(f func()) func() bool { return time.AfterFunc(holdWait, f).Stop }
+	holdTimer = orig
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

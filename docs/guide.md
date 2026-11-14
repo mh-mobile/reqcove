@@ -555,7 +555,10 @@ Connect's demo server, through a relay that dials mitmproxy as the exit node
 does (both transports, the CA given as the trust root), by an E2E test, and
 on an iPhone (iOS 27.3, both transports). Before, on the iPhone, the server's
 HTTP/2 settings came first and mitmproxy carried the calls as raw TCP,
-unrecorded ([raw TCP](#connections-not-read-as-http-raw-tcp)).
+unrecorded ([raw TCP](#connections-not-read-as-http-raw-tcp)). A server
+that takes only `grpc-exp`, not `h2`, would fail such a call through
+Reqcove, as it is offered no `grpc-exp` when the client offers `h2` too
+(from reading code; no such server was found).
 
 ### Android
 
