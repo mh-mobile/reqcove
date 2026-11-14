@@ -762,7 +762,8 @@ again (visible in `ps`) while the port stays held, so no other process can take
 made meanwhile waits in the socket's queue for the next mitmdump; the devices'
 connections wait (15 seconds at most, then fail) until its addon says hello.
 Tests: while mitmdump is down, and after reqcove gave up on it, binding the
-port fails, and Stop frees it (unit test, also in CI on Linux); with real
+port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
+Linux too); with real
 mitmproxy (from the lock and through uvx, macOS), the same while it restarts,
 and a request sent then is carried and recorded by the next mitmdump. Were the
 launcher's change missed (a mitmproxy that binds another way), its own bind
