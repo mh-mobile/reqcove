@@ -117,7 +117,7 @@ func run(ctx context.Context, args []string) error {
 		if webLocal != exitnode.WebPort && !o.lanMode {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
-		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all")
+		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all (finished flows: one in progress counts once it ends)")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

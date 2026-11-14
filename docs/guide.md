@@ -381,6 +381,10 @@ code `run` (or `reqcove links`) prints.
 
 - Nothing is masked ([SECURITY](SECURITY.md#mitmweb---web)). It shows bodies
   up to 2 MB each, and keeps the newest 10,000 flows and 256 MB of bodies.
+  These bounds count finished flows only: one still in progress (a download
+  or an event stream still coming, a request waiting for its answer) counts
+  once it ends, and what Reqcove keeps of its bodies for mitmweb meanwhile
+  (up to 2 MB each way) is outside them (from reading code; not measured).
 - The link is the same at each start (`web-token` in the state directory).
   After a restart, open it again: a bookmark without the token asks for it.
 - In its Capture tab, leave "Run SOCKS Proxy" on, or the devices' HTTP(S)

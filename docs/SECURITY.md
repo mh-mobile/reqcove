@@ -628,7 +628,9 @@ the exit node. It shows traffic **unmasked**, and
 from its page anyone with the password can edit and replay requests and change
 options. It shows bodies up to 2 MB each (Reqcove gives it them,
 as mitmproxy keeps no body it streams), whole and unmasked, and keeps the newest
-10,000 flows and 256 MB of bodies. It shows every flow mitmproxy decrypted, including requests to hosts
+10,000 flows and 256 MB of bodies. Those bounds count finished flows: one still
+in progress counts once it ends, and what is kept of its bodies meanwhile (up to
+2 MB each way) is outside them (from reading code). It shows every flow mitmproxy decrypted, including requests to hosts
 outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
 reuse): the per-request check keeps those out of Reqcove's records only.
 
