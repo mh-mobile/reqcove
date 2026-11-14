@@ -83,7 +83,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 ### ツールを許可する
 
 - 読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。
-- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`、v0.6 の `activate_mock`、`deactivate_mock`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
+- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`、非推奨の v0.6 の `activate_mock`、`deactivate_mock`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
 - Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の印のないツールも許可されます（v0.6 からは `activate_mock`、v0.7 からはプリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
 
 たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによるもので、ここでは試していません）。
@@ -95,16 +95,16 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
               "mcp__reqcove__search_flows", "mcp__reqcove__wait_for_flows", "mcp__reqcove__get_flow",
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
-              "mcp__reqcove__list_mock_presets", "mcp__reqcove__list_presets",
-              "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
-    "ask": ["mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock",
-            "mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
+              "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__list_mock_presets"],
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset",
+            "mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
   }
 }
 ```
 
-この中の v0.6 のもの（`list_mock_presets`、`activate_mock`、`deactivate_mock`）は非推奨で、v1.0 で削除します。
+それぞれのリストの最後にある v0.6 のもの（`list_mock_presets`、`activate_mock`、`deactivate_mock`）は非推奨で、v1.0 で削除します。
 
 注意点は次のとおりです。
 
@@ -398,6 +398,8 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 - `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET にも応答し、一緒に送られてきたボディはすべてメモリに保持します。`--device` のデバイス上のアプリや Web ページも（`--local-proxy` なら、このコンピュータのアプリも）、ルールに合うホストへのこうしたリクエストの送り手になりえます。とても大きなボディだと mitmproxy のメモリが尽き（reqcove が起動し直します）、その間デバイスの通信が止まります。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。これらのテストにないもの：長さのない HTTP/2 の GET への `map_local`、mitmproxy のメモリが尽きるほど大きなボディ。
+
 #### 接続先だけを変える（`resolve`）
 
 `resolve` は、リクエストをそのままにして、接続先だけを変えます。ステージングサーバーや新しいロードバランサー向けです。
@@ -413,6 +415,8 @@ resolve:                        # Reqcove 独自：Host と SNI はそのまま�
 - 名前解決はこれまでどおり行われ（iPhone が行い、Remote Proxy ではこのコンピュータが行います）、先に本物のサーバーへ接続します。公開の DNS で解決できない名前や、接続を拒否する本物のサーバーは、接続先を変えられません。
 - 名前は `--allow-hosts` に入っている必要があり、名前ごとに別のアドレス（またはポート）が必要です。mitmproxy が接続をアドレス単位で使い回すためです。
 - 拒否するもの：`0.0.0.0/8`、リンクローカル（クラウドのメタデータ）、マルチキャスト、Tailscale の 100.100.100.100（[SECURITY](SECURITY.ja.md#ルール--rules)）。`--upstream-proxy` と一緒に使う `resolve` も拒否します。
+
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、平文の HTTP がアプリの `Host` のままルールのアドレスへ送られ、送り先が記録に残ること、`map_remote` のあとの `resolve`、TLS で接続先にその名前（SNI）を求め、信頼できない証明書なら 502 になること、読み込みで断るもの（クラウドのメタデータ、100.100.100.100、名前の接続先、アドレスの共有、`--allow-hosts` にないホスト、`--upstream-proxy` との組み合わせ）です。別の名前の信頼された証明書を持つサーバーで 502 になることも試しました（[SECURITY](SECURITY.ja.md#ルール--rules)）。`resolve` のプリセットは iPhone では試していません（[下](#map_remotemodify_headersresolve-のプリセット)）。
 
 #### ここで応答する（`mock`）
 
@@ -631,7 +635,7 @@ reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew
 - **ファイル**：`--config FILE` は、`run` のフラグを 1 行に 1 つずつ読みます。
   - `#` から後ろはコメントです。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリです。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます。
   - コマンドラインのフラグはファイルのあとに読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。
-  - ファイルで断るもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--allow-hosts '*'`（`@FILE` で指定したものも）。これらはコマンドラインでだけ使えます。
+  - ファイルで断るもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'`（`@FILE` で指定したものも）。これらはコマンドラインでだけ使えます。
   - ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。
   - `--config` は 1 つだけです。指定しなければ、何も読みません。
 - **終わったとき**：ファイルがないときや断ったときは、サービスは 1 回で終わります（`brew services` がエラーを表示します）。繰り返し起動し直すことはありません。ほかの理由で終わったときも同じなので、`brew services restart reqcove` で起動し直してください（`brew upgrade reqcove` のあとも）。
@@ -659,7 +663,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 ```
 
 - **ファイル**は、`--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。
-  - インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan` が書いてある、のどれかなら断ります。
+  - インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config` が書いてある、のどれかなら断ります。
   - `--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。
   - ファイルに `--state` があれば、それが状態ディレクトリです（フルパスか `~/` から）。状態ディレクトリは、空か、新しいか、reqcove のものに限ります（`run` と同じ）。
 - **終わったとき**：`run` が終わると（エラー、断られたファイル、`kill`）、次のログインまで止まったままです。`reqcove service restart` で起動し直せます（`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user restart reqcove` を実行します。試したのは Linux だけです）。
@@ -742,12 +746,12 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし（写した先は `~/.reqcove/ca-copies` に記録し、`~/.reqcove` の `cleanup` が表示する）、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
-| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
+| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
 | `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、デフォルトの mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認）。ファイル名が `uvx` でないパスは uvx として実行する（ロックもハッシュの確認もなし） |
 | `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
 | `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |
 
-ほかのコマンドは次のとおりです。`init` と `version` 以外は、`--state DIR` も指定できます。
+ほかのコマンドは次のとおりです。`init`、`version`、`setup`、`service restart`、`service uninstall` 以外は、`--state DIR` も指定できます。
 
 | | |
 |---|---|
@@ -759,6 +763,8 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `reqcove lan` | `allow ADDR`、`deny ADDR`、`list`。[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)で中継するアドレス。ターミナルでのみ |
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
 | `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |
+| `reqcove setup` | [初回の手順](#初回の起動ログインと承認)。フラグなし。ターミナルでのみ |
+| `reqcove service install` | `--config FILE`、`--state DIR`。そのあとは `reqcove service restart`、`reqcove service uninstall`。[Homebrew なしで常駐させる](#homebrew-なしで常駐させるreqcove-service-install) |
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 

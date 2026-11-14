@@ -233,7 +233,9 @@ tell them what you added and where.
    `checkpoint`. One preset is on per match, per kind: it says which it turned
    off (`turned_off`). `activate_mock`, `deactivate_mock` and
    `list_mock_presets` are the same for mocks only: deprecated, removed in
-   v1.0; use `list_presets`, `activate_preset` and `deactivate_preset`.
+   v1.0; use `list_presets`, `activate_preset` and `deactivate_preset`. Read
+   `status`' `active_presets` and `capture_stats`' `presets`: `active_mock_presets`
+   and `mock_presets` hold the same, deprecated, removed in v1.0.
 3. Act (RoamRun, or ask the user to use the app).
 4. `wait_for_flows` with `after: checkpoint`; a flow a preset changed or
    answered lists it in `presets` (a mock's also in `preset`; a closed one's

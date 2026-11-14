@@ -64,7 +64,6 @@ Podman 6.2.0、macOS で、2026-11-14 に試しました（arm64。`podman machi
 
 - **確かめたこと**：`CONTAINER=podman scripts/container-smoke.sh` が通ること（最初に挙げた確かめがすべて通り、`podman stop` の終了コードは 0）。`podman build -t reqcove .`（イメージの名前は `localhost/reqcove` になり、`reqcove` で見つかります）。2 をネットワークありで、ログインの手前まで：`podman exec $NAME reqcove status` が `NeedsLogin` と残りの手順を答え、`podman exec $NAME reqcove har` も答えること。Mac のフォルダを `-v ./rules:/rules:ro` でつないだ `--rules` が読まれること（SELinux は enforcing でしたが、`:z` は要りませんでした）。`host.containers.internal` と `host.docker.internal` のどちらでも、Mac の `127.0.0.1` のサーバーに届くこと（普通のコンテナから確かめました。`--rules` や `--upstream-proxy` を通しては試していません）。
 - **Podman で試していないこと**：ログイン、iPhone の通信を通すこと、`claude mcp add … podman run -i …` で追加したエージェント（`podman run -i --volumes-from` の MCP は、確かめのスクリプトだけです）、`reqcove links`、`--mcp-http`、Linux のホスト、rootful のマシン。コンテナでの `run --lan` は、Docker でも Podman でも試していません。
-- `run` が表示するエージェント向けのコマンドは `docker run` の形です。Podman では `podman run` に読み替えてください。
 - マシンの既定のログドライバーは journald です。`--log-opt max-size=10m` は受け付けられますが、Podman のドキュメントでは、大きさを抑えるのは `--log-driver k8s-file` のログです（ドキュメントで読んだだけで、確かめていません）。
 
 ## 複数の環境

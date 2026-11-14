@@ -243,10 +243,16 @@ func status(ctx context.Context, args []string) error {
 		Capture   map[string]any        `json:"capture"`
 		Active    []mcpserver.PresetOut `json:"active_presets"` // every kind (kind says which)
 		ActiveErr string                `json:"active_presets_error"`
-		Service   string                `json:"service"`
+		// v0.7's names (a run not yet restarted): read when the new ones are absent.
+		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
+		OldActiveErr string                `json:"active_mock_presets_error"`
+		Service      string                `json:"service"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
+	}
+	if out.Active == nil && out.ActiveErr == "" {
+		out.Active, out.ActiveErr = out.OldActive, out.OldActiveErr
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
@@ -270,7 +276,11 @@ func status(ctx context.Context, args []string) error {
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
-	if names, _ := c["presets"].([]any); len(names) > 0 {
+	presets, ok := c["presets"]
+	if !ok {
+		presets = c["mock_presets"] // v0.7's name
+	}
+	if names, _ := presets.([]any); len(names) > 0 {
 		var on []string
 		for _, p := range out.Active {
 			s := p.Name
