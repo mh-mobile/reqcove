@@ -66,7 +66,9 @@ func TestWaitReleased(t *testing.T) {
 		for range maxWaiters + 2 {
 			abandon(s)
 		}
-		time.Sleep(100 * time.Millisecond)
+		// Past --mcp-http's one-second window (at most 10 calls a second),
+		// which the abandoned calls filled.
+		time.Sleep(1100 * time.Millisecond)
 		res, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "wait_for_flows", Arguments: map[string]any{"timeout": 1}})
 		if err != nil || res.IsError {
 			t.Fatalf("after the abandoned waits: %v %+v", err, res)

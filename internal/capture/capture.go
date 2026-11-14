@@ -55,7 +55,11 @@ func PyCommand(cfg Config, tool string) (string, []string) {
 		uv := filepath.Join(filepath.Dir(cfg.Uvx), "uv") // "uv" itself when uvx is on PATH
 		return uv, []string{"run", "--locked", "--no-project", "--python", cfg.Python, "--script", filepath.Join(cfg.Dir, "mitm.py"), tool}
 	}
-	return cfg.Uvx, []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+	args := []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+	if tool != "python" { // mitmdump and mitmweb through the launcher too, for the SOCKS socket (mitm.py)
+		args = append(args[:len(args)-1], "python", filepath.Join(cfg.Dir, "mitm.py"), tool)
+	}
+	return cfg.Uvx, args
 }
 
 // Apple's services fail on HTTPS interception
@@ -118,7 +122,7 @@ const (
 
 type Capture struct {
 	Store       *Store
-	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener; the same across restarts
+	SocksAddr   string // 127.0.0.1:port of mitmdump's SOCKS5 listener; reqcove holds it for the whole run (socks)
 	SocksSecret string // the SOCKS5 password; any user name (reqcove sends the device's StableID)
 	WebURL      string // with WebPort: mitmweb's address, with its password as the token
 	CA          CA     // the CA iPhones must trust
@@ -127,6 +131,7 @@ type Capture struct {
 	bin    string // uv, or uvx
 	args   []string
 	ln     net.Listener
+	socks  *os.File // the SOCKS5 listener, bound by Start and handed to each mitmdump as fd 3: its port is never free while mitmdump restarts
 	cancel context.CancelFunc
 	done   chan struct{}
 	upMu   sync.Mutex
@@ -175,8 +180,12 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		return nil, err
 	}
 	os.Chmod(sock, 0o600) // the directory is 0700 already; this keeps the socket private on its own too
+	var socks *os.File
 	fail := func(err error) (*Capture, error) {
 		ln.Close()
+		if socks != nil {
+			socks.Close()
+		}
 		os.Remove(sock)
 		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
 		for _, f := range scriptFiles {
@@ -190,7 +199,13 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 			return fail(err)
 		}
 	}
-	port, err := freePort()
+	socksLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fail(err)
+	}
+	port := socksLn.Addr().(*net.TCPAddr).Port
+	socks, err = socksLn.(*net.TCPListener).File() // a dup: the socket outlives socksLn
+	socksLn.Close()
 	if err != nil {
 		return fail(err)
 	}
@@ -233,7 +248,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	}
 	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
-		cfg: cfg, ln: ln, done: make(chan struct{}), up: make(chan struct{})}
+		cfg: cfg, ln: ln, socks: socks, done: make(chan struct{}), up: make(chan struct{})}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
@@ -297,7 +312,8 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
 	p := &proc{cmd: exec.Command(c.bin, c.args...), done: make(chan struct{})}
 	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
-	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1") // mitmproxy.log as it happens, not when Python's buffer fills
+	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "REQCOVE_SOCKS_FD=3") // PYTHONUNBUFFERED: mitmproxy.log as it happens, not when Python's buffer fills
+	p.cmd.ExtraFiles = []*os.File{c.socks}                                       // fd 3: the addon serves SOCKS5 on it
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := p.cmd.Start(); err != nil {
 		return nil, err
@@ -356,9 +372,9 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 			return
 		case <-p.done:
 		}
-		// First: from now its port is free for anyone to take.
+		// First: from now connections wait in the listener's queue for the next one.
 		c.setUp(false)
-		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would hold the port
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would still accept on the port
 		err := fmt.Errorf("mitmdump exited: %v", p.err)
 		c.Store.mitmdumpExited(err.Error())
 		if time.Since(p.ready) >= stableAfter {
@@ -387,12 +403,9 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 	}
 }
 
-// WaitReady returns once mitmdump is ready, so that nothing is sent to its
-// SOCKS port while it is down: there, another local user's process could have
-// taken the port. Ready means its addon said hello, which mitmproxy (12.3.1)
-// does only after its listeners are up: one that cannot bind exits first
-// (errorcheck). Between its death and supervise noticing it (milliseconds),
-// a dial can still go to the free port.
+// WaitReady returns once mitmdump is ready (its addon said hello), so that
+// dials made while it is down wait for it here rather than in the SOCKS
+// listener's queue. The port itself is never free: reqcove holds it (socks).
 func (c *Capture) WaitReady(ctx context.Context) error {
 	c.upMu.Lock()
 	up := c.up
@@ -450,6 +463,7 @@ func (c *Capture) Stop() {
 	c.cancel()
 	<-c.done
 	c.ln.Close()
+	c.socks.Close()
 	os.Remove(c.ln.Addr().String())
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
@@ -685,15 +699,4 @@ func removeAll(paths []string) {
 	for _, p := range paths {
 		os.Remove(p)
 	}
-}
-
-// freePort asks the kernel for an unused port.
-// ponytail: the port is free when asked, not guaranteed when mitmdump binds; retry if that ever races.
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
 }
