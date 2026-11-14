@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -217,7 +218,9 @@ func TestPassHosts(t *testing.T) {
 // decrypts it, then carries it as raw TCP: no flow, no TLS failure. It is
 // listed as a connection (reason raw_tcp, its protocols, the bytes relayed
 // inside TLS) and counted (raw_tcp), and the next HTTPS request is recorded
-// as before. Without the addon's tcp_start, nothing at all is recorded.
+// as before. Without the addon's tcp_start, nothing at all is recorded. Then
+// plain HTTP that a 101 upgrades: the request a flow, the connection after it
+// a raw record named by the request's host.
 func TestRawTCPE2E(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
@@ -308,6 +311,58 @@ func TestRawTCPE2E(t *testing.T) {
 	}
 	if h.stat("raw_tcp") != 1 {
 		t.Errorf("raw_tcp after HTTPS: %d", h.stat("raw_tcp"))
+	}
+
+	// Plain HTTP upgraded with a 101 (not a WebSocket): the request is a flow,
+	// and what the connection carries after it is a raw connection named by
+	// the request's host (no SNI to name it). Without the addon's memory of
+	// the 101's host, nothing.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		if _, err := http.ReadRequest(bufio.NewReader(c)); err != nil {
+			return
+		}
+		io.WriteString(c, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: x-reqcove-test\r\nConnection: Upgrade\r\n\r\n")
+		b := make([]byte, 4)
+		if _, err := io.ReadFull(c, b); err == nil {
+			c.Write(b)
+		}
+	}()
+	up, err := (pinClient{h: h, addr: ln.Addr().String()}).dial(ctx, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up.SetDeadline(time.Now().Add(20 * time.Second))
+	io.WriteString(up, "GET /up-plain HTTP/1.1\r\nHost: plain.example.com\r\nConnection: Upgrade\r\nUpgrade: x-reqcove-test\r\n\r\n")
+	br := bufio.NewReader(up)
+	if r, err := http.ReadResponse(br, nil); err != nil || r.StatusCode != 101 {
+		t.Fatalf("101: %v %v", r, err)
+	}
+	io.WriteString(up, "ping")
+	echo = make([]byte, 4)
+	if _, err := io.ReadFull(br, echo); err != nil || string(echo) != "ping" {
+		t.Fatalf("echo after the 101: %q %v", echo, err)
+	}
+	up.Close()
+	if v := h.doneFlow("/up-plain", false); v.Status != 101 {
+		t.Errorf("the 101's flow: %+v", v.Flow)
+	}
+	pt = waitPass(h.c.Store, "plain.example.com", true)
+	if len(pt) != 1 || pt[0].Reason != "raw_tcp" || pt[0].Open || pt[0].Device != "dev" || pt[0].Server != ln.Addr().String() ||
+		pt[0].BytesUp != 4 || pt[0].BytesDown != 4 {
+		t.Fatalf("plain 101's raw record: %+v", pt)
+	}
+	if h.stat("raw_tcp") != 2 {
+		t.Errorf("raw_tcp after the plain 101: %d", h.stat("raw_tcp"))
 	}
 }
 

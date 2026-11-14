@@ -1097,6 +1097,7 @@ class Reqcove:
         self.allow = []
         self.passing = []  # --pass-hosts: allowed hosts carried undecrypted, their connections' metadata recorded
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
+        self.upgraded = {}  # client connection id -> the host a 101 (not a WebSocket) switched: tcp_start's name without SNI
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
         self.web_keep = 0  # --web: bodies up to this many bytes kept for mitmweb
@@ -1392,6 +1393,7 @@ class Reqcove:
 
     def client_disconnected(self, client):
         self.conn_device.pop(client.id, None)
+        self.upgraded.pop(client.id, None)
         for k in [k for k in self.resolve_sni if k[0] == client.id]:
             del self.resolve_sni[k]
 
@@ -1912,6 +1914,8 @@ class Reqcove:
         self._web_done(flow)
         if flow.metadata.get("reqcove_skip"):
             return
+        if flow.response.status_code == 101 and not flow.websocket:
+            self.upgraded[flow.client_conn.id] = flow.request.pretty_host  # plain HTTP has no SNI: tcp_start's host
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "response", flow.response)
         elif isinstance(head := flow.response.stream, _Head) and head.sent_len == -1:
@@ -2032,9 +2036,10 @@ class Reqcove:
             # do not look like HTTP, and its HTTP layer after a 101 that is not
             # a WebSocket: what it carries has no flow, so it is recorded as a
             # connection (raw: never its bytes). Ignored connections (Apple's,
-            # hosts outside --allow-hosts) fire no hook.
+            # hosts outside --allow-hosts) fire no hook. A plain HTTP 101's
+            # connection is named by its request's host.
             ip = (flow.server_conn.address or ("",))[0]
-            host = (c.sni or ip).lower().rstrip(".")
+            host = (c.sni or self.upgraded.pop(c.id, None) or ip).lower().rstrip(".")
             if not host or not check.is_valid_host(host) or not self._in_scope(host):
                 return
             p = flow.metadata["reqcove_pass"] = {
