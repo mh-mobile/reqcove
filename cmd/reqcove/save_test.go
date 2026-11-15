@@ -33,7 +33,7 @@ func saveFiles(t *testing.T, dir, hosts, conf string) (hostsFile, config string)
 }
 
 // run remembers where its hosts came from: the hosts file, the --config
-// file's own hosts, the command line's; a host in the file too is the file's.
+// file's own hosts, the command line's, a host in the file too included.
 func TestRunHostsOrigin(t *testing.T) {
 	dir := t.TempDir()
 	hostsFile, config := saveFiles(t, dir, "# mine\napi.a.com\nboth.c.com\n", "--allow-hosts=conf.d.com\n")
@@ -44,8 +44,8 @@ func TestRunHostsOrigin(t *testing.T) {
 	if !slices.Equal(o.origin.files, []string{hostsFile}) {
 		t.Errorf("files %q", o.origin.files)
 	}
-	if want := map[string]string{"cli.c.com": "the command line", "conf.d.com": "the --config file"}; !maps.Equal(o.origin.pinned(), want) {
-		t.Errorf("pinned %q, want %q", o.origin.pinned(), want)
+	if want := map[string]string{"cli.c.com": "the command line", "both.c.com": "the command line", "conf.d.com": "the --config file"}; !maps.Equal(o.origin.given, want) || !o.origin.inFiles["both.c.com"] || o.origin.inFiles["cli.c.com"] {
+		t.Errorf("given %q, want %q; in files %v", o.origin.given, want, o.origin.inFiles)
 	}
 	if !slices.Equal(o.allow.Hosts, []string{"api.a.com", "both.c.com", "conf.d.com", "cli.c.com", "both.c.com"}) {
 		t.Errorf("allow %q", o.allow.Hosts)
@@ -53,19 +53,20 @@ func TestRunHostsOrigin(t *testing.T) {
 	// @~/ and a relative @FILE: the file's absolute path.
 	t.Chdir(dir)
 	o, err = parseRunFlags([]string{"--device", "x", "--state", filepath.Join(dir, "s"), "--allow-hosts", "@hosts"})
-	if err != nil || !slices.Equal(o.origin.files, []string{hostsFile}) || len(o.origin.pinned()) != 0 {
+	if err != nil || !slices.Equal(o.origin.files, []string{hostsFile}) || len(o.origin.given) != 0 {
 		t.Errorf("relative: %v, %+v", err, o.origin)
 	}
 }
 
-// capture save writes the base minus the hosts given as they are, keeping
-// the file's comments; a host given on the command line and removed now is
-// named as coming back. Refused: "*", no hosts left, a file not plain or not
+// capture save writes the base minus the hosts given as they are (but those
+// in the file too), keeping the file's comments; a host given on the command
+// line and removed now, in the file too or not, is named as coming back. Refused: "*", no hosts left, a file not plain or not
 // this user's, no hosts file or several, the --pass-hosts file.
 func TestSaveHosts(t *testing.T) {
 	dir := t.TempDir()
-	hostsFile, _ := saveFiles(t, dir, "# mine\napi.a.com # the app\nold.b.com\n\n", "")
-	origin := hostsOrigin{files: []string{hostsFile}, given: map[string]string{"cli.c.com": "the command line", "gone.c.com": "the command line", "conf.d.com": "the --config file"}}
+	hostsFile, _ := saveFiles(t, dir, "# mine\napi.a.com # the app\nold.b.com\nboth.c.com\n\n", "")
+	origin := hostsOrigin{files: []string{hostsFile}, inFiles: map[string]bool{"api.a.com": true, "old.b.com": true, "both.c.com": true},
+		given: map[string]string{"cli.c.com": "the command line", "gone.c.com": "the command line", "both.c.com": "the command line", "conf.d.com": "the --config file"}}
 	base, _ := capture.ParseAllowHosts([]string{"api.a.com,cli.c.com,new.c.com,conf.d.com"})
 	base, _ = base.WithPass([]string{"api.a.com"})
 	msg, err := saveHosts(base, origin)
@@ -75,7 +76,7 @@ func TestSaveHosts(t *testing.T) {
 	for _, want := range []string{
 		"saved to " + hostsFile + ": api.a.com, new.c.com",
 		"not written, as given on the command line (a start with it records them again): cli.c.com",
-		"removed now, but given on the command line, so a start with it records them again: gone.c.com",
+		"removed now, but given on the command line, so a start with it records them again: both.c.com, gone.c.com",
 		"not written, as given on the --config file (a start with it records them again): conf.d.com",
 		"the hosts passed undecrypted are not saved",
 	} {
@@ -92,6 +93,11 @@ func TestSaveHosts(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(dir); len(ents) != 2 {
 		t.Errorf("left behind: %v", ents)
+	}
+	// Given on the command line and in the file, still recorded: it stays in the file.
+	kept, _ := capture.ParseAllowHosts([]string{"api.a.com,both.c.com"})
+	if msg, err := saveHosts(kept, origin); err != nil || !strings.HasPrefix(msg, "saved to "+hostsFile+": api.a.com, both.c.com;") || strings.Contains(msg, "not written, as given on the command line (a start with it records them again): both") {
+		t.Errorf("kept: %q %v", msg, err)
 	}
 
 	refused := func(what string, base capture.HostRules, o hostsOrigin, want string) {

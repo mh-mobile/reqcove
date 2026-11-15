@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -167,6 +168,51 @@ func TestServiceInstallDarwin(t *testing.T) {
 	}
 	if s := plistStrings(t, file); slices.Contains(s, "--state") || s[len(s)-1] != filepath.Join(home, ".reqcove/service.log") {
 		t.Errorf("default state: %q", s)
+	}
+}
+
+// Installed again on macOS: bootout can return while the old run still
+// holds the state's lock, so the new one is started only once it is free;
+// still held after the wait (a run in a terminal), started all the same,
+// and said so.
+func TestServiceInstallWaitsForState(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	state := filepath.Join(home, "st")
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	var heldAtStart []bool
+	old := serviceCtl
+	serviceCtl = func(args ...string) error {
+		switch {
+		case slices.Contains(args, "print"):
+			return errors.New("not loaded") // no Homebrew service
+		case slices.Contains(args, "bootstrap"):
+			heldAtStart = append(heldAtStart, stateHeld(state))
+		}
+		return nil
+	}
+	t.Cleanup(func() { serviceCtl = old })
+	release, err := lockState(state) // the old run, stopping
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	if err := serviceInstall("darwin", config, state, true); err != nil || !slices.Equal(heldAtStart, []bool{false}) {
+		t.Errorf("started while the old run held the lock: %v, held %v", err, heldAtStart)
+	}
+	oldWait := stateFreeWait
+	stateFreeWait = 200 * time.Millisecond
+	t.Cleanup(func() { stateFreeWait = oldWait })
+	release2, err := lockState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release2()
+	out := captureStdout(t, func() error { return serviceInstall("darwin", config, state, true) })
+	if !slices.Equal(heldAtStart, []bool{false, true}) || !strings.Contains(out, "note: "+state+" is still in use 200ms after the old run was stopped") {
+		t.Errorf("held: %v\n%s", heldAtStart, out)
 	}
 }
 

@@ -33,7 +33,8 @@ type SeenHost struct {
 
 // SetDiscover turns discovery on until now+d (on already: its end moves;
 // was is the end before). A new start begins a new list of names. The Store
-// first, then mitmproxy: ErrPending while it has not answered (a restarted
+// first, then mitmproxy: ErrPending while it has not answered (told again at
+// its hello and every few seconds: syncScope, retryPending; a restarted
 // mitmdump starts with it on, until its end: mitmArgs). ErrUnchanged for a
 // base of "*": no host is outside it.
 func (c *Capture) SetDiscover(ctx context.Context, why string, d time.Duration) (until, was time.Time, err error) {
@@ -49,18 +50,41 @@ func (c *Capture) SetDiscover(ctx context.Context, why string, d time.Duration) 
 	c.discUntil = until
 	c.Store.setDiscover(until, was.IsZero())
 	c.NoteChange(why)
-	if was.IsZero() {
+	if was.IsZero() || !c.discAcked() {
 		err = c.discoverOp(ctx, true)
+		c.setDiscAck(err == nil)
 	}
 	return until, was, err
 }
 
-// DiscoverUntil is when discovery ends; zero when off. The Store's copy:
-// status never waits for a change that waits for mitmdump.
+// DiscoverUntil is when discovery ends; zero when off, or not acknowledged by
+// mitmproxy (DiscoverAsked). The Store's copy: status never waits for a
+// change that waits for mitmdump.
 func (c *Capture) DiscoverUntil() time.Time {
+	if !c.discAcked() {
+		return time.Time{}
+	}
+	return c.DiscoverAsked()
+}
+
+// DiscoverAsked is when the discovery asked for ends, acknowledged or not;
+// zero when off.
+func (c *Capture) DiscoverAsked() time.Time {
 	c.Store.mu.Lock()
 	defer c.Store.mu.Unlock()
 	return c.Store.discUntil
+}
+
+func (c *Capture) discAcked() bool {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.discAck
+}
+
+func (c *Capture) setDiscAck(on bool) {
+	c.ackMu.Lock()
+	c.discAck = on
+	c.ackMu.Unlock()
 }
 
 // EndDiscover ends discovery now, as its time running out does (expire):
@@ -78,6 +102,7 @@ func (c *Capture) EndDiscover(ctx context.Context, why string) error {
 func (c *Capture) endDiscoverLocked(ctx context.Context, why string) error {
 	c.discUntil = time.Time{}
 	c.Store.setDiscover(time.Time{}, false) // first: a name told late is not taken
+	c.setDiscAck(false)
 	c.NoteChange(why)
 	return c.discoverOp(ctx, false)
 }

@@ -53,6 +53,9 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 		otherLine = "\nother settings take effect at the next start of run: " + strings.Join(other, ", ")
 	}
 	cur := cap.Base()
+	if n.allow.All && !cur.All { // as capture set refuses it: never every host by a file's edit
+		return ctlAnswer{Message: `refused: the files give "*", every app's and site's traffic, which reload never turns on: ` + "`reqcove capture allow-all --for D`" + ` records every host for a while, a restart of run with "*" for good; nothing changed` + otherLine}
+	}
 	if changes(cur, n.allow) == "" && rules == nil {
 		return ctlAnswer{OK: true, Message: "nothing changed: the hosts are the files' already" + otherLine}
 	}
@@ -80,7 +83,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 	}
 	switch {
 	case rules != nil && loaded == nil: // pending
-		msg += "; the rules of " + o.rules + " come with these hosts (mitmproxy restarted meanwhile starts with both)"
+		msg += "; the rules of " + o.rules + " come with these hosts (mitmproxy, not told, is restarted with both)"
 	case rules != nil:
 		msg += "; rules from " + o.rules + ": " + ruleCounts(loaded) + "; presets are off (new rules turn them off)"
 	}
@@ -92,7 +95,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 		msg += "; allow-all is on: every host is recorded until" + allAt(cap.AllowAllUntil()) + ", these hosts after"
 	default:
 		if len(minus(cur.Hosts, n.allow.Hosts))+len(minus(n.allow.PassHosts, cur.PassHosts)) > 0 {
-			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
+			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close" + openNote
 		}
 		if len(minus(n.allow.Hosts, cur.Hosts))+len(minus(cur.PassHosts, n.allow.PassHosts)) > 0 {
 			msg += "; new connections only: reopen the app to see it now"

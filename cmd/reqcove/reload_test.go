@@ -108,6 +108,34 @@ func TestReloadNothing(t *testing.T) {
 	}
 }
 
+// The command line's hosts file edited to "*" (a --config's is refused
+// there) is refused by reload, as capture set refuses it (allow-all is the
+// way, for a while); while mitmproxy restarts, a change is refused (it
+// cannot be checked against the rules), saying to try again.
+func TestReloadRefusesEverything(t *testing.T) {
+	dir := t.TempDir()
+	hostsFile := filepath.Join(dir, "hosts")
+	os.WriteFile(hostsFile, []byte("a.example.com\n"), 0o644)
+	o, err := parseRunFlags([]string{"--device", "x", "--state", filepath.Join(dir, "s"), "--allow-hosts", "@" + hostsFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(hostsFile, []byte("*\n"), 0o644)
+	a := answerCtl(context.Background(), &capture.Capture{}, newCtlState(o), ctlRequest{Cmd: "reload"})
+	if a.OK || !strings.HasPrefix(a.Message, `refused: the files give "*"`) || !strings.Contains(a.Message, "reqcove capture allow-all --for D") || !strings.HasSuffix(a.Message, "nothing changed") {
+		t.Errorf("%+v", a)
+	}
+	os.WriteFile(hostsFile, []byte("b.example.com\n"), 0o644)
+	a = answerCtl(context.Background(), &capture.Capture{}, newCtlState(o), ctlRequest{Cmd: "reload"}) // no mitmproxy to ask
+	if a.OK || a.Message != "mitmproxy is restarting: try again in a moment; nothing changed" {
+		t.Errorf("restarting: %+v", a)
+	}
+	a = answerCtl(context.Background(), &capture.Capture{}, newCtlState(o), ctlRequest{Cmd: "add", Hosts: []string{"c.example.com"}})
+	if a.OK || a.Message != "mitmproxy is restarting: try again in a moment; nothing changed" {
+		t.Errorf("add while restarting: %+v", a)
+	}
+}
+
 // TestReloadE2E (REQCOVE_E2E=1, real mitmproxy): reqcove reload over
 // ctl.sock. A host and a mock for it, added to the files together, apply
 // together (the new rules are checked against the new hosts); a broken rules

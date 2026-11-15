@@ -199,8 +199,12 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	}
 	if again && goos == "darwin" {
 		// launchd reads the file only as it loads it: out, then in again. Not
-		// loaded (stopped until the next login): nothing to stop.
-		serviceCtl("launchctl", "bootout", "gui/"+uid+"/"+serviceLabel)
+		// loaded (stopped until the next login): nothing to stop. bootout can
+		// return before the old run lets go of the state's lock, which the
+		// new one would then fail to take: waited for, a while.
+		if serviceCtl("launchctl", "bootout", "gui/"+uid+"/"+serviceLabel) == nil && !waitStateFree(state, stateFreeWait) {
+			fmt.Printf("note: %s is still in use %v after the old run was stopped (a run in a terminal?): the service may fail to start; %s shows it\n", state, stateFreeWait, withState(selfCmd()+" status", state))
+		}
 	}
 	for _, c := range start {
 		if err := serviceCtl(c...); err != nil {

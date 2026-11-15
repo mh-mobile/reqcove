@@ -308,7 +308,10 @@ warns of it, and `status` says `"recording": "stopped"` (E2E tests: a mocked
 URL reaches the server, on a new connection and on one decrypted before the
 stop; a preset cannot be turned on). mitmproxy decrypts mitm.it alone
 meanwhile, never an empty list (which would decrypt everything); connections
-decrypted before stay decrypted until they close, unrecorded (an E2E test).
+decrypted before stay decrypted until they close, unrecorded (an E2E test),
+a body under way on them copied no more (a unit test); `--web`'s mitmweb
+still lists their requests, unmasked, without their bodies (from reading the
+code).
 
 `reqcove capture allow-all --for D` records **everything** for a while (at
 most 24 hours), as `--allow-hosts '*'` does: every app's and site's
@@ -321,7 +324,7 @@ it, and `status` says `"recording": "allow-all"` with `allow_all_until`.
   running time, whichever comes first, so a sleep does not extend it, and
   fails closed: reqcove stops recording the other hosts first, then tells
   mitmproxy; if mitmproxy does not answer, it is restarted without it (unit
-  tests, with either clock; an E2E test kills mitmproxy just before the end:
+  tests, with either clock, and for a `capture stop` meanwhile; an E2E test kills mitmproxy just before the end:
   the one started next does not decrypt the other hosts). Never kept past a
   restart of `run`, and never written to a file: `capture save` writes the
   hosts you allowed, never `"*"`. Not tried across a real sleep.
