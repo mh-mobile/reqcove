@@ -181,6 +181,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture add HOST…`, `capture remove HOST…` (since v1.1) | `--pass`, `--state` |
 | `reqcove capture set` (since v1.1) | `--allow-hosts`, `--pass-hosts`, `--state` |
 | `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
+| `reqcove capture save` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
@@ -208,6 +209,12 @@ stable ([below](#not-stable)).
   `--config` by default) and `reqcove setup` without Homebrew; with Homebrew,
   `reqcove setup` writes `$(brew --prefix)/etc/reqcove/config`, which
   `brew services` reads.
+- Since v1.1, `reqcove setup` writes the hosts to their own file beside it,
+  `hosts` (`~/.config/reqcove/hosts`, or `$(brew --prefix)/etc/reqcove/hosts`),
+  one host a line, `#` starting a comment, and the config line
+  `--allow-hosts=@FILE` for it; `reqcove capture save` rewrites that file.
+  A config written before (hosts on the `--allow-hosts` line) is read as
+  before.
 
 ### The state directory
 

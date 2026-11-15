@@ -133,7 +133,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
 	// and no ctl.sock for one older than v1.1.
-	if err := serveCtl(ctx, o.state, cap, o.lanMode); err != nil {
+	if err := serveCtl(ctx, o.state, cap, o.lanMode, o.origin); err != nil {
 		return err
 	}
 	if !o.lanMode {

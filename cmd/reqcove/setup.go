@@ -198,17 +198,41 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	}
 
 	if write {
+		if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+			return err
+		}
 		if old != nil {
 			if err := writePrivate(config+".old", old); err != nil {
 				return fmt.Errorf("%s.old: %w (nothing replaced)", config, err)
 			}
 			fmt.Fprintf(out, "   the old one: %s\n", shellWord(config+".old"))
 		}
-		if err := writeSetupConfig(config, device, hosts); err != nil {
+		hostsFile := ""
+		if hosts != "" {
+			hostsFile = setupHosts(config)
+			if fi, err := os.Lstat(hostsFile); err == nil && fi.Mode().IsRegular() {
+				b, err := os.ReadFile(hostsFile)
+				if err == nil {
+					err = writePrivate(hostsFile+".old", b)
+				}
+				if err != nil {
+					return fmt.Errorf("%s.old: %w (nothing replaced)", hostsFile, err)
+				}
+				fmt.Fprintf(out, "   the old hosts: %s\n", shellWord(hostsFile+".old"))
+			}
+			if err := writeHosts(hostsFile, strings.Split(hosts, ","), hostsHead); err != nil {
+				return fmt.Errorf("%w (nothing replaced)", err)
+			}
+		}
+		if err := writeSetupConfig(config, device, hostsFile); err != nil {
 			return err
 		}
 		have = true
-		fmt.Fprintf(out, "   wrote %s (yours only, 0600)\n", shown)
+		if hostsFile != "" {
+			fmt.Fprintf(out, "   wrote %s, and the hosts in %s (yours only, 0600)\n", shown, shellWord(hostsFile))
+		} else {
+			fmt.Fprintf(out, "   wrote %s (yours only, 0600)\n", shown)
+		}
 	}
 
 	fmt.Fprintln(out, "\n3. The agent")
@@ -237,9 +261,18 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	return nil
 }
 
+// setupHosts is the hosts file beside config: ~/.config/reqcove/hosts, or
+// Homebrew's etc/reqcove/hosts.
+func setupHosts(config string) string { return filepath.Join(filepath.Dir(config), "hosts") }
+
+// hostsHead starts the hosts file setup writes.
+const hostsHead = "# The hosts reqcove records, one a line (# starts a comment); the config reads them\n" +
+	"# with --allow-hosts=@FILE. Written by reqcove setup; reqcove capture save rewrites\n" +
+	"# the hosts, keeping the comments.\n"
+
 // writeSetupConfig writes the --config file, whole or not at all, 0600 (its
 // directory 0700 when new), read back as run will before it takes the
-// file's place.
+// file's place. hosts is the hosts file (setupHosts), "" for none.
 func writeSetupConfig(path, device, hosts string) error {
 	q := func(s string) string { // "…" as configWords reads it
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
@@ -251,13 +284,10 @@ func writeSetupConfig(path, device, hosts string) error {
 	if hosts == "" {
 		text += "# --allow-hosts=api.example.com   (none yet: nothing is recorded)\n"
 	} else {
-		text += "--allow-hosts=" + q(hosts) + "\n"
-		want = append(want, "--allow-hosts="+hosts)
+		text += "--allow-hosts=" + q("@"+hosts) + "\n"
+		want = append(want, "--allow-hosts=@"+hosts)
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
 	tmp, err := os.CreateTemp(dir, ".config.tmp*") // 0600
 	if err != nil {
 		return err

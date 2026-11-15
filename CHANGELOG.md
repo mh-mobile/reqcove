@@ -4,6 +4,26 @@
 
 ### Added
 
+- **`reqcove capture save`** (`--state DIR`): write the hosts recorded now
+  (the base scope, while stopped too) into the hosts file `run` read them
+  from (`--allow-hosts=@FILE`), for the next start. `reqcove setup` now writes
+  the hosts to their own file beside the config (`~/.config/reqcove/hosts`;
+  Homebrew: `$(brew --prefix)/etc/reqcove/hosts`, the config staying at
+  `etc/reqcove/config`) and the config line `--allow-hosts=@FILE` (an old
+  hosts file kept as `hosts.old`); configs written before work unchanged.
+  `run` remembers which of its hosts came from which `@FILE`, and which were
+  given as they are (command line, or `--config`): those are not written, and
+  the answer names them, with the ones removed now that a start with them
+  records again. The file is replaced atomically, 0600, keeping its comments
+  and the lines whose hosts are all kept. Refused, nothing written: `"*"`, no
+  hosts to write (`run` refuses a hosts file without hosts), a file not plain
+  or not yours, the `--pass-hosts` file, LAN mode; with no hosts file (or
+  several): "nothing to save to". Hosts passed undecrypted are not saved. The
+  trace: `run`'s log, a `cli` marker, `scope_change` "capture save". Unit
+  tests (setup's files, where the hosts came from, what is written, each
+  refusal) and an E2E test with real mitmproxy (add, remove a command-line
+  host, save, then a new `run` from the config records the host added). Not
+  tried on an iPhone or with `brew services`.
 - **`reqcove capture stop` and `capture start`** (`--state DIR`): stop
   recording for a while, without a restart, and start again with the same
   hosts. While stopped, mitmproxy decrypts mitm.it alone, nothing new is

@@ -63,7 +63,7 @@ func TestCaptureArgs(t *testing.T) {
 		}
 	}
 	// run checks again (any process of the user can reach ctl.sock), before the capture is touched.
-	if a := answerCtl(context.Background(), nil, false, ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
+	if a := answerCtl(context.Background(), nil, false, hostsOrigin{}, ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
 		t.Errorf("run, *: %+v", a)
 	}
 }
@@ -173,15 +173,19 @@ func TestCaptureRefusals(t *testing.T) {
 	// LAN mode: refused by run, over the socket (as the CLI asks it).
 	lanDir, _ := os.MkdirTemp("/tmp", "rcvc-")
 	defer os.RemoveAll(lanDir)
-	if err := serveCtl(ctx, lanDir, nil, true); err != nil {
+	if err := serveCtl(ctx, lanDir, nil, true, hostsOrigin{}); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(lanDir, ctlSock))
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("ctl.sock: %v, mode %v", err, fi.Mode().Perm())
 	}
-	for _, req := range []ctlRequest{{Cmd: "add", Hosts: []string{"a.com"}}, {Cmd: "stop"}, {Cmd: "start"}} {
-		if err := sendCapture(ctx, io.Discard, lanDir, req); err == nil || !strings.Contains(err.Error(), "LAN mode") || !strings.Contains(err.Error(), "nothing changed") {
+	for _, req := range []ctlRequest{{Cmd: "add", Hosts: []string{"a.com"}}, {Cmd: "stop"}, {Cmd: "start"}, {Cmd: "save"}} {
+		nothing := "nothing changed"
+		if req.Cmd == "save" {
+			nothing = "nothing written"
+		}
+		if err := sendCapture(ctx, io.Discard, lanDir, req); err == nil || !strings.Contains(err.Error(), "LAN mode") || !strings.Contains(err.Error(), nothing) {
 			t.Errorf("LAN mode, %s: %v", req, err)
 		}
 	}
@@ -290,7 +294,7 @@ func TestCaptureE2E(t *testing.T) {
 	logged := logTo(t)
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	defer func() { mcpserver.CaptureAddCmd = "" }()
-	if err := serveCtl(ctx, state, c, false); err != nil {
+	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}
@@ -411,7 +415,7 @@ func TestCaptureStopE2E(t *testing.T) {
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	mcpserver.CaptureStartCmd = withState("reqcove capture start", state)
 	defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
-	if err := serveCtl(ctx, state, c, false); err != nil {
+	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}

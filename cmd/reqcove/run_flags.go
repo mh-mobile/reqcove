@@ -33,6 +33,57 @@ type runOpts struct {
 	upstreamProxy, upstreamCA, upstream string
 	lanIface                            string
 	localProxy                          bool
+	origin                              hostsOrigin
+}
+
+// hostsOrigin is where run's --allow-hosts came from, for capture save: the
+// @FILEs read, the hosts in them, and the hosts given as they are, with where
+// ("the command line" or "the --config file").
+type hostsOrigin struct {
+	files, passFiles []string
+	inFiles          map[string]bool
+	given            map[string]string
+}
+
+// add notes value v of --allow-hosts (pass: --pass-hosts), hosts its hosts
+// (@FILE read), given in from.
+func (o *hostsOrigin) add(v, hosts, from string, pass bool) {
+	file, ok, _ := atFile(v)
+	if pass {
+		if ok {
+			o.passFiles = append(o.passFiles, file)
+		}
+		return
+	}
+	if ok && !slices.Contains(o.files, file) {
+		o.files = append(o.files, file)
+	}
+	r, _ := capture.ParseAllowHosts(hostsOf(hosts)) // a bad one: run refuses it next
+	for _, h := range r.Hosts {
+		if ok {
+			if o.inFiles == nil {
+				o.inFiles = map[string]bool{}
+			}
+			o.inFiles[h] = true
+		} else {
+			if o.given == nil {
+				o.given = map[string]string{}
+			}
+			o.given[h] = from
+		}
+	}
+}
+
+// pinned are the hosts given as they are and in no hosts file, with where
+// they were given: a restart takes them again whatever the file says.
+func (o hostsOrigin) pinned() map[string]string {
+	out := map[string]string{}
+	for h, from := range o.given {
+		if !o.inFiles[h] {
+			out[h] = from
+		}
+	}
+	return out
 }
 
 // parseRunFlags defines run's flags, reads --config and the command line, and
@@ -46,14 +97,18 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		return nil
 	})
 	var allowSpecs, passSpecs []string
+	var origin hostsOrigin
+	from := "the --config file"
 	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything; @FILE reads them from a file, one a line. Without it, nothing is recorded.`, func(v string) error {
-		v, err := hostList(v)
-		allowSpecs = append(allowSpecs, v)
+		hosts, err := hostList(v)
+		allowSpecs = append(allowSpecs, hosts)
+		origin.add(v, hosts, from, false)
 		return err
 	})
 	fs.Func("pass-hosts", `allowed hosts carried undecrypted, as --allow-hosts' (not "*"; @FILE too): for apps that refuse Reqcove's certificate there (certificate pinning). Only their connections are recorded (host, times, bytes): no URL, headers or bodies`, func(v string) error {
-		v, err := hostList(v)
-		passSpecs = append(passSpecs, v)
+		hosts, err := hostList(v)
+		passSpecs = append(passSpecs, hosts)
+		origin.add(v, hosts, from, true)
 		return err
 	})
 	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
@@ -96,6 +151,7 @@ func parseRunFlags(args []string) (*runOpts, error) {
 			}
 		}
 	}
+	from = "the command line"
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -224,7 +280,7 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		state: *state, hostname: hostname, dns: dns, mitmSpec: *mitmSpec, python: *python, uvx: *uvx,
 		proxyPort: *proxyPort, mcpHTTP: *mcpHTTP, ui: *uiFlag, verbose: *verbose, lanMode: *lanMode,
 		upstreamProxy: *upstreamProxy, upstreamCA: *upstreamCA, upstream: upstream,
-		lanIface: *lanIface, localProxy: *localProxy,
+		lanIface: *lanIface, localProxy: *localProxy, origin: origin,
 	}, nil
 }
 

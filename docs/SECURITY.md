@@ -273,7 +273,7 @@ Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
 
-`reqcove capture` (add, remove, set, stop, start) changes which hosts `run` records, over
+`reqcove capture` (add, remove, set, stop, start, save) changes which hosts `run` records, over
 `ctl.sock` in the state directory (0600, a test), not over the MCP tools'
 socket: no tool changes what is recorded. It runs only when its input and
 output are a terminal, and the skill and the server's instructions tell agents
@@ -476,6 +476,11 @@ bound the switch, not its effects: the app may keep what it got there.
 flags. The file must be yours and readable by you only. Five flags are
 refused in it and stay on the command line: `--no-redact`, `--web`,
 `--allow-hosts '*'`, `--rules-reload` and `--lan`.
+Since v1.1, `reqcove setup` puts the hosts in a file beside it (`hosts`,
+0600), which the file reads with `--allow-hosts=@FILE`: what can write that
+file decides what the next start records too. `run` does not check its owner
+or mode (from reading the code); `reqcove capture save` writes it only when
+it is a plain file of yours.
 [Details](guide.md#security-config).
 
 ## Prompt injection

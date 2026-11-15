@@ -78,7 +78,7 @@ the agent.
    It checks uv, asks for the iPhone's name in your tailnet (as in
    `tailscale status`) and the hosts to record, and writes them to a config
    file: `~/.config/reqcove/config`, or Homebrew's `etc/reqcove/config` for a
-   brew install. It adds the agent skill if you answer `y`, and prints the
+   brew install (the hosts in `hosts` beside it). It adds the agent skill if you answer `y`, and prints the
    line that gives Claude Code the tools. It starts nothing itself
    ([what it asks and writes](docs/guide.md#first-start)).
 

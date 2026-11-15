@@ -100,9 +100,21 @@ func TestSetupWrites(t *testing.T) {
 	if strings.Count(out, "Device: ") != 2 || strings.Count(out, "Hosts: ") != 2 || !strings.Contains(out, "only on the command line") {
 		t.Errorf("not asked again:\n%s", out)
 	}
+	// The hosts in their own file beside the config, which the config reads
+	// with @: capture save writes it.
+	hostsFile := filepath.Join(home, ".config/reqcove/hosts")
 	words, _, err := readConfig(config)
-	if want := []string{`--device=Taro's "iPhone" --no-redact`, "--allow-hosts=api.example.com,*.example-cdn.com"}; err != nil || !slices.Equal(words, want) {
+	if want := []string{`--device=Taro's "iPhone" --no-redact`, "--allow-hosts=@" + hostsFile}; err != nil || !slices.Equal(words, want) {
 		t.Errorf("read back %q, %v; want %q", words, err, want)
+	}
+	if got, err := hostList("@" + hostsFile); err != nil || got != "api.example.com,*.example-cdn.com" {
+		t.Errorf("hosts file: %q, %v", got, err)
+	}
+	if b, _ := os.ReadFile(hostsFile); !strings.HasPrefix(string(b), hostsHead) || !strings.HasSuffix(string(b), "\napi.example.com\n*.example-cdn.com\n") {
+		t.Errorf("hosts file:\n%s", b)
+	}
+	if fi, err := os.Stat(hostsFile); err != nil || fi.Mode().Perm() != 0o600 || !strings.Contains(out, "the hosts in "+shellWord(hostsFile)) {
+		t.Errorf("hosts file: %v\n%s", err, out)
 	}
 	if _, err := checkConfig(config); err != nil {
 		t.Error(err)
@@ -117,7 +129,7 @@ func TestSetupWrites(t *testing.T) {
 	if fi, _ := os.Stat(filepath.Dir(config)); fi.Mode().Perm() != 0o700 {
 		t.Errorf("dir mode %v", fi.Mode())
 	}
-	if ents, _ := os.ReadDir(filepath.Dir(config)); len(ents) != 1 {
+	if ents, _ := os.ReadDir(filepath.Dir(config)); len(ents) != 2 { // config, hosts
 		t.Errorf("left behind: %v", ents)
 	}
 	if !exists(filepath.Join(home, ".claude/skills/reqcove/SKILL.md")) || !strings.Contains(out, "installed ~/.claude/skills/reqcove/SKILL.md") {
@@ -247,5 +259,32 @@ func TestSetupEOF(t *testing.T) {
 		if _, err := runSetup(t, in, config, false); err != errNoAnswer || exists(config) {
 			t.Errorf("%q: %v, file %v", in, err, exists(config))
 		}
+	}
+}
+
+// A hosts file there already: kept as hosts.old, its comments kept in the
+// new one; no hosts answered: no hosts file, no @ line.
+func TestSetupHostsFile(t *testing.T) {
+	_, config := setupHome(t)
+	hostsFile := filepath.Join(filepath.Dir(config), "hosts")
+	os.MkdirAll(filepath.Dir(config), 0o700)
+	mine := "# my note\nold.example.com\n"
+	os.WriteFile(hostsFile, []byte(mine), 0o600)
+	out, err := runSetup(t, "phone\nnew.example.com\nn\n", config, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(hostsFile); string(b) != "# my note\nnew.example.com\n" {
+		t.Errorf("hosts file:\n%s", b)
+	}
+	if b, _ := os.ReadFile(hostsFile + ".old"); string(b) != mine || !strings.Contains(out, "the old hosts: "+shellWord(hostsFile+".old")) {
+		t.Errorf("old: %q\n%s", b, out)
+	}
+	_, config = setupHome(t)
+	if _, err := runSetup(t, "phone\n\nn\n", config, false); err != nil {
+		t.Fatal(err)
+	}
+	if words, _, err := readConfig(config); err != nil || !slices.Equal(words, []string{"--device=phone"}) || exists(filepath.Join(filepath.Dir(config), "hosts")) {
+		t.Errorf("no hosts: %q, %v", words, err)
 	}
 }

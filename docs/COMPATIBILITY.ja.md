@@ -99,6 +99,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture add HOST…`、`capture remove HOST…`（v1.1 から） | `--pass`、`--state` |
 | `reqcove capture set`（v1.1 から） | `--allow-hosts`、`--pass-hosts`、`--state` |
 | `reqcove capture stop`、`capture start`（v1.1 から） | `--state` |
+| `reqcove capture save`（v1.1 から） | `--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
 | `reqcove setup` | なし |
 | `reqcove service install` | `--config`、`--state` |
@@ -116,6 +117,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - 書けないもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、そしてどう書いても（`@FILE` でも）`--allow-hosts '*'`。
 - ファイルは通常のファイルで、自分が所有し、グループとほかの人に権限がない（`chmod 600`）ものでなければなりません。
 - 置き場所：`reqcove service install`（その `--config` の既定値）と Homebrew なしの `reqcove setup` は `~/.config/reqcove/config`。Homebrew では `reqcove setup` が `$(brew --prefix)/etc/reqcove/config` に書き、`brew services` がそれを読みます。
+- v1.1 から、`reqcove setup` はホストを、その隣の別のファイル `hosts`（`~/.config/reqcove/hosts` か `$(brew --prefix)/etc/reqcove/hosts`）に書きます。1 行に 1 つのホストで、`#` から後はコメントです。config には、そのファイルを読む `--allow-hosts=@FILE` の行を書きます。`reqcove capture save` が書き換えるのもこのファイルです。それより前に書いた config（`--allow-hosts` の行にホストがあるもの）は、これまでどおり読みます。
 
 ### 状態ディレクトリ
 
