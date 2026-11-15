@@ -1201,20 +1201,28 @@ connection, reached GitHub.
 
 #### When the file is read (`--rules-reload`)
 
-The file is read when mitmproxy starts: with `run`, and when reqcove restarts
-it.
+The file is read when `run` starts. When reqcove restarts mitmproxy, it gives
+it the rules that loaded last (a private copy, `rules-loaded` in the state
+directory), not the file as it is on disk then: a file broken meanwhile never
+leaves mitmproxy without its rules. Files the rules name (`map_local`, `@file`
+values, mock bodies) are still read from disk, relative to the rules file; if
+the rules that loaded last no longer load (such a file is gone), `run` stops
+with the reason rather than go on without them.
 
 With `--rules-reload`, it is read again once a change has settled. The new
 rules are for requests that start after that; one under way keeps the rules it
 started with.
 
 - A file that does not load leaves the earlier rules in place, and `run` and
-  `reqcove status` say why. But if mitmproxy restarts meanwhile, `run` stops
-  on it, as at start.
+  `reqcove status` say why, after a restart of mitmproxy too (the restarted
+  one looks at the file again and says why it does not load).
 - Whatever can write the file (an agent included) can then change where the
   devices' requests go, without you restarting anything.
 
-From reading code: a change is read within about two seconds.
+Checked: an E2E test (real mitmproxy, macOS): with the file broken on disk
+and mitmdump killed, the next one applied the rules that loaded last (a
+reload's, with `--rules-reload`), a value file named relative to the rules
+file included. From reading code: a change is read within about two seconds.
 
 #### Add a mock from your terminal (`reqcove mock add`)
 
@@ -1551,8 +1559,15 @@ has no way to the file at all.
 - **`run --rules-reload` reads the file again whenever it changes.**
   Whatever can write it (any process as your user, an agent with file access
   included) can then change where the devices' requests go while `run` runs.
-  Without it, the file is read only when mitmproxy starts (with `run`, or
-  when Reqcove restarts it after it exits).
+  Without it, the file is read only when `run` starts.
+- **A mitmproxy that Reqcove restarts after it exits gets the rules that
+  loaded last**, from a copy in the state directory (`rules-loaded`, 0600 in
+  the 0700 directory; it holds whatever the file holds, tokens in
+  `modify_headers` included). `run` removes it when it stops; a run that is
+  killed leaves it until the next start, which replaces it (unit test) or,
+  without `--rules`, removes it (from reading code). If those rules no longer
+  load, `run` stops rather than go on without them: a mock or `map_remote`
+  lost would send test requests to the real servers.
 - **`reqcove mock add` writes a mock into a rules file for you**, and runs
   only when its input and output are a terminal: a help against an agent
   running it unasked, not a guarantee (an agent that can run commands can
@@ -2153,7 +2168,7 @@ Start with `reqcove status`: it says what reqcove is doing, and the next steps
 | An iPhone on the exit node has no internet while the Mac sleeps | [Keep it running (`brew services`)](#keep-it-running-brew-services) |
 | A service ended and did not start again, or a `run` in your terminal finds the state in use | [Run it as a service](#run-it-as-a-service) |
 | The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
-| reqcove restarts mitmproxy, or `run` stops after restarts in a row | [Limits](#limits) (a huge WebSocket message), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches) |
+| reqcove restarts mitmproxy again and again, or `run` stops on mitmproxy | [Limits](#limits) (a huge WebSocket message; when mitmproxy exits or does not start), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches; rules that no longer load) |
 | IPv6, QUIC, phone calls | [Limits](#limits) |
 
 This section only points to the others: what was tried, and what was not, is
@@ -2281,9 +2296,20 @@ The main ones are in the [README](../README.md#limits). The rest:
   so one huge message can use a lot of memory: Reqcove's 4 KiB bound is on
   what it keeps, not on mitmproxy. Compressed messages are recorded inflated
   and masked.
-- If mitmproxy runs out of memory, reqcove restarts it; when it is down again
-  within a minute after 5 restarts in a row, `run` stops with an error (exit
-  status 1, not the 0 of Ctrl-C, so a service shows it failed).
+- **When mitmproxy exits** (out of memory, say) **or does not start**,
+  reqcove starts it again, without end: after 1 second, then each wait
+  doubled up to 5 minutes, back to 1 second once it stayed up a minute.
+  Meanwhile devices' connections wait or fail; `reqcove status` (and
+  `capture_stats`) says why (`last_failure`), how many attempts in a row
+  (`retries`) and when the next is (`next_attempt`). At the start, one that
+  does not say hello within 2 minutes (a slow machine, uv still downloading)
+  is tried again too; until the first one is up, `run` answers no status, so
+  those attempts are in its log only. `run` stops with an error (exit status
+  1, not the 0 of Ctrl-C, so a service shows it failed) only on what trying
+  again cannot mend: rules that do not load, and, before mitmproxy has come
+  up once in this run, one that cannot be launched or exits before its hello
+  (bad options, `--mitmproxy-spec` or `--python`; not tried: uv that cannot
+  download without network, which exits too).
 - A connection reqcove gives to mitmproxy waits for mitmproxy to connect to
   the server, as a direct one waits for the server: 10 seconds at most. The
   log then says `<address>:<port> did not answer within 10s (through
@@ -2303,8 +2329,10 @@ The main ones are in the [README](../README.md#limits). The rest:
 
 Tried: compressed WebSocket messages by an E2E test with Go's client and
 server, and from an iPhone (iOS 27.3, 2026-11-15) to a server that accepts
-them; `run`'s exit after restarts in a row, with a stand-in for mitmproxy that
-kept exiting; the 10 seconds, with an address that never answers (why the two
+them; the restarts, by unit tests with a stand-in for mitmproxy (one that
+kept exiting was tried 8 times with growing waits and `run` went on; one
+silent at the start was tried again; one that exited at the start ended it);
+the 10 seconds, with an address that never answers (why the two
 such lines seen with real apps were slow is not known); the tunnels' limits,
 by a test with 2 tunnels and 300 ms.
 
@@ -2457,8 +2485,8 @@ runs too.
   carried or recorded.
 - From the lock and through uvx: the port cannot be bound while mitmdump
   restarts, and a request sent then is recorded by the next mitmdump.
-- The unit test: the port cannot be bound while mitmdump is down or given up
-  on; Stop frees it.
+- The unit test: the port cannot be bound while mitmdump is down or after a
+  failure that ended it; Stop frees it.
 
 Tried by hand on macOS, as the same user:
 

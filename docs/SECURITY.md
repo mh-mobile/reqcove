@@ -415,13 +415,16 @@ computer or on the tailnet. [Details](guide.md#security-upstream-proxy).
 
 ### Rules (`--rules`)
 
-Rules are yours, read from a file when mitmproxy starts; no MCP tool writes
-or changes one. A rules file from someone else is code: it can send your
+Rules are yours, read from a file when `run` starts; no MCP tool writes or
+changes one. A rules file from someone else is code: it can send your
 apps' requests, cookies and tokens included, anywhere. `map_remote` and
 `resolve` connect from this computer, this computer and the LAN included, and
 a `mock` answers in the site's name. With `--rules-reload`, whatever can
 write the file (an agent with file access included) can change where the
-devices' requests go while `run` runs. [Details](guide.md#security-rules).
+devices' requests go while `run` runs. A mitmproxy that reqcove restarts gets
+the rules that loaded last from a private copy (0600, tokens included, removed
+when `run` stops); if those no longer load, `run` stops rather than go on
+without rules. [Details](guide.md#security-rules).
 
 ### Mock presets
 
