@@ -229,7 +229,7 @@ rendering instead of the bytes (`view` says so).
 | A span of printable text | Always a string, never read as a message: its bytes would then show as numbers |
 | Random bytes (`bytes` fields) | Can still read as a message. In a response usually all of their bytes then show as numbers (about 1 in 100 16-byte values whole, 1 in 1,000 32-byte ones); in a request parts of them (field numbers and 1-byte numbers) |
 | Lengths | **Shown**: a password's length |
-| With `--proto FILE` (your compiled schema), a message whose type is known: a gRPC, Connect or Twirp method by its path, or `messageType` in the content type | Read with its field names (the proto names, never `json_name`) as JSON, and masked by name as JSON is. `bytes` show their length, and fields the schema does not have their structure |
+| With `--proto FILE` (your compiled schema, made with the guide's [`protoc` command](guide.md#grpc)), a message whose type is known: a gRPC, Connect or Twirp method by its path, or `messageType` in the content type | Read with its field names (the proto names, never `json_name`) as JSON, and masked by name as JSON is. `bytes` show their length, and fields the schema does not have their structure |
 | A schema that is stale or wrong | It can give a token an innocent name, which then **passes** |
 | Values under names the built-in list does not count as secret (a `cookie` entry of a headers map, a `cvv`) | **Not masked**, as in JSON |
 

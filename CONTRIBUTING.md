@@ -58,6 +58,9 @@ Neither is a log of what was fixed.
   found") stays in the CHANGELOG.
 - **A masking gap that is not fixed becomes one row in docs/masking.md**, never
   a new clause in SECURITY.
+- **An option's detail goes in docs/guide.md**, under "Security details" in the
+  option's section (「セキュリティの詳細」 in Japanese). SECURITY keeps a few
+  lines per option: what it exposes, to whom, the main limit, what to do.
 - **One point per bullet.** Mark only the exceptions where they stand ("not
   tried", "from reading the code"); what a test or a trial covered goes in the
   section's one "Checked:" line (「確認状況：」 in Japanese).
