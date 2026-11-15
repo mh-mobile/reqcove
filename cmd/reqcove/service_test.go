@@ -441,7 +441,7 @@ func TestServiceUninstall(t *testing.T) {
 		if err := serviceUninstall(goos); (err == nil) != (goos == "darwin") {
 			t.Errorf("%s none but loaded: %v", goos, err)
 		}
-		got := fakeCtl(t, false, nil)
+		fakeCtl(t, false, nil)
 		if err := serviceInstall(goos, config, defaultState(), false); err != nil {
 			t.Fatal(err)
 		}
@@ -449,7 +449,7 @@ func TestServiceUninstall(t *testing.T) {
 		// Loaded: restarted. Not loaded (launchctl bootout, stopped until the
 		// next login): on macOS, kickstart cannot find it; loaded again.
 		for _, loaded := range []bool{true, false} {
-			got = fakeCtl(t, loaded, nil)
+			got := fakeCtl(t, loaded, nil)
 			if err := serviceRestart(goos); err != nil {
 				t.Fatal(err)
 			}
@@ -465,7 +465,7 @@ func TestServiceUninstall(t *testing.T) {
 				t.Errorf("%s restart, loaded %v: %q", goos, loaded, *got)
 			}
 		}
-		got = fakeCtl(t, false, nil)
+		got := fakeCtl(t, false, nil)
 		*got = nil
 		if err := serviceUninstall(goos); err != nil {
 			t.Fatal(err)
