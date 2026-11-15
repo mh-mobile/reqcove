@@ -229,7 +229,7 @@ func readyOnStatus(o *runOpts, cap *capture.Capture, node *nodeState, user *user
 				caSHA256: cap.CA.SHA256, caFile: filepath.Join(o.state, "mitmproxy", "mitmproxy-ca-cert.pem")}
 			caCaption = "CA (with the Wi-Fi proxy set)"
 		}
-		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, o.state, statusOut(s, cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices()).NextSteps, user.terminal, presetNames(statsPresets(cap.Store.Stats()), cap.Store.PresetTargets()), lanR))
+		fmt.Fprint(os.Stderr, readyBlock(s.Devices, shownUI, shownWeb, mcpURL, shownToken, o.state, liveStatus(s, cap).NextSteps, user.terminal, presetNames(statsPresets(cap.Store.Stats()), cap.Store.PresetTargets()), lanR))
 		var codes []qrItem
 		if uiLink != "" {
 			codes = append(codes, qrItem{uiLink, "--ui (the flows)"})

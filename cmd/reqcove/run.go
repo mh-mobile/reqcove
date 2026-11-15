@@ -324,7 +324,7 @@ func privateOutput(fs ...*os.File) {
 func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeState, mcpToken string) (http.Handler, error) {
 	mcpSock := filepath.Join(o.state, "mcp.sock")
 	remoteStatus := func() mcpserver.StatusOut {
-		return statusOut(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices())
+		return liveStatus(node.get(), cap)
 	}
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
 		out := remoteStatus()
@@ -354,9 +354,9 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 func uiPage(o *runOpts, cap *capture.Capture, node *nodeState, uiToken string) *webui.UI {
 	page := webui.New(cap.Store, uiToken, func(id string, all bool) []string {
 		if all { // one of the user's own devices: the steps as `reqcove status` gives them
-			return withoutMacStep(statusOut(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices()).NextSteps)
+			return withoutMacStep(liveStatus(node.get(), cap).NextSteps)
 		}
-		return pageSteps(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices(), id)
+		return pageSteps(node.get(), cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices(), id)
 	})
 	if o.hostname != "reqcove" {
 		page.Node = o.hostname

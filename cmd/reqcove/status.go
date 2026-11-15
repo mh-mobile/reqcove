@@ -59,6 +59,14 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	return out
 }
 
+// liveStatus is statusOut as run answers it: the scope mitmproxy has
+// acknowledged (it may have changed since the start), and what is pending.
+func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
+	out := statusOut(n, cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices())
+	out.ScopePending = cap.ScopePending()
+	return out
+}
+
 // pageSteps are the next steps the --ui page shows the device id: built from it
 // alone, so no other device's name or problem gets into them.
 func pageSteps(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo, id string) []string {

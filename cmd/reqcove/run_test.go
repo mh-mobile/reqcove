@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/mh-mobile/reqcove/internal/exitnode"
 )
 
 // syncBuf is a log destination tests read while run writes.
@@ -118,6 +120,44 @@ func TestRulesReloadPresetsE2E(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("flows recorded: %v", c.Store.Stats()["flows"])
 		}
+	}
+}
+
+// TestStatusFollowsScopeE2E (REQCOVE_E2E=1, real mitmproxy): run's status
+// (the status tool, `reqcove status`, --ui's steps) shows the scope as changed
+// live, not the one run started with.
+func TestStatusFollowsScopeE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvr-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	allow, _ := capture.ParseAllowHosts([]string{"a.example.com"})
+	c, err := capture.Start(ctx, capture.Config{Dir: filepath.Join(dir, "s"), Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec, AllowHosts: allow,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	if got := liveStatus(exitnode.Status{}, c).AllowHosts; !slices.Equal(got, []string{"a.example.com"}) {
+		t.Fatalf("at the start: allow_hosts %v", got)
+	}
+	changed, _ := capture.ParseAllowHosts([]string{"a.example.com", "b.example.com"})
+	if changed, err = changed.WithPass([]string{"b.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetScope(ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	if out := liveStatus(exitnode.Status{}, c); !slices.Equal(out.AllowHosts, []string{"a.example.com", "b.example.com"}) || !slices.Equal(out.PassHosts, []string{"b.example.com"}) || out.ScopePending != "" {
+		t.Errorf("after the change: allow_hosts %v, pass_hosts %v, pending %q", out.AllowHosts, out.PassHosts, out.ScopePending)
 	}
 }
 

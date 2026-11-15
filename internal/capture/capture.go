@@ -147,8 +147,8 @@ type Capture struct {
 	CA          CA     // the CA iPhones must trust
 
 	cfg    Config
-	bin    string // uv, or uvx
-	args   []string
+	bin    string   // uv, or uvx
+	args   []string // mitmdump's, but the scope's (mitmArgs adds them)
 	ln     net.Listener
 	socks  *os.File // the SOCKS5 listener, bound by Start and handed to each mitmdump as fd 3: its port is never free while mitmdump restarts
 	cancel context.CancelFunc
@@ -160,6 +160,19 @@ type Capture struct {
 	wasUp   bool
 	err     error
 	readers atomic.Int64 // ingest connections still being read
+
+	// The scope (SetScope). scopeMu orders the changes and spawn's use of
+	// them: want is the scope asked for last, the one a new mitmdump starts
+	// with; storeGen the newest generation the Store has; instance names the
+	// mitmdump spawned last, whose answers alone count.
+	scopeMu  sync.Mutex
+	want     HostRules
+	wantGen  int64
+	storeGen int64
+	instance string
+	ackMu    sync.Mutex // acked alone, for status: never held across a call to mitmdump
+	acked    HostRules  // what mitmdump acknowledged last
+	pending  string     // ScopePending
 }
 
 // proc is one mitmdump process.
@@ -299,9 +312,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		}
 		webURL = fmt.Sprintf("http://127.0.0.1:%d/?token=%s", cfg.WebPort, pw)
 	}
-	allowJSON, _ := json.Marshal(map[string]any{"all": cfg.AllowHosts.All, "patterns": cfg.AllowHosts.Patterns, "pass": cfg.AllowHosts.Pass})
 	c := &Capture{Store: NewStore(cfg.MaxFlows, cfg.MaxBytes), SocksAddr: fmt.Sprintf("127.0.0.1:%d", port), SocksSecret: secret, WebURL: webURL,
-		cfg: cfg, ln: ln, socks: socks, done: make(chan struct{}), up: make(chan struct{})}
+		cfg: cfg, ln: ln, socks: socks, done: make(chan struct{}), up: make(chan struct{}),
+		want: cfg.AllowHosts, acked: cfg.AllowHosts}
 	c.Store.SetScope(cfg.AllowHosts, !cfg.NoRedact)
 	go c.accept()
 
@@ -319,8 +332,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "flow_detail=0", "--set", "termlog_verbosity=error",
 		"--set", fmt.Sprintf("reqcove_body_head=%d", cfg.BodyHead),
 		"-s", addon, "--set", "reqcove_socket="+sock, "--set", "reqcove_control="+filepath.Join(cfg.Dir, ControlSock),
-		"--set", "reqcove_secret_file="+secretFile,
-		"--set", "reqcove_allow_hosts="+string(allowJSON))
+		"--set", "reqcove_secret_file="+secretFile)
 	if cfg.Rules != "" {
 		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules, "--set", "reqcove_rules_copy="+filepath.Join(cfg.Dir, rulesCopy))
 		if cfg.RulesReload {
@@ -345,9 +357,6 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		if cfg.webMaxFlows > 0 {
 			c.args = append(c.args, "--set", fmt.Sprintf("reqcove_web_max_flows=%d", cfg.webMaxFlows))
 		}
-	}
-	for _, re := range cfg.AllowHosts.mitmAllowHosts() {
-		c.args = append(c.args, "--allow-hosts", re) // per connection: others pass through undecrypted
 	}
 	for _, re := range strings.Split(strings.TrimSpace(appleIgnoreHosts), "\n") {
 		c.args = append(c.args, "--ignore-hosts", re)
@@ -392,7 +401,11 @@ func (c *Capture) retryWait(ctx context.Context, err error, n int) bool {
 // no hello within ReadyTimeout, and once one has come up, any other.
 func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
-	p := &proc{cmd: exec.Command(c.bin, c.args...), done: make(chan struct{})}
+	c.scopeMu.Lock()
+	c.instance = rand.Text()
+	args := c.mitmArgs()
+	c.scopeMu.Unlock()
+	p := &proc{cmd: exec.Command(c.bin, args...), done: make(chan struct{})}
 	p.cmd.Stdout, p.cmd.Stderr = c.cfg.Log, c.cfg.Log
 	p.cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "REQCOVE_SOCKS_FD=3") // PYTHONUNBUFFERED: mitmproxy.log as it happens, not when Python's buffer fills
 	p.cmd.ExtraFiles = []*os.File{c.socks}                                       // fd 3: the addon serves SOCKS5 on it
@@ -439,11 +452,190 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 		}
 		return nil, permanent{fmt.Errorf("--rules: %s", e)}
 	}
+	c.syncScope(ctx)
 	p.ready = time.Now()
 	c.wasUp = true
 	c.Store.setState("ready", "")
 	c.setUp(true)
 	return p, nil
+}
+
+// mitmArgs is mitmdump's arguments with the scope asked for last and its
+// generation, so a restarted mitmdump keeps a change (and the Store's gate
+// takes what it admits). Called with scopeMu held.
+func (c *Capture) mitmArgs() []string {
+	hosts, _ := json.Marshal(addonHosts(c.want))
+	args := append(slices.Clone(c.args), "--set", "reqcove_allow_hosts="+string(hosts),
+		"--set", fmt.Sprintf("reqcove_scope_gen=%d", c.wantGen), "--set", "reqcove_instance="+c.instance)
+	for _, re := range c.want.mitmAllowHosts() {
+		args = append(args, "--allow-hosts", re) // per connection: others pass through undecrypted
+	}
+	return args
+}
+
+// addonHosts is the addon's reqcove_allow_hosts: the hosts it records.
+func addonHosts(r HostRules) map[string]any {
+	return map[string]any{"all": r.All, "patterns": r.Patterns, "pass": r.Pass}
+}
+
+// syncScope, after a mitmdump's hello: one started with the scope asked for
+// last has acknowledged it; one started before that change is told it again
+// (a failure leaves it pending, as SetScope's).
+func (c *Capture) syncScope(ctx context.Context) {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	inst, gen := c.Store.helloScope()
+	switch {
+	case inst != c.instance: // a stand-in for mitmdump, in tests: none to compare
+	case gen == c.wantGen:
+		c.appliedLocked()
+	default:
+		if err := c.applyLocked(ctx); err != nil {
+			c.cfg.Logf("the scope asked for (generation %d) is not applied yet: %v", c.wantGen, err)
+		}
+	}
+}
+
+// What ScopePending says of a scope asked for and not acknowledged yet.
+const (
+	PendingNarrowed = "narrowed in reqcove's records, mitmproxy not told yet"
+	PendingAsked    = "asked, not acknowledged by mitmproxy yet"
+)
+
+// Scope is the scope mitmproxy has acknowledged: what status shows.
+func (c *Capture) Scope() HostRules {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.acked
+}
+
+// ScopePending is "" when the scope asked for last is the one acknowledged
+// (Scope), else PendingNarrowed or PendingAsked.
+func (c *Capture) ScopePending() string {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.pending
+}
+
+// SetScope changes the hosts recorded (and decrypted, on new connections:
+// open ones keep how they were carried) without restarting mitmdump. The
+// addon first checks the rules in force against r: a mock or resolve naming
+// a host r leaves out refuses it, and nothing changes. Then a change that
+// takes anything out applies to the Store first (an event of a host left out
+// is no longer recorded, even if mitmdump is not told), then to mitmdump; one
+// that only adds applies to mitmdump first, and to the Store once it
+// acknowledged. An error after the check leaves the change pending
+// (ScopePending): a mitmdump started later gets it, and one that says hello
+// again is told it again.
+func (c *Capture) SetScope(ctx context.Context, r HostRules) error {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	gen := c.wantGen + 1
+	var ack scopeAck
+	if err := c.control(ctx, scopeOp(r, gen, true), &ack); err != nil {
+		if errors.Is(err, ErrNoControl) || errors.Is(err, ErrUncertain) {
+			return fmt.Errorf("mitmproxy did not answer (restarting?): nothing changed")
+		}
+		return err // refused: the rules' conflicts
+	}
+	old := c.want
+	c.want, c.wantGen = r, gen
+	if narrows(old, r) {
+		c.toStoreLocked()
+		c.setPending(PendingNarrowed)
+	} else {
+		c.setPending(PendingAsked)
+	}
+	err := c.applyLocked(ctx)
+	var refused *refusal
+	if errors.As(err, &refused) { // the rules changed since the check (--rules-reload): back to the scope before
+		c.want, c.wantGen = old, gen+1
+		c.toStoreLocked() // with a newer generation than r's, so the Store and mitmdump agree again
+		if err := c.applyLocked(ctx); err != nil {
+			c.cfg.Logf("the scope before (generation %d) is not applied yet: %v", c.wantGen, err)
+		}
+	}
+	return err
+}
+
+// refusal is the addon's answer refusing a scope.
+type refusal struct{ error }
+
+// scopeAck is the addon's answer to a scope op.
+type scopeAck struct {
+	OK       bool   `json:"ok"`
+	Gen      int64  `json:"gen"`
+	Instance string `json:"instance"`
+}
+
+func scopeOp(r HostRules, gen int64, check bool) map[string]any {
+	allow := r.mitmAllowHosts()
+	if allow == nil {
+		allow = []string{} // All: an empty allow_hosts decrypts everything (Apple's still ignored)
+	}
+	return map[string]any{"op": "scope", "gen": gen, "allow_hosts": allow, "rules": addonHosts(r), "check": check}
+}
+
+// applyLocked tells the mitmdump spawned last the scope asked for last; on
+// its acknowledgment (its instance, the generation) the scope is applied.
+func (c *Capture) applyLocked(ctx context.Context) error {
+	var ack scopeAck
+	err := c.control(ctx, scopeOp(c.want, c.wantGen, false), &ack)
+	switch {
+	case errors.Is(err, ErrNoControl), errors.Is(err, ErrUncertain):
+		return fmt.Errorf("mitmproxy did not answer (restarting?): the change is pending")
+	case err != nil:
+		return &refusal{err}
+	case !ack.OK || ack.Instance != c.instance || ack.Gen != c.wantGen:
+		return fmt.Errorf("mitmproxy answered for another generation or process: the change is pending")
+	}
+	c.appliedLocked()
+	return nil
+}
+
+// appliedLocked: mitmdump has the scope asked for last.
+func (c *Capture) appliedLocked() {
+	c.toStoreLocked()
+	c.ackMu.Lock()
+	c.acked, c.pending = c.want, ""
+	c.ackMu.Unlock()
+}
+
+func (c *Capture) toStoreLocked() {
+	if c.storeGen < c.wantGen {
+		c.Store.setScopeGen(c.wantGen, c.want)
+		c.storeGen = c.wantGen
+	}
+}
+
+func (c *Capture) setPending(p string) {
+	c.ackMu.Lock()
+	c.pending = p
+	c.ackMu.Unlock()
+}
+
+// narrows says whether r leaves out anything old recorded, judged by the
+// specs: a host or pattern of old missing from r, "*" given up, or a
+// --pass-hosts host added. A change it calls narrowing may also add hosts:
+// the Store then has them before mitmdump, which admits none of them meanwhile.
+func narrows(old, r HostRules) bool {
+	for _, p := range r.PassHosts {
+		if !slices.Contains(old.PassHosts, p) {
+			return true
+		}
+	}
+	if r.All {
+		return false
+	}
+	if old.All {
+		return true
+	}
+	for _, h := range old.Hosts {
+		if !slices.Contains(r.Hosts, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // supervise restarts mitmdump until ctx ends or a failure is permanent;

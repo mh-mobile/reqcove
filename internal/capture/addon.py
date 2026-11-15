@@ -932,6 +932,20 @@ def _read(path):
         return None
 
 
+def _out_of_scope_rules(rules, allowed, passed, scope):
+    """The resolve and mock rules naming a host the scope (allowed, passed)
+    leaves out, each in a line (they would never apply: a typo, or a host
+    taken out); scope names it in the line."""
+    out = []
+    for kind, names in (("resolve", rules["resolve"].order), ("mock", rules["mock"].hosts())):
+        for i, name in enumerate(names):
+            if passed(name):  # never decrypted, so no rule applies to it
+                out.append(f"{kind}[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
+            elif not allowed(name):
+                out.append(f"{kind}[{i}]: {name} is not in {scope}")
+    return out
+
+
 def _stamp(path):
     """What changes when the file is saved, in place or by a rename; None when it is gone."""
     try:
@@ -1123,6 +1137,7 @@ class Reqcove:
         self.upstream = None  # (host, port) of --upstream-proxy
         self.rules_error = ""
         self.control_server = None
+        self.scope_gen = 0  # reqcove_scope_gen: the scope's generation, on what it admits
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
@@ -1143,6 +1158,8 @@ class Reqcove:
                         out = {"error": str(e)}
                     except Exception as e:  # never mitmproxy's text: it quotes URLs, filters and regexes
                         out = {"error": f"explain_rules failed: {type(e).__name__}"}
+                elif req.get("op") == "scope":  # a live scope change from run, whole
+                    out = self._scope(req)
                 elif req.get("op") == "check":  # reqcove mock add: the file as it would be, at path (next to target), checked as at start
                     out = self._check(str(req.get("path", "")), str(req.get("target", "")), ctx.options.reqcove_rules, ctx.options.reqcove_rules_reload)
                 elif not self.rules or not self.rules["mock"].book.entries:
@@ -1170,6 +1187,40 @@ class Reqcove:
             return
         async with server:
             await server.serve_forever()
+
+    def _scope(self, req):
+        """op scope: the scope as a whole (mitmproxy's allow_hosts, decrypting
+        per connection; the hosts recorded; its generation), or with check only
+        whether it would be taken. Refused, nothing changed, when a rule loaded
+        names a host it leaves out: checked against the rules in force, never
+        the file on disk. The answer names this mitmdump and the generation."""
+        gen, allow, hosts = req.get("gen"), req.get("allow_hosts"), req.get("rules")
+        if not (isinstance(gen, int) and isinstance(allow, list) and all(isinstance(a, str) for a in allow) and isinstance(hosts, dict)):
+            return {"error": "scope: a bad request"}
+        try:
+            allowed_res = [re.compile(p) for p in hosts.get("patterns") or []]
+            passing = [re.compile(p) for p in hosts.get("pass") or []]
+            for a in allow:
+                re.compile(a)
+        except (re.error, TypeError):
+            return {"error": "scope: a bad pattern"}
+
+        def allowed(h):
+            h = h.lower().rstrip(".")
+            return h != "mitm.it" and (bool(hosts.get("all")) or any(r.match(h) for r in allowed_res))
+
+        def passed(h):
+            h = h.lower().rstrip(".")
+            return any(r.match(h) for r in passing)
+
+        if self.rules and (problems := _out_of_scope_rules(self.rules, allowed, passed, "the new scope")):
+            return {"error": "the --rules file's rules name hosts the new scope leaves out: " + "; ".join(problems)}
+        if not req.get("check"):
+            try:
+                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen)
+            except Exception as e:  # never mitmproxy's text: it quotes the patterns
+                return {"error": f"scope: {type(e).__name__}"}
+        return {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
 
     def _list_rules(self):
         """list_rules: each rule by kind and its index in the file, its preset
@@ -1294,6 +1345,8 @@ class Reqcove:
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
         loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns presets on and off.")
+        loader.add_option("reqcove_scope_gen", int, 0, "The generation of reqcove_allow_hosts (and allow_hosts), on the events it admits.")
+        loader.add_option("reqcove_instance", str, "", "This mitmdump's name from reqcove, on its hello and its scope answers.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -1306,6 +1359,7 @@ class Reqcove:
                     self.secret = f.read().strip() or None
             except OSError:
                 self.secret = None
+        self.scope_gen = ctx.options.reqcove_scope_gen
         if "reqcove_allow_hosts" in updated:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
@@ -1336,16 +1390,8 @@ class Reqcove:
             if self.upstream and rules["resolve"].names():
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
-            for i, name in enumerate(rules["resolve"].order):
-                if self._passed(name):  # never decrypted, so no rule applies to it
-                    raise ValueError(f"resolve[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
-                if not self._in_scope(name):  # would never apply: a typo
-                    raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
-            for i, name in enumerate(rules["mock"].hosts()):
-                if self._passed(name):
-                    raise ValueError(f"mock[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
-                if not self._in_scope(name):
-                    raise ValueError(f"mock[{i}]: {name} is not in --allow-hosts")
+            if problems := _out_of_scope_rules(rules, self._allowed, self._passed, "--allow-hosts"):
+                raise ValueError(problems[0])
             return rules, ""
         except Exception as e:
             why = str(e) if isinstance(e, ValueError) else type(e).__name__
@@ -1582,7 +1628,7 @@ class Reqcove:
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "ts": r.timestamp_start, "method": r.method, "url": r.pretty_url,
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
-            "headers": headers, "note": note,
+            "headers": headers, "note": note, "gen": self.scope_gen,
         }
         rules = self.rules
         if rules:
@@ -2094,7 +2140,7 @@ class Reqcove:
         ev = {
             "v": VERSION, "ev": "pass_open", "conn": c.id, "device": p["device"],
             "sni": p["sni"], "alpn": p["alpn"], "server": f"{addr[0]}:{addr[1]}" if addr else None,
-            "ts": c.timestamp_start or time.time(),
+            "ts": c.timestamp_start or time.time(), "gen": self.scope_gen,
         }
         if p.get("raw"):
             ev["raw"], ev["alpn_negotiated"] = True, _alpn(c.alpn) if c.alpn else ""
@@ -2126,6 +2172,7 @@ class Reqcove:
             "sni": data.context.client.sni, "msg": str(data.conn.error or "")[:SHORT],
             # without SNI (an IP address dialed directly), the destination
             "host": data.context.server.address[0] if data.context.server.address else None,
+            "gen": self.scope_gen,
         })
 
     def _hello(self):
@@ -2136,6 +2183,7 @@ class Reqcove:
             "dropped_bodies": self.dropped_bodies, "dropped_events": self.dropped_events,
             **self._rules_info(),
             "upstream": "%s:%d" % self.upstream if self.upstream else "",
+            "instance": ctx.options.reqcove_instance, "gen": self.scope_gen,
         }
 
     def _encode(self, msg):
