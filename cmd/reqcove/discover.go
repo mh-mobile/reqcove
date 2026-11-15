@@ -45,10 +45,10 @@ func discover(ctx context.Context, cap *capture.Capture, req ctlRequest, why str
 	}
 	msg := "applied: host discovery on until" + allAt(until)
 	switch {
+	case pending:
+		msg = "pending: host discovery asked, until" + allAt(until) + " (mitmproxy has not answered yet: restarting? it starts once mitmproxy is back; status says so meanwhile)"
 	case !was.IsZero():
 		msg = "applied: host discovery was on until" + allAt(was) + ": now until" + allAt(until) + " (the names seen so far kept)"
-	case pending:
-		msg = "pending: host discovery asked, until" + allAt(until) + " (mitmproxy has not answered yet: restarting? it starts once mitmproxy is back)"
 	}
 	msg += "; kept: the names of the hosts outside the ones recorded that the devices reach (the SNI of a TLS connection, the Host of a request), and how often: never what they send, a URL path or a time" +
 		"; shown to this computer's agents (status, summarize) and in reqcove status, never over --mcp-http or on the --ui page" +
@@ -74,6 +74,8 @@ func withDiscovery(out mcpserver.StatusOut, cap *capture.Capture) mcpserver.Stat
 		left := max(time.Until(until), 0).Round(time.Second)
 		out.DiscoverUntil, out.DiscoverLeft = until.Format(time.RFC3339), left.String()
 		out.NextSteps = append(out.NextSteps, fmt.Sprintf("host discovery is on until %s (%v left): the names of hosts outside the ones recorded are kept; to end it now, in your terminal: %s", until.Local().Format("15:04:05"), left, discoverEndCmd))
+	} else if asked := cap.DiscoverAsked(); !asked.IsZero() {
+		out.NextSteps = append(out.NextSteps, fmt.Sprintf("host discovery is asked until %s, not on yet: mitmproxy has not acknowledged it (restarting?); it starts once mitmproxy is back; to give it up, in your terminal: %s", asked.Local().Format("15:04:05"), discoverEndCmd))
 	}
 	return out
 }

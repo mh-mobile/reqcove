@@ -47,7 +47,8 @@ type runOpts struct {
 
 // hostsOrigin is where run's --allow-hosts came from, for capture save: the
 // @FILEs read, the hosts in them, and the hosts given as they are, with where
-// ("the command line" or "the --config file").
+// ("the command line" or "the --config file"), in a file too or not: a
+// restart takes those again whatever the file says.
 type hostsOrigin struct {
 	files, passFiles []string
 	inFiles          map[string]bool
@@ -81,18 +82,6 @@ func (o *hostsOrigin) add(v, hosts, from string, pass bool) {
 			o.given[h] = from
 		}
 	}
-}
-
-// pinned are the hosts given as they are and in no hosts file, with where
-// they were given: a restart takes them again whatever the file says.
-func (o hostsOrigin) pinned() map[string]string {
-	out := map[string]string{}
-	for h, from := range o.given {
-		if !o.inFiles[h] {
-			out[h] = from
-		}
-	}
-	return out
 }
 
 // parseRunFlags defines run's flags, reads --config and the command line, and

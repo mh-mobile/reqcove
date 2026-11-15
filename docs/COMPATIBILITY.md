@@ -126,7 +126,9 @@ exits 1, saying why on stderr. Its fields:
   `reqcove service` for `reqcove service install`'s LaunchAgent or unit,
   `brew services`; more values may come; absent when it cannot be told),
   `restart_command` (the command that restarts it under its service, such as
-  `brew services restart reqcove`; absent from a terminal), and, on this
+  `brew services restart reqcove`, or `reqcove service install` when that
+  service runs another binary than `run`, or one gone; absent from a
+  terminal), and, on this
   computer only (not over `--mcp-http`), `config_file` (the `--config` file
   it read, in full; absent for flags only), `config_unused` (the other config
   file a `run` with no arguments found there and did not read) and

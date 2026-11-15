@@ -33,6 +33,7 @@ import threading
 import time
 import types
 import urllib.parse
+import weakref
 import zlib
 from pathlib import Path
 
@@ -182,10 +183,16 @@ class _Decoder:
 
 
 class _Head:
-    """The stream callable for one body: pass chunks through, copy the head."""
+    """The stream callable for one body: pass chunks through, copy the head.
+    Once the flow's host leaves what is recorded (a remove, a stop, allow-all's
+    end: cut, in configure), nothing more is copied, queued or kept for
+    mitmweb; the chunks still pass."""
 
     def __init__(self, addon, flow, direction, headers):
         self.addon, self.flow_id, self.dir = addon, flow.id, direction
+        self.meta = flow.metadata  # "reqcove_cut" there: the flow's other body is cut too
+        self.host = flow.metadata.get("reqcove_host", flow.request.pretty_host)  # as recorded, before any rule
+        self.cut = False
         self.limit = addon.head_limit
         self.head = bytearray()
         # --web: the whole body as on the wire, up to web_keep, for mitmweb (which
@@ -205,8 +212,19 @@ class _Head:
             self.dec = _Decoder(self.encoding)
         except Exception as e:
             self.dec, self.note = None, str(e)[:SHORT]  # copy the head as it is on the wire
+        if self.meta.get("reqcove_cut") or not addon._in_scope(self.host):
+            self.cut_off()  # a response whose request was cut, or came after its host left
+        else:
+            addon.heads.add(self)
+
+    def cut_off(self):
+        self.cut, self.keep = True, None
+        self.meta["reqcove_cut"] = True
+        self.addon.kept.pop((self.flow_id, self.dir), None)
 
     def __call__(self, data):
+        if self.cut:
+            return data
         try:
             self.size += len(data)
             if self.keep is not None:
@@ -247,7 +265,7 @@ class _Head:
 
     def _send(self, final=False):
         self.last_flush = time.monotonic()
-        if len(self.head) == self.sent_len and not final:
+        if self.cut or len(self.head) == self.sent_len and not final:
             return
         self.sent_len, self.sent_size = len(self.head), self.size
         self.addon.put_body({
@@ -1128,6 +1146,7 @@ class Reqcove:
         self.rules = None  # load_rules(), or None without --rules
         self.web_keep = 0  # --web: bodies up to this many bytes kept for mitmweb
         self.kept = {}  # (flow id, "request" or "response") -> the body to give mitmweb
+        self.heads = weakref.WeakSet()  # the bodies being copied (_Head), cut when their host leaves the scope
         self.web_flows = collections.deque()  # (flow, bytes kept): mitmweb's flows, oldest first
         self.web_bytes = 0
         self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
@@ -1402,6 +1421,11 @@ class Reqcove:
             self.allow_all = bool(rules.get("all"))
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
             self.passing = [re.compile(p) for p in rules.get("pass") or []]
+        if {"reqcove_scope_gen", "reqcove_stopped", "reqcove_allow_all", "reqcove_allow_hosts"} & set(updated):
+            for h in list(self.heads):  # bodies under way of a host no longer recorded: nothing more copied
+                if not self._in_scope(h.host):
+                    h.cut_off()
+                    self.heads.discard(h)
         if "reqcove_upstream" in updated:
             host, _, port = ctx.options.reqcove_upstream.rpartition(":")
             self.upstream = (host.strip("[]"), int(port)) if host else None  # [::1]:8080
@@ -1678,6 +1702,7 @@ class Reqcove:
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
             "headers": headers, "note": note, "gen": self.scope_gen,
         }
+        flow.metadata["reqcove_host"] = r.pretty_host  # the host recorded, for _Head's cut and websocket_message's
         rules = self.rules if self._allowed(r.pretty_host) else None  # allow-all's other hosts: no rule (a modify_headers rule without a host would send a token anywhere)
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
@@ -2078,7 +2103,8 @@ class Reqcove:
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": msg})
 
     def websocket_message(self, flow):
-        if flow.metadata.get("reqcove_skip"):
+        meta = flow.metadata
+        if meta.get("reqcove_skip"):
             flow.websocket.messages.clear()
             return
         m = flow.websocket.messages[-1]
@@ -2086,6 +2112,13 @@ class Reqcove:
             "v": VERSION, "ev": "ws", "id": flow.id, "from_client": m.from_client,
             "size": len(m.content), "text": m.is_text, "ts": m.timestamp,
         }
+        if meta.get("reqcove_ws_gen") != self.scope_gen:  # checked again once the scope changed: its host may have left
+            meta["reqcove_ws_gen"] = self.scope_gen
+            if not self._in_scope(meta.get("reqcove_host", flow.request.pretty_host)):
+                meta["reqcove_skip"] = True  # nothing more queued; this one, without its head, closes its flow in reqcove (its gate)
+                flow.websocket.messages.clear()
+                self.put_event(ev)
+                return
         if m.is_text:
             # A token bucket per socket: past it a message keeps its count, not
             # its head, so a flood cannot fill the one pipeline into reqcove.

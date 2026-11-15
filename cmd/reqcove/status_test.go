@@ -760,8 +760,11 @@ func TestStatusUpgrade(t *testing.T) {
 	check("v1.1, flags only", []string{"config:      none (flags only)"})
 }
 
-// What started run, and the command that restarts it there.
+// What started run, and the command that restarts it there: install
+// again when our service runs another binary, or one gone, as reqcove
+// status says.
 func TestRunService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	old, oldTerm := procCgroup, terminal
 	t.Cleanup(func() { procCgroup, terminal = old, oldTerm })
 	procCgroup = filepath.Join(t.TempDir(), "cgroup")
@@ -779,6 +782,22 @@ func TestRunService(t *testing.T) {
 		out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil)
 		if out.Service != c.service || out.Manager != c.manager || out.RestartCommand != c.restart || out.Version != mcpserver.Version {
 			t.Errorf("%+v: %q %q %q %q", c, out.Service, out.Manager, out.RestartCommand, out.Version)
+		}
+	}
+	self, _ := selfExe()
+	for _, bin := range []string{"/gone/reqcove", self} {
+		fakeServices(t, bin, false)
+		for _, env := range [][2]string{{"XPC_SERVICE_NAME", serviceLabel}, {"REQCOVE_SERVICE", serviceUnit}} {
+			t.Setenv("XPC_SERVICE_NAME", "")
+			t.Setenv("REQCOVE_SERVICE", "")
+			t.Setenv(env[0], env[1])
+			want := "reqcove service install"
+			if bin == self {
+				want = "reqcove service restart"
+			}
+			if out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil); out.RestartCommand != want {
+				t.Errorf("ours running %s (%s): %q, want %q", bin, env[0], out.RestartCommand, want)
+			}
 		}
 	}
 	t.Setenv("XPC_SERVICE_NAME", "")

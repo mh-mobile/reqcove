@@ -142,9 +142,12 @@ func run(ctx context.Context, args []string) error {
 		captureEndCmd = withState("reqcove capture allow-all --end", o.state)
 		discoverEndCmd = withState("reqcove capture discover --end", o.state)
 		allowAllNotes = allowAllWarnings(o)
+		if o.web {
+			openNote = webOpenNote
+		}
 		defer func() {
 			mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start"
-			captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil
+			captureEndCmd, allowAllNotes, openNote = "reqcove capture allow-all --end", nil, ""
 			discoverEndCmd = "reqcove capture discover --end"
 		}()
 	}

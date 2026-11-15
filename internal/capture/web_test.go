@@ -196,7 +196,7 @@ func TestWebMadeResponse(t *testing.T) {
 	}
 	// request is a coroutine: awaited, or it never runs (Python only warns).
 	py := `import asyncio, sys, importlib.util
-from mitmproxy.test import taddons, tflow
+from mitmproxy.test import taddons, tflow, tutils
 spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -227,6 +227,76 @@ asyncio.run(main())
 	}
 }
 
+// TestBodyCut (REQCOVE_E2E=1, mitmproxy's Python): a body under way when
+// its host leaves what is recorded (a remove, a stop, allow-all's end) is
+// copied no more: nothing of it queued for reqcove from then, nothing kept
+// for mitmweb (--web); a WebSocket's next message goes without its head (it
+// closes the flow in reqcove), and the ones after it not at all.
+func TestBodyCut(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	addon := filepath.Join(t.TempDir(), "addon.py")
+	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	py := `import asyncio, json, sys, importlib.util
+from mitmproxy import websocket
+from mitmproxy.test import taddons, tflow, tutils
+from wsproto.frame_protocol import Opcode
+spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+base = json.dumps({"all": False, "patterns": ["^address$"], "pass": []})
+other = json.dumps({"all": False, "patterns": ["^other$"], "pass": []})
+async def main():
+    for case, start, change in (
+        ("remove", {}, {"reqcove_allow_hosts": other}),
+        ("stop", {}, {"reqcove_stopped": True}),
+        ("allow-all end", {"reqcove_allow_hosts": other, "reqcove_allow_all": True}, {"reqcove_allow_all": False}),
+    ):
+        a = m.Reqcove()
+        bodies, events = [], []
+        a.put_body, a.put_event, a._put = bodies.append, events.append, lambda msg, size: events.append(msg)
+        with taddons.context(a) as tctx:
+            tctx.configure(a, **dict({"reqcove_web_keep": 1 << 20, "reqcove_body_head": 1024, "reqcove_allow_hosts": base}, **start))
+            f = tflow.tflow()
+            await a.requestheaders(f)
+            f.response = tutils.tresp()
+            await a.responseheaders(f)
+            h = f.response.stream
+            assert isinstance(h, m._Head), case
+            h(b"a" * 10)
+            w = tflow.twebsocketflow()
+            w.request.host = "address"
+            await a.requestheaders(w)
+            w.websocket.messages.append(websocket.WebSocketMessage(Opcode.TEXT, True, b"before"))
+            a.websocket_message(w)
+            tctx.configure(a, reqcove_scope_gen=1, **change)
+            h(b"b" * 2000)
+            h(b"")
+            for text in (b"after", b"later"):
+                w.websocket.messages.append(websocket.WebSocketMessage(Opcode.TEXT, True, text))
+                a.websocket_message(w)
+            ws = [e for e in events if e.get("ev") == "ws"]
+            print(case, len([b for b in bodies if b["dir"] == "response"]), (f.id, "response") in a.kept, len(ws), "head" in ws[-1])
+asyncio.run(main())
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "uvx", "--python", "3.14", "--exclude-newer", UVExcludeNewer, "--from", "mitmproxy==12.3.1", "python", "-I", "-c", py, addon).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("%v\n%s", err, ee.Stderr)
+		}
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(out)), "remove 0 False 2 False\nstop 0 False 2 False\nallow-all end 0 False 2 False"; got != want {
+		t.Errorf("bodies queued, kept for mitmweb, WebSocket events after the cut:\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestModifyHeadersFileChanged (REQCOVE_E2E=1): a modify_headers @file is
 // read again for each flow; one given a line break after it was checked
 // must not put it into the headers (it would start a header of its own).
@@ -242,7 +312,7 @@ func TestModifyHeadersFileChanged(t *testing.T) {
 	rules := filepath.Join(dir, "rules.yaml")
 	os.WriteFile(rules, []byte(`modify_headers: ["|~q|X-A|@value"]`+"\n"), 0o600)
 	py := `import sys, importlib.util
-from mitmproxy.test import taddons, tflow
+from mitmproxy.test import taddons, tflow, tutils
 spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)

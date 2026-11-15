@@ -238,6 +238,35 @@
   `last_failure` and `next_attempt`; `reqcove status` says the retry and when
   the next is (at the first start, before `run` answers status, only its log
   does). Unit tests with a stand-in for mitmproxy.
+- **Changes mitmproxy did not acknowledge** (`scope_pending`, discovery
+  asked) are told it again every few seconds, not only when it starts again.
+  A `capture stop` during allow-all that it does not acknowledge restarts it,
+  stopped, as allow-all's end does (it would have gone on decrypting every
+  host, with no end). A `reqcove reload` whose new rules it does not
+  acknowledge restarts it with the new hosts and rules, never one without the
+  other. Host discovery shows on only once mitmproxy has it on, and one asked
+  while mitmproxy starts is turned on at its hello. Unit tests.
+- **While mitmproxy restarts**, `capture add`, `remove`, `set` and `reqcove
+  reload` answer "mitmproxy is restarting: try again in a moment; nothing
+  changed" (the guide said they went pending). Unit test.
+- **A body under way when its host leaves what is recorded** (a remove, a
+  stop, allow-all's end) is copied no more: nothing more queued for reqcove,
+  nothing kept for mitmweb; a WebSocket's next message closes its flow, the
+  ones after it are not queued. With `--web`, mitmweb still lists the
+  requests on connections decrypted before, unmasked, without bodies: the
+  answers say so (from reading the code). A test with mitmproxy's Python.
+- **`reqcove reload` refuses a hosts file that gives `"*"`** while the hosts
+  recorded are not `"*"`, as `capture set` does (`capture allow-all --for D`
+  is the way). Unit test.
+- **`capture save`**: a host given on the command line and in the hosts file
+  too, removed, is named as coming back at the next start (it was dropped
+  from the file silently). Unit test.
+- **`status`'s `restart_command`** is `reqcove service install` when the
+  service runs another binary than `run`, or one gone, as `reqcove status`
+  says. Unit test.
+- **`reqcove service install` again, on macOS**, waits (at most 10 s) for the
+  old run to let go of the state directory before starting the new one, and
+  says so when it does not. Unit test.
 
 ## v1.0.0 — 2026-11-15
 

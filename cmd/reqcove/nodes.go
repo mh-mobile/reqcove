@@ -286,6 +286,20 @@ func lockState(dir string) (func(), error) {
 	return func() { f.Close() }, nil
 }
 
+// stateFreeWait bounds waitStateFree in service install (a var for tests).
+var stateFreeWait = 10 * time.Second
+
+// waitStateFree waits, at most d, for no run to hold dir's lock; false if
+// one still does.
+func waitStateFree(dir string, d time.Duration) bool {
+	for deadline := time.Now().Add(d); stateHeld(dir); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+	return true
+}
+
 // stateHeld reports whether a run holds dir's lock (lockState), making no file.
 // It holds the lock shared for a moment, which lockState waits out.
 func stateHeld(dir string) bool {

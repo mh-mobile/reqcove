@@ -178,13 +178,20 @@ reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # all of them
 
 Hosts are written as `--allow-hosts` takes them; `--state DIR` for a node
 other than the default one. Each answer says what happened: applied, or
-pending (mitmproxy has not acknowledged it yet, restarting say: it applies once
-mitmproxy is back), how many records are kept, and the limits below.
+pending (mitmproxy took the change but did not acknowledge it: reqcove tells
+it again every few seconds, and when mitmproxy starts again), how many
+records are kept, and the limits below. While mitmproxy restarts, `add`,
+`remove` and `set` are refused, nothing changed ("mitmproxy is restarting:
+try again in a moment"): each is checked first against the rules mitmproxy
+holds.
 
 - **New connections only.** An added host is decrypted on new connections:
   an app keeps its connection open for a while, so reopen it to see the host
-  now. A removed host is no longer recorded from the next event on, but its
-  open connections stay decrypted (unrecorded) until they close.
+  now. A removed host is no longer recorded from the next event on, and a
+  body under way is copied no more, but its open connections stay decrypted
+  (unrecorded) until they close. With `--web`, mitmweb still lists the
+  requests on them (URLs and headers, unmasked), without their bodies (from
+  reading the code).
 - **Not saved** until `reqcove capture save` (below): a restart of `run`
   goes back to the hosts it was started with (its flags or `--config`).
 - **Refused:** `"*"`, removing a host a wildcard takes in (the answer names
@@ -203,7 +210,9 @@ Tried by tests only (unit, and E2E with real mitmproxy: add, then a new
 connection is recorded; remove, then one is not; the marker and status); not
 on an iPhone. The pending answer and a `mock` rule's refusal, as `reqcove
 capture` gives them, are from reading the code (the change underneath, its
-pending state and the refusal, has tests of its own).
+pending state and the refusal, has tests of its own); the refusal while
+mitmproxy restarts, telling a pending change again, and a body under way
+copied no more (with mitmproxy's Python) have unit tests.
 
 #### Keep the hosts for the next start (`reqcove capture save`)
 
@@ -219,8 +228,9 @@ lines whose hosts are all kept; new hosts go at the end.
 
 - **Hosts given as they are** (on `run`'s command line, or as
   `--allow-hosts HOST` in the config) are not written: a start with them
-  records them again whatever the file says. The answer names them, and says
-  which of them you removed now that come back that way.
+  records them again whatever the file says (one in the hosts file too stays
+  there). The answer names them, and says which of them you removed now
+  that come back that way, in the hosts file too or not.
 - **Nothing to save to** when `run`'s hosts do not come from a hosts file, or
   come from several: the answer says to put one `--allow-hosts=@FILE` in the
   config. Nothing is written.
@@ -267,13 +277,20 @@ DIR` for a node other than the default one.
   added, removed or moved to another path.
 - **Nothing to reload** for a `run` started from flags alone (no `--config`,
   no `--allow-hosts=@FILE`, no `--rules`).
+- **Refused**, nothing changed: a hosts file that now gives `"*"` (every
+  host) while the hosts recorded are not `"*"`, as `capture set` refuses it
+  (`reqcove capture allow-all --for D` records every host for a while); and
+  while mitmproxy restarts, as `capture add` ("try again in a moment"). New
+  hosts and rules that mitmproxy then does not acknowledge restart it with
+  both, never one without the other.
 - **New connections only**, as `capture add` and `remove`.
 - As the `capture` commands: in a terminal only, refused in LAN mode, an
   older `run` named, and a trace (`run`'s log, a `cli` marker, `scope_change`
   `reload`).
 
 Tried by tests only (unit: the parse of `run`'s arguments again, which never
-exits nor logs, and the settings named; E2E with real mitmproxy: a host and a
+exits nor logs, the settings named, `"*"` refused, mitmproxy restarted when it
+does not acknowledge new rules; E2E with real mitmproxy: a host and a
 mock for it added together, then answered by the mock; a broken rules file
 changing nothing, the hosts file's edit neither; the host and its mock taken
 out together; an unsaved `capture add` named as replaced; a preset off after;
@@ -295,8 +312,11 @@ answer of `stop` warns of it and says how many records are kept.
 
 - Connections already decrypted stay decrypted until they close, but nothing
   on them is recorded, and no rule applies to their new requests (a request
-  already under way when you stop ends as it began, from reading the code). An open WebSocket's flow
-  is closed with "recording stopped: its host left the scope".
+  already under way when you stop ends as it began, from reading the code;
+  its body is copied no more, a unit test). An open WebSocket's flow
+  is closed with "recording stopped: its host left the scope". With `--web`,
+  mitmweb still lists the requests on those connections (URLs and headers,
+  unmasked), without their bodies (from reading the code).
 - `start` says the hosts it records again. It records new connections and
   WebSockets only (reopen the app): one open before the stop is not recorded
   again. Presets stay off until an agent turns one on.
@@ -352,7 +372,9 @@ their certificates (banks, say) fail meanwhile; and, when they apply,
 - **Never kept past its end:** a restart of mitmproxy meanwhile keeps it
   until its end, not longer; when its end comes and mitmproxy does not
   answer, reqcove stops recording the other hosts first, then restarts
-  mitmproxy without it. A restart of `run` ends it (not saved).
+  mitmproxy without it. So does a `capture stop` meanwhile that mitmproxy
+  does not acknowledge: restarted stopped (a unit test). A restart of `run`
+  ends it (not saved).
 - `reqcove status` says "every host: allow-all until …" with the time left
   and the hosts recorded after it; `--json` and the MCP `status` say
   `"recording": "allow-all"`, `allow_hosts: ["*"]`, `allow_all_until`,
@@ -388,7 +410,10 @@ ones you want.
   capture add HOST` command that records it), and for this computer's agents
   `status` and `summarize` (`out_of_scope_hosts`, `out_of_scope_hosts_kept`,
   `discover_until`, `discover_left`). Never over `--mcp-http` nor on the
-  `--ui` page.
+  `--ui` page. It shows on once mitmproxy has acknowledged it: until then
+  (mitmproxy restarting, say) `next_steps` says it is asked, not on yet, and
+  reqcove tells mitmproxy again every few seconds and when it starts again
+  (unit tests).
 - **Counts:** TLS connections and requests together. The 30 most seen are
   shown, of at most 1,000 kept (past that, a new name takes the place of the
   least seen). A host you add drops off the list.
@@ -2370,7 +2395,10 @@ reqcove service uninstall     # stops it and removes the file
 - **Installed already** (since v1.1): install again re-points it at this
   binary and restarts it, and says so (the records start empty). It keeps the
   installed service's `--config` and `--state` unless you give them. Use it
-  after moving to another binary, or to change them.
+  after moving to another binary, or to change them. On macOS it starts the
+  new one once the old one has let go of the state directory (at most 10
+  seconds; past that it starts it all the same and says so: a `run` in a
+  terminal holding it, say).
 - **Refused while Homebrew's service is there** (its file or loaded:
   `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
   `sh.brew.reqcove.service`, `homebrew.reqcove.service`, the Linux names from

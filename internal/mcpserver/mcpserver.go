@@ -239,7 +239,9 @@ type StatusOut struct {
 	// "brew services"; none when it cannot be told.
 	Manager string `json:"manager,omitempty"`
 	// RestartCommand restarts run under its service (none from a terminal:
-	// Ctrl-C there, then run it again). A restart empties the records.
+	// Ctrl-C there, then run it again): reqcove service install when that
+	// service runs another binary than run, or one gone. A restart empties
+	// the records.
 	RestartCommand string `json:"restart_command,omitempty"`
 	// ConfigFile is the --config file run read (none: flags only);
 	// ConfigUnused another one a run with no arguments found, not read.

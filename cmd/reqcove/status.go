@@ -44,8 +44,14 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
+	restart := restartCmd(service)
+	if self, _ := selfExe(); (service == serviceLabel || service == serviceUnit) && oursStale(runtime.GOOS, self) {
+		// As reqcove status says: restart alone would start that binary (or
+		// fail, gone) again. Not this binary's path: it may be the one gone.
+		restart = "reqcove service install"
+	}
 	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service,
-		Version: mcpserver.Version, Manager: manager, RestartCommand: restartCmd(service)}
+		Version: mcpserver.Version, Manager: manager, RestartCommand: restart}
 	if n.LAN != nil {
 		out.LAN = n.LAN
 	}

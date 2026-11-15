@@ -366,7 +366,7 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		msg += "; allow-all is on: every host is recorded until" + allAt(cap.AllowAllUntil()) + ", these hosts after; the --rules file's rules apply to these hosts alone"
 	default:
 		if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
-			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
+			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close" + openNote
 		}
 		if len(minus(next.Hosts, cur.Hosts))+len(minus(cur.PassHosts, next.PassHosts)) > 0 {
 			msg += "; new connections only: reopen the app to see it now"
@@ -411,11 +411,14 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		if pending {
 			msg = "pending: recording stopped in reqcove's records, mitmproxy not told yet (restarting? it stops once mitmproxy is back; status shows scope_pending meanwhile); "
 		}
-		if wasAll {
+		switch {
+		case wasAll && pending:
+			msg += "allow-all ended (a stop ends it; mitmproxy, not told, is restarted without it); "
+		case wasAll:
 			msg += "allow-all ended (a stop ends it); "
 		}
 		msg += kept + "; WARNING: the --rules file's rules apply no more (mock, map_local, map_remote, modify_headers, resolve; presets turned off), so the app's requests go to the real servers as it sends them, a mocked API's too" +
-			"; connections already decrypted stay decrypted (unrecorded) until they close; not saved: a restart of run records again; `reqcove capture start` records again"
+			"; connections already decrypted stay decrypted (unrecorded) until they close" + openNote + "; not saved: a restart of run records again; `reqcove capture start` records again"
 	} else {
 		msg = "applied: recording started again: " + scopeText(base) + "; "
 		if pending {
@@ -430,6 +433,14 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 // host is recorded (--upstream-proxy, --mcp-http, --web, --local-proxy):
 // run sets them.
 var allowAllNotes []string
+
+// openNote follows "stay decrypted (unrecorded) until they close": with
+// --web (run sets it), what mitmweb still shows of those connections. A body
+// under way is copied no more (the addon's cut), but mitmweb lists each
+// request as mitmproxy reads it.
+var openNote string
+
+const webOpenNote = " (--web: mitmweb still lists their requests, URLs and headers unmasked, without their bodies)"
 
 // allowAllWarnings are run's warnings of --allow-hosts '*' for o's other
 // flags, and --mcp-http's reach.
@@ -517,13 +528,14 @@ func allAt(t time.Time) string {
 
 // endedText says what is left once allow-all ends: its records kept.
 func endedText(cap *capture.Capture) string {
-	return fmt.Sprintf("%v records kept, %d of them of hosts not recorded now (allow-all's: still readable, until evicted or run restarts); connections already decrypted stay decrypted (unrecorded) until they close",
-		cap.Store.Stats()["flows"], cap.Store.OutsideScope(cap.Base()))
+	return fmt.Sprintf("%v records kept, %d of them of hosts not recorded now (allow-all's: still readable, until evicted or run restarts); connections already decrypted stay decrypted (unrecorded) until they close%s",
+		cap.Store.Stats()["flows"], cap.Store.OutsideScope(cap.Base()), openNote)
 }
 
 // save is capture save: the base scope (the hosts a start records) into the
 // one hosts file run's --allow-hosts read, without the hosts given as they
-// are (a restart takes those again whatever the file says): never "*", never
+// are but not in the file (a restart takes those again whatever the file
+// says; one in the file too stays there, and removed, is named): never "*", never
 // none (run refuses a hosts file without hosts). Hosts passed undecrypted are
 // not saved.
 func save(cap *capture.Capture, st *ctlState, why string) ctlAnswer {
@@ -549,13 +561,13 @@ func saveHosts(base capture.HostRules, o hostsOrigin) (string, error) {
 	case slices.Contains(o.passFiles, o.files[0]):
 		return "", errors.New("refused: " + o.files[0] + " is run's --pass-hosts file too: saving would change the hosts passed undecrypted; nothing written")
 	}
-	file, pinned := o.files[0], o.pinned()
+	file, pinned := o.files[0], o.given
 	if base.All {
 		return "", errors.New(`refused: this run records every host ("*"), which a hosts file never holds; nothing written`)
 	}
 	var hosts []string
 	for _, h := range base.Hosts {
-		if _, ok := pinned[h]; !ok && !slices.Contains(hosts, h) {
+		if _, ok := pinned[h]; (!ok || o.inFiles[h]) && !slices.Contains(hosts, h) { // one given in the file too stays there
 			hosts = append(hosts, h)
 		}
 	}
@@ -570,7 +582,7 @@ func saveHosts(base capture.HostRules, o hostsOrigin) (string, error) {
 		var on, back []string
 		for _, h := range slices.Sorted(maps.Keys(pinned)) {
 			switch {
-			case pinned[h] != from:
+			case pinned[h] != from, slices.Contains(hosts, h):
 			case slices.Contains(base.Hosts, h):
 				on = append(on, h)
 			default:
