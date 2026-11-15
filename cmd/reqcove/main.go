@@ -81,6 +81,9 @@ Usage:
   reqcove capture allow-all --for D | capture allow-all --end
                      record every app's traffic for D (30m, 2h; at most 24h), not only
                      the allowed hosts', its records kept after; in your terminal only
+  reqcove reload     read the config, its hosts files and the --rules file again, and
+                     put their hosts and rules in force together (all or nothing), in
+                     your terminal only; other settings take a restart
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
@@ -154,6 +157,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"service": service,
 	"mock":    mockCmd,
 	"capture": captureCmd,
+	"reload":  reloadCmd,
 }
 
 // noFlags are the commands that take nothing.

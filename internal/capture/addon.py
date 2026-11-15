@@ -1218,14 +1218,30 @@ class Reqcove:
             h = h.lower().rstrip(".")
             return any(r.match(h) for r in passing)
 
-        if self.rules and (problems := _out_of_scope_rules(self.rules, allowed, passed, "the new scope")):
+        new = None
+        if "rules_file" in req:  # reqcove reload: these rules with this scope, checked against it, never the rules in force
+            path = ctx.options.reqcove_rules
+            if not (isinstance(req["rules_file"], str) and path):
+                return {"error": "scope: a bad request"}
+            new, why = self._load_checked(req["rules_file"], Path(path).parent, allowed, passed, "the new scope")
+            if new is None:
+                return {"error": f"the --rules file does not load: {why}"}
+        elif self.rules and (problems := _out_of_scope_rules(self.rules, allowed, passed, "the new scope")):
             return {"error": "the --rules file's rules name hosts the new scope leaves out: " + "; ".join(problems)}
         if not req.get("check"):
             try:
                 ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen, reqcove_stopped=stopped, reqcove_allow_all=everything)
             except Exception as e:  # never mitmproxy's text: it quotes the patterns
                 return {"error": f"scope: {type(e).__name__}"}
-        return {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
+            if new is not None:  # with the scope, no await between: the presets of the rules before go with them
+                self.rules, self.rules_error = new, ""
+                if _read(path) == _read(ctx.options.reqcove_rules_copy):
+                    self.rules_stamp = _stamp(path)  # --rules-reload's look: these are the file's (a newer save is taken as usual)
+                self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
+        out = {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
+        if new is not None:
+            out["rules_loaded"] = rule_counts(new)
+        return out
 
     def _list_rules(self):
         """list_rules: each rule by kind and its index in the file, its preset
@@ -1397,15 +1413,16 @@ class Reqcove:
                 # ends the run; none of the rules applies meanwhile.
                 self.rules, self.rules_error = self._load_checked(copy or path, Path(path).parent)
 
-    def _load_checked(self, path, base=None):
-        """The rules in path, checked as at start, or None and why not (never a
+    def _load_checked(self, path, base=None, allowed=None, passed=None, scope="--allow-hosts"):
+        """The rules in path, checked as at start (against the scope in force,
+        or allowed and passed, named scope), or None and why not (never a
         rule's text: modify_headers rules often carry tokens)."""
         try:
             rules = load_rules(path, base)
             if self.upstream and rules["resolve"].names():
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
-            if problems := _out_of_scope_rules(rules, self._allowed, self._passed, "--allow-hosts"):
+            if problems := _out_of_scope_rules(rules, allowed or self._allowed, passed or self._passed, scope):
                 raise ValueError(problems[0])
             return rules, ""
         except Exception as e:

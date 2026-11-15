@@ -60,7 +60,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 `reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります。フィールドは次のとおりです。
 
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
-- v1.1 から、動かしたままホストを変えたとき（`reqcove capture`）のフィールド：`scope_pending`（mitmproxy がまだ受け取りを返していない変更。人が読むための文で、ないときはフィールドもありません）、`scope_changed_at`（RFC 3339）、`scope_change`（`capture add api.example.com` のようなコマンド）。後の 2 つは、最初の変更まではありません。`allow_hosts` と `pass_hosts` は、mitmproxy が受け取りを返したホストです。
+- v1.1 から、動かしたままホストを変えたとき（`reqcove capture`、`reqcove reload`）のフィールド：`scope_pending`（mitmproxy がまだ受け取りを返していない変更。人が読むための文で、ないときはフィールドもありません）、`scope_changed_at`（RFC 3339）、`scope_change`（`capture add api.example.com` や `reload` のようなコマンド）。後の 2 つは、最初の変更まではありません。`allow_hosts` と `pass_hosts` は、mitmproxy が受け取りを返したホストです。
 - v1.1 から、`recording`：`on` か `stopped`（`reqcove capture stop` から `capture start` まで。値は今後増えることがあります）。止めている間、`allow_hosts` は `[]` で、`pass_hosts` はありません（何も記録しません）。`base_allow_hosts` と `base_pass_hosts` は、記録しているときに記録するホストです（ないときはフィールドもありません）。止めている間は、`start` で記録するホストです。v1.1 より前の `run` にはありません。
 - v1.1 から、`recording` は `allow-all` にもなります（`reqcove capture allow-all --for D` から、終わるまで）。その間 `allow_hosts` は `["*"]`、`pass_hosts` は復号せずに通したままのホスト、`base_allow_hosts` は終わったあとに記録するホストです。`allow_all_until`（RFC 3339）と `allow_all_left`（`29m10s` のような Go の duration）が終わる時刻を伝えます。オフのときはありません。`records_outside_scope` は、残っている記録のうち、ホストが `base_allow_hosts` の外にあるものの数です（allow-all の間の記録で、終わったあとも残るもの、またはあとで外したホストのもの）。ないときはフィールドもありません。
 - v1.1 から、`run` 自身について：`version`（`reqcove version` が表示するもの。`serverInfo` のものと同じ）、`manager`（起動したもの：`terminal`、`reqcove service install` の LaunchAgent かユニットなら `reqcove service`、`brew services`。値は増えることがあります。見分けられないときはありません）、`restart_command`（サービスの下で再起動するコマンド。`brew services restart reqcove` など。ターミナルから起動したときはありません）。さらにこのコンピュータでだけ（`--mcp-http` ではなし）、`config_file`（読んだ `--config` のファイル、フルパス。フラグだけのときはありません）、`config_unused`（引数なしの `run` が見つけて読まなかった、もう 1 つの設定ファイル）、`hosts_files`（`--allow-hosts=@FILE` と `--pass-hosts=@FILE` が読んだファイル）。v1.1 より古い `run` にはありません。そのとき `reqcove status` はバージョンを `serverInfo` から取ります。
@@ -103,6 +103,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture stop`、`capture start`（v1.1 から） | `--state` |
 | `reqcove capture save`（v1.1 から） | `--state` |
 | `reqcove capture allow-all`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
+| `reqcove reload`（v1.1 から） | `--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
 | `reqcove setup` | なし |
 | `reqcove service install` | `--config`、`--state` |

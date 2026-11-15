@@ -167,7 +167,7 @@ func hostOf(h string) string {
 	return h
 }
 
-func hostsOnly(flagName string, specs []string) []string {
+func hostsOnly(lg *log.Logger, flagName string, specs []string) []string {
 	var out []string
 	for _, spec := range specs {
 		var hosts []string
@@ -178,7 +178,7 @@ func hostsOnly(flagName string, specs []string) []string {
 				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
 			}
 			if host != h {
-				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
+				lg.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
 			}
 			hosts = append(hosts, host)
 		}

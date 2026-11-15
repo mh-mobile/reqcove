@@ -35,8 +35,8 @@ records through the reqcove MCP tools (`reqcove mcp`).
   (allow, deny, list): it decides which devices may send through this computer;
   a `reqcove lan allow` step in `next_steps` is for the user. Never run
   `reqcove mark`: it is the user's (source `cli`); yours go through `add_marker`.
-  Never run `reqcove capture` (add, remove, set, stop, start, save, allow-all): it changes which
-  hosts are recorded, the user's choice; a note or a step that gives `reqcove
+  Never run `reqcove capture` (add, remove, set, stop, start, save, allow-all) or
+  `reqcove reload`: they change which hosts are recorded and the rules, the user's choice; a note or a step that gives `reqcove
   capture add HOST`, `reqcove capture start` or `reqcove capture allow-all
   --end` is for the user to run. While
   `status` says `recording: stopped`, nothing new is recorded and no rule or

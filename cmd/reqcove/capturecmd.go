@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -37,7 +38,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save or allow-all
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all or reload (reqcove reload)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -109,6 +110,10 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
+	case "reload":
+		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
+			return r, errors.New("usage: " + reloadUse)
+		}
 	case "set":
 		if len(r.Hosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture set takes --allow-hosts and --pass-hosts only (usage: %s)", captureUse)
@@ -159,6 +164,8 @@ func (r ctlRequest) String() string {
 		return s + " --for " + r.For // a duration: ParseDuration took it
 	case r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save":
 		return s
+	case r.Cmd == "reload":
+		return "reload"
 	}
 	if r.Pass {
 		s += " --pass"
@@ -175,7 +182,11 @@ func (r ctlRequest) String() string {
 
 func captureIn(ctx context.Context, in, out *os.File, state string, req ctlRequest) error {
 	if !isTerminal(in) || !isTerminal(out) {
-		return errors.New("reqcove capture runs only in a terminal: it changes what is recorded, which is the user's choice (an agent never runs it). Run it in your own terminal")
+		name := "reqcove capture"
+		if req.Cmd == "reload" {
+			name = "reqcove reload"
+		}
+		return errors.New(name + " runs only in a terminal: it changes what is recorded, which is the user's choice (an agent never runs it). Run it in your own terminal")
 	}
 	return sendCapture(ctx, out, state, req)
 }
@@ -228,10 +239,26 @@ func noCtl(ctx context.Context, state string) error {
 	return fmt.Errorf("this run is %s: restart it with v1.1 or later to change what it records while it runs (a restart empties the records: `%s > flows.har` keeps them first); nothing changed", v, withState("reqcove har", state))
 }
 
-// serveCtl serves ctl.sock until ctx ends. lan: LAN mode, whose hosts are
-// set at the start (its proxy takes their names then); origin: where run's
-// hosts came from (capture save).
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool, origin hostsOrigin) error {
+// ctlState is what ctl.sock answers from: run's options as it started (in
+// LAN mode, whose hosts are set at the start, as its proxy takes their names
+// then, every change is refused), and, guarded by mu, which also takes one
+// change at a time, where the hosts come from (capture save writes there)
+// and the hosts the files gave when last read or written (reload says what
+// it replaces of the changes made since).
+type ctlState struct {
+	o      *runOpts
+	mu     sync.Mutex
+	origin hostsOrigin
+	loaded capture.HostRules
+}
+
+func newCtlState(o *runOpts) *ctlState {
+	return &ctlState{o: o, origin: o.origin, loaded: o.allow}
+}
+
+// serveCtl serves ctl.sock until ctx ends, for the run o started.
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts) error {
+	st := newCtlState(o)
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
 	ln, err := net.Listen("unix", path)
@@ -258,7 +285,7 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool,
 				}
 				ctx, cancel := context.WithTimeout(ctx, ctlWait-time.Second) // the answer before the CLI gives up
 				defer cancel()
-				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, lan, origin, req))
+				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, st, req))
 			}()
 		}
 	}()
@@ -271,7 +298,10 @@ var errUnchanged = errors.New("unchanged")
 // answerCtl makes the change and says what happened. A change taken
 // (applied, or pending) leaves a trace: run's log line, a cli marker, and
 // status's scope_changed_at.
-func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hostsOrigin, req ctlRequest) ctlAnswer {
+func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlRequest) ctlAnswer {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
 		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"}
 	}
@@ -287,9 +317,11 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hosts
 	case "stop", "start":
 		return stopStart(ctx, cap, req.Cmd == "stop", why)
 	case "save":
-		return save(cap, origin, why)
+		return save(cap, st, why)
 	case "allow-all":
 		return allowAll(ctx, cap, req, why)
+	case "reload":
+		return reload(ctx, cap, st, why)
 	}
 	var cur, next capture.HostRules
 	var notes []string
@@ -340,7 +372,11 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hosts
 // traced is the answer to a change taken, leaving its trace: run's log line
 // and a cli marker (status's scope_changed_at comes from the change itself).
 func traced(cap *capture.Capture, why, msg string) ctlAnswer {
-	log.Printf("%s (reqcove capture, from a terminal): %s", why, msg)
+	from := "reqcove capture"
+	if why == "reload" {
+		from = "reqcove reload"
+	}
+	log.Printf("%s (%s, from a terminal): %s", why, from, msg)
 	if _, _, err := cap.Store.AddMarker(cut(why, capture.MaxMarkerText), "cli"); err != nil {
 		log.Printf("WARN: the marker of %s: %v", why, err)
 	}
@@ -484,10 +520,13 @@ func endedText(cap *capture.Capture) string {
 // are (a restart takes those again whatever the file says): never "*", never
 // none (run refuses a hosts file without hosts). Hosts passed undecrypted are
 // not saved.
-func save(cap *capture.Capture, o hostsOrigin, why string) ctlAnswer {
-	msg, err := saveHosts(cap.Base(), o)
+func save(cap *capture.Capture, st *ctlState, why string) ctlAnswer {
+	msg, err := saveHosts(cap.Base(), st.origin)
 	if err != nil {
 		return ctlAnswer{Message: err.Error()}
+	}
+	if n, err := reloadFlags(st.o.args); err == nil { // what the files give now, for reload
+		st.loaded = n.allow
 	}
 	cap.NoteChange(why)
 	return traced(cap, why, msg)

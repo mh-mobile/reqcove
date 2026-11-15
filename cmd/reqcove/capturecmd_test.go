@@ -84,7 +84,7 @@ func TestCaptureArgs(t *testing.T) {
 		t.Errorf("allow-all --for 30m: %v", err)
 	}
 	// run checks again (any process of the user can reach ctl.sock), before the capture is touched.
-	if a := answerCtl(context.Background(), nil, false, hostsOrigin{}, ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
+	if a := answerCtl(context.Background(), nil, newCtlState(&runOpts{}), ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
 		t.Errorf("run, *: %+v", a)
 	}
 }
@@ -194,7 +194,7 @@ func TestCaptureRefusals(t *testing.T) {
 	// LAN mode: refused by run, over the socket (as the CLI asks it).
 	lanDir, _ := os.MkdirTemp("/tmp", "rcvc-")
 	defer os.RemoveAll(lanDir)
-	if err := serveCtl(ctx, lanDir, nil, true, hostsOrigin{}); err != nil {
+	if err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(lanDir, ctlSock))
@@ -315,7 +315,7 @@ func TestCaptureE2E(t *testing.T) {
 	logged := logTo(t)
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	defer func() { mcpserver.CaptureAddCmd = "" }()
-	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
+	if err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}
@@ -436,7 +436,7 @@ func TestCaptureStopE2E(t *testing.T) {
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	mcpserver.CaptureStartCmd = withState("reqcove capture start", state)
 	defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
-	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
+	if err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}
@@ -559,7 +559,7 @@ func TestCaptureAllowAllE2E(t *testing.T) {
 	captureEndCmd = withState("reqcove capture allow-all --end", state)
 	allowAllNotes = []string{"--mcp-http: agents on your other devices (Grok Bot in xAI's cloud) read these records too"}
 	defer func() { captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil }()
-	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
+	if err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}

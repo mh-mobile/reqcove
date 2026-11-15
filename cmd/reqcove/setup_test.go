@@ -142,7 +142,8 @@ func TestSetupWrites(t *testing.T) {
 		"or to start it at login, in the background: reqcove service install",
 		"`reqcove links` prints the login URL",
 		"reqcove capture add HOST (or remove, set); reqcove capture save keeps them for the next start, in " + shellWord(setupHosts(config)),
-		"edit " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ", then restart it (Ctrl-C and run it again, or reqcove service restart): a restart empties the records",
+		"After editing " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ": reqcove reload takes its hosts and the --rules file without a restart",
+		"other changes need a restart (Ctrl-C and run it again, or reqcove service restart): a restart empties the records",
 		"--lan is not kept in a config file",
 	} {
 		if !strings.Contains(out, want) {
@@ -256,7 +257,8 @@ func TestSetupStartLines(t *testing.T) {
 		"or to start it at login, in the background: brew services start reqcove",
 		"Then `" + rc + " links`",
 		rc + " capture add HOST (or remove, set); " + rc + " capture save keeps them for the next start, in " + shellWord(setupHosts(config)),
-		"edit " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ", then restart it (Ctrl-C and run it again, or brew services restart reqcove): a restart empties the records.\n",
+		"After editing " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ": " + rc + " reload takes its hosts and the --rules file without a restart;\n",
+		"other changes need a restart (Ctrl-C and run it again, or brew services restart reqcove): a restart empties the records.\n",
 	}
 	at := start
 	for _, w := range want { // in this order, the last at the end
@@ -266,8 +268,8 @@ func TestSetupStartLines(t *testing.T) {
 		}
 		at += i
 	}
-	if !strings.HasSuffix(out, want[len(want)-1]) || strings.Contains(out, "reload") {
-		t.Errorf("the last line, or reload:\n%s", out)
+	if !strings.HasSuffix(out, want[len(want)-1]) {
+		t.Errorf("the last line:\n%s", out)
 	}
 	os.MkdirAll(filepath.Dir(defaultConfig()), 0o700)
 	os.WriteFile(defaultConfig(), []byte("--device x\n"), 0o600)

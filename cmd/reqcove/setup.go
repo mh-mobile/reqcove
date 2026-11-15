@@ -275,7 +275,8 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 			files = hf + " or " + shown
 		}
 		fmt.Fprintf(out, "   While it runs, change the hosts recorded without a restart (the records stay):\n   %s capture add HOST (or remove, set)%s.\n", rc, save)
-		fmt.Fprintf(out, "   Other changes: edit %s, then restart it (%s): a restart empties the records.\n", files, restart)
+		fmt.Fprintf(out, "   After editing %s: %s reload takes its hosts and the --rules file without a restart;\n", files, rc)
+		fmt.Fprintf(out, "   other changes need a restart (%s): a restart empties the records.\n", restart)
 	}
 	return nil
 }
