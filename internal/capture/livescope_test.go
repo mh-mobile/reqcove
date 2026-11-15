@@ -340,3 +340,125 @@ func TestLiveScopeRulesE2E(t *testing.T) {
 	}
 	mocked("/mocked?n=2") // on a new connection: still decrypted, the mock still loaded
 }
+
+// TestCaptureStopE2E: reqcove capture stop and start. Stopped: an open
+// WebSocket records nothing more and is closed with the error; a mocked URL
+// reaches the server (the stand-in), on a new connection (not decrypted) and
+// on one decrypted before the stop (not mocked, not recorded); the preset on
+// is turned off and none can be turned on. Started: the old socket does not
+// resume, a new one records, the mock answers again. Stopped again, a
+// restarted mitmdump stays stopped (and its rules still load: they are
+// checked against the base, not the empty scope recorded).
+func TestCaptureStopE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	e := newLiveEnv(t, ctx, []string{"a.example.com"}, func(port string) string {
+		return fmt.Sprintf("mock:\n  - match: {url: \"https://a.example.com:%[1]s/mocked\"}\n    status: 418\n  - match: {url: \"https://a.example.com:%[1]s/preset\"}\n    preset: teapot\n    status: 418\n", port)
+	})
+	status := func(c *http.Client, path string) (bool, int) {
+		t.Helper()
+		if c == nil {
+			c = e.client("a.example.com", new(atomic.Int32))
+		}
+		return e.do(c, "a.example.com", path)
+	}
+	presetOn := func() bool {
+		t.Helper()
+		ps, err := e.h.c.Presets(ctx)
+		if err != nil || len(ps) != 1 {
+			t.Fatalf("presets: %v %v", ps, err)
+		}
+		return ps[0].Active
+	}
+	if _, st := status(nil, "/mocked?n=1"); st != 418 {
+		t.Fatalf("before: the mock did not answer (%d)", st)
+	}
+	var dials atomic.Int32
+	ka := e.client("a.example.com", &dials)
+	if dec, _ := status(ka, "/ka-before"); !dec {
+		t.Fatal("not decrypted before the stop")
+	}
+	e.recorded("/ka-before", true)
+	one := e.ws(ctx, "a.example.com", "one")
+	e.send(one, 3)
+	e.wsFlow("one", messages(3), 10*time.Second)
+	if _, err := e.h.c.Activate(ctx, "teapot", 60, 0); err != nil || !presetOn() {
+		t.Fatalf("activate before the stop: %v", err)
+	}
+
+	if _, err := e.h.c.SetStopped(ctx, "capture stop", true); err != nil {
+		t.Fatal(err)
+	}
+	if !e.h.c.Stopped() || e.h.c.ScopePending() != "" || !slices.Equal(e.h.c.Scope().Hosts, []string{"a.example.com"}) || e.h.stats()["recording"] != "stopped" {
+		t.Errorf("stopped: %v, pending %q, base %v, stats %v", e.h.c.Stopped(), e.h.c.ScopePending(), e.h.c.Scope().Hosts, e.h.stats()["recording"])
+	}
+	e.send(one, 3)
+	if v := e.wsFlow("one", wsCut, 10*time.Second); v.WSMessages != 3 || v.Error != ScopeCut {
+		t.Errorf("stopped: the socket has %d messages, %s %q", v.WSMessages, v.State, v.Error)
+	}
+	if dec, st := status(nil, "/mocked?s=new"); dec || st != 200 {
+		t.Errorf("stopped, a new connection: decrypted %v, status %d (want the server's 200, undecrypted)", dec, st)
+	}
+	if dec, st := status(ka, "/mocked?s=open"); !dec || st != 200 || dials.Load() != 1 {
+		t.Errorf("stopped, the connection decrypted before: decrypted %v, status %d (want the server's 200, not the mock's), connections %d", dec, st, dials.Load())
+	}
+	if _, rec := e.recorded("/mocked?s=", false); rec {
+		t.Error("recorded while stopped")
+	}
+	if presetOn() {
+		t.Error("the preset is still on after the stop")
+	}
+	if _, err := e.h.c.Activate(ctx, "teapot", 60, 0); err == nil || !strings.Contains(err.Error(), "recording is stopped") {
+		t.Errorf("activate while stopped: %v, want refused", err)
+	}
+
+	if base, err := e.h.c.SetStopped(ctx, "capture start", false); err != nil || !slices.Equal(base.Hosts, []string{"a.example.com"}) {
+		t.Fatalf("start: %v %v", base.Hosts, err)
+	}
+	if e.h.c.Stopped() || e.h.stats()["recording"] != "on" {
+		t.Error("still stopped after the start")
+	}
+	e.send(one, 3)
+	if v := e.wsFlow("one", messages(4), 2*time.Second); v.WSMessages != 3 {
+		t.Errorf("started: the old socket resumed, %d messages", v.WSMessages)
+	}
+	two := e.ws(ctx, "a.example.com", "two")
+	e.send(two, 3)
+	if v := e.wsFlow("two", messages(3), 10*time.Second); v.WSMessages != 3 || v.State != "open" {
+		t.Errorf("started: a new socket has %d messages, %s", v.WSMessages, v.State)
+	}
+	if _, st := status(nil, "/mocked?n=2"); st != 418 {
+		t.Errorf("started: the mock did not answer (%d)", st)
+	}
+	if v, _ := e.recorded("/mocked?n=2", true); !v.Mocked {
+		t.Error("started: not recorded as mocked")
+	}
+	if presetOn() {
+		t.Error("the preset came back on with the start")
+	}
+
+	// Stopped again, then mitmdump killed: the restarted one is stopped too.
+	if _, err := e.h.c.SetStopped(ctx, "capture stop", true); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(e.h.c.cfg.Dir, "mitmdump.pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 {
+		t.Fatalf("pid: %v", err)
+	}
+	syscall.Kill(-pid, syscall.SIGKILL)
+	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if s := e.h.stats(); s["state"] == "ready" && s["restarts"] == int64(1) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no restart: %v", e.h.stats())
+		}
+	}
+	if dec, st := status(nil, "/mocked?s=restarted"); dec || st != 200 || !e.h.c.Stopped() {
+		t.Errorf("restarted: decrypted %v, status %d, stopped %v (want still stopped)", dec, st, e.h.c.Stopped())
+	}
+	if _, rec := e.recorded("/mocked?s=restarted", false); rec {
+		t.Error("recorded after the restart while stopped")
+	}
+}

@@ -109,6 +109,11 @@ exits 1, saying why on stderr. Its fields:
   (the command, such as `capture add api.example.com`), absent before the
   first change. `allow_hosts` and `pass_hosts` are the hosts mitmproxy has
   acknowledged.
+- Since v1.1, `recording`: `on`, or `stopped` (`reqcove capture stop`, until
+  `capture start`; more values may come). While stopped, `allow_hosts` is `[]`
+  and `pass_hosts` absent (nothing is recorded); `base_allow_hosts` and
+  `base_pass_hosts` are the hosts recorded when it is on (absent when none),
+  while stopped the ones `start` records. Absent from a run older than v1.1.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -129,7 +134,8 @@ Its documented fields: `flows`, `flows_with_truncated_bodies`, `evicted`,
 v1.1: attempts in a row to start mitmproxy again), `last_failure` (since v1.1:
 why it last failed, text for people; "" when it has not), `next_attempt` (since
 v1.1: while it waits to try again), `rules_loaded`
-(once a rules file was taken), and, while masking is on, `mask_names` and
+(once a rules file was taken), `recording` (since v1.1: `on` or `stopped`, as
+`status`'s; while stopped, `pass_hosts` is none), and, while masking is on, `mask_names` and
 `mask_values` (the matches per name and per pattern number). The others are
 [not stable](#not-stable).
 
@@ -174,6 +180,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove mark [TEXT]` (`-- TEXT` for one starting with `-`) | `--state` |
 | `reqcove capture add HOST…`, `capture remove HOST…` (since v1.1) | `--pass`, `--state` |
 | `reqcove capture set` (since v1.1) | `--allow-hosts`, `--pass-hosts`, `--state` |
+| `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |

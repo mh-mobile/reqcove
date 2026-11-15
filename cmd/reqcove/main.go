@@ -69,6 +69,9 @@ Usage:
   reqcove capture add HOST… | capture remove HOST… | capture set --allow-hosts HOSTS
                      change the hosts the running reqcove records, in your terminal only
                      (--pass: the hosts carried undecrypted; not saved: a restart goes back)
+  reqcove capture stop | capture start
+                     record nothing new (and apply no --rules rule: the app reaches the
+                     real servers) until start; the records stay, in your terminal only
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -

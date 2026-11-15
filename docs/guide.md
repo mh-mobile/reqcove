@@ -186,6 +186,43 @@ on an iPhone. The pending answer and a `mock` rule's refusal, as `reqcove
 capture` gives them, are from reading the code (the change underneath, its
 pending state and the refusal, has tests of its own).
 
+#### Stop recording for a while
+
+```sh
+reqcove capture stop     # record nothing new; the records stay readable
+reqcove capture start    # record the same hosts again
+```
+
+While stopped, mitmproxy decrypts nothing new (mitm.it only, for the CA),
+nothing new is recorded, and **no rule of the `--rules` file applies**: mock,
+map_local, map_remote, modify_headers and resolve, presets included (the
+ones on are turned off, and `activate_preset` is refused). So the app's
+requests go to the real servers as it sends them, a mocked API's too: the
+answer of `stop` warns of it and says how many records are kept.
+
+- Connections already decrypted stay decrypted until they close, but nothing
+  on them is recorded, and no rule applies to their new requests (a request
+  already under way when you stop ends as it began, from reading the code). An open WebSocket's flow
+  is closed with "recording stopped: its host left the scope".
+- `start` says the hosts it records again. It records new connections and
+  WebSockets only (reopen the app): one open before the stop is not recorded
+  again. Presets stay off until an agent turns one on.
+- `capture add`, `remove` and `set` while stopped change the hosts `start`
+  records (the answer says so); nothing is recorded until then.
+- A restart of mitmproxy keeps it stopped; a restart of `run` records again
+  (not saved).
+- `reqcove status` says "recorded: nothing: stopped" and the hosts kept;
+  `--json` and the MCP `status` say `"recording": "stopped"`, `allow_hosts: []`
+  and the hosts kept in `base_allow_hosts` (`base_pass_hosts`); `next_steps`
+  gives `reqcove capture start`. Refused in LAN mode, as the others.
+
+Tried by tests only (E2E with real mitmproxy: an open WebSocket records
+nothing more and does not resume after the start, a new one records; a mocked
+URL reaches the server, on a new connection and on one decrypted before the
+stop; a preset is turned off and cannot be turned on; mitmproxy killed while
+stopped comes back stopped; the CLI's answers, status, markers); not on an
+iPhone.
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole

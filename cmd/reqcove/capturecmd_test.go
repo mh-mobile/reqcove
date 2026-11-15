@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -35,6 +36,9 @@ func TestCaptureArgs(t *testing.T) {
 	if req, _ := (ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, PassHosts: []string{"a.com"}}).normalized(); req.String() != "capture set --allow-hosts a.com --pass-hosts a.com" {
 		t.Errorf("set: %q", req.String())
 	}
+	if req, err := (ctlRequest{Cmd: "stop"}).normalized(); err != nil || req.String() != "capture stop" {
+		t.Errorf("stop: %v %q", err, req.String())
+	}
 	for _, c := range []struct {
 		req  ctlRequest
 		want string
@@ -49,6 +53,8 @@ func TestCaptureArgs(t *testing.T) {
 		{ctlRequest{Cmd: "add", Hosts: []string{"a.com"}, AllowHosts: []string{"b.com"}}, "go with capture set"},
 		{ctlRequest{Cmd: "set"}, "needs --allow-hosts"},
 		{ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, Hosts: []string{"b.com"}}, "only"},
+		{ctlRequest{Cmd: "stop", Hosts: []string{"a.com"}}, "takes no hosts"},
+		{ctlRequest{Cmd: "start", Pass: true}, "takes no hosts"},
 		{ctlRequest{Cmd: "allow-all"}, "usage"},
 		{ctlRequest{}, "usage"},
 	} {
@@ -174,8 +180,10 @@ func TestCaptureRefusals(t *testing.T) {
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("ctl.sock: %v, mode %v", err, fi.Mode().Perm())
 	}
-	if err := sendCapture(ctx, io.Discard, lanDir, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "LAN mode") || !strings.Contains(err.Error(), "nothing changed") {
-		t.Errorf("LAN mode: %v", err)
+	for _, req := range []ctlRequest{{Cmd: "add", Hosts: []string{"a.com"}}, {Cmd: "stop"}, {Cmd: "start"}} {
+		if err := sendCapture(ctx, io.Discard, lanDir, req); err == nil || !strings.Contains(err.Error(), "LAN mode") || !strings.Contains(err.Error(), "nothing changed") {
+			t.Errorf("LAN mode, %s: %v", req, err)
+		}
 	}
 
 	// A v1.0 run: mcp.sock, no ctl.sock.
@@ -238,6 +246,15 @@ func TestCaptureStep(t *testing.T) {
 	steps := nextSteps(exitnode.Status{Backend: "Running"}, stats, capture.HostRules{}, capture.CA{}, nil)
 	if !slices.Contains(steps, "nothing is recorded: add your app's hosts, in your terminal: reqcove capture add --state '/tmp/my state' api.example.com") {
 		t.Errorf("%q", steps)
+	}
+	// Stopped: the start, not the add (the hosts are kept for the start).
+	mcpserver.CaptureStartCmd = withState("reqcove capture start", "/tmp/my state")
+	defer func() { mcpserver.CaptureStartCmd = "reqcove capture start" }()
+	steps = nextSteps(exitnode.Status{Backend: "Running"}, map[string]any{"state": "ready", "recording": "stopped"}, capture.HostRules{}, capture.CA{}, nil)
+	if !slices.ContainsFunc(steps, func(s string) bool {
+		return strings.HasPrefix(s, "recording is stopped: ") && strings.Contains(s, "the app reaches the real servers") && strings.HasSuffix(s, "reqcove capture start --state '/tmp/my state'")
+	}) || slices.ContainsFunc(steps, func(s string) bool { return strings.HasPrefix(s, "nothing is recorded") }) {
+		t.Errorf("stopped: %q", steps)
 	}
 	mcpserver.CaptureAddCmd = ""
 	steps = nextSteps(exitnode.Status{Mode: "lan"}, stats, capture.HostRules{}, capture.CA{}, nil)
@@ -359,6 +376,129 @@ func TestCaptureE2E(t *testing.T) {
 		marks = append(marks, m.Source+": "+m.Text)
 	}
 	if !slices.Equal(marks, []string{"cli: capture add 127.0.0.1", "cli: capture remove 127.0.0.1", "cli: capture add 127.0.0.1"}) { // none for the change that changed nothing
+		t.Errorf("markers: %q", marks)
+	}
+}
+
+// TestCaptureStopE2E (REQCOVE_E2E=1, real mitmproxy): reqcove capture stop
+// and start over ctl.sock. The stop's answer warns that the rules stop too
+// and counts the records kept; status says recording stopped, allow_hosts []
+// and the base, next_steps the start; a request is not recorded; an add while
+// stopped changes the base only; the start says what it records, and records.
+// Each change leaves its log line, a cli marker and status's trace.
+func TestCaptureStopE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvc-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	state := filepath.Join(dir, "s")
+	allow, _ := capture.ParseAllowHosts([]string{"127.0.0.1"})
+	c, err := capture.Start(ctx, capture.Config{Dir: state, Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute, AllowHosts: allow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	logged := logTo(t)
+	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
+	mcpserver.CaptureStartCmd = withState("reqcove capture start", state)
+	defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
+	if err := serveCtl(ctx, state, c, false); err != nil {
+		t.Fatal(err)
+	}
+	node := exitnode.Status{Backend: "Running"}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer origin.Close()
+	socks, _ := proxy.SOCKS5("tcp", c.SocksAddr, &proxy.Auth{User: "dev", Password: c.SocksSecret}, proxy.Direct)
+	hc := &http.Client{Transport: &http.Transport{DialContext: socks.(proxy.ContextDialer).DialContext, DisableKeepAlives: true}, Timeout: 30 * time.Second}
+	get := func(path string) {
+		t.Helper()
+		r, err := hc.Get(origin.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}
+	paths := func() []string {
+		var out []string
+		flows, _ := c.Store.List(capture.Filter{Limit: 10})
+		for _, f := range flows {
+			out = append([]string{strings.TrimPrefix(f.URL, origin.URL)}, out...)
+		}
+		return out
+	}
+	waitPaths := func(want ...string) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); !slices.Equal(paths(), want); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("flows %q, want %q", paths(), want)
+			}
+		}
+	}
+	change := func(req ctlRequest) string {
+		t.Helper()
+		var out strings.Builder
+		if err := sendCapture(ctx, &out, state, req); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	get("/before")
+	waitPaths("/before")
+	out := change(ctlRequest{Cmd: "stop"})
+	for _, want := range []string{"applied: recording stopped; 1 records kept (still readable); WARNING: ", "mock, map_local, map_remote", "the app's requests go to the real servers", "not saved", "`reqcove capture start` records again"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stop: %q, want %q in it", out, want)
+		}
+	}
+	waitLog(t, logged, "capture stop (reqcove capture, from a terminal): applied: recording stopped", 1)
+	s := liveStatus(node, c)
+	b, _ := json.Marshal(s)
+	for _, want := range []string{`"allow_hosts":[]`, `"recording":"stopped"`, `"base_allow_hosts":["127.0.0.1"]`, `"scope_change":"capture stop"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("status while stopped: %s, want %s in it", b, want)
+		}
+	}
+	start := "to record again, in your terminal: " + withState("reqcove capture start", state)
+	if !slices.ContainsFunc(s.NextSteps, func(st string) bool { return strings.HasSuffix(st, start) }) || c.Store.Stats()["recording"] != "stopped" {
+		t.Errorf("while stopped: steps %q, capture_stats recording %v", s.NextSteps, c.Store.Stats()["recording"])
+	}
+	get("/stopped")
+	if out := change(ctlRequest{Cmd: "stop"}); !strings.HasPrefix(out, "nothing changed: recording is stopped already") {
+		t.Errorf("stop again: %q", out)
+	}
+	if out := change(ctlRequest{Cmd: "add", Hosts: []string{"localhost"}}); !strings.HasPrefix(out, "applied: localhost added") || !strings.Contains(out, "recording is stopped: these are the hosts `reqcove capture start` records") || strings.Contains(out, "new connections only") {
+		t.Errorf("add while stopped: %q", out)
+	}
+	if s := liveStatus(node, c); len(s.AllowHosts) != 0 || !slices.Equal(s.BaseAllowHosts, []string{"127.0.0.1", "localhost"}) {
+		t.Errorf("add while stopped: allow %q, base %q", s.AllowHosts, s.BaseAllowHosts)
+	}
+	if out := change(ctlRequest{Cmd: "start"}); !strings.HasPrefix(out, "applied: recording started again: recording 127.0.0.1, localhost; 1 records kept") || !strings.Contains(out, "new connections only") {
+		t.Errorf("start: %q", out)
+	}
+	if s := liveStatus(node, c); s.Recording != "on" || !slices.Equal(s.AllowHosts, []string{"127.0.0.1", "localhost"}) || s.ScopeChange != "capture start" {
+		t.Errorf("started: recording %q, allow %q, change %q", s.Recording, s.AllowHosts, s.ScopeChange)
+	}
+	if out := change(ctlRequest{Cmd: "start"}); out != "nothing changed: recording is not stopped\n" {
+		t.Errorf("start again: %q", out)
+	}
+	get("/started")
+	waitPaths("/before", "/started")
+	var marks []string
+	for _, m := range c.Store.Markers(0) {
+		marks = append(marks, m.Source+": "+m.Text)
+	}
+	if !slices.Equal(marks, []string{"cli: capture stop", "cli: capture add localhost", "cli: capture start"}) {
 		t.Errorf("markers: %q", marks)
 	}
 }

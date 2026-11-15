@@ -537,6 +537,7 @@ MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 MOCK_DELAY_MS = 30000  # under URLSession's default timeout (60 s): slow, not a timeout
 PRESET_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_preset's bounds (Go checks them too)
+STOPPED_PRESET = "recording is stopped (reqcove capture stop): no rule applies, presets included, so none can be turned on; the user runs reqcove capture start in their terminal first (pass it on; never run it yourself)"
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
@@ -1138,6 +1139,7 @@ class Reqcove:
         self.rules_error = ""
         self.control_server = None
         self.scope_gen = 0  # reqcove_scope_gen: the scope's generation, on what it admits
+        self.stopped = False  # reqcove_stopped (reqcove capture stop): nothing recorded, no rule applies
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
@@ -1160,6 +1162,8 @@ class Reqcove:
                         out = {"error": f"explain_rules failed: {type(e).__name__}"}
                 elif req.get("op") == "scope":  # a live scope change from run, whole
                     out = self._scope(req)
+                elif req.get("op") == "activate" and self.stopped:
+                    out = {"error": STOPPED_PRESET}
                 elif req.get("op") == "check":  # reqcove mock add: the file as it would be, at path (next to target), checked as at start
                     out = self._check(str(req.get("path", "")), str(req.get("target", "")), ctx.options.reqcove_rules, ctx.options.reqcove_rules_reload)
                 elif not self.rules or not self.rules["mock"].book.entries:
@@ -1194,7 +1198,7 @@ class Reqcove:
         whether it would be taken. Refused, nothing changed, when a rule loaded
         names a host it leaves out: checked against the rules in force, never
         the file on disk. The answer names this mitmdump and the generation."""
-        gen, allow, hosts = req.get("gen"), req.get("allow_hosts"), req.get("rules")
+        gen, allow, hosts, stopped = req.get("gen"), req.get("allow_hosts"), req.get("rules"), bool(req.get("stopped"))
         if not (isinstance(gen, int) and isinstance(allow, list) and all(isinstance(a, str) for a in allow) and isinstance(hosts, dict)):
             return {"error": "scope: a bad request"}
         try:
@@ -1217,7 +1221,7 @@ class Reqcove:
             return {"error": "the --rules file's rules name hosts the new scope leaves out: " + "; ".join(problems)}
         if not req.get("check"):
             try:
-                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen)
+                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen, reqcove_stopped=stopped)
             except Exception as e:  # never mitmproxy's text: it quotes the patterns
                 return {"error": f"scope: {type(e).__name__}"}
         return {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
@@ -1261,6 +1265,8 @@ class Reqcove:
         host = r.pretty_host.lower().rstrip(".")
         rules = self.rules
         out = {"in_scope": False, "loaded": rules is not None, "rules_error": self.rules_error}
+        if self.stopped:
+            return dict(out, scope="recording is stopped (reqcove capture stop): nothing is decrypted but on connections already open, nothing is recorded, and no rule applies, presets included, until the user runs reqcove capture start")
         # As requestheaders and next_layer decide it.
         if not check.is_valid_host(r.pretty_host) or not self._allowed(host):
             return dict(out, scope="not in --allow-hosts: carried but not recorded, and no rule applies to it")
@@ -1347,6 +1353,7 @@ class Reqcove:
         loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns presets on and off.")
         loader.add_option("reqcove_scope_gen", int, 0, "The generation of reqcove_allow_hosts (and allow_hosts), on the events it admits.")
         loader.add_option("reqcove_instance", str, "", "This mitmdump's name from reqcove, on its hello and its scope answers.")
+        loader.add_option("reqcove_stopped", bool, False, "reqcove capture stop: nothing recorded, no rule applied (reqcove_allow_hosts is the scope kept for the start).")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -1360,6 +1367,9 @@ class Reqcove:
             except OSError:
                 self.secret = None
         self.scope_gen = ctx.options.reqcove_scope_gen
+        if ctx.options.reqcove_stopped and not self.stopped and self.rules:
+            self.rules["mock"].book.active.clear()  # presets go off at a stop, and stay off after the start
+        self.stopped = ctx.options.reqcove_stopped
         if "reqcove_allow_hosts" in updated:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
@@ -1552,8 +1562,10 @@ class Reqcove:
 
     def _in_scope(self, host):
         # A --pass-hosts host is not recorded as flows, even in a request riding
-        # an allowed host's decrypted connection (HTTP/2 coalescing).
-        return self._allowed(host) and not self._passed(host)
+        # an allowed host's decrypted connection (HTTP/2 coalescing). Stopped:
+        # none, so no rule applies either, on a connection decrypted before too.
+        # _allowed stays the base: rules are checked against it.
+        return not self.stopped and self._allowed(host) and not self._passed(host)
 
     def running(self):
         # Connect now, not on the first flow: reqcove waits for this hello
@@ -2088,7 +2100,7 @@ class Reqcove:
         (Apple's): those it passes through itself, unrecorded. Script addons run
         before mitmproxy's own NextLayer (12.3.1), which leaves a layer chosen
         here; a change of that order fails TestPassHosts."""
-        if not self.passing or nl.layer is not None or len(nl.context.layers) != 1:
+        if self.stopped or not self.passing or nl.layer is not None or len(nl.context.layers) != 1:
             return
         data = nl.data_client()
         if not starts_like_tls_record(data):

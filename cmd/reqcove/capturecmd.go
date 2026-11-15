@@ -36,7 +36,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove or set
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop or start
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -49,7 +49,7 @@ type ctlAnswer struct {
 	Message string `json:"message"`
 }
 
-const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS]  [--state DIR]"
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start  [--state DIR]"
 
 func captureCmd(ctx context.Context, args []string) error {
 	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts")
@@ -83,6 +83,10 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		}
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
+		}
+	case "stop", "start":
+		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
+			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
 	case "set":
 		if len(r.Hosts) > 0 || r.Pass {
@@ -118,6 +122,9 @@ func hostSpecs(specs []string) ([]string, error) {
 // String is the command as the trace shows it.
 func (r ctlRequest) String() string {
 	s := "capture " + r.Cmd
+	if r.Cmd == "stop" || r.Cmd == "start" {
+		return s
+	}
 	if r.Pass {
 		s += " --pass"
 	}
@@ -230,18 +237,22 @@ var errUnchanged = errors.New("unchanged")
 // status's scope_changed_at.
 func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlRequest) ctlAnswer {
 	if lan {
-		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded cannot change while run runs (not in this version): restart run with them in --allow-hosts; nothing changed"}
+		return ctlAnswer{Message: "refused: in LAN mode what is recorded cannot change while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
 	}
 	req, err := req.normalized()
 	if err != nil {
 		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 	}
 	why := req.String()
+	if req.Cmd == "stop" || req.Cmd == "start" {
+		return stopStart(ctx, cap, req.Cmd == "stop", why)
+	}
 	var cur, next capture.HostRules
 	var notes []string
-	err = cap.ChangeScope(ctx, why, func(c capture.HostRules) (capture.HostRules, error) {
+	var stopped bool
+	err = cap.ChangeScope(ctx, why, func(c capture.HostRules, stop bool) (capture.HostRules, error) {
 		var err error
-		cur = c
+		cur, stopped = c, stop
 		if next, notes, err = newScope(c, req); err != nil {
 			return c, err
 		}
@@ -266,18 +277,73 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlReque
 		msg = "pending: " + changes(cur, next) + " (mitmproxy has not acknowledged it yet: restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile)"
 	}
 	msg += fmt.Sprintf("; %v records kept; not saved: a restart of run goes back to the hosts it was started with", cap.Store.Stats()["flows"])
-	if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
-		msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
+	switch {
+	case stopped: // nothing is recorded either way until the start
+		msg += "; recording is stopped: these are the hosts `reqcove capture start` records, nothing is recorded until then"
+	default:
+		if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
+			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
+		}
+		if len(minus(next.Hosts, cur.Hosts))+len(minus(cur.PassHosts, next.PassHosts)) > 0 {
+			msg += "; new connections only: reopen the app to see it now"
+		}
 	}
-	if len(minus(next.Hosts, cur.Hosts))+len(minus(cur.PassHosts, next.PassHosts)) > 0 {
-		msg += "; new connections only: reopen the app to see it now"
-	}
-	msg = strings.Join(append([]string{msg}, notes...), "; ")
+	return traced(cap, why, strings.Join(append([]string{msg}, notes...), "; "))
+}
+
+// traced is the answer to a change taken, leaving its trace: run's log line
+// and a cli marker (status's scope_changed_at comes from the change itself).
+func traced(cap *capture.Capture, why, msg string) ctlAnswer {
 	log.Printf("%s (reqcove capture, from a terminal): %s", why, msg)
 	if _, _, err := cap.Store.AddMarker(cut(why, capture.MaxMarkerText), "cli"); err != nil {
 		log.Printf("WARN: the marker of %s: %v", why, err)
 	}
 	return ctlAnswer{OK: true, Message: msg}
+}
+
+// stopStart is capture stop (stop) or capture start. A stop's answer warns
+// that the rules stop too: a mock's or map_remote's requests go to the real
+// servers then.
+func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string) ctlAnswer {
+	base, err := cap.SetStopped(ctx, why, stop)
+	pending := errors.Is(err, capture.ErrPending)
+	switch {
+	case errors.Is(err, capture.ErrUnchanged) && stop:
+		return ctlAnswer{OK: true, Message: "nothing changed: recording is stopped already (`reqcove capture start` records again)"}
+	case errors.Is(err, capture.ErrUnchanged):
+		return ctlAnswer{OK: true, Message: "nothing changed: recording is not stopped"}
+	case err != nil && !pending:
+		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+	}
+	kept := fmt.Sprintf("%v records kept (still readable)", cap.Store.Stats()["flows"])
+	var msg string
+	if stop {
+		msg = "applied: recording stopped; "
+		if pending {
+			msg = "pending: recording stopped in reqcove's records, mitmproxy not told yet (restarting? it stops once mitmproxy is back; status shows scope_pending meanwhile); "
+		}
+		msg += kept + "; WARNING: the --rules file's rules apply no more (mock, map_local, map_remote, modify_headers, resolve; presets turned off), so the app's requests go to the real servers as it sends them, a mocked API's too" +
+			"; connections already decrypted stay decrypted (unrecorded) until they close; not saved: a restart of run records again; `reqcove capture start` records again"
+	} else {
+		msg = "applied: recording started again: " + scopeText(base) + "; "
+		if pending {
+			msg = "pending: recording started again, mitmproxy not told yet (restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile): " + scopeText(base) + "; "
+		}
+		msg += kept + "; the rules apply again (presets stay off until turned on); new connections only: reopen the app to see it now (a connection or WebSocket open before the stop is not recorded again)"
+	}
+	return traced(cap, why, msg)
+}
+
+// scopeText says what base records.
+func scopeText(base capture.HostRules) string {
+	if len(base.Hosts) == 0 {
+		return "nothing recorded (no hosts: `reqcove capture add HOST` adds one)"
+	}
+	s := "recording " + strings.Join(base.Hosts, ", ")
+	if len(base.PassHosts) > 0 {
+		s += "; passed undecrypted: " + strings.Join(base.PassHosts, ", ")
+	}
+	return s
 }
 
 // cut is s in at most n characters, … ending one cut short.

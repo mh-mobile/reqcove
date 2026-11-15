@@ -4,6 +4,31 @@
 
 ### Added
 
+- **`reqcove capture stop` and `capture start`** (`--state DIR`): stop
+  recording for a while, without a restart, and start again with the same
+  hosts. While stopped, mitmproxy decrypts mitm.it alone, nothing new is
+  recorded (an open WebSocket's flow is closed with "recording stopped: its
+  host left the scope", and does not resume after the start), and no rule of
+  the `--rules` file applies: mock, map_local, map_remote, modify_headers and
+  resolve, presets included (those on are turned off; `activate_preset` is
+  refused with a note). The records stay readable. `stop`'s answer warns that
+  the app's requests then go to the real servers, a mocked API's too, and
+  says how many records are kept; `start`'s says the hosts it records again
+  (new connections only). `capture add`, `remove` and `set` while stopped
+  change the hosts `start` records. A restart of mitmproxy keeps it stopped; a
+  restart of `run` records again. `status` (and `reqcove status --json`) gets
+  `recording` (`on`, `stopped`), `allow_hosts` `[]` while stopped, and the
+  hosts kept in `base_allow_hosts` and `base_pass_hosts`; `capture_stats`
+  gets `recording`; `next_steps`, and the note of an empty `list_flows`,
+  `search_flows`, `summarize` or `wait_for_flows`, give `reqcove capture
+  start`; `explain_rules` says no rule applies. Same rules as the other
+  `capture` commands (a terminal only, refused in LAN mode, an older run named,
+  the trace). Unit tests (mitmproxy's arguments while stopped: mitm.it only,
+  never empty, with `"*"` too; the order of a stop and a start; the step) and
+  E2E tests with real mitmproxy (a WebSocket; a mocked URL reaching the
+  server, on a new connection and on one decrypted before; a preset turned
+  off and refused; mitmproxy killed while stopped; the CLI's answers, status
+  and markers). Not tried on an iPhone.
 - **`reqcove capture add HOST…`, `capture remove HOST…` and `capture set
   --allow-hosts HOSTS [--pass-hosts HOSTS]`** (`--pass` for the hosts carried
   undecrypted; `--state DIR`): change the hosts the running `run` records
