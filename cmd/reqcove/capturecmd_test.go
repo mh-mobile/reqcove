@@ -55,12 +55,33 @@ func TestCaptureArgs(t *testing.T) {
 		{ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, Hosts: []string{"b.com"}}, "only"},
 		{ctlRequest{Cmd: "stop", Hosts: []string{"a.com"}}, "takes no hosts"},
 		{ctlRequest{Cmd: "start", Pass: true}, "takes no hosts"},
-		{ctlRequest{Cmd: "allow-all"}, "usage"},
+		{ctlRequest{Cmd: "allow-all"}, "takes --for D"},
+		{ctlRequest{Cmd: "allow-all", For: "30m", End: true}, "takes --for D"},
+		{ctlRequest{Cmd: "allow-all", For: "25h"}, "at most 24h"},
+		{ctlRequest{Cmd: "allow-all", For: "0s"}, "at most 24h"},
+		{ctlRequest{Cmd: "allow-all", For: "-5m"}, "at most 24h"},
+		{ctlRequest{Cmd: "allow-all", For: "30"}, "a duration such as 30m"},
+		{ctlRequest{Cmd: "allow-all", For: "1h", Hosts: []string{"a.com"}}, "takes no hosts"},
+		{ctlRequest{Cmd: "stop", For: "1h"}, "go with capture allow-all"},
+		{ctlRequest{Cmd: "add", Hosts: []string{"a.com"}, End: true}, "go with capture allow-all"},
+		{ctlRequest{Cmd: "allow-al"}, "usage"},
 		{ctlRequest{}, "usage"},
 	} {
 		if _, err := c.req.normalized(); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v, want %q", c.req, err, c.want)
 		}
+	}
+	for _, c := range []struct {
+		req  ctlRequest
+		want string
+	}{{ctlRequest{Cmd: "allow-all", For: "30m"}, "capture allow-all --for 30m"}, {ctlRequest{Cmd: "allow-all", For: "24h"}, "capture allow-all --for 24h"}, {ctlRequest{Cmd: "allow-all", End: true}, "capture allow-all --end"}} {
+		if req, err := c.req.normalized(); err != nil || req.String() != c.want {
+			t.Errorf("%+v: %v %q", c.req, err, req.String())
+		}
+	}
+	// --for's value is not a host: past the arguments, only the terminal check is left.
+	if err := captureCmd(context.Background(), []string{"allow-all", "--for", "30m", "--state", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "only in a terminal") {
+		t.Errorf("allow-all --for 30m: %v", err)
 	}
 	// run checks again (any process of the user can reach ctl.sock), before the capture is touched.
 	if a := answerCtl(context.Background(), nil, false, hostsOrigin{}, ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
@@ -503,6 +524,131 @@ func TestCaptureStopE2E(t *testing.T) {
 		marks = append(marks, m.Source+": "+m.Text)
 	}
 	if !slices.Equal(marks, []string{"cli: capture stop", "cli: capture add localhost", "cli: capture start"}) {
+		t.Errorf("markers: %q", marks)
+	}
+}
+
+// TestCaptureAllowAllE2E (REQCOVE_E2E=1, real mitmproxy): reqcove capture
+// allow-all over ctl.sock. Its answer warns as --allow-hosts '*' does; status says
+// allow-all, allow_hosts ["*"], the base, its end and time left, next_steps
+// the --end; a host outside the base (localhost) is recorded; --end says how
+// many of its records stay; status then counts them in records_outside_scope;
+// a new request to it is not recorded. Each change leaves its trace.
+func TestCaptureAllowAllE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvc-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	state := filepath.Join(dir, "s")
+	allow, _ := capture.ParseAllowHosts([]string{"127.0.0.1"})
+	c, err := capture.Start(ctx, capture.Config{Dir: state, Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute, AllowHosts: allow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	logged := logTo(t)
+	captureEndCmd = withState("reqcove capture allow-all --end", state)
+	allowAllNotes = []string{"--mcp-http: agents on your other devices (Grok Bot in xAI's cloud) read these records too"}
+	defer func() { captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil }()
+	if err := serveCtl(ctx, state, c, false, hostsOrigin{}); err != nil {
+		t.Fatal(err)
+	}
+	node := exitnode.Status{Backend: "Running"}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer origin.Close()
+	_, port, _ := net.SplitHostPort(origin.Listener.Addr().String())
+	socks, _ := proxy.SOCKS5("tcp", c.SocksAddr, &proxy.Auth{User: "dev", Password: c.SocksSecret}, proxy.Direct)
+	hc := &http.Client{Transport: &http.Transport{DialContext: socks.(proxy.ContextDialer).DialContext, DisableKeepAlives: true}, Timeout: 30 * time.Second}
+	get := func(host, path string) {
+		t.Helper()
+		r, err := hc.Get("http://" + host + ":" + port + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}
+	paths := func() []string {
+		var out []string
+		flows, _ := c.Store.List(capture.Filter{Limit: 10})
+		for _, f := range flows {
+			out = append([]string{strings.Replace(strings.TrimPrefix(f.URL, "http://"), ":"+port, "", 1)}, out...)
+		}
+		return out
+	}
+	waitPaths := func(want ...string) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); !slices.Equal(paths(), want); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("flows %q, want %q", paths(), want)
+			}
+		}
+	}
+	change := func(req ctlRequest) string {
+		t.Helper()
+		var out strings.Builder
+		if err := sendCapture(ctx, &out, state, req); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	get("127.0.0.1", "/before")
+	waitPaths("127.0.0.1/before")
+	out := change(ctlRequest{Cmd: "allow-all", For: "30m"})
+	for _, want := range []string{"applied: allow-all on: every host is recorded until ", "(in 30m0s)", "WARNING: every app's and site's traffic", "agents, and their model providers, can read it", "banks", "the records stay after it ends", "`reqcove capture allow-all --end` ends it sooner", "--mcp-http: agents on your other devices"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("allow-all: %q, want %q in it", out, want)
+		}
+	}
+	waitLog(t, logged, "capture allow-all --for 30m (reqcove capture, from a terminal): applied: allow-all on", 1)
+	s := liveStatus(node, c)
+	b, _ := json.Marshal(s)
+	for _, want := range []string{`"allow_hosts":["*"]`, `"recording":"allow-all"`, `"base_allow_hosts":["127.0.0.1"]`, `"allow_all_until":"`, `"allow_all_left":"`, `"scope_change":"capture allow-all --for 30m"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("status during allow-all: %s, want %s in it", b, want)
+		}
+	}
+	if !strings.HasSuffix(s.NextSteps[0], "to end it now, in your terminal: "+withState("reqcove capture allow-all --end", state)) || !strings.HasPrefix(s.NextSteps[0], "allow-all is on: every app's traffic is recorded") || c.Store.Stats()["recording"] != "allow-all" {
+		t.Errorf("during allow-all: steps %q, capture_stats recording %v", s.NextSteps, c.Store.Stats()["recording"])
+	}
+	get("localhost", "/during")
+	waitPaths("127.0.0.1/before", "localhost/during")
+	if out := change(ctlRequest{Cmd: "allow-all", For: "1h"}); !strings.HasPrefix(out, "applied: allow-all was on until ") || !strings.Contains(out, "(in 1h0m0s)") {
+		t.Errorf("allow-all again: %q", out)
+	}
+	if out := change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.2"}}); !strings.Contains(out, "allow-all is on: every host is recorded until ") || strings.Contains(out, "new connections only") {
+		t.Errorf("add during allow-all: %q", out)
+	}
+
+	out = change(ctlRequest{Cmd: "allow-all", End: true})
+	if !strings.HasPrefix(out, "applied: allow-all ended: recording 127.0.0.1, 127.0.0.2; 2 records kept, 1 of them of hosts not recorded now") || !strings.Contains(out, "stay decrypted (unrecorded)") {
+		t.Errorf("end: %q", out)
+	}
+	s = liveStatus(node, c)
+	if s.Recording != "on" || !slices.Equal(s.AllowHosts, []string{"127.0.0.1", "127.0.0.2"}) || s.AllowAllUntil != "" || s.RecordsOutsideScope != 1 || s.ScopeChange != "capture allow-all --end" || slices.ContainsFunc(s.NextSteps, func(st string) bool { return strings.HasPrefix(st, "allow-all") }) {
+		t.Errorf("ended: recording %q, allow %q, until %q, outside %d, change %q, steps %q", s.Recording, s.AllowHosts, s.AllowAllUntil, s.RecordsOutsideScope, s.ScopeChange, s.NextSteps)
+	}
+	get("localhost", "/after")
+	get("127.0.0.1", "/again")
+	waitPaths("127.0.0.1/before", "localhost/during", "127.0.0.1/again")
+	if out := change(ctlRequest{Cmd: "allow-all", End: true}); out != "nothing changed: allow-all is not on\n" {
+		t.Errorf("end again: %q", out)
+	}
+	var marks []string
+	for _, m := range c.Store.Markers(0) {
+		marks = append(marks, m.Source+": "+m.Text)
+	}
+	if !slices.Equal(marks, []string{"cli: capture allow-all --for 30m", "cli: capture allow-all --for 1h", "cli: capture add 127.0.0.2", "cli: capture allow-all --end"}) {
 		t.Errorf("markers: %q", marks)
 	}
 }

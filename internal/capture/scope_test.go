@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // Live scope changes: the Store's per-event gate and the Capture's order of
@@ -56,13 +59,13 @@ func TestScopeGate(t *testing.T) {
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
 	s.Apply(wsLine("f1"))
-	s.setScopeGen(1, rulesOf(t, "b.example.com"), false)
+	s.setScopeGen(1, rulesOf(t, "b.example.com"), "")
 	s.Apply(wsLine("f1"))
 	v, _ := s.Get("f1", false)
 	if v.WSMessages != 1 || v.State != "error" || v.Error != ScopeCut || v.answered == 0 {
 		t.Fatalf("after the removal: %d messages, %s %q, answered %d", v.WSMessages, v.State, v.Error, v.answered)
 	}
-	s.setScopeGen(2, rulesOf(t, "a.example.com", "b.example.com"), false)
+	s.setScopeGen(2, rulesOf(t, "a.example.com", "b.example.com"), "")
 	s.Apply(wsLine("f1"))
 	if n := wsCount(t, s, "f1"); n != 1 {
 		t.Errorf("a back: f1 resumed, %d messages", n)
@@ -83,8 +86,8 @@ func TestScopeGateStopStart(t *testing.T) {
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
 	s.Apply(wsLine("f1"))
-	s.setScopeGen(1, HostRules{}, false)
-	s.setScopeGen(2, rulesOf(t, "a.example.com"), false)
+	s.setScopeGen(1, HostRules{}, "")
+	s.setScopeGen(2, rulesOf(t, "a.example.com"), "")
 	s.Apply(wsLine("f1"))
 	s.Apply(reqLine("f2", "a.example.com", 0))
 	s.Apply(fmt.Appendf(nil, `{"v":%d,"ev":"tls_failed","conn":"c9","ts":1,"sni":"a.example.com","msg":"x","gen":0}`, wireVersion))
@@ -106,13 +109,13 @@ func TestScopeGateMemo(t *testing.T) {
 	s := NewStore(100, 1<<20)
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
-	s.setScopeGen(1, rulesOf(t, "a.example.com", "b.example.com"), false)
+	s.setScopeGen(1, rulesOf(t, "a.example.com", "b.example.com"), "")
 	s.Apply(wsLine("f1"))
 	if f := s.flows["f1"]; f.checked != 1 || wsCount(t, s, "f1") != 1 {
 		t.Fatalf("memo %d, %d messages", f.checked, wsCount(t, s, "f1"))
 	}
-	s.setScopeGen(2, rulesOf(t, "b.example.com"), false)
-	s.setScopeGen(3, rulesOf(t, "a.example.com"), false)
+	s.setScopeGen(2, rulesOf(t, "b.example.com"), "")
+	s.setScopeGen(3, rulesOf(t, "a.example.com"), "")
 	s.Apply(wsLine("f1"))
 	if n := wsCount(t, s, "f1"); n != 1 || !s.flows["f1"].cut {
 		t.Errorf("a out and back between two events: %d messages, cut %v", n, s.flows["f1"].cut)
@@ -130,7 +133,7 @@ func TestScopeGateMaskedHost(t *testing.T) {
 	}
 	s.SetScope(rulesOf(t, host), true)
 	s.Apply(reqLine("f", host, 0))
-	s.setScopeGen(1, rulesOf(t, host, "b.example.com"), false)
+	s.setScopeGen(1, rulesOf(t, host, "b.example.com"), "")
 	s.Apply(wsLine("f"))
 	v, _ := s.Get("f", false)
 	if v.WSMessages != 1 || v.State != "open" || strings.Contains(v.Host, "abcdefghij") {
@@ -341,7 +344,7 @@ func TestStoppedArgs(t *testing.T) {
 		if !slices.Contains(args, "reqcove_allow_hosts="+string(hosts)) {
 			t.Errorf("%v stopped: the addon is not given the base: %s", r.Hosts, joined)
 		}
-		if op := scopeOp(r, 7, false, true); !slices.Equal(op["allow_hosts"].([]string), []string{mitmIt}) || op["stopped"] != true {
+		if op := scopeOp(r, 7, false, true, false); !slices.Equal(op["allow_hosts"].([]string), []string{mitmIt}) || op["stopped"] != true {
 			t.Errorf("%v stopped: the op %v", r.Hosts, op)
 		}
 	}
@@ -374,8 +377,8 @@ func TestStoppedArgs(t *testing.T) {
 		t.Errorf("after the hello: stopped %v, pending %q", c.Stopped(), c.ScopePending())
 	}
 	var saw bool
-	if err := c.ChangeScope(ctx, "capture add c.example.com", func(r HostRules, stopped bool) (HostRules, error) {
-		saw = stopped
+	if err := c.ChangeScope(ctx, "capture add c.example.com", func(r HostRules, rec string) (HostRules, error) {
+		saw = rec == RecordingStopped
 		return rulesOf(t, "a.example.com", "c.example.com"), nil
 	}); err != nil || !saw {
 		t.Fatalf("add while stopped: %v, told stopped %v", err, saw)
@@ -388,5 +391,165 @@ func TestStoppedArgs(t *testing.T) {
 	}
 	if !storeHas("c.example.com") || c.Store.Stopped() || c.Stopped() || strings.Contains(strings.Join(c.mitmArgs(), " "), "reqcove_stopped") {
 		t.Errorf("started: store c %v, stopped %v %v", storeHas("c.example.com"), c.Store.Stopped(), c.Stopped())
+	}
+}
+
+// allowHostsArgs is mitmArgs' --allow-hosts values.
+func allowHostsArgs(args []string) []string {
+	var allow []string
+	for i, a := range args {
+		if a == "--allow-hosts" {
+			allow = append(allow, args[i+1])
+		}
+	}
+	return allow
+}
+
+// TestAllowAll: during allow-all mitmproxy decrypts everything (no
+// --allow-hosts: an empty allow_hosts), the addon keeps the base (its rules
+// are checked against it) and the base's --pass-hosts still pass; the Store
+// takes every host once acknowledged. Stopped, it is refused; add changes the
+// base only (f is told allow-all); a stop ends it; at most 24h.
+func TestAllowAll(t *testing.T) {
+	ctx := context.Background()
+	base, err := rulesOf(t, "a.example.com", "b.example.com").WithPass([]string{"b.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := scopeCapture(t, base)
+	var mode atomic.Value
+	mode.Store("ok")
+	ops := fakeControl(t, c.cfg.Dir, func(op map[string]any) map[string]any {
+		if mode.Load() == "silent" {
+			return nil
+		}
+		return map[string]any{"ok": true, "gen": op["gen"], "instance": "inst-1"}
+	})
+	storeHas := func(host string) bool {
+		return c.Store.inScopeSince(c.Store.topGen(), func(r HostRules) bool { return r.Match(host) })
+	}
+	for _, d := range []time.Duration{0, -time.Minute, MaxAllowAll + time.Second} {
+		if _, _, err := c.SetAllowAll(ctx, "x", d); err == nil || c.allOn() {
+			t.Errorf("allow-all for %v: taken", d)
+		}
+	}
+
+	mode.Store("silent") // a widening: the Store waits for the ack
+	if _, _, err := c.SetAllowAll(ctx, "capture allow-all --for 30m", 30*time.Minute); !errors.Is(err, ErrPending) || storeHas("other.example.net") || !c.AllowAllUntil().IsZero() {
+		t.Errorf("allow-all, mitmproxy silent: %v, store other %v, acked %v", err, storeHas("other.example.net"), c.AllowAllUntil())
+	}
+	args := c.mitmArgs()
+	hosts, _ := json.Marshal(addonHosts(base))
+	if len(allowHostsArgs(args)) != 0 || !slices.Contains(args, "reqcove_allow_all=true") || !slices.Contains(args, "reqcove_allow_hosts="+string(hosts)) {
+		t.Errorf("a new mitmdump's args during allow-all: %q", args)
+	}
+	if op := ops()[len(ops())-1]; fmt.Sprint(op["allow_hosts"]) != "[]" || op["allow_all"] != true || op["check"] != false {
+		t.Errorf("the op: %v", op)
+	}
+
+	mode.Store("ok")
+	until, was, err := c.SetAllowAll(ctx, "capture allow-all --for 1h", time.Hour) // on already: its end moves
+	if err != nil || was.IsZero() || time.Until(was) > 31*time.Minute || time.Until(until) < 59*time.Minute {
+		t.Errorf("again: %v, was %v, until %v", err, was, until)
+	}
+	c.Store.Apply(fmt.Appendf(nil, `{"v":%d,"ev":"hello","instance":"inst-1","gen":0}`, wireVersion))
+	c.syncScope(ctx)
+	if !storeHas("other.example.net") || storeHas("b.example.com") || !c.Recorded().All || !c.AllowAllUntil().Equal(until) || c.Store.Stats()["recording"] != RecordingAllowAll {
+		t.Errorf("acknowledged: store other %v, store b (passed) %v, recorded %v, until %v, stats %v", storeHas("other.example.net"), storeHas("b.example.com"), c.Recorded().Hosts, c.AllowAllUntil(), c.Store.Stats()["recording"])
+	}
+
+	var told string
+	if err := c.ChangeScope(ctx, "capture add c.example.com", func(r HostRules, rec string) (HostRules, error) {
+		told = rec
+		return rulesOf(t, "a.example.com", "c.example.com"), nil
+	}); err != nil || told != RecordingAllowAll {
+		t.Fatalf("add during allow-all: %v, told %q", err, told)
+	}
+	if !c.allOn() || !storeHas("other.example.net") || !slices.Equal(c.Scope().Hosts, []string{"a.example.com", "c.example.com"}) {
+		t.Errorf("add during allow-all: on %v, store other %v, base %v", c.allOn(), storeHas("other.example.net"), c.Scope().Hosts)
+	}
+
+	if _, err := c.SetStopped(ctx, "capture stop", true); err != nil {
+		t.Fatal(err)
+	}
+	if c.allOn() || !c.AllowAllUntil().IsZero() || storeHas("other.example.net") || storeHas("a.example.com") || slices.Contains(c.mitmArgs(), "reqcove_allow_all=true") {
+		t.Errorf("a stop did not end allow-all: on %v, acked %v", c.allOn(), c.AllowAllUntil())
+	}
+	if _, _, err := c.SetAllowAll(ctx, "x", time.Hour); !errors.Is(err, ErrStopped) || c.allOn() {
+		t.Errorf("allow-all while stopped: %v", err)
+	}
+	if err := c.EndAllowAll(ctx, "x"); !errors.Is(err, ErrUnchanged) {
+		t.Errorf("end while off: %v", err)
+	}
+	if _, _, err := scopeCapture(t, rulesOf(t, "*")).SetAllowAll(ctx, "x", time.Hour); !errors.Is(err, ErrUnchanged) {
+		t.Errorf(`allow-all with "*": %v`, err)
+	}
+}
+
+// TestAllowAllExpiry: allow-all ends when the monotonic clock or the wall
+// clock reaches its end, whichever first (a sleep stops the first; the
+// second can be set back), and fails closed: with mitmproxy silent the Store
+// narrows all the same and the mitmdump is killed (the next one starts
+// without allow-all); the records made meanwhile stay, counted outside the
+// base.
+func TestAllowAllExpiry(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		mono   time.Duration // from the end, by the monotonic clock
+		wall   time.Duration // by the wall clock
+		expire bool
+	}{
+		{"before", -time.Second, -time.Second, false},
+		{"monotonic", 0, -time.Hour, true},            // the wall clock set back an hour
+		{"wall clock", -time.Hour, time.Second, true}, // an hour asleep: the monotonic clock behind
+	} {
+		cp := scopeCapture(t, rulesOf(t, "a.example.com"))
+		var mode atomic.Value
+		mode.Store("ok")
+		fakeControl(t, cp.cfg.Dir, func(op map[string]any) map[string]any {
+			if mode.Load() == "silent" {
+				return nil
+			}
+			return map[string]any{"ok": true, "gen": op["gen"], "instance": "inst-1"}
+		})
+		until, _, err := cp.SetAllowAll(ctx, "capture allow-all --for 30m", 30*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cp.Store.Apply(reqLine("f1", "other.example.net", cp.wantGen))
+		sleep := exec.Command("sleep", "60") // the mitmdump
+		sleep.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := sleep.Start(); err != nil {
+			t.Fatal(err)
+		}
+		p := &proc{cmd: sleep, done: make(chan struct{})}
+		go func() { p.err = sleep.Wait(); close(p.done) }()
+		t.Cleanup(func() { syscall.Kill(-sleep.Process.Pid, syscall.SIGKILL) })
+		cp.proc = p
+
+		mode.Store("silent")
+		cp.expire(ctx, until.Add(c.mono), until.Round(0).Add(c.wall))
+		storeHas := cp.Store.inScopeSince(cp.Store.topGen(), func(r HostRules) bool { return r.Match("other.example.net") })
+		if !c.expire {
+			if !cp.allOn() || !storeHas {
+				t.Errorf("%s: ended", c.name)
+			}
+			continue
+		}
+		select {
+		case <-p.done:
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s: mitmdump not killed", c.name)
+		}
+		if cp.allOn() || storeHas || cp.ScopePending() != PendingNarrowed || slices.Contains(cp.mitmArgs(), "reqcove_allow_all=true") {
+			t.Errorf("%s: on %v, store other %v, pending %q", c.name, cp.allOn(), storeHas, cp.ScopePending())
+		}
+		if _, err := cp.Store.Get("f1", false); err != nil || cp.Store.OutsideScope(cp.Base()) != 1 {
+			t.Errorf("%s: allow-all's record not kept (%v), outside %d", c.name, err, cp.Store.OutsideScope(cp.Base()))
+		}
+		if _, why := cp.LastChange(); why != "allow-all ended: its time is up" {
+			t.Errorf("%s: last change %q", c.name, why)
+		}
 	}
 }

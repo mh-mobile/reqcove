@@ -62,6 +62,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
 - v1.1 から、動かしたままホストを変えたとき（`reqcove capture`）のフィールド：`scope_pending`（mitmproxy がまだ受け取りを返していない変更。人が読むための文で、ないときはフィールドもありません）、`scope_changed_at`（RFC 3339）、`scope_change`（`capture add api.example.com` のようなコマンド）。後の 2 つは、最初の変更まではありません。`allow_hosts` と `pass_hosts` は、mitmproxy が受け取りを返したホストです。
 - v1.1 から、`recording`：`on` か `stopped`（`reqcove capture stop` から `capture start` まで。値は今後増えることがあります）。止めている間、`allow_hosts` は `[]` で、`pass_hosts` はありません（何も記録しません）。`base_allow_hosts` と `base_pass_hosts` は、記録しているときに記録するホストです（ないときはフィールドもありません）。止めている間は、`start` で記録するホストです。v1.1 より前の `run` にはありません。
+- v1.1 から、`recording` は `allow-all` にもなります（`reqcove capture allow-all --for D` から、終わるまで）。その間 `allow_hosts` は `["*"]`、`pass_hosts` は復号せずに通したままのホスト、`base_allow_hosts` は終わったあとに記録するホストです。`allow_all_until`（RFC 3339）と `allow_all_left`（`29m10s` のような Go の duration）が終わる時刻を伝えます。オフのときはありません。`records_outside_scope` は、残っている記録のうち、ホストが `base_allow_hosts` の外にあるものの数です（allow-all の間の記録で、終わったあとも残るもの、またはあとで外したホストのもの）。ないときはフィールドもありません。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
@@ -69,7 +70,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 
 #### `capture_stats`
 
-ドキュメントにあるフィールドは、`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`retries`（v1.1 から。mitmproxy を続けて起動し直した回数）、`last_failure`（v1.1 から。最後に失敗した理由で、人が読むための文。失敗していなければ ""）、`next_attempt`（v1.1 から。次に試すのを待っている間だけ）、`rules_loaded`（ルールファイルを一度読み込んだあと）、`recording`（v1.1 から。`status` と同じく `on` か `stopped`。止めている間 `pass_hosts` は空です）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）です。それ以外は[変わりえます](#変わりうるもの)。
+ドキュメントにあるフィールドは、`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`retries`（v1.1 から。mitmproxy を続けて起動し直した回数）、`last_failure`（v1.1 から。最後に失敗した理由で、人が読むための文。失敗していなければ ""）、`next_attempt`（v1.1 から。次に試すのを待っている間だけ）、`rules_loaded`（ルールファイルを一度読み込んだあと）、`recording`（v1.1 から。`status` と同じく `on`、`stopped`、`allow-all` のどれか。止めている間 `pass_hosts` は空です）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）です。それ以外は[変わりえます](#変わりうるもの)。
 
 ### ルールファイル（`--rules`）
 
@@ -100,6 +101,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture set`（v1.1 から） | `--allow-hosts`、`--pass-hosts`、`--state` |
 | `reqcove capture stop`、`capture start`（v1.1 から） | `--state` |
 | `reqcove capture save`（v1.1 から） | `--state` |
+| `reqcove capture allow-all`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
 | `reqcove setup` | なし |
 | `reqcove service install` | `--config`、`--state` |

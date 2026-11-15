@@ -60,15 +60,22 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 }
 
 // liveStatus is statusOut as run answers it: the scope mitmproxy has
-// acknowledged (it may have changed since the start), and what is pending.
-// While stopped allow_hosts is [] (nothing is recorded), the base kept in
-// base_allow_hosts.
+// acknowledged (it may have changed since the start) with its overlay, and
+// what is pending. While stopped allow_hosts is [] (nothing is recorded),
+// during allow-all ["*"]; the base is kept in base_allow_hosts.
 func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
-	out := statusOut(n, cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices())
-	out.Recording, out.BaseAllowHosts, out.BasePassHosts = "on", out.AllowHosts, out.PassHosts
-	if cap.Stopped() {
-		out.Recording, out.AllowHosts, out.PassHosts = "stopped", []string{}, nil
+	base, until := cap.Scope(), cap.AllowAllUntil()
+	out := statusOut(n, cap.Store.Stats(), cap.Recorded(), cap.CA, cap.Store.Devices())
+	out.Recording, out.BaseAllowHosts, out.BasePassHosts = capture.RecordingOn, base.Hosts, base.PassHosts
+	switch {
+	case cap.Stopped():
+		out.Recording = capture.RecordingStopped
+	case !until.IsZero():
+		left := max(time.Until(until), 0).Round(time.Second)
+		out.Recording, out.AllowAllUntil, out.AllowAllLeft = capture.RecordingAllowAll, until.Format(time.RFC3339), left.String()
+		out.NextSteps = append([]string{fmt.Sprintf("allow-all is on: every app's traffic is recorded (agents and their providers can read it) until %s (%v left); to end it now, in your terminal: %s", until.Local().Format("15:04:05"), left, captureEndCmd)}, out.NextSteps...)
 	}
+	out.RecordsOutsideScope = cap.Store.OutsideScope(base)
 	out.ScopePending = cap.ScopePending()
 	if at, why := cap.LastChange(); !at.IsZero() {
 		out.ScopeChangedAt, out.ScopeChange = at.Format(time.RFC3339), why
@@ -127,6 +134,10 @@ func localStep() string {
 	}
 	return "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password):\n" + macTrustCommand(localCA)
 }
+
+// captureEndCmd is the `reqcove capture allow-all --end` the steps name: run
+// sets it to its own (with --state).
+var captureEndCmd = "reqcove capture allow-all --end"
 
 // stepLinksCmd is the `reqcove links` the steps name: run sets it to its own
 // node's (with --state).
@@ -300,6 +311,9 @@ func status(ctx context.Context, args []string) error {
 		Recording    string                `json:"recording"`
 		BaseAllow    []string              `json:"base_allow_hosts"`
 		BasePass     []string              `json:"base_pass_hosts"`
+		AllUntil     string                `json:"allow_all_until"`
+		AllLeft      string                `json:"allow_all_left"`
+		Outside      int                   `json:"records_outside_scope"`
 		Pending      string                `json:"scope_pending"`
 		ChangedAt    string                `json:"scope_changed_at"`
 		Change       string                `json:"scope_change"`
@@ -334,11 +348,24 @@ func status(ctx context.Context, args []string) error {
 	if len(out.PassHosts) > 0 {
 		hosts += "; passed undecrypted: " + strings.Join(out.PassHosts, ", ")
 	}
-	if out.Recording == "stopped" {
+	switch out.Recording {
+	case capture.RecordingStopped:
 		hosts = "nothing: stopped (no rule applies); `reqcove capture start` records " + orDash(strings.Join(out.BaseAllow, ", "))
 		if len(out.BasePass) > 0 {
 			hosts += "; passed undecrypted: " + strings.Join(out.BasePass, ", ")
 		}
+	case capture.RecordingAllowAll:
+		end := out.AllUntil
+		if t, err := time.Parse(time.RFC3339, end); err == nil {
+			end = t.Local().Format("15:04:05")
+		}
+		hosts = fmt.Sprintf("every host: allow-all until %s (%s left), then %s (the rules apply to these alone)", end, out.AllLeft, orDash(strings.Join(out.BaseAllow, ", ")))
+		if len(out.BasePass) > 0 {
+			hosts += "; passed undecrypted: " + strings.Join(out.BasePass, ", ")
+		}
+	}
+	if out.Outside > 0 {
+		hosts += fmt.Sprintf("; %d records kept of hosts outside the allowed ones (allow-all's, or removed since)", out.Outside)
 	}
 	if out.ChangedAt != "" {
 		if t, err := time.Parse(time.RFC3339, out.ChangedAt); err == nil {

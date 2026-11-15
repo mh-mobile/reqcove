@@ -1140,6 +1140,7 @@ class Reqcove:
         self.control_server = None
         self.scope_gen = 0  # reqcove_scope_gen: the scope's generation, on what it admits
         self.stopped = False  # reqcove_stopped (reqcove capture stop): nothing recorded, no rule applies
+        self.everything = False  # reqcove_allow_all (reqcove capture allow-all): every host recorded, the rules on the base alone
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
@@ -1198,7 +1199,7 @@ class Reqcove:
         whether it would be taken. Refused, nothing changed, when a rule loaded
         names a host it leaves out: checked against the rules in force, never
         the file on disk. The answer names this mitmdump and the generation."""
-        gen, allow, hosts, stopped = req.get("gen"), req.get("allow_hosts"), req.get("rules"), bool(req.get("stopped"))
+        gen, allow, hosts, stopped, everything = req.get("gen"), req.get("allow_hosts"), req.get("rules"), bool(req.get("stopped")), bool(req.get("allow_all"))
         if not (isinstance(gen, int) and isinstance(allow, list) and all(isinstance(a, str) for a in allow) and isinstance(hosts, dict)):
             return {"error": "scope: a bad request"}
         try:
@@ -1221,7 +1222,7 @@ class Reqcove:
             return {"error": "the --rules file's rules name hosts the new scope leaves out: " + "; ".join(problems)}
         if not req.get("check"):
             try:
-                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen, reqcove_stopped=stopped)
+                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen, reqcove_stopped=stopped, reqcove_allow_all=everything)
             except Exception as e:  # never mitmproxy's text: it quotes the patterns
                 return {"error": f"scope: {type(e).__name__}"}
         return {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
@@ -1268,6 +1269,8 @@ class Reqcove:
         if self.stopped:
             return dict(out, scope="recording is stopped (reqcove capture stop): nothing is decrypted but on connections already open, nothing is recorded, and no rule applies, presets included, until the user runs reqcove capture start")
         # As requestheaders and next_layer decide it.
+        if check.is_valid_host(r.pretty_host) and not self._allowed(host) and self._in_scope(host):
+            return dict(out, scope="recorded while allow-all is on (reqcove capture allow-all), but not in --allow-hosts: no rule applies to it")
         if not check.is_valid_host(r.pretty_host) or not self._allowed(host):
             return dict(out, scope="not in --allow-hosts: carried but not recorded, and no rule applies to it")
         if self._passed(host):
@@ -1354,6 +1357,7 @@ class Reqcove:
         loader.add_option("reqcove_scope_gen", int, 0, "The generation of reqcove_allow_hosts (and allow_hosts), on the events it admits.")
         loader.add_option("reqcove_instance", str, "", "This mitmdump's name from reqcove, on its hello and its scope answers.")
         loader.add_option("reqcove_stopped", bool, False, "reqcove capture stop: nothing recorded, no rule applied (reqcove_allow_hosts is the scope kept for the start).")
+        loader.add_option("reqcove_allow_all", bool, False, "reqcove capture allow-all: every host recorded (allow_hosts empty); the rules apply to reqcove_allow_hosts alone.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -1370,6 +1374,7 @@ class Reqcove:
         if ctx.options.reqcove_stopped and not self.stopped and self.rules:
             self.rules["mock"].book.active.clear()  # presets go off at a stop, and stay off after the start
         self.stopped = ctx.options.reqcove_stopped
+        self.everything = ctx.options.reqcove_allow_all
         if "reqcove_allow_hosts" in updated:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
@@ -1560,12 +1565,18 @@ class Reqcove:
         host = host.lower().rstrip(".")
         return any(r.match(host) for r in self.passing)
 
+    def _recorded(self, host):
+        # The hosts recorded now: none while stopped, every one but mitm.it
+        # during allow-all, else the base (_allowed).
+        return not self.stopped and (self._allowed(host) or self.everything and host.lower().rstrip(".") != "mitm.it")
+
     def _in_scope(self, host):
         # A --pass-hosts host is not recorded as flows, even in a request riding
         # an allowed host's decrypted connection (HTTP/2 coalescing). Stopped:
         # none, so no rule applies either, on a connection decrypted before too.
-        # _allowed stays the base: rules are checked against it.
-        return not self.stopped and self._allowed(host) and not self._passed(host)
+        # _allowed stays the base: rules are checked against it, and apply to
+        # it alone (allow-all records the others, no rule touching them).
+        return self._recorded(host) and not self._passed(host)
 
     def running(self):
         # Connect now, not on the first flow: reqcove waits for this hello
@@ -1642,7 +1653,7 @@ class Reqcove:
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
             "headers": headers, "note": note, "gen": self.scope_gen,
         }
-        rules = self.rules
+        rules = self.rules if self._allowed(r.pretty_host) else None  # allow-all's other hosts: no rule (a modify_headers rule without a host would send a token anywhere)
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
             mocks = rules["mock"].candidates(flow)
@@ -2115,7 +2126,7 @@ class Reqcove:
         # The name the client sent, or without one (an app dialing an address),
         # the address: what --pass-hosts names, and what status suggests.
         sni = (hello.sni or ip).lower().rstrip(".")
-        if not sni or not (self._allowed(sni) and self._passed(sni)):
+        if not sni or not (self._recorded(sni) and self._passed(sni)):  # during allow-all every --pass-hosts host: mitmproxy would decrypt it
             return
         # mitmproxy's own ignore_hosts (Apple's) come first, by name or address.
         if any(re.search(p, f"{sni}:{port}") or re.search(p, f"{ip}:{port}") for p in ctx.options.ignore_hosts):

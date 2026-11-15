@@ -193,7 +193,7 @@ type Store struct {
 	firstSeen     map[string]float64 // device StableID -> its first request or connection this run (a few devices: only reqcove names them)
 	allow         HostRules          // hosts recorded (--allow-hosts): the newest of scopes
 	scopes        []scopeAt          // every scope since the start, oldest first
-	stopped       bool               // reqcove capture stop: allow is none (capture_stats' recording)
+	recording     string             // capture_stats' recording: "" (on), stopped (allow is none), allow-all (allow is all)
 	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
 	outOfScope    int64              // requests to hosts outside allow, seen here
 	addonOOS      int64              // the same, seen by the addon
@@ -318,11 +318,25 @@ type scopeAt struct {
 // whose host one of the scopes since its admission leaves out is not recorded.
 // ponytail: the history grows by one entry per change, never trimmed; a
 // change is a person's command, so it stays short.
-func (s *Store) setScopeGen(gen int64, allow HostRules, stopped bool) {
+func (s *Store) setScopeGen(gen int64, allow HostRules, recording string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.allow, s.stopped = allow, stopped
+	s.allow, s.recording = allow, recording
 	s.scopes = append(s.scopes, scopeAt{gen, allow})
+}
+
+// OutsideScope counts the flows kept whose host base does not record:
+// allow-all's, or those of hosts removed since.
+func (s *Store) OutsideScope(base HostRules) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, f := range s.flows {
+		if !base.Match(f.rawHost) {
+			n++
+		}
+	}
+	return n
 }
 
 // inScopeSince: ok holds for every scope from the one in force at generation
@@ -377,7 +391,7 @@ func (s *Store) gateLocked(f *Flow) bool {
 func (s *Store) Stopped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stopped
+	return s.recording == RecordingStopped
 }
 
 // ScopeCut is the error of a flow whose host left the scope while it was open.

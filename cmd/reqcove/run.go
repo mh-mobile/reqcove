@@ -139,7 +139,12 @@ func run(ctx context.Context, args []string) error {
 	if !o.lanMode {
 		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
 		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
-		defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
+		captureEndCmd = withState("reqcove capture allow-all --end", o.state)
+		allowAllNotes = allowAllWarnings(o)
+		defer func() {
+			mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start"
+			captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil
+		}()
 	}
 	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
 	if err != nil {
@@ -366,7 +371,7 @@ func uiPage(o *runOpts, cap *capture.Capture, node *nodeState, uiToken string) *
 		if all { // one of the user's own devices: the steps as `reqcove status` gives them
 			return withoutMacStep(liveStatus(node.get(), cap).NextSteps)
 		}
-		return pageSteps(node.get(), cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices(), id)
+		return pageSteps(node.get(), cap.Store.Stats(), cap.Recorded(), cap.CA, cap.Store.Devices(), id)
 	})
 	if o.hostname != "reqcove" {
 		page.Node = o.hostname

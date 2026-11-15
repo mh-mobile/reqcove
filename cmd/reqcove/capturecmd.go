@@ -37,11 +37,13 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start or save
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save or allow-all
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
 	PassHosts  []string `json:"pass_hosts,omitempty"`  // set
+	For        string   `json:"for,omitempty"`         // allow-all: how long, as 30m or 2h
+	End        bool     `json:"end,omitempty"`         // allow-all: end it now
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -50,20 +52,22 @@ type ctlAnswer struct {
 	Message string `json:"message"`
 }
 
-const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save  [--state DIR]"
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end  [--state DIR]"
 
 func captureCmd(ctx context.Context, args []string) error {
-	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts")
+	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts", "for")
 	fs := flag.NewFlagSet("capture", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
 	pass := fs.Bool("pass", false, "with add and remove: the hosts carried undecrypted (run's --pass-hosts), not the hosts recorded")
 	var allow, passHosts []string
 	fs.Func("allow-hosts", `with set: every host recorded, as run's --allow-hosts (not "*")`, func(v string) error { allow = append(allow, v); return nil })
 	fs.Func("pass-hosts", "with set: the allowed hosts carried undecrypted, as run's --pass-hosts", func(v string) error { passHosts = append(passHosts, v); return nil })
+	forD := fs.String("for", "", "with allow-all: how long every host is recorded, as 30m or 2h (at most 24h)")
+	end := fs.Bool("end", false, "with allow-all: end it now")
 	if err := parseFlags(fs, flags); err != nil {
 		return err
 	}
-	req := ctlRequest{Pass: *pass, AllowHosts: allow, PassHosts: passHosts}
+	req := ctlRequest{Pass: *pass, AllowHosts: allow, PassHosts: passHosts, For: *forD, End: *end}
 	if len(words) > 0 {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
@@ -77,7 +81,23 @@ func captureCmd(ctx context.Context, args []string) error {
 // of the commands, a bad host, or "*" (every app's traffic is not a change
 // made in passing).
 func (r ctlRequest) normalized() (ctlRequest, error) {
+	if r.Cmd != "allow-all" && (r.For != "" || r.End) {
+		return r, fmt.Errorf("--for and --end go with capture allow-all (usage: %s)", captureUse)
+	}
 	switch r.Cmd {
+	case "allow-all":
+		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
+			return r, errors.New("capture allow-all takes no hosts: it records every host for a while (--for D), or ends that (--end)")
+		}
+		if r.End == (r.For != "") {
+			return r, errors.New("capture allow-all takes --for D (how long, as 30m or 2h; at most 24h) or --end")
+		}
+		if r.For != "" {
+			if _, err := allowAllFor(r.For); err != nil {
+				return r, err
+			}
+		}
+		return r, nil
 	case "add", "remove":
 		if len(r.Hosts) == 0 {
 			return r, fmt.Errorf("capture %s: name the hosts (usage: %s)", r.Cmd, captureUse)
@@ -120,10 +140,24 @@ func hostSpecs(specs []string) ([]string, error) {
 	return r.Hosts, nil
 }
 
+// allowAllFor is --for's duration: more than 0, at most capture.MaxAllowAll.
+func allowAllFor(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 || d > capture.MaxAllowAll {
+		return 0, fmt.Errorf("--for %q: a duration such as 30m or 2h, at most %s", v, strings.TrimSuffix(capture.MaxAllowAll.String(), "0m0s"))
+	}
+	return d, nil
+}
+
 // String is the command as the trace shows it.
 func (r ctlRequest) String() string {
 	s := "capture " + r.Cmd
-	if r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save" {
+	switch {
+	case r.Cmd == "allow-all" && r.End:
+		return s + " --end"
+	case r.Cmd == "allow-all":
+		return s + " --for " + r.For // a duration: ParseDuration took it
+	case r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save":
 		return s
 	}
 	if r.Pass {
@@ -254,13 +288,15 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hosts
 		return stopStart(ctx, cap, req.Cmd == "stop", why)
 	case "save":
 		return save(cap, origin, why)
+	case "allow-all":
+		return allowAll(ctx, cap, req, why)
 	}
 	var cur, next capture.HostRules
 	var notes []string
-	var stopped bool
-	err = cap.ChangeScope(ctx, why, func(c capture.HostRules, stop bool) (capture.HostRules, error) {
+	var rec string
+	err = cap.ChangeScope(ctx, why, func(c capture.HostRules, r string) (capture.HostRules, error) {
 		var err error
-		cur, stopped = c, stop
+		cur, rec = c, r
 		if next, notes, err = newScope(c, req); err != nil {
 			return c, err
 		}
@@ -285,9 +321,11 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hosts
 		msg = "pending: " + changes(cur, next) + " (mitmproxy has not acknowledged it yet: restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile)"
 	}
 	msg += fmt.Sprintf("; %v records kept; not saved: a restart of run goes back to the hosts it was started with (reqcove capture save writes them to its hosts file)", cap.Store.Stats()["flows"])
-	switch {
-	case stopped: // nothing is recorded either way until the start
+	switch rec {
+	case capture.RecordingStopped: // nothing is recorded either way until the start
 		msg += "; recording is stopped: these are the hosts `reqcove capture start` records, nothing is recorded until then"
+	case capture.RecordingAllowAll: // every host is recorded either way until it ends
+		msg += "; allow-all is on: every host is recorded until" + allAt(cap.AllowAllUntil()) + ", these hosts after; the --rules file's rules apply to these hosts alone"
 	default:
 		if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
 			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
@@ -311,8 +349,9 @@ func traced(cap *capture.Capture, why, msg string) ctlAnswer {
 
 // stopStart is capture stop (stop) or capture start. A stop's answer warns
 // that the rules stop too: a mock's or map_remote's requests go to the real
-// servers then.
+// servers then. A stop ends allow-all.
 func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string) ctlAnswer {
+	wasAll := !cap.AllowAllUntil().IsZero()
 	base, err := cap.SetStopped(ctx, why, stop)
 	pending := errors.Is(err, capture.ErrPending)
 	switch {
@@ -330,6 +369,9 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		if pending {
 			msg = "pending: recording stopped in reqcove's records, mitmproxy not told yet (restarting? it stops once mitmproxy is back; status shows scope_pending meanwhile); "
 		}
+		if wasAll {
+			msg += "allow-all ended (a stop ends it); "
+		}
 		msg += kept + "; WARNING: the --rules file's rules apply no more (mock, map_local, map_remote, modify_headers, resolve; presets turned off), so the app's requests go to the real servers as it sends them, a mocked API's too" +
 			"; connections already decrypted stay decrypted (unrecorded) until they close; not saved: a restart of run records again; `reqcove capture start` records again"
 	} else {
@@ -340,6 +382,101 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		msg += kept + "; the rules apply again (presets stay off until turned on); new connections only: reopen the app to see it now (a connection or WebSocket open before the stop is not recorded again)"
 	}
 	return traced(cap, why, msg)
+}
+
+// allowAllNotes are the warnings of run's other flags that apply while every
+// host is recorded (--upstream-proxy, --mcp-http, --web, --local-proxy):
+// run sets them.
+var allowAllNotes []string
+
+// allowAllWarnings are run's warnings of --allow-hosts '*' for o's other
+// flags, and --mcp-http's reach.
+func allowAllWarnings(o *runOpts) []string {
+	var w []string
+	if o.upstream != "" {
+		w = append(w, "--upstream-proxy: every decrypted request goes on to it, and it connects to HTTPS hosts by name, looked up again on this computer, so a site the device visits can point it at this computer or the LAN")
+	}
+	if o.mcpHTTP {
+		w = append(w, "--mcp-http: agents on your other devices (Grok Bot in xAI's cloud) read these records too")
+	}
+	if o.web {
+		w = append(w, "--web: mitmweb shows every one of them too, unmasked")
+	}
+	if o.localProxy {
+		w = append(w, "--local-proxy: every HTTPS site this computer's apps open is decrypted too (failing in those that do not trust Reqcove's CA)")
+	}
+	return w
+}
+
+// allowAll is capture allow-all --for D (every host recorded until then, the
+// records kept after) or --end. Its answer repeats what --allow-hosts '*'
+// warns of.
+func allowAll(ctx context.Context, cap *capture.Capture, req ctlRequest, why string) ctlAnswer {
+	if req.End {
+		err := cap.EndAllowAll(ctx, why)
+		pending := errors.Is(err, capture.ErrPending)
+		switch {
+		case errors.Is(err, capture.ErrUnchanged):
+			return ctlAnswer{OK: true, Message: "nothing changed: allow-all is not on"}
+		case err != nil && !pending:
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+		}
+		msg := "applied: allow-all ended: " + scopeText(cap.Base())
+		if pending {
+			msg = "applied in reqcove's records (nothing outside these hosts is recorded from now), mitmproxy restarted without allow-all, as it did not answer: allow-all ended: " + scopeText(cap.Base())
+		}
+		return traced(cap, why, msg+"; "+endedText(cap))
+	}
+	d, err := allowAllFor(req.For)
+	if err != nil {
+		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+	}
+	until, was, err := cap.SetAllowAll(ctx, why, d)
+	pending := errors.Is(err, capture.ErrPending)
+	switch {
+	case errors.Is(err, capture.ErrStopped):
+		return ctlAnswer{Message: "refused: recording is stopped: `reqcove capture start` first; nothing changed"}
+	case errors.Is(err, capture.ErrUnchanged):
+		return ctlAnswer{OK: true, Message: `nothing changed: this run records every host already (--allow-hosts "*")`}
+	case err != nil && !pending:
+		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+	}
+	msg := "applied: allow-all on: every host is recorded until" + allAt(until)
+	switch {
+	case !was.IsZero():
+		msg = "applied: allow-all was on until" + allAt(was) + ": now until" + allAt(until)
+	case pending:
+		msg = "pending: allow-all asked, until" + allAt(until) + " (mitmproxy has not acknowledged it yet: restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile)"
+	}
+	if base := cap.Base(); len(base.PassHosts) > 0 {
+		msg += "; still passed undecrypted: " + strings.Join(base.PassHosts, ", ")
+	}
+	msg += "; WARNING: every app's and site's traffic on the devices is recorded (but Apple's, passed through undecrypted), and agents, and their model providers, can read it" +
+		"; apps that pin their certificates (banks, say) fail meanwhile" +
+		"; the --rules file's rules apply to the hosts recorded before alone" +
+		"; new connections only: reopen an app to see it" +
+		"; the records stay after it ends (until evicted, or run restarts), and fill max_flows sooner" +
+		"; `reqcove capture allow-all --end` ends it sooner; not saved: a restart of run ends it"
+	return traced(cap, why, strings.Join(append([]string{msg}, allowAllNotes...), "; "))
+}
+
+// allAt is " HH:MM:SS (in 29m)" for allow-all's end t; the date too when
+// not today.
+func allAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	l, layout := t.Local(), "15:04:05"
+	if y, m, d := time.Now().Date(); l.Day() != d || l.Month() != m || l.Year() != y {
+		layout = "2006-01-02 15:04:05"
+	}
+	return fmt.Sprintf(" %s (in %v)", l.Format(layout), time.Until(t).Round(time.Second))
+}
+
+// endedText says what is left once allow-all ends: its records kept.
+func endedText(cap *capture.Capture) string {
+	return fmt.Sprintf("%v records kept, %d of them of hosts not recorded now (allow-all's: still readable, until evicted or run restarts); connections already decrypted stay decrypted (unrecorded) until they close",
+		cap.Store.Stats()["flows"], cap.Store.OutsideScope(cap.Base()))
 }
 
 // save is capture save: the base scope (the hosts a start records) into the

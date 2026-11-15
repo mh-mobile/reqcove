@@ -462,3 +462,114 @@ func TestCaptureStopE2E(t *testing.T) {
 		t.Error("recorded after the restart while stopped")
 	}
 }
+
+// TestAllowAllE2E: reqcove capture allow-all with real mitmproxy. During it
+// a host outside the base is decrypted and recorded, with no rule applied to
+// it (a modify_headers rule naming no host applies to the base's alone);
+// ended, a new connection to it is neither decrypted nor recorded, one open
+// since stays decrypted but unrecorded, and the records made meanwhile stay.
+func TestAllowAllE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	e := newLiveEnv(t, ctx, []string{"a.example.com"}, func(string) string { return "modify_headers:\n  - \"|~q|X-Injected|yes\"\n" })
+	injected := func(v FlowView) bool {
+		return slices.ContainsFunc(v.Rewrites, func(r string) bool { return strings.Contains(r, "X-Injected") })
+	}
+	if e.get("b.example.com", "/before") {
+		t.Error("b decrypted before allow-all")
+	}
+	base, _ := rulesOf(t, "a.example.com").WithPass([]string{"c.example.com"}) // c: an app that pins (not among the hosts recorded)
+	if err := e.h.c.SetScope(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.h.c.SetAllowAll(ctx, "capture allow-all --for 1h", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if e.get("c.example.com", "/passed") {
+		t.Error("a --pass-hosts host decrypted during allow-all")
+	}
+	if e.h.c.AllowAllUntil().IsZero() || e.h.c.ScopePending() != "" || e.h.stats()["recording"] != RecordingAllowAll || !slices.Equal(e.h.c.Scope().Hosts, []string{"a.example.com"}) {
+		t.Errorf("on: until %v, pending %q, stats %v, base %v", e.h.c.AllowAllUntil(), e.h.c.ScopePending(), e.h.stats()["recording"], e.h.c.Scope().Hosts)
+	}
+	if !e.get("b.example.com", "/during") {
+		t.Error("b not decrypted during allow-all")
+	}
+	if v, ok := e.recorded("/during", true); !ok || injected(v) {
+		t.Errorf("during: recorded %v, rewrites %v (want recorded, no rule)", ok, v.Rewrites)
+	}
+	if x, err := e.h.c.Explain(ctx, "GET", "https://b.example.com:"+e.port+"/x", ""); err != nil || !strings.Contains(x.Scope, "recorded while allow-all is on") || len(x.Rewrites) != 0 {
+		t.Errorf("explain_rules during allow-all: %+v %v", x, err)
+	}
+	e.get("a.example.com", "/base")
+	if v, ok := e.recorded("/base", true); !ok || !injected(v) {
+		t.Errorf("the base during allow-all: recorded %v, rewrites %v (want the rule)", ok, v.Rewrites)
+	}
+	var dials atomic.Int32
+	kb := e.client("b.example.com", &dials)
+	if dec, _ := e.do(kb, "b.example.com", "/ka-during"); !dec {
+		t.Error("kept-alive b not decrypted during allow-all")
+	}
+	e.recorded("/ka-during", true)
+
+	if err := e.h.c.EndAllowAll(ctx, "capture allow-all --end"); err != nil {
+		t.Fatal(err)
+	}
+	if !e.h.c.AllowAllUntil().IsZero() || e.h.stats()["recording"] != RecordingOn {
+		t.Errorf("ended: until %v, stats %v", e.h.c.AllowAllUntil(), e.h.stats()["recording"])
+	}
+	if e.get("b.example.com", "/after") {
+		t.Error("b decrypted on a new connection after the end")
+	}
+	if dec, _ := e.do(kb, "b.example.com", "/ka-after"); !dec || dials.Load() != 1 {
+		t.Errorf("the connection open since: decrypted %v, connections %d (want still decrypted, one)", dec, dials.Load())
+	}
+	for _, p := range []string{"/after", "/ka-after"} {
+		if _, rec := e.recorded(p, false); rec {
+			t.Errorf("%s recorded after the end", p)
+		}
+	}
+	if _, ok := e.recorded("/during", true); !ok || e.h.c.Store.OutsideScope(e.h.c.Scope()) != 2 {
+		t.Errorf("allow-all's records: kept %v, outside the base %d (want 2)", ok, e.h.c.Store.OutsideScope(e.h.c.Scope()))
+	}
+}
+
+// TestAllowAllKillE2E: mitmdump killed just before allow-all's end, so it is
+// down when the end comes: the one started next has no allow-all (no
+// extension), and the records made meanwhile stay.
+func TestAllowAllKillE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	e := newLiveEnv(t, ctx, []string{"a.example.com"}, nil)
+	until, _, err := e.h.c.SetAllowAll(ctx, "capture allow-all --for 8s", 8*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.get("b.example.com", "/during") {
+		t.Fatal("b not decrypted during allow-all")
+	}
+	e.recorded("/during", true)
+	b, err := os.ReadFile(filepath.Join(e.h.c.cfg.Dir, "mitmdump.pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 {
+		t.Fatalf("pid: %v", err)
+	}
+	time.Sleep(time.Until(until) - 500*time.Millisecond)
+	syscall.Kill(-pid, syscall.SIGKILL)
+	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if s := e.h.stats(); s["state"] == "ready" && s["restarts"] == int64(1) && e.h.c.AllowAllUntil().IsZero() && e.h.c.ScopePending() == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no restart without allow-all: %v, until %v, pending %q", e.h.stats(), e.h.c.AllowAllUntil(), e.h.c.ScopePending())
+		}
+	}
+	if e.get("b.example.com", "/after") {
+		t.Error("b decrypted after the end: allow-all outlived its time in the restarted mitmdump")
+	}
+	if _, rec := e.recorded("/after", false); rec {
+		t.Error("b recorded after the end")
+	}
+	if _, ok := e.recorded("/during", true); !ok {
+		t.Error("allow-all's record gone")
+	}
+}
