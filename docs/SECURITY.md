@@ -2,1201 +2,1162 @@
 
 [日本語](SECURITY.ja.md)
 
-Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This page
-says what it protects, what it trusts, and what it does not try to do. Points that
-come from reading code rather than from a test say so. It describes v1.0.
+Reqcove decrypts a phone's HTTPS and hands what it reads to an AI agent. This
+page says what it protects, what it trusts, and what it does not try to do. It
+describes v1.0. What masking finds in each format, and which connections leave
+no record, is in [masking.md](masking.md).
 
-## Trust
+A point that was not tried, or that comes from reading code, says so where it
+stands. What tests and trials covered is in the "Checked:" line that ends a
+section. Tried with mitmproxy 12.3.1, an iPhone on iOS 27.3 and macOS, unless
+a line names something else.
 
-- **Your OS user is trusted.** The state directory (`~/.reqcove`, mode 0700) and
-  the MCP socket in it are open to that user only. Any process running as that user
-  can read the records, and the CA's private key. Reqcove promises nothing stronger.
-- **The devices you name are trusted to use the exit node**, nothing else. Traffic
-  from other tailnet devices is refused, on the exit node and on the Remote Proxy.
-  A device name is what each device calls itself, so `--device` takes one only from
-  your own user's devices, and only while neither it nor Reqcove's node is tagged
-  (a tagged node keeps the user ID of whoever tagged it); name other devices by
-  machine name, IP or StableID.
-- **In LAN mode (`--lan`), the addresses you allow are trusted to use the
-  proxy**, with no password: an address, not a device ([below](#lan-mode---lan)).
+Two terms. The **state directory** is `~/.reqcove`, or the one `--state`
+names. **Your own devices** are those on the tailnet as the same user as
+Reqcove's node, neither tagged: Reqcove checks that when a connection opens
+and on every request.
 
-## Other people's devices
+## Reporting a vulnerability
 
-`--device` can name a device that is not yours, and LAN mode carries whatever
-address you allow. Carry and record a device only with the consent of the
-person who uses it: its requests to the allowed hosts are decrypted and
-recorded, what an agent reads of them goes to its model provider, and the
-device trusts a CA whose key you hold, for every site, until its profile is
-removed ([below](#the-cas-private-key)). Reqcove asks no one and checks no
-consent (from reading code); recording someone's traffic without it may be
-against the law where you are. Your own device's traffic holds other
-people's words too (a chat's messages), and personal data is not masked.
+Please use GitHub's private vulnerability reporting on this repository rather
+than a public issue.
 
-## In a container
+## What leaves the phone, and where it goes
 
-(docs/container.md) mitmproxy, which opens what sites send, runs
-in the container: a flaw there reaches the container (the records, the CA's key
-in its volume), not the rest of the user's files. The image has no shell or
-package manager and runs as a user of its own, not root. In exchange, whoever
-can use the Docker daemon's socket can read the volume, the CA's key included,
-and, when the container is given a terminal (`docker run -t`), `docker logs`
-keeps the login URL, the `--ui`/`--web` links and the `--mcp-http` token until
-the container is removed (without one, `run` names `reqcove links` in their
-place). `reqcove mcp` runs with
-`--log-driver none`, so the tools' answers are not logged. Checked by
-`scripts/container-smoke.sh` (the state directory's owner and mode, no
-network needed), not by an attack.
+### What is recorded
 
-## The CA's private key
+- Only requests to hosts in `--allow-hosts`, and not in `--pass-hosts`, are
+  recorded. Two checks enforce it: mitmproxy passes other connections through
+  undecrypted, and each request's Host is checked again.
+- Connections to Apple's hosts always pass through undecrypted.
+- A connection to an allowed host can carry requests to other hosts (HTTP/2
+  connection reuse). Those are decrypted with it and not recorded, but `--web`
+  shows them and they may be sent on to `--upstream-proxy`.
+- Requests and TLS failures outside the list are counted, never recorded.
+- A `--pass-hosts` host, and a connection mitmproxy carries as raw TCP, leave
+  a record of the connection only, never of what it carried
+  ([detail](masking.md#connections-recorded-without-their-content)).
+- Some connections leave no record at all: [Not caught](#not-caught).
+- The secrets Reqcove recognises are masked as they arrive, so no tool can
+  return them: [Masking](#masking).
+- Bodies are returned only when a tool is asked for them (`bodies` in
+  `get_flow` and `search_flows`), and by `diff_flows`, which compares them.
+- Records live in memory, at most 10,000 flows and 64 MiB of text, and are
+  gone when `reqcove run` stops. Reqcove writes no flow to disk itself
+  ([what a record keeps](masking.md#what-a-record-keeps)).
+- `reqcove har > FILE` writes the records where you send them, masked as the
+  tools return them, with your shell's file mode: often readable by other
+  users, while the state directory is 0700.
+- Reqcove does not record DNS.
 
-`~/.reqcove/mitmproxy/mitmproxy-ca.pem`, and `mitmproxy-ca.p12` next to it (a
-PKCS#12 file without a passphrase), hold the private key of a CA your iPhone
-trusts. Whoever has it can impersonate any HTTPS site to that iPhone. Keep the
-directory to yourself; when you stop using Reqcove, remove the profile from the
-iPhone first, then delete the directory (`reqcove cleanup` lists the steps).
-Copying the directory to another computer copies the key.
+### What the agent sees goes further
 
-A `--state` directory without a CA gets a copy of `~/.reqcove`'s
-at start (several exit nodes on one computer, one profile on the iPhone):
-`mitmproxy-ca.pem` with the key, and the certificate files; not
-`mitmproxy-ca.p12`, nor mitmweb's password. `run` logs where it copied it, and
-every command refuses a `--state` starting with `~` (`--state=~/x`, which the
-shell leaves as it is, would put the key in `./~/x`, and `cleanup` would call
-the real one gone). The key is then in each such
-directory, each 0700 with the files 0600 (a test): deleting one leaves it in
-the others, and removing the profile from the iPhone is what stops them all.
-`~/.reqcove/ca-copies` lists the copies, and `cleanup` of `~/.reqcove` names
-those still holding the CA; `cleanup` of a copy says the profile serves both.
-So "delete the directory" above means each of them.
+- Whatever a tool returns is sent to the agent's model provider. Choose
+  `--allow-hosts` with that in mind: `--allow-hosts '*'` sends other apps' and
+  sites' traffic too, and Reqcove warns when it starts.
+- Besides the traffic, the `status` and `list_devices` tools carry the node's
+  MagicDNS name (which includes the tailnet's name), its tailnet addresses and
+  the devices' machine names; not your login (from reading the code).
+- It stays there. The provider keeps what it received for as long as its
+  terms say.
+- It stays with the agent too, which keeps its conversations on the computer
+  it runs on. Claude Code writes each session, tool results included, to
+  files under `~/.claude/projects/`. Other agents were not looked at.
+- Those copies are not Reqcove's: stopping `run` empties its records, not
+  them, and `reqcove cleanup` does not touch them.
+- A secret that masking did not find, or anything read with `--no-redact`,
+  stays readable there, and in whatever the agent wrote from it (a summary, a
+  file, a commit).
 
-The CA is made at the first start and is valid for 10 years (mitmproxy
-12.3.1's lifetime for a CA, from reading its code; the E2E test checks only
-that it is over 9; `run` and `reqcove status` print the date). It is not
-limited to any names (from reading the same code), so a device that trusts it
-trusts it for every HTTPS site, not only the hosts in `--allow-hosts`: that
-list is what Reqcove decrypts, not what the key can sign for. The trust lasts
-until the profile is removed from the device: stopping `run`,
-`reqcove cleanup` and deleting the state directory do not remove it.
+Checked: seen on this Mac with Claude Code 2.1, 2026-11-14.
 
-Backups hold the key too. The state directory is an ordinary directory in
-your home, and Reqcove marks nothing in it as not to be backed up (from
-reading code; no backup was looked at): Time Machine, or another backup or
-sync tool that takes your home, copies the CA's key, the node's key
-(`tsnet/`) and the tokens, and keeps them after `cleanup --delete-state`.
-Exclude the directory, or count the backup as one more place the key is. A
-restore can widen the modes: `run` makes the directory 0700 and the token
-files 0600 again at start, not the other files (from reading code).
+### The exit node's DNS
 
-## What `reqcove cleanup` leaves
+- The exit node answers DNS over HTTPS (Tailscale's PeerAPI) for the devices
+  that use it. Other devices of the tailnet that may use the exit node can
+  resolve names through it too (from reading Tailscale's code: it answers any
+  peer the tailnet policy lets use an exit node).
+- They ask the same upstream as your devices: `1.1.1.1` by default. With
+  `--dns system`, or a LAN resolver in `--dns`, that is your router's or your
+  company's resolver, and they can look up names only it knows.
+- From this computer to the upstream, DNS is plain and unencrypted, for the
+  exit node and for the Remote Proxy alike, and answers are not checked with
+  DNSSEC (from reading the code). So the network this computer is on (its
+  Wi-Fi, the ISP) sees the names the devices look up, and someone on that
+  path can answer falsely.
+- Off the path that is hard: each query has a random ID and its own random
+  port, and answers from any other address are dropped.
+- A false answer gets little (from reading the code, not tried). HTTPS still
+  has to show a certificate for the name: mitmproxy checks it for decrypted
+  hosts, the phone itself for the others. An answer pointing at this
+  computer, its LAN or loopback is refused like any connection there. Plain
+  HTTP can be sent elsewhere, as it can on any network.
+- To hide the names, a local DNS-over-HTTPS relay could serve as
+  `--dns 127.0.0.1:PORT`; that has not been tried.
+
+Checked: a test (an answer pointing at this computer, its LAN or loopback is
+refused). Tried: the exit node answered this computer, which was not one of
+`--device`.
+
+### Logs to Tailscale
+
+Reqcove's node does not send logs to Tailscale. A tailnet that requires data
+plane audit logs is not supported (`reqcove status` says so); Reqcove never
+turns logs on.
+
+## What is stored, and who can read it
+
+What Reqcove keeps on disk is in the state directory. It is 0700 and the
+files in it 0600: open to your OS user only, and to any process running as
+that user. The records themselves are in memory only.
+
+| In the state directory | What it holds |
+|---|---|
+| `mitmproxy/mitmproxy-ca.pem`, `mitmproxy/mitmproxy-ca.p12` | The CA and its private key |
+| `tsnet/` | The node's key, and tsnet's own log lines |
+| `ui-token`, `web-token`, `mcp-token` | The tokens of `--ui`, `--web` and `--mcp-http` |
+| `login-url`, `links` | The login URL while login is pending; the links with tokens once `run` is ready |
+| `lan-allowed` | The addresses LAN mode allows |
+| `mitmproxy.log` | mitmproxy's error lines only |
+| `ca-copies` (in `~/.reqcove`) | Which other state directories hold a copy of the CA |
+| Also | mitmproxy's lock file and launcher, the SOCKS5 password, three sockets, and with `--local-proxy` the system proxy settings to put back |
+
+The state directory is checked itself, not the directories above it. Keep it
+(and `--state`) under directories only you can write: someone who can rename
+entries in a parent can swap the state directory for their own.
+
+### The CA's private key
+
+- `~/.reqcove/mitmproxy/mitmproxy-ca.pem`, and `mitmproxy-ca.p12` next to it
+  (a PKCS#12 file without a passphrase), hold the private key of a CA your
+  iPhone trusts. Whoever has it can impersonate any HTTPS site to that iPhone.
+- The CA is not limited to any names (from reading mitmproxy's code). A
+  device that trusts it trusts it for every HTTPS site, not only the hosts in
+  `--allow-hosts`: that list is what Reqcove decrypts, not what the key can
+  sign for.
+- The CA is made at the first start and is valid for 10 years (mitmproxy
+  12.3.1's lifetime for a CA, from reading its code). `run` and
+  `reqcove status` print the date.
+- The trust lasts until the profile is removed from the device. Stopping
+  `run`, `reqcove cleanup` and deleting the state directory do not remove it.
+- Keep the directory to yourself. When you stop using Reqcove, remove the
+  profile from the iPhone first, then delete the directory (`reqcove cleanup`
+  lists the steps).
+- Copying the directory to another computer copies the key.
+
+Copies in other state directories:
+
+- A `--state` directory without a CA gets a copy of `~/.reqcove`'s at start
+  (several exit nodes on one computer, one profile on the iPhone):
+  `mitmproxy-ca.pem` with the key, and the certificate files; not
+  `mitmproxy-ca.p12`, nor mitmweb's password. `run` logs where it copied it.
+- The key is then in each such directory, each 0700 with the files 0600.
+  Deleting one leaves it in the others, so "delete the directory" above means
+  each of them. Removing the profile from the iPhone is what stops them all.
+- `~/.reqcove/ca-copies` lists the copies. `cleanup` of `~/.reqcove` names
+  those still holding the CA; `cleanup` of a copy says the profile serves
+  both.
+- Every command refuses a `--state` starting with `~`: `--state=~/x`, which
+  the shell leaves as it is, would put the key in `./~/x`, and `cleanup`
+  would call the real one gone.
+
+Backups:
+
+- Backups hold the key too. The state directory is an ordinary directory in
+  your home, and Reqcove marks nothing in it as not to be backed up (from
+  reading the code; no backup was looked at). Time Machine, or another backup
+  or sync tool that takes your home, copies the CA's key, the node's key
+  (`tsnet/`) and the tokens, and keeps them after `cleanup --delete-state`.
+- Exclude the directory, or count the backup as one more place the key is.
+- A restore can widen the modes: `run` makes the directory 0700 and the
+  token files 0600 again at start, not the other files (from reading the
+  code).
+
+Checked: tests (a copy's directory is 0700 and its files 0600; the E2E test
+checks only that the CA is valid for over 9 years).
+
+### The login URL
+
+While the node is not logged in, `reqcove run` prints a login URL. Whoever
+opens it first puts this node in their own tailnet. The same care goes to the
+links that carry the `--ui`, `--web` and `--mcp-http` tokens.
+
+- **Terminal only.** The login URL and the links are printed on `run`'s
+  terminal and by `reqcove links`, never in a log line or by the MCP tools.
+  The `status` tool, and with it the agent and its model provider, says where
+  to find the login URL but does not carry it.
+- **Off a terminal** (a service, `docker logs` without `-t`, an agent's
+  shell), `run` prints neither the URL nor the links, only that
+  `reqcove links` prints them.
+- **`reqcove links` refuses when its output is not a terminal**: a help
+  against an agent running it, not a guarantee (a program can give it a
+  terminal). The skill and the server's instructions tell agents never to run
+  it.
+- **One filter for every log line.** Every line `run` logs, and the error it
+  exits with, goes through a filter that replaces the tokens, the login URL
+  itself once `run` has seen it, and any URL shaped as a control server's
+  login URL (Tailscale's `/a/<hex>`, Headscale's `/register/…` and
+  `/register?key=…`). Under `--verbose` that covers tsnet's own lines, which
+  print the URL before `run` learns it.
+- **The filter knows those shapes only.** A control server whose login URL
+  has another shape is masked from `run`'s first poll on (within 3 s).
+- **`login-url` and `links`** are kept in the state directory, 0600, and
+  removed when `run` starts and when it stops. After a crash they stay until
+  the next start: `reqcove links` does not check that `run` is up.
+- **tsnet keeps its own lines**, the login URL among them, in a buffer file
+  there (`tsnet/tailscaled.log*.txt`, 0600), also without `--verbose` (from
+  reading the code).
+- **0600 keeps other users out, not a program running as you.** An agent
+  with a shell can read those files, as it can the node's key, the tokens and
+  the CA's key in the same directory.
+- **mitmweb's server logs a failed request's URL**, `?token=` included, into
+  `mitmproxy.log`: the addon masks the token there first.
+
+Checked: tests (tsnet's lines, read from a test control server; the mitmweb
+E2E test for `mitmproxy.log`). Tried 2026-11-13: Claude Code's `!` gets
+nothing from `reqcove links`.
+
+### Logs
+
+- `mitmproxy.log` in the state directory holds mitmproxy's error lines only.
+- `run`'s own output, when it is a file, is made 0600 as `run` starts,
+  before its first line: a redirect, or brew services'
+  `$(brew --prefix)/var/log/reqcove.log`, which launchd makes 0644.
+- `reqcove setup` makes brew's log 0600 before the service first starts, as
+  `reqcove service install` does its `service.log`. Not tried with brew
+  services.
+- That output holds no token or login URL, but what `run` logs of the
+  devices.
+
+Checked: tests (secrets sent in failing and malformed requests do not reach
+`mitmproxy.log`; `run` making its output 0600; making the service's log).
+
+### What `reqcove cleanup` leaves
 
 `reqcove cleanup` prints the steps and takes none of them itself, with one
 exception: system web proxies that a `run` which died left pointed at
 `--local-proxy` are put back. With `--delete-state` it also deletes the state
 directory (the node's key, the CA and its key, the tokens, `lan-allowed`, the
 logs kept there), unless `run` holds it, it still holds proxy settings to put
-back, or it is not Reqcove's. (From reading its code; tests cover the
-refusals, the proxies and the CA copies it names.) What stays until you
-remove it:
+back, or it is not Reqcove's (from reading the code).
 
-- The CA's profile on each device, and its trust on this computer or in a
-  Simulator. cleanup prints how for iPhones, the Simulator and a Mac's
-  keychain, and does none of it; a trust added elsewhere (Linux's store, a
+What stays until you remove it:
+
+- **The CA's profile on each device**, and its trust on this computer or in
+  a Simulator. cleanup prints how for iPhones, the Simulator and a Mac's
+  keychain, and does none of it. A trust added elsewhere (Linux's store, a
   browser's own, Android) it does not know of.
-- The node in the tailnet (the admin console's Machines), and the exit node
-  or Wi-Fi proxy chosen on the phone.
-- Other state directories (`--state`): each is cleaned up on its own, and
-  cleanup of `~/.reqcove` names only those holding a copy of its CA.
-- A service, which cleanup does not mention. `reqcove service uninstall`
+- **The node in the tailnet** (the admin console's Machines), and the exit
+  node or Wi-Fi proxy chosen on the phone.
+- **Other state directories** (`--state`). Each is cleaned up on its own,
+  and cleanup of `~/.reqcove` names only those holding a copy of its CA.
+- **A service**, which cleanup does not mention. `reqcove service uninstall`
   stops it and removes its file, not its config file
-  (`~/.config/reqcove/config`); `brew services stop reqcove` stops
+  (`~/.config/reqcove/config`). `brew services stop reqcove` stops
   Homebrew's, whose config and log (`$(brew --prefix)/var/log/reqcove.log`)
   stay. A service left in place starts `run` at the next login, which makes
   the state directory, and a new CA, again.
-- The skill (`reqcove init --uninstall` removes it) and the agent's MCP
+- **The skill** (`reqcove init --uninstall` removes it) and the agent's MCP
   server entry.
-- What left Reqcove: HAR files, the agent's transcripts
-  ([below](#what-the-agent-sees-goes-further)), backups, and uv's cache of
+- **What left Reqcove**: HAR files, the agent's transcripts
+  ([above](#what-the-agent-sees-goes-further)), backups, and uv's cache of
   mitmproxy and Python.
 
-## What is recorded
+Checked: tests (the refusals to delete, the proxies put back, the CA copies
+it names).
 
-- Only requests to hosts in `--allow-hosts` (and not in `--pass-hosts`) are
-  recorded. Two checks enforce it: mitmproxy passes other connections through
-  undecrypted, and each request's Host is checked again. A connection to an
-  allowed host can carry requests to others (HTTP/2 connection reuse): those are
-  decrypted with it, not recorded, but shown by `--web` and possibly sent on to
-  `--upstream-proxy`. Requests and TLS failures outside the list are counted,
-  never recorded.
-- Connections to Apple's hosts always pass through undecrypted.
-- `--pass-hosts` hosts (allowed hosts whose apps refuse
-  Reqcove's certificate) pass through undecrypted too, and only their
-  connections are recorded: the host the client named (its SNI), the server's
-  address, start and end, bytes each way, the protocols offered. Nothing inside
-  TLS is kept or seen. The record is checked against --allow-hosts again, so
-  a host outside it leaves nothing, and requests to a pass host riding another
-  host's decrypted connection (HTTP/2) are not recorded either. Bytes are the
-  whole connection's: another host's requests riding it count in them, unseen
-  (from reading code). The hosts `reqcove status` suggests for `--pass-hosts`
-  come from the phone's TLS (its SNI, the app's to choose): only host names
-  and IPv4 addresses (a client that names no host is passed by its
-  destination) are suggested, never mitm.it, and the command is quoted for a
-  shell (a test). `@FILE` lists are read as hosts, never run: a line that is
-  not a host stops `run`, named by its line number only, so a wrong file (a
-  .env, say) is not printed back (a test). A pass host's TLS connections go to
-  its server directly, past `--rules` and `--upstream-proxy`. Its plain HTTP,
-  and its requests riding another host's decrypted connection, are decrypted all
-  the same: counted as out of scope, not recorded, and sent on through
-  `--upstream-proxy` when one is set (a test), checked as all HTTPS through it
-  is: against `--upstream-ca` only, or the public CAs without one. They skip
-  `--rules` (from reading code). A pass
-  host on Apple's list is passed by mitmproxy itself and leaves no record (a
-  test); `run` warns.
-- A connection to an allowed host that mitmproxy carries as raw TCP, not
-  read as HTTP, has no flow for what it carries. mitmproxy does so (once
-  decrypted, for TLS) with an ALPN name it does not know only when the
-  server speaks first or the client's bytes do not look like HTTP; otherwise
-  it reads the connection as HTTP/1, which fails for a client speaking
-  another protocol (tried with mitmproxy 12.3.1, 2026-11-15). It does so too
-  for bytes that do not look like HTTP, and for what a request upgrades to
-  with a `101` other than a WebSocket, whose request is a flow (an E2E test
-  over plain HTTP; over TLS, tried with mitmproxy 12.3.1, 2026-11-15). Only
-  the connection is recorded, in `list_passthrough` with `reason: raw_tcp`:
-  the host the client named (its SNI; after a plain HTTP `101`, the
-  request's host; else the address), the server's address, start and end,
-  the protocols the client offered and the one it got, and the bytes relayed
-  each way (inside TLS, for TLS); never the bytes themselves (an E2E test).
-  The record is checked against `--allow-hosts` and `--pass-hosts` again, so
-  a host outside the first or in the second leaves nothing (a test).
-- Not caught, so nothing of them is recorded or counted. Connections
-  mitmproxy passes through itself fire none of its hooks (from reading
-  mitmproxy 12.3.1's code): Apple's hosts, hosts outside `--allow-hosts`, and
-  connections mitmproxy knows by their address only, unless `--allow-hosts`
-  names the address. Those are TLS without SNI (on the Remote Proxy, LAN mode
-  and the local proxy too: the name in `CONNECT` does not reach mitmproxy,
-  from reading code), and plain TCP (ports 80 and 443 go to mitmproxy) whose
-  first bytes do not name an allowed host as mitmproxy reads them: not HTTP,
-  a server that speaks first, HTTP/2 without TLS (h2c with prior knowledge,
-  which mitmproxy 12.3.1 does not take), HTTP/1.0 without `Host`, `Host:`
-  with no space after the colon (tried with mitmproxy 12.3.1, 2026-11-15).
-  An allowed host's HTTP/2 requests riding a connection the client opened
-  for a name outside the list, which shares its certificate and address, go
-  with that connection, undecrypted: URLSession reuses connections so
-  (HTTP/2 connection coalescing, from Apple's WWDC 2020 session "Boost
-  performance and security with modern networking"), and CDNs give sibling
-  hosts one certificate, so an allowed host's requests can be missing when
-  the app reached a sibling first (tried with Go's HTTP/2 client and
-  mitmproxy 12.3.1, 2026-11-15; not on an iPhone). Allow the names that
-  share the certificate (`*.example.com`). TLS with Encrypted Client Hello shows
-  mitmproxy only the provider's public name, so unless that name is allowed
-  the connection passes through (tried with Go's ECH client and server and
-  mitmproxy 12.3.1, 2026-11-15); iOS does not use ECH by default, by public
-  sources (not tried on an iPhone), but an app can turn it on for its own
-  connections. An HTTP/1 connection to an allowed host (by SNI) whose first
-  request names one of Apple's hosts in `Host` is carried whole, decrypted,
-  its later requests too: mitmproxy checks the name again after TLS (tried
-  with mitmproxy 12.3.1, 2026-11-15). With an address in `--allow-hosts` and
-  a name in SNI, the connection is decrypted by its address, but one
-  mitmproxy then carries as raw TCP is checked by its name and leaves
-  nothing (its HTTP requests count as out of scope; tried with mitmproxy
-  12.3.1, 2026-11-15). A client that finishes the TLS handshake and only then
-  refuses mitmproxy's certificate and closes leaves no TLS failure, no flow
-  and no count: for mitmproxy the handshake succeeded (tried with curl on
-  OpenSSL 4.1, TLS 1.2 and 1.3, and mitmproxy 12.3.1, 2026-11-15). So does a
-  client that finishes the handshake and closes without a request (an E2E
-  test). Python's and Go's clients refuse during the handshake, and are
-  listed (tried with TLS 1.2 and 1.3; Go's, an E2E test). On an iPhone (iOS 27.3,
-  2026-11-15), an app that pins by refusing in URLSession's delegate or in
-  Network.framework's verify block refuses during the handshake, and is
-  listed; one that lets the handshake finish, checks the certificate itself
-  and closes leaves nothing, as above.
-- The secrets Reqcove recognises are masked as they arrive, so no tool can
-  return them. A header, query
-  parameter or body field is secret by its name: a name containing token,
-  secret, password, passwd, passphrase, passcode, credential, signature, session,
-  jwt, apikey, privatekey, authorization, authentication, csrf, xsrf, ticket
-  (a WebSocket's `wsTicket` was seen unmasked), dpop, hmac, verifier
-  (OAuth's `oauth_verifier`), privkey or mnemonic (a wallet's recovery
-  phrase), even run together (`accesstoken`, `X-AuthToken`), or having auth, key, sid, sig, sign
-  (an app's request-signing header `sign` was seen unmasked), pwd,
-  pw, pass, otp, totp, pin or code as a whole word (names split at punctuation
-  and case changes, so `apiKey`, `XAuth` and `X-Amz-Signature` count, while
-  `author` and `keyword` do not; a number after the word counts too: `key1`,
-  `pin2`, but not in `auth0`, the Auth0 service's name: `Auth0-Client`).
-  `code` and `key` next to an everyday word
-  (`country_code`, `error_code`, `sort_key`, `foreign_key`; `primaryKey` is a
-  secret), `token_type`, `ticket_id`,
-  `ticketNumber` and CORS's `Access-Control-Allow-Credentials` (only ever
-  `true`; seen masked in use) are not secrets, nor a body's `"key"` whose
-  value is a dotted lowercase name, as OpenTelemetry writes attributes
-  (`{"key": "service.name", …}`; seen masked in use). A key in it is mixed case
-  or has no dots; JWTs and the other shapes below are masked whatever the field;
-  `key=` in a URL stays a secret.
-  Cookie values are masked (names stay; a value without a name too; in a
-  `Set-Cookie` line joining several cookies with commas, which a server can
-  send and is recorded as sent, each cookie, its attributes kept: an E2E
-  test; a comma before a cookie's first `;` may be its value's, as in
-  `v1,QUJD…==`, so cookies joined with no attributes between them are masked
-  as one value), and query parameters wherever a URL
-  appears (any header, such as `Referer`, `Location` or `Link`; fragments such
-  as `#/callback?access_token=`; a URL inside another parameter; bodies; error
-  messages), as is a URL's password (`https://user:…@host`) and the response's
-  reason text. A credential's shape is masked also in a host (a flow's `host`,
-  an SNI), a method, the ALPN names a connection in `list_passthrough` offered or got, a body's
-  `Content-Encoding` and the notes that quote it; the scope is checked with the
-  host as sent (a test). Raw bytes that mitmproxy quotes in an error message
-  (`b'…'`) are masked whole. `--no-redact` turns this off.
-- Bodies are masked as they arrive too, as far as they can be recognised: in JSON
-  (whatever the content type says), the string and number values of fields
-  whose names are secret by the same rule, also in JSON sent as a string inside
-  JSON or as a form field (one level deep). In a response a lone `code` is
-  kept, as it is usually an error code (`verification_code` and `device_code`
-  are masked); in a request it is masked, as it carries one-time and OAuth
-  codes. In forms (or bodies that look like one: one line, a newline may end
-  it), such fields' values, a lone `code` included. Anywhere in a header
-  value, URL, body or error message,
-  credentials recognisable by their shape are masked: `Bearer`/`Basic`/`Token`
-  values that look like credentials (not the next word of a sentence), JWTs,
-  and keys with well-known prefixes (GitHub, `sk-…`, Slack, AWS access key IDs,
-  Google API keys), also behind percent-encoding (JSON encoded in a form
-  field or a URL parameter, `Bearer+…`) and behind JSON's escapes
-  (`Basic\t…`, `\/` or `\u…` inside a token: a string with any escape is read
-  decoded, at the top level and in JSON inside a string, a cut one too).
-  `WWW-Authenticate` keeps its challenge (scheme, realm, error), with only
-  such shapes masked.
-  A line `name: value` or `name=value` in a text body that is not a GraphQL
-  document, or in a JSON string, whose name is secret (a STOMP frame's
-  `passcode:`, also inside SockJS's JSON; a YAML mapping; headers written into
-  a body; a `.env` file's `API_KEY=…`, after `export` too) has the rest of
-  the line masked, all of it (a `Bearer`/`Basic`/`Token` scheme stays only
-  when the value is that credential alone); YAML list items
-  (`- password: …`) and quoted names are not looked at. A URL parameter or form field holding base64 of a JSON object with
-  a secret in it (AppSync's `?header=`) is masked whole, and so is a credential
-  carried in `Sec-WebSocket-Protocol` (after a name such as `access_token`, as
-  AppSync's `header-` base64 JSON, after Kubernetes' bearer prefix, or a long
-  value shaped like one that is not a dotted name). (Tests.)
-  A field with a secret name whose value is a list or an object is masked
-  whole (`{"password": "[redacted]"}`).
-  In a GraphQL document, read by a lexer, an argument, an input object's
-  field or a variable's default whose name is such has its whole value masked
-  (`login(password: "[redacted]", pin: "[redacted]")`: a string, a number, a
-  list, an object), as a JSON field's is; enum and boolean values, `$variables`
-  and aliases stay. A document is found where it starts like one: a JSON
-  string at the top level or in JSON inside a string (under any key, in
-  requests and in responses that echo it), the body, or a URL parameter (GET
-  `?query=`, masked and escaped again). One that starts like a document and
-  cannot be read is masked whole, unless it starts like a script's object
-  (`{a: b, …}`, a comma after the first value), which is left as it is. (Tests and the fuzz test.)
-  A URL inside a parameter is looked into also when encoded two or three times.
-  A body is kept up to 64 KiB, in memory only, and works on a head that may be cut:
-  a value cut before its closing quote is masked too (a fuzz test, over these
-  shapes and cut anywhere: it found the twice-encoded URL and a GraphQL value
-  cut after a backslash, both fixed).
-- Your own rules, fixed at start: `--mask-names` adds names treated as secret
-  wherever names count, the whole name only (any spelling: `clientRef` covers
-  `client_ref` and `Client-Ref`, not `X-Client-Ref`), before the built-in
-  exceptions (an OpenTelemetry `key`, `WWW-Authenticate` kept as a challenge,
-  a cookie's attributes: a test). `--mask-values` adds RE2 patterns whose matches are masked
-  wherever they appear (a header of any name, a User-Agent's `key=…` among
-  them, URLs, bodies, error text); at most 32 patterns of 512 bytes each, none
-  that matches empty text. Errors name a pattern by its number, never its text.
-  `capture_stats` counts the matches per name and per pattern number (a value
-  can count more than once). (Tests.) A pattern on the command line shows in
-  `ps`, so a literal secret belongs in an `@FILE`, written as `\Q…\E` so its
-  `+`, `/` and `.` match themselves. Both do nothing with `--no-redact` (`run`
-  warns).
-- **What this does not catch:** a secret under a name that does not say so
-  (`{"data": "…"}`; `--mask-names` or `--mask-values` can add it),
-  or in formats other than JSON, forms and text
-  (`multipart/mixed`; protobuf, `multipart/form-data`, XML and HTML are read
-  as below). XML is masked by names only: a secret in an element or attribute
-  named otherwise passes; what does not tokenize outside a secret element
-  (XML 1.1's declaration, `1 < 2`, a bad comment or name) gets the text
-  masking only, but a start tag the decoder refuses (`a=b!c`, an unquoted
-  value) is still read as one, by its name and attributes; nothing in a DTD
-  (`<!ENTITY p "…">`), and no comment outside a secret element, is masked by
-  names; XML carried as text in an element, escaped (`&lt;Password&gt;`) or in
-  CDATA outside a secret element, is not read as XML (a test); a WebSocket
-  message has no content type, so it is read as XML only if it starts with
-  `<?xml` (XMPP's `<auth mechanism='PLAIN'>…</auth>` passes: a test); XML's
-  masking reads a body before JSON's, so in a JSON body labelled XML
-  (`application/xml`) a tag inside a string, its masked value running over
-  the string's end, takes the quote JSON's reading needs, and a secret field
-  after it passes (`{"xml": "<b data-token=x\"", "password": "…"}`: a test;
-  labelled HTML, JSON's reading comes first and it is masked); a
-  declared encoding is not used:
-  a head that is not valid UTF-8 (Latin-1 or Shift_JIS with text beyond
-  ASCII, UTF-16) is not masked, as no such body is, and so is neither handed
-  out nor searched (a test); SAML's POST binding sends the assertion as a base64
-  `SAMLResponse` form field, which is not decoded and passes (a test). In GraphQL the same
-  holds: a secret under an innocent name passes, so ids stay readable and
-  `diff_flows` can compare them (tools that parse GraphQL, such as
-  OpenTelemetry and Apollo, drop every value written into the query instead);
-  and a document quoted mid-message, with prose before it, is not found.
-  Values sent as GraphQL variables are JSON fields, masked by name.
-  Personal data, such as e-mail addresses
-  and names, is not masked: debugging needs it. A body is handed out and searched
-  only if masking could look at it: decoded (not wire bytes of an encoding it
-  could not undo) and text, by its content type (JSON, XML, forms, text, …;
-  another type naming `json`, such as `application/x-amz-json-1.1`, and Sentry
-  envelopes only with no control characters) or, with none, by its bytes. Others, a protobuf that happens to be valid UTF-8
-  included, are neither handed out nor searched while masking is on;
-  `--no-redact` returns them. Protobuf (by its content type, or in gRPC's
-  frames) is the exception: reqcove hands out its own rendering instead of
-  the bytes (`view` says so); a body that does not read as protobuf to its
-  end shows nothing, nor does printable text unless it reads whole as strings
-  and sub-messages alone (one string field of printable length is printable),
-  and a head cut before its end shows what it read only when that held a
-  string or a whole sub-message. Without a schema, it is the structure only:
-  field numbers, wire types, lengths, a string's length but never its text,
-  and numbers in responses; in requests only 1-byte numbers (0 to 127:
-  enums, booleans, but also a PIN or CVV that small), larger ones as their
-  byte count, as a lone `code` is masked in requests. A span of printable
-  text is always a string, never read as a message, as its bytes would then
-  show as numbers; random bytes (`bytes` fields) can still read as one: in a
-  response usually all of their bytes then show as numbers (about 1 in 100
-  16-byte values whole, 1 in 1,000 32-byte ones), in a request parts of
-  them (field numbers and 1-byte numbers). Lengths show (a password's
-  length). With `--proto FILE` (your
-  compiled schema), a message whose type is known (a gRPC, Connect or Twirp
-  method by its path, or `messageType` in the content type) is read with
-  its field names (the proto names, never `json_name`) as JSON and masked
-  by name as JSON is; `bytes` show their length, and fields the schema does
-  not have their structure. A schema that is stale or wrong can give a
-  token an innocent name, which then passes; so do values under names the
-  built-in list does not count as secret, as in JSON (a `cookie` entry of a
-  headers map, a `cvv`). (Tests; the fuzz test is of the reading without a
-  schema. The `protoc` command above was run once, with protoc 33.0.)
-- `multipart/form-data` (uploads): handed out as reqcove's rendering
-  (`view`), part by part. A part whose name is secret (a lone `code` in a
-  request) is masked whole, as are part headers with secret names; a text
-  part (no filename, a text or JSON type) is masked as a body is; a file
-  part, a part that is not text or is encoded (`Content-Transfer-Encoding:
-  base64`), and a part whose `Content-Disposition` does not read, comes twice
-  or names neither a field nor a file keep their headers and their size only,
-  never their bytes. Folded part headers (a line starting with a space or a
-  tab) are read and masked unfolded, as one line. A body with LF-only lines
-  shows no part. A preamble and an epilogue are not
-  shown. At most 256 parts are read.
-  (Tests, and an E2E test with Go's multipart writer.)
-- XML (`text/xml`, `application/xml`, `application/*+xml` such as SOAP's
-  `application/soap+xml`, or a body that starts with `<?xml`) is read token
-  by token: an element whose local name (`wsse:Password` is `Password`) is
-  secret by the rule above, JSON's, has its whole content masked (text,
-  CDATA, child elements, comments: `<wsse:Password>[redacted]</wsse:Password>`)
-  up to an end tag of the same local name (a stray `</i>` inside does not end
-  it), and an attribute whose local name is has its value masked; namespace
-  declarations stay. The rest stays as it came, byte for byte (prefixes,
-  entities, spacing). A SAML `Assertion` or `EncryptedAssertion` is masked
-  whole: it is a bearer credential (whoever holds it can present it until it
-  expires), so its subject and attributes do not show either. In an Apple
-  plist, the value after a `<key>` in a `<dict>` whose text is secret is
-  masked (`<key>access_token</key><string>[redacted]</string>`). As JSON's
-  `key` is, an element named `Key` is masked, S3's object names among them. A
-  head cut, or that does not tokenize, inside a secret element or attribute
-  value is masked to its end; elsewhere, reading goes on past it (after a bad
-  comment's `-->`), in bounded time (a test). No DTD is read: no entity is
-  expanded or fetched (a billion-laughs test). The text masking above applies
-  on top. The XML masking can take away what the text masking keys on (a
-  quote inside a masked element), so it is not checked to mask everything
-  the text masking alone would; a fuzz test of markup checks that it never
-  fails and that a secret element and attribute before any markup stay masked.
-  (Tests, the fuzz test, and an E2E test over mitmproxy with a SOAP request.)
-- HTML (a content type naming `html`, or a head that starts with
-  `<!doctype html` or `<html`; since v1.0) is read tag by tag, not as a
-  browser parses it: a tag whose `name`, `id` or `property` is secret by the
-  rule above, a lone `code` included as in forms (an OAuth `form_post`'s
-  hidden `code` and `id_token`, Rails' `authenticity_token`, ASP.NET's
-  `__RequestVerificationToken`, `<meta name="csrf-token">`), has its `value`
-  and `content` masked, a `<textarea>` so named its text, and an attribute
-  secret by its own name (`data-auth-token`) its value, as XML's. A tag cut
-  by the head's end has its `value` and `content` masked whatever its name,
-  which may come after them (a secret `<textarea>` cut, its text to the end).
-  A comment, and the text of `<script>`, `<style>`, `<textarea>`, `<title>`
-  and the other elements whose text is no markup, is read up to its end only:
-  a quote or a `<` in it (a script's `"<a x='"`) does not make the tags after
-  it read as an attribute's value. Tags inside are still read (a
-  commented-out field, HTML in a script's string). In HTML and in JavaScript
-  (by its content type), an object's field with an unquoted name
-  (`{accessToken: "…"}`, `{pin: 1234}`; a lone `code` as in JSON) has its
-  string, template literal or number value masked, with comments around its
-  name and colon (two at most, of 80 bytes or less each: unbounded, they made
-  masking quadratic), and a string going on past a line's end after a
-  backslash. Not caught: a longer comment or more between a name and its
-  value, a quoted name (`{'accessToken': '…'}`), an assignment
-  (`x.accessToken = "…"`), a name written with character references (`&#99;ode`), a
-  template literal holding another (masked up to that one), a secret in a
-  tag's text other than a `<textarea>`'s, or under an innocent name; a
-  script's text that a browser reads past its first `</script>`
-  (`<script><!--<script>`) ends there here. SAML's `SAMLResponse` field
-  passes, as in a form. JSON's masking reads the head before this, so a
-  masked tag takes no quote from it (a JSON body labelled `text/html`); the
-  rest of the text masking applies on top. (Tests and the fuzz test, cut
-  anywhere.)
-- gRPC: response trailers are masked as headers are; metadata ending in `-bin`
-  (binary) keeps its size only; `grpc-message` is decoded, then masked, cut to
-  1 KiB, as other header values are (by shapes and URLs: a free-text
-  `password=…` in it is not caught). Framed JSON messages are masked as JSON;
-  protobuf ones are rendered as above; a body under a gRPC type that is not
-  framed is masked as a body. (Tests, and an E2E test over
-  HTTP/2.)
-- WebSocket messages: a text message's first 4 KiB is masked as it arrives,
-  as a body is (a client's with a request's rules, a lone `code` included),
-  and kept only if masking could read it (text with no control characters but
-  a STOMP frame's closing NUL, and SignalR's 0x1e between JSON objects). From
-  a client, shapes only messages have are masked too: a message that is one token-shaped word (bare or as one
-  JSON string), the strings after an auth event's name in an event array
-  (socket.io's `42["authenticate","…"]`, with a namespace and an ack id too),
-  and a SignalR invocation's arguments when its target is such a name
-  (SignalR's records are read one by one; only the first `target` is read,
-  and strings nested deeper in the arguments, as in socket.io's, are not). Binary messages, and those past about 20 a
-  second on one socket, keep their size only. A socket keeps its first 5
-  messages and its newest 100; they are handed out only by
-  `list_ws_messages` (and `reqcove har`). A close's reason is masked as error
-  text is. (Tests, and the E2E test with a real socket.) Not caught: a
-  credential sent positionally in other ways (an array without such an event
-  name, a custom binary framing), as in bodies.
-- Bodies are returned only when a tool is asked for them (`bodies` in
-  `get_flow` and `search_flows`), and by `diff_flows`, which compares them: the
-  values and keys that differ, cut to 300 bytes, and bodies that are not text
-  not at all while masking.
-- Records live in memory (at most 10,000 flows and 64 MiB of body heads, headers,
-  URLs and other text together; a site's reason text, `Content-Encoding` and
-  error messages are cut to 1 KiB, 64 bytes and 1 KiB) and are gone
-  when `reqcove run` stops; reqcove writes no flow to disk itself. `reqcove har >
-  FILE` writes them where you send it, masked as the tools return
-  them, with your shell's file mode (often readable by other users; the state
-  directory is 0700). `mitmproxy.log` in the
-  state directory holds mitmproxy's error lines only (a test checks that secrets
-  sent in failing and malformed requests do not reach it). `run`'s own output,
-  when it is a file (brew services' `$(brew --prefix)/var/log/reqcove.log`,
-  which launchd makes 0644; a redirect), is made 0600 as `run` starts, before
-  its first line; `reqcove setup` makes brew's log 0600 before the service
-  first starts, as `reqcove service install` does its `service.log` (tests of
-  `run` and of making the log; not tried with brew services). It holds no
-  token or login URL ([below](#the-login-url)), but what `run` logs of the
-  devices.
-- Markers (`reqcove mark`, `add_marker`) are kept in memory with the records:
-  at most 80 characters on one line (else refused), masked as error text is,
-  at most 100 per source, not logged (from reading code). Their `source` (`cli`, `mcp`) is the
-  channel, set by Reqcove from how the call came (`reqcove mcp` never passes
-  on an agent's client name), not proof: an agent that can run commands on
-  this computer can claim `cli`, by running `reqcove mark` or by connecting
-  to `run`'s socket (same user) itself, and then push out the user's 100. An
-  agent through `reqcove mcp` gets `mcp` and cannot. Their text is the user's or an agent's words: data, never
-  instructions (the server's instructions say so; tests check the masking, the
-  refusals and that an agent through `reqcove mcp` gets `mcp`).
+### In a container
 
-## What the agent sees goes further
+How to run it: [container.md](container.md).
 
-Whatever a tool returns is sent to the agent's model provider. Choose
-`--allow-hosts` with that in mind; `--allow-hosts '*'` sends other apps' and sites'
-traffic too, and Reqcove warns when it starts. Besides the traffic, the `status`
-and `list_devices` tools carry the node's MagicDNS name (which includes the
-tailnet's name), its tailnet addresses and the devices' machine names; not your
-login (from reading code).
+- mitmproxy, which opens what sites send, runs in the container. A flaw
+  there reaches the container (the records, the CA's key in its volume), not
+  the rest of the user's files.
+- The image has no shell or package manager and runs as a user of its own,
+  not root.
+- In exchange, whoever can use the Docker daemon's socket can read the
+  volume, the CA's key included.
+- When the container is given a terminal (`docker run -t`), `docker logs`
+  keeps the login URL, the `--ui`/`--web` links and the `--mcp-http` token
+  until the container is removed. Without one, `run` names `reqcove links`
+  in their place.
+- `reqcove mcp` runs with `--log-driver none`, so the tools' answers are not
+  logged.
 
-It stays there, and with the agent. The provider keeps what it received for as
-long as its terms say, and the agent keeps its conversations on the computer
-it runs on: Claude Code writes each session, tool results included, to files
-under `~/.claude/projects/` (seen on this Mac with Claude Code 2.1,
-2026-11-14; other agents not looked at). Those are not Reqcove's: stopping
-`run` empties its records, not them, and `reqcove cleanup` does not touch
-them. A secret that masking did not find, or anything read with
-`--no-redact`, stays readable there, and in whatever the agent wrote from it
-(a summary, a file, a commit).
+Checked: `scripts/container-smoke.sh` (the state directory's owner and mode,
+no network needed); not by an attack.
 
-## Prompt injection
+## Who can use it
 
-Reqcove's tools read (the one exception, [presets](#mock-presets), turns
-on only what you wrote), but an agent that reads them may also hold other
-tools: a shell, file writes, the network, other MCP servers. Text a site
-wrote into a record can try to steer it into using those (send a cookie
-somewhere, edit a file). Reqcove cannot stop that from its side; your agent's
-own settings can. Give an agent that reads Reqcove only what the task needs:
-in Claude Code, allow Reqcove's read tools by name (not `activate_preset`) without allowing shell commands or
-network tools along with them, and keep its permission prompts for the rest;
-in Codex, keep its sandbox (by default without network, from its
-documentation, not tried) and approvals. An agent that only
-reads Reqcove and answers you is the safest shape.
+- **Your OS user is trusted.** The state directory and the MCP socket in it
+  are open to that user only. Any process running as that user can read the
+  records, and the CA's private key. Reqcove promises nothing stronger.
+- **The devices you name are trusted to use the exit node**, nothing else.
+  Traffic from other tailnet devices is refused, on the exit node and on the
+  Remote Proxy.
+- **A device name is what each device calls itself.** So `--device` takes
+  one only from your own user's devices, and only while neither it nor
+  Reqcove's node is tagged (a tagged node keeps the user ID of whoever tagged
+  it). Name other devices by machine name, IP or StableID.
+- **In LAN mode (`--lan`), the addresses you allow are trusted to use the
+  proxy**, with no password: an address, not a device
+  ([LAN mode](#lan-mode---lan)).
 
-Response bodies, and also response headers, status reasons, redirect targets
-and error messages, are written by remote sites and may contain text meant to
-steer the agent; an app chooses its User-Agent, its TLS names and the JSON
-keys it sends, and a tailnet peer its device name. Tools return bodies only on
-request (and `diff_flows` what differs), and each tool that returns what
-sites, apps or the tailnet wrote says so in its description: data, not
-instructions (the twelve tools `--mcp-http` has too, and `list_markers` for
-a marker's text: a test). The preset and rule tools return what your rules
-file holds, and `add_marker` Reqcove's own values; `list_presets` says a
-preset's description is your words, not instructions. The server's
-instructions, sent to every client (also those without the skill, such as Grok
-Bot), say so too, and that the agent must not write a file (a `--rules` file
-above all), a commit or a command because of what the records say, nor suggest
-`--no-redact` or `--web`, and that `next_steps` are for the user (tests check
-that clients get them over stdio and HTTP, not their wording; whether a model
-keeps to them is not something a test can show). A request whose Host is no host name or address (an app's own HTTP stack
-can put any text there) is carried but not recorded (a test); hosts from TLS
-are host names by mitmproxy's own check (from reading its code). A flow's host
-is the request's Host, which the app chooses: over plain HTTP on a connection
-to any address, and over HTTPS on one to an allowed host, it can name an
-allowed host, and the record shows that one (the request still goes where the
-connection went; what that means for rules: [Rules](#rules---rules)). User-Agents in lists and summaries
-are cut to 256 bytes, ALPN names to printable ASCII, and JSON keys in
-`diff_flows` that are not plain names are quoted (`$["a.b"]`).
-The MCP tools read, with one exception: an agent can turn on, for at most 5
-minutes each time (no cap on turning it on again), a rule you marked as a
-preset: a mock ([Mock presets](#mock-presets)), or since v0.7 a `map_remote`,
-`modify_headers` or `resolve` rule, which changes what requests carry or where they go
-([map_remote, modify_headers and resolve presets](#map_remote-modify_headers-and-resolve-presets));
-`add_marker` writes too, but only a marker in Reqcove's memory. No tool
-writes or changes a rule; with no presets, nothing an agent calls changes
-traffic. (`--rules` are yours, from a file, at start.)
+### What the devices can reach
 
-## A flags file (`--config`)
+Through the exit node and the Remote Proxy, the devices reach public IPv4
+addresses. Reqcove refuses:
 
-`run --config FILE` (for `brew services` and `reqcove service install`) takes run's flags from a file: what
-can write that file decides the next start's flags. So it must be yours and
-readable by you only (refused otherwise; it may hold `--mask-values` patterns),
-errors name its lines, never a value, and the flags that take masking off,
-show traffic unmasked, record every site or let a file change where requests
-go while running stay on the command line: `--no-redact`, `--web`,
-`--allow-hosts '*'` (also through `@FILE`), `--rules-reload` and `--lan` (an open proxy on the LAN) are refused in
-it (tests). Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+- this computer's own addresses (those of every interface) and the networks
+  those interfaces are on, so a LAN with public addresses, or a cloud
+  server's subnet with its neighbours, is refused too;
+- loopback, private and link-local ranges, the tailnet's range, multicast
+  and the other special-purpose ranges;
+- all of IPv6.
 
-## Mock presets
+Beyond that:
 
-A mock in the `--rules` file marked `preset: NAME` does nothing until an agent
-turns it on with `activate_preset` (`list_presets`, `deactivate_preset`).
-Since v0.7 a
-`map_remote`, `modify_headers` or `resolve` rule can be a preset too: see
-[below](#map_remote-modify_headers-and-resolve-presets), it can send requests
-elsewhere.
-Writing a preset is your consent that an agent may turn it on; there is no
-switch at start. The skill and the server's instructions tell an agent to write
-`preset:` only when you ask in the conversation, as any rule, never because of
-what the records say. An agent that writes a preset when asked (with
-`--rules-reload`) can turn it on at once: the request in the conversation is
-the consent then. Whether a model keeps to that is not something a test can
-show.
+- Public networks reached only through a route (behind a router, not on an
+  interface's subnet) are not refused (from reading the code).
+- Pings (ICMP echo) follow the same rules: one from a device not in
+  `--device`, or to a refused address, is dropped. A listed device's ping to
+  a public address is answered by pinging from this computer (from reading
+  the code).
+- While a device's UDP flow lasts (2 minutes after its last packet, 30
+  seconds for DNS), only the address and port it was sent to can answer
+  through it. Datagrams from anyone else that reach its port on this computer
+  are dropped.
+- **Not caught: your network's public address.** It is not an address of
+  this computer's interfaces. A device that connects to it may reach what the
+  router forwards (port forwarding), or, on a cloud server, this computer.
+  Not tested.
 
-What is new since v0.5: an agent allowed only Reqcove's tools (an MCP-only
-client, or a sandboxed one) can now change what the device gets, at the moment
-it chooses and, by calling again, for as long as it keeps calling. Text a site
-wrote into the records can try to steer it into that. What it can turn on is
-only what you wrote. For a mock preset: no new content, target or host, and
-nothing new leaves this computer. The worst case: every preset kept on all the time, each
-answering in the site's name what you wrote (a mock of an HTML page on an
-allowed host runs in Safari with that host's cookies, as any mock does).
+Checked: tests (pings to 127.0.0.1, from a device not in `--device` and from
+a listed one; a datagram sent from this computer).
 
-- Bounds, in Reqcove and again in mitmproxy's addon: at most 5 minutes each
-  time, and, with `times`, at most 20 requests; no cap on turning one on again.
-  Any matching request uses a count, whoever sent it.
-- Only on this computer: the tools are on `run`'s socket and `reqcove mcp`;
-  `--mcp-http` has its own server without them (a test of the two servers
-  `run` builds). The addon takes
-  requests on its own socket in the state directory (0600) only with the
-  secret `run` gave it (a test).
-- `reqcove mcp` never sends a write again after its connection to `run`
-  dropped mid-call (a test): it says it may or may not have taken effect.
-- The write tools are not marked read-only, so a client that asks before
-  other tools asks before them. A v0.5 user who allowed `"mcp__reqcove"`
+### A computer shared with other users
+
+Reqcove trusts your OS user, not the others on the computer. File modes keep
+them out: the state directory is 0700, the files in it 0600, and so are the
+three sockets there (the MCP tools', mitmproxy's two). Another user cannot
+read the records, call the tools or take the keys (from reading the code,
+where each is made; not tried with a second user). What another user can
+still see or reach:
+
+- **`ps`.** `run`'s and mitmproxy's command lines, with the device names,
+  the hosts in `--allow-hosts` and `--pass-hosts`, the paths of the rules
+  file and the state directory, the upstream proxy's address, and any
+  `--mask-names` or `--mask-values` given there rather than in an `@FILE`
+  (from reading the code). Never the SOCKS5 password, the tokens or mitmweb's
+  password: those go in 0600 files.
+- **`--local-proxy`.** Its port takes any user's requests, and records those
+  to allowed hosts as `local` ([below](#the-local-proxy---local-proxy)).
+  mitmproxy's SOCKS5 port and mitmweb's are on 127.0.0.1 too, behind their
+  passwords ([below](#other-processes-on-this-computer)).
+- **The node's ports**, when this computer itself is on your tailnet as you.
+  The node tells devices apart, not this computer's users, so another user's
+  programs here come to `--ui`, `--web` and `--mcp-http` as one of your own
+  devices, and to the exit node and the Remote Proxy when this computer is a
+  `--device`. The tokens are what keep them out of the first three (from
+  reading the code; not tried with a second user).
+- **What you write outside the state directory.** A HAR file gets your
+  shell's mode, usually readable by others, and `/tmp` is everyone's.
+  `(umask 077; reqcove har > FILE)` makes a new file 0600 (tried with zsh).
+  A service's file (the LaunchAgent, the systemd unit) is 0644: it holds
+  paths, no token (from reading the code).
+
+Not covered: root, and anyone who can become your user.
+
+### Other processes on this computer
+
+- **A password.** mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a
+  password made at each start (kept in a 0600 file, never in process
+  arguments). Only Reqcove knows it, so another local process can neither use
+  the proxy nor pose as a device.
+- **The port stays Reqcove's.** Reqcove binds it itself, once per `run`, and
+  hands the listening socket to each mitmdump it starts. mitmproxy (12.3.1)
+  has no option for that, so Reqcove's launcher (`mitm.py`, also used with
+  another `--mitmproxy-spec`) has it serve on that socket instead of binding
+  its own. When mitmdump dies, Reqcove starts it again (visible in `ps`)
+  while the port stays held: no other process can take 127.0.0.1 on that port
+  in between, nor before the first mitmdump.
+- **Connections made meanwhile wait** in the socket's queue for the next
+  mitmdump. The devices' connections wait (15 seconds at most, then fail)
+  until its addon says hello.
+- **No connection is read before the password check is loaded.** mitmproxy
+  runs with `proxyauth=any` and only Reqcove's addon checks the password, so
+  the launcher has mitmproxy make its server on the socket without accepting,
+  and the addon starts accepting when it is loaded, just before its hello.
+- **Were the launcher's change missed** (a mitmproxy that binds another
+  way), its own bind fails on the held port and it exits before its hello,
+  never ready.
+- **Another user was not tried.** As both kernels document it (not checked
+  here), a second socket gets that address only if both set SO_REUSEPORT (on
+  Linux, only for the same user), which Reqcove's never does.
+- **Not covered:** processes of your own user, which can read the password
+  file anyway, and root.
+
+Checked: tests with real mitmproxy on macOS, from the lock and through uvx
+(connections queued while mitmdump is down, with a wrong password sent all at
+once and step by step, are refused, and nothing is carried or recorded; the
+port cannot be bound while mitmdump restarts, and a request sent then is
+recorded by the next mitmdump); a unit test, also in CI on Linux (the port
+cannot be bound while mitmdump is down or given up on; Stop frees it). Tried
+by hand on macOS as the same user: binding 127.0.0.1 on the port fails even
+with SO_REUSEADDR and SO_REUSEPORT; binding 0.0.0.0 works with SO_REUSEADDR,
+but connections to 127.0.0.1 still reach the more specific socket,
+Reqcove's; the queued-connection test fails when the launcher accepts at once
+and the addon loads 1.5 seconds late (without the delay mitmproxy happened to
+load the addon first); a launcher change made too late ends in "address
+already in use".
+
+## Masking
+
+The secrets Reqcove recognises are masked as they arrive, so no tool can
+return them. `--no-redact` turns masking off.
+
+- **By name.** A header, query parameter or body field whose name says it is
+  a secret (`token`, `password`, `apiKey`, …) has its value masked. Cookie
+  values are masked whatever their names.
+- **By shape.** `Bearer`, `Basic` and `Token` credentials, JWTs and keys
+  with well-known prefixes are masked wherever they appear.
+- **By format.** JSON, forms, text lines, GraphQL, XML, HTML and JavaScript,
+  `multipart/form-data`, protobuf, gRPC and WebSocket messages are each read
+  for secret names.
+- **By your own rules.** `--mask-names` and `--mask-values` add names and
+  patterns.
+
+The words, the shapes and each format, with what each leaves unmasked, are in
+[masking.md](masking.md). The main gaps:
+
+- A secret under a name that does not say so (`{"data": "…"}`), in any
+  format. `--mask-names` or `--mask-values` can add it.
+- Personal data, such as e-mail addresses and names, is not masked:
+  debugging needs it.
+- A secret in a format masking does not read (`multipart/mixed`, a base64
+  `SAMLResponse` form field), or sent by its position rather than under a
+  name.
+- A body masking could not look at (not text, or not decoded) is neither
+  handed out nor searched while masking is on. `--no-redact` returns it.
+- A secret that masking did not find stays with the agent and its model
+  provider ([above](#what-the-agent-sees-goes-further)).
+
+## Not caught
+
+These connections leave nothing: no record, no count. The conditions, and how
+each was tried, are in
+[masking.md](masking.md#connections-that-leave-no-record).
+
+- Connections mitmproxy passes through itself: Apple's hosts, hosts outside
+  `--allow-hosts`, and connections it knows by their address only.
+- TLS without SNI, unless `--allow-hosts` names the address.
+- Plain TCP on port 80 or 443 whose first bytes do not name an allowed host
+  as mitmproxy reads them: HTTP/2 without TLS, for one.
+- An allowed host's HTTP/2 requests riding a connection the app opened for a
+  sibling name outside the list. Allow the names that share the certificate
+  (`*.example.com`).
+- TLS with Encrypted Client Hello, unless the provider's public name is
+  allowed.
+- A connection to an allowed host whose first HTTP/1 request names one of
+  Apple's hosts in `Host`: carried whole, decrypted.
+- A connection allowed by its address but named otherwise in SNI, once
+  mitmproxy carries it as raw TCP.
+- A client that finishes the TLS handshake and only then refuses Reqcove's
+  certificate and closes, or closes without a request. A pinning app that
+  checks the certificate itself does this; one that refuses during the
+  handshake is listed.
+
+## Options that widen exposure
+
+Three options open a port on the node:
+
+| Option | Port | Open to | Guarded by |
+|---|---|---|---|
+| `--ui` | 80 | your own devices, and the `--device` devices | a token (`ui-token`), set as a cookie |
+| `--web` | 8081, relayed to mitmweb | your own devices | mitmweb's password (`web-token`) |
+| `--mcp-http` | 8090, at `/mcp` | your own devices | a token (`mcp-token`), sent as `Authorization: Bearer` |
+
+Each answers only requests that name the node (its MagicDNS name or tailnet
+address) in `Host`. Each token is kept in the state directory (0600) and
+appears only on `run`'s terminal and through `reqcove links`
+([The login URL](#the-login-url)).
+
+### mitmweb (`--web`)
+
+mitmweb shows traffic **unmasked**. From its page anyone with the password
+can edit and replay requests and change options (scripts included), which
+runs code on this computer.
+
+- It listens on 127.0.0.1. Its password is kept in `web-token` (the same at
+  each start until you delete that file and start again) and passed through a
+  0600 file, never the command line.
+- The node relays its port 8081 to mitmweb for your own devices only: not a
+  `--device` device of another user, nor anyone else. The password still
+  guards it, and it gives what it gives on this computer.
+- A phone on the Remote Proxy reaches it the same way: its requests and
+  WebSocket tunnels to the node's port 8081 go to mitmweb, for your own
+  devices only. A WebSocket already open stays open if the device stops
+  counting as yours.
+- On a terminal `run` prints the links with the tokens: they stay in its
+  scrollback, valid until the token files are deleted. Off one it prints
+  none. `reqcove links` prints them again, from `links`.
+- A link with the password (`?token=`) opened by a browser through the node
+  is answered, once mitmweb accepts it, with a redirect to the same URL
+  without it, so the password does not stay in the address bar. Whether
+  Safari's history keeps the first URL is not checked.
+- mitmweb's cookie does not outlast its restart: it signs it with a key made
+  at each start (from reading its code). After one the link is needed again.
+- It shows every flow mitmproxy decrypted, including requests to hosts
+  outside `--allow-hosts` that rode on an allowed connection (HTTP/2
+  connection reuse): the per-request check keeps those out of Reqcove's
+  records only.
+- It shows bodies up to 2 MB each, whole and unmasked (Reqcove gives it them,
+  as mitmproxy keeps no body it streams), and keeps the newest 10,000 flows
+  and 256 MB of bodies. Those bounds count finished flows: one still in
+  progress counts once it ends, and what is kept of its bodies meanwhile (up
+  to 2 MB each way) is outside them (from reading the code).
+
+What its options change (from reading the code, not tried):
+
+- mitmproxy's behaviour only, until Reqcove starts it again. Reqcove's
+  records stay scoped to `--allow-hosts` and masked, since Reqcove checks
+  both again as they arrive.
+- Turning off the SOCKS proxy in its Capture tab stops the devices' HTTP(S):
+  that is how Reqcove hands them to mitmproxy.
+- Another mode turned on there listens on 127.0.0.1 (the listen host Reqcove
+  sets) and bypasses Reqcove's device names and its refusals of this computer
+  and the LAN.
+
+Checked: a test with a stand-in for mitmweb (the redirect). Tried from an
+iPhone on the exit node.
+
+### The page (`--ui`)
+
+`--ui` serves a read-only page of the records, with what the MCP tools
+return, masked the same way. Who can read it:
+
+- **Your own devices and the `--device` devices**; others get nothing.
+- **A `--device` device of another user sees only its own flows**, in the
+  list and by ID, and its own counts and next steps: not the other devices',
+  nor their names. Your own devices see every device's flows, with the
+  device's name.
+- **Only a browser holding the token.** The link `run` prints sets it as an
+  HttpOnly, SameSite=Strict cookie kept 400 days. Another app on the same
+  iPhone can reach the port, but not read the page without the token. A link
+  that leaks works only from the devices above.
+- **The token is the same at each start**, so a link, a bookmark or a cookie
+  keeps working until you delete `ui-token` and start again; then they get
+  403.
+- **Only by the node's name in `Host`**: a site the iPhone visits cannot
+  point its own name at the node and read the page as its own (DNS
+  rebinding).
+- **GET and HEAD only**, also when the request comes through the Remote
+  Proxy. The search form goes to the page itself (CSP `form-action 'self'`),
+  and Clear only hides flows from the list (a `since` in its URL), deleting
+  nothing.
+- **Its only script is its own `/app.js`**: the Content-Security-Policy
+  allows no other, and nothing inline. It asks `/flows.json` for the list
+  once a second and puts it in with DOM calls and `textContent` only, so what
+  sites wrote into headers and bodies stays text. It is not cached
+  (`no-store`).
+
+What those checks do not cover:
+
+- Pages still go through Safari. Its history may keep the URLs of the flow
+  pages viewed, the first link with the token (useless without the device;
+  it lasts until `ui-token` is deleted), and the URLs of searches, with what
+  was searched. With `--no-redact`, a search for a secret's value keeps it
+  there.
+- A JSON body nested deeper than 32 levels is shown as it is, not indented:
+  indenting deep nesting takes memory that grows with the square of the
+  depth.
+
+Checked: tests (one for each point of who can read it; `/app.js` run over a
+stand-in DOM in node).
+
+### MCP over HTTP (`--mcp-http`)
+
+The node serves the MCP tools to your own devices, with the token compared in
+constant time. Requests from a browser page of another origin are refused.
+
+- **The token is what tells your devices apart.** On a personal tailnet an
+  agent's device joined through Tailscale's OAuth apps (Grok Bot) counts as
+  one of your own devices, as do your other computers.
+- **Whatever the tools answer then reaches that device and its model
+  provider** (for Grok Bot, xAI's cloud). The agent keeps the token until you
+  delete `mcp-token` and restart `run`.
+- **The token is not printed in a log line, by `reqcove status` or by the
+  tools**: agents may run those. In a container run with `-t`, `docker logs`
+  keeps it.
+- **Fewer tools than over `reqcove mcp`.** `--mcp-http`'s own server does
+  not have the preset tools, `list_rules` and `explain_rules`, nor the marker
+  tools (`add_marker`, `list_markers`). The rest are the same, and give the
+  same masked records.
+- **`capture_stats` and `status` leave out the `resolve` rules and the
+  upstream proxy's address**, but not `rules_error`: when a `--rules-reload`
+  change fails on a `resolve` line, the error (and `status`'s `next_steps`,
+  which quotes it) can name that line's host and address (from reading the
+  code).
+- **`run` logs each tool call over HTTP** with the calling device and the
+  tool's name (not its arguments), and each request with no token or a wrong
+  one.
+- **Each device may call about 10 times a second** (30 at once). Past that
+  it gets `429 Too Many Requests` for the moment, logged once a minute: a
+  runaway agent on one device does not keep `run` busy for the others. A call
+  ends when its caller disconnects.
+
+Checked: tests (another user's device refused over a real tailnet; the token,
+`Host` and origin checks; the tools the server does not have; what
+`capture_stats` and `status` leave out; the 429; a call ending when its
+caller disconnects). Tried from this Mac over the tailnet, and with Grok Bot.
+
+### The local proxy (`--local-proxy`)
+
+An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the iOS
+Simulator), with no password.
+
+- Any process on this computer, of any user, can use it, and what it sends
+  to `--allow-hosts` hosts is recorded as the device `local`.
+- Its apps reach the LAN, VPNs and the tailnet as they would without it, by
+  this computer's own lookups. This computer, the LAN and the tailnet are in
+  the system proxy's exceptions, so apps reach them directly, as without
+  Reqcove.
+- It refuses IPv6, and a name that leads to this computer itself (loopback,
+  its own addresses) or to a link-local address unless this computer's
+  `/etc/hosts` gives it. A page in a browser here could otherwise reach this
+  computer's services through it by pointing its own name there (DNS
+  rebinding).
+- A page could still point its name at a LAN, VPN or tailnet address, and
+  the proxy lets it on (so that names inside a VPN keep working). A browser
+  going direct faces the same, but through the proxy it does not see the
+  address, so its own protection for private networks (Chrome's Private
+  Network Access) does not apply: keep `--local-proxy` on only while you need
+  it.
+- Apple's hosts are not decrypted.
+- On macOS, `run` points the system's web proxies at it while it runs,
+  keeping what they were in the state directory (0600) to put back when it
+  stops (also on SIGHUP), at the next start, or with `reqcove cleanup`. It
+  never saves over settings not put back yet, and cleanup will not delete the
+  state while it holds them. If Reqcove is killed outright, apps here that
+  use the system proxy cannot connect until they are put back.
+- Reqcove never makes this computer trust its CA; `run` prints the command
+  (TLS only, for this user). Once trusted, the CA's private key in
+  `<state>/mitmproxy/` can impersonate any HTTPS site to this computer too,
+  not only to the devices. Keep the state directory, and its copies and
+  backups, private, and remove the trust when done (`reqcove status` and
+  `cleanup` print how, by its fingerprint).
+
+Checked: a test (names that lead to this computer or to a link-local address
+are refused). Tried with the real `networksetup` (set, and put back at
+Ctrl-C) and an iOS 27 Simulator.
+
+### LAN mode (`--lan`)
+
+`run --lan` starts no tailnet node. An HTTP proxy listens on one address of
+this computer, that of one LAN interface (never 0.0.0.0, never a VPN's
+tunnel), on `--proxy-port`. There is no password: who may use it is decided
+by address. Use LAN mode on a network you trust, and stop it when done.
+
+- **An address is not a device.** Whoever has an allowed address later is
+  allowed too, on this network or on another with the same prefix (a café's
+  192.168.1.0/24 as your home's). The ready block, `reqcove status` and
+  `reqcove lan list` show the list.
+- **Other addresses are refused.** A connection from outside that
+  interface's network is closed as it is accepted, as is one from an address
+  not allowed. Nothing is recorded, and each new address is logged once,
+  until the list of addresses seen (10,000) fills and is emptied: then once
+  more, and `run` asks again.
+- **A deny refuses new requests within two seconds**: each request on a kept
+  connection is checked again. An HTTPS tunnel already open goes on until it
+  closes, or until no bytes went either way for 15 minutes. An address keeps
+  at most 256 tunnels open at once.
+- **The allowed addresses** are kept in `<state>/lan-allowed` (0600, with
+  when each was allowed). They change through `reqcove lan allow|deny`, or
+  through `run`'s question on its own terminal. No MCP tool changes the list.
+- **The `lan` commands refuse to run unless stdin and stdout are a
+  terminal**, as `reqcove links` does: an agent's shell usually has neither
+  (a help, not a guarantee: a script can give it one).
+- **`run`'s question** is asked only while `run` is the terminal's
+  foreground job, and input typed before it is dropped first, so an earlier
+  Enter or `y` does not answer it.
+- **`--lan` is refused in a `--config` file**, so `brew services` and
+  `reqcove service install` (which refuses the file at install too) never
+  keep an open proxy running.
+
+What an allowed address reaches through this computer:
+
+| Destination | Reached |
+|---|---|
+| Ports other than 80 and 443 | Never: refused before any lookup |
+| Public addresses | Yes, from your address |
+| Private ranges (10/8, 172.16/12, 192.168/16, 100.64/10), those behind this computer's VPN included | Only by a name written exactly in `--allow-hosts` (no `*`) |
+| This computer (loopback, its addresses), link-local addresses, the network the proxy is on, this computer's other networks numbered from public space, special-purpose ranges, IPv6 | Never, even by an exact name |
+
+- Names are looked up with this computer's resolver, `/etc/hosts` first.
+- `map_remote` and `resolve` targets are dialled by mitmproxy, outside these
+  checks: a rule sending an allowed host to a server on this computer serves
+  the LAN clients' requests too.
+- The CA at `http://mitm.it` comes over plain HTTP, which anyone else on the
+  LAN can swap. The ready block names the CA file, to send by AirDrop
+  instead, and prints its SHA-256 as iOS shows it in the profile's More
+  Details.
+
+Checked: tests (the refused connections and the log of addresses; the deny,
+the idle tunnel and the 256 tunnels, with smaller values; what an allowed
+address reaches; `run`'s question through a seam, the terminal calls
+themselves not tested). Tried with an iPhone on a home Wi-Fi, 2026-11-14:
+refused until allowed, then recorded; refused again after `reqcove lan deny`;
+the SHA-256 matched what iOS showed.
+
+### An upstream proxy (`--upstream-proxy`)
+
+Decrypted HTTP(S) requests then go on through that proxy, and Reqcove's
+mitmproxy does not connect to their servers itself (connection strategy
+lazy). Other protocols over TLS to an allowed host still go straight to their
+servers (from reading the code). The flag is read at start; no tool changes
+it.
+
+- **The proxy sees the requests and responses unmasked.** Burp, for one,
+  keeps them in its project, on disk. Its own MCP server or extensions give
+  agents what Reqcove's tools hold back, and the ability to send requests.
+- **Checking the real server's certificate is the proxy's job.** With the
+  proxy's CA (`--upstream-ca`, or Burp's fetched at start), Reqcove trusts
+  only that CA, so it checks the proxy, not the server. Burp, by default, did
+  not check when tried.
+- **Burp's CA is fetched over plain HTTP** from the proxy's own listener
+  (`http://127.0.0.1:PORT/cert`, no name looked up, so no other server can
+  answer), only when the proxy is on this computer, and only a CA named
+  "PortSwigger CA" is taken.
+- **Where the proxy connects is the proxy's choice.** Reqcove hands it the
+  address the exit node allowed, but Burp connects by the name in the SNI,
+  looked up again on this computer: a name that resolves into this
+  computer's LAN reaches it, past the exit node's refusal.
+- **Keep `--allow-hosts` narrow.** A site the iPhone visits can make its own
+  name do that only for the proxy's lookup (DNS rebinding: from reading the
+  code, not tried). `run` warns when the list is `'*'`. `resolve` rules are
+  refused with `--upstream-proxy` for this reason.
+- **The CONNECT lines (an IP address and port) and plain HTTP reach the
+  proxy unencrypted**: keep it on this computer, or on the tailnet.
+
+Checked: tests (one counts the server's connections; only a CA named
+"PortSwigger CA" is taken). Tried with Burp: it answered at `/cert` (checked
+with curl), did not check the server's certificate by default, and connected
+by the name in the SNI.
+
+### Rules (`--rules`)
+
+Rules are yours, read from a file when mitmproxy starts. No MCP tool writes
+or changes a rule, and over `--mcp-http` an agent has no way to the file at
+all. A rules file from someone else is code: it can send your apps' requests,
+cookies and tokens included, anywhere.
+
+- **`run --rules-reload` reads the file again whenever it changes.**
+  Whatever can write it (any process as your user, an agent with file access
+  included) can then change where the devices' requests go while `run` runs.
+  Without it, the file is read only when mitmproxy starts (with `run`, or
+  when Reqcove restarts it after it exits).
+- **`reqcove mock add` writes a mock into a rules file for you**, and runs
+  only when its input and output are a terminal: a help against an agent
+  running it unasked, not a guarantee (an agent that can run commands can
+  give it a terminal, or edit the file itself). Writing rules stays yours:
+  the skill tells agents never to run it. To have `run` check the file first,
+  it reads `run`'s SOCKS5 password from the state directory (0600, your
+  user); `run` checks the file it is pointed at without taking it.
+- **A request a rule fails on** (say, a `map_remote` making a bad port) is
+  answered with a 502 rather than sent on as it was. A `map_remote` whose
+  replacement cannot work at all stops `run` at start.
+- **`modify_headers`** takes header names that are HTTP tokens, and values
+  without a line break or NUL (they would start a header of their own on the
+  wire). A value file read again for a later flow and given one since is
+  dropped from that flow's headers.
+- **`resolve` names** are host names only, so nothing in them reaches the
+  log as control characters.
+
+**A header rule reaches only the host the request names.** A request's Host
+is the app's to write, and mitmproxy connects where the app dialled whatever
+it says, while rules (`~d`) read the Host. So a header a rule sets
+(`modify_headers`, presets too) goes only to the host the request names, and
+one set on a response only to that host's response. When no `map_remote` or
+`resolve` sends the request on, the rules apply only if one of these holds:
+
+- the address dialled is the Host as the app sent it (read before any rule);
+- over HTTPS, that Host is the TLS name mitmproxy checks the server's
+  certificate for, and a server without a certificate for the name gets no
+  request (not through `--upstream-proxy`: mitmproxy then checks the proxy's
+  certificate, and the server's is the proxy's to check);
+- the Host's addresses, as this computer looks them up, include the address
+  dialled.
+
+Otherwise the request goes on as the app sent it, and its response as the
+server sent it, their rewrites saying the rules were not applied
+(`explain_rules` names the condition). The edges:
+
+- The rules do not apply to such a request when a rule changes its Host
+  either: a rule's own Host would vouch for itself (a token rule for the
+  Host, then one setting Host to the address dialled). Where a request goes
+  is for `map_remote` and `resolve` to change.
+- A `map_remote` rule that changes only the path, the host staying the same,
+  sends the request on as any other does: mitmproxy then connects to that
+  host by its name, looked up on this computer, not to the address the app
+  dialled, and the header rules apply.
+- Names are compared in IDNA's ASCII form (HTTP/2's `:authority` comes
+  decoded, SNI does not). A Host with İ, ı, ſ or K (as such or in `xn--`
+  form) gets no rules, as `~d`, case-insensitive, matches it to an ASCII name
+  it is not (`mysıte.com` to `mysite.com`).
+- Each name is looked up on a thread of its own, one lookup at a time per
+  name, 16 names at most at once, and its answer kept 30 seconds: a stalled
+  resolver leaves the loop's executor free and the process able to exit. A
+  request whose Host takes over 3 seconds, or comes while 16 names are being
+  looked up, goes without the rules.
+- This computer's lookup can disagree with the device's (the exit node asks
+  `--dns`, 1.1.1.1 by default, and a CDN may answer resolvers differently):
+  such a request then goes without the rule. A `resolve` rule for the name
+  avoids that (from reading the code, not tried with a CDN), except through
+  `--upstream-proxy`, which takes no `resolve`: there such a request stays
+  without the rule.
+- Sending such a request to its Host instead was not done: mitmproxy would
+  look the name up itself, past the exit node's refusals of this computer and
+  the LAN (from reading its code).
+
+**`map_remote` and `resolve` connect from this computer**, where the rule
+says, this computer and the LAN included. The exit node's refusal of those
+addresses is about the devices' own connections, and a rule opens its target
+to every app on the carried devices that sends a request for the rule's host
+(a web page included).
+
+- `resolve` takes IPv4 addresses only, never a name to look up, and refuses
+  `0.0.0.0/8`, link-local, multicast and reserved ranges, Tailscale's
+  100.100.100.100 and the cloud metadata addresses 169.254.169.254 and
+  100.100.100.200. `map_remote` takes whatever it is given.
+- A `resolve` rule without a port takes the request's port (the app's, or a
+  `map_remote` URL's).
+- TLS to a `resolve` target is checked against the rule's name, with
+  mitmproxy's own CA list (certifi, from reading its code), so a request goes
+  on only to a server with a certificate for that name. Plain HTTP is not
+  checked.
+- Each `resolve` name needs its own address: mitmproxy reuses a connection
+  by address, so names sharing one would share one name's check, and are
+  refused.
+- A `map_remote` to a `resolve` target's address shares its connections,
+  both ways: a request of one can ride on a connection made, and checked, for
+  the other, and a failed connection fails both for as long as the app's
+  connection lasts.
+
+**A `mock` answers in the site's name.** The app, and a web view's page,
+take it as the site's own answer: a script in it runs in that origin, a
+redirect is followed.
+
+- It is for hosts in `--allow-hosts` only (refused otherwise), and its
+  header values are checked as `modify_headers`'s are.
+- The records say a flow was mocked, with the rule's number and status,
+  never its text.
+- A request a mock may answer is held whole until its body is in (the
+  operation is in it): at most 1 MiB when it says its length.
+- A GET that says no length is held only while it has no body. Over HTTP/2,
+  one that sends a body anyway gets a 502 at its first body byte and its body
+  is not held, as for `map_local`; one whose stream ends with an empty DATA
+  frame is answered. While it waits for that byte or the stream's end, none
+  of its body is held and no server is connected to (from reading the code).
+- With a mitmproxy other than 12.3.1 (another `--mitmproxy-spec`), a stream
+  not ended with its headers gets the 502 at once (from reading the code).
+
+**`list_rules` and `explain_rules` are read-only.** They show each rule by
+kind and number with its preset, and only what is derived from it:
+
+- a mock's method, URL, operation, status, delay and fault; a `map_remote`
+  target's scheme and host (or "path only", or "not shown" when the rule
+  does not write it out); a `modify_headers` header name and direction; a
+  `resolve` name and address; for a `map_local` rule, its number only;
+- never a filter, a regex, a header value, a body or a file's path.
+- `explain_rules` runs the request path's own code on a request it makes up,
+  never sent, with a copy of the presets' state, so it uses no preset's count
+  and turns none on or off.
+- Like the preset tools they are on `run`'s local socket and `reqcove mcp`
+  only, never over `--mcp-http`: the targets say where the devices' requests
+  can be sent.
+
+Checked: tests (header names and values; `resolve` names; the 502 for a
+failing rule; `run` checking a file without taking it; `explain_rules` and
+the presets' counts; what the two tools show, with marker strings, end to
+end). With real mitmproxy: a stand-in server dialled with another host's Host
+gets no rule's value (over plain HTTP, over HTTPS with a valid certificate
+for its own name, and with a rule setting Host to its address), and the app
+gets no response rule's value from it; one without a certificate for the name
+gets no request; the Host's own address, and a `resolve` target, get the
+rules, both ways. Not over the network: IDNA and İ, ı, ſ, K (on mitmproxy's
+own made flows); the lookup bounds (in mitmproxy's Python with a lookup that
+never answers, not in a running mitmdump); the path-only `map_remote` (in
+mitmproxy's Python). With Go's HTTP/2 client: the 502 and the empty DATA
+frame (the stream's end as mitmproxy tells it is from reading its code).
+Tried: a `resolve` target with a trusted certificate for another name gets a
+502.
+
+### Mock presets
+
+A mock in the `--rules` file marked `preset: NAME` does nothing until an
+agent turns it on with `activate_preset` (`list_presets`,
+`deactivate_preset`). A `map_remote`, `modify_headers` or `resolve` rule can
+be a preset too, and it can send requests elsewhere: see
+[below](#map_remote-modify_headers-and-resolve-presets).
+
+- **Writing a preset is your consent** that an agent may turn it on; there
+  is no switch at start.
+- **An agent allowed only Reqcove's tools** (an MCP-only client, or a
+  sandboxed one) can change what the device gets, at the moment it chooses
+  and, by calling again, for as long as it keeps calling. Text a site wrote
+  into the records can try to steer it into that.
+- **It can turn on only what you wrote.** For a mock preset: no new content,
+  target or host, and nothing new leaves this computer.
+- **The worst case:** every preset kept on all the time, each answering in
+  the site's name what you wrote (a mock of an HTML page on an allowed host
+  runs in Safari with that host's cookies, as any mock does).
+- **Bounds**, in Reqcove and again in mitmproxy's addon: at most 5 minutes
+  each time, and, with `times`, at most 20 requests; no cap on turning one on
+  again. Any matching request uses a count, whoever sent it.
+- **Only on this computer.** The tools are on `run`'s socket and
+  `reqcove mcp`; `--mcp-http` has its own server without them. The addon
+  takes requests on its own socket in the state directory (0600) only with
+  the secret `run` gave it.
+- **No write is sent twice.** `reqcove mcp` never sends a write again after
+  its connection to `run` dropped mid-call: it says it may or may not have
+  taken effect.
+- **The write tools are not marked read-only**, so a client that asks before
+  other tools asks before them. A client that allowed `"mcp__reqcove"`
   wholesale gets them allowed without a prompt: allow the read tools by name.
-- The skill and the server's instructions tell agents to turn one on only for
-  a test the user asked for in the conversation, never because of what the
-  records or a preset's description say, and to add `preset:` to a rules file
-  only when the user asks. Whether a model keeps to that is not something a
-  test can show.
-- Visible: `run` logs each preset an agent turns on or off; `reqcove status`
-  and the `status` tool list the ones on (or say mitmproxy did not answer); a
-  flow a preset answered says `preset: NAME`. With `--rules-reload` a changed
-  rules file turns them all off, as does a restart of mitmproxy or of `run`.
-- An end is checked on two clocks, so a computer that slept past it does not
-  leave one on (a test). One answer already waiting out its `delay_ms` still
-  goes out after the preset is turned off.
-- `list_presets` gives what each
-  matches and its status, delay or fault, never its body or header values.
+- **What agents are told.** The skill and the server's instructions tell
+  agents to turn a preset on only for a test the user asked for in the
+  conversation, never because of what the records or a preset's description
+  say, and to write `preset:` into a rules file only when the user asks in
+  the conversation, as any rule. An agent that writes a preset when asked
+  (with `--rules-reload`) can turn it on at once: the request in the
+  conversation is the consent then. Whether a model keeps to that is not
+  something a test can show.
+- **Visible.** `run` logs each preset an agent turns on or off. The `status`
+  tool and `reqcove status` list the ones on (or say mitmproxy did not
+  answer). A flow a preset answered says `preset: NAME`.
+- **Turned off** by a changed rules file (with `--rules-reload`), and by a
+  restart of mitmproxy or of `run`. An end is checked on two clocks, so a
+  computer that slept past it does not leave one on. One answer already
+  waiting out its `delay_ms` still goes out after the preset is turned off.
+- **`list_presets`** gives what each matches and its status, delay or fault,
+  never its body or header values.
+
+Checked: tests (the two servers `run` builds; the addon's secret; no write
+sent again; the two clocks).
 
 ### map_remote, modify_headers and resolve presets
 
 A preset of these kinds changes where the device's requests go, or what they
 carry, while it is on: not only what the app gets.
 
-- A `map_remote` preset sends the matching requests, with the app's cookies,
-  tokens, login bodies and everything else in them, to the target you wrote,
-  from every device recorded (in LAN mode, every address you allowed). An
-  agent cannot choose the target, only when, and for how long by turning it on
-  again. The worst case through text a site wrote into the records: your
-  production credentials sent to the staging or dev server in the preset, again
-  and again. The risk to weigh is a stale target: an old tunnel or staging name
+- **A `map_remote` preset sends the matching requests**, with the app's
+  cookies, tokens, login bodies and everything else in them, to the target
+  you wrote, from every device recorded (in LAN mode, every address you
+  allowed).
+- **An agent cannot choose the target**, only when, and for how long by
+  turning it on again. The worst case through text a site wrote into the
+  records: your production credentials sent to the staging or dev server in
+  the preset, again and again.
+- **The risk to weigh is a stale target**: an old tunnel or staging name
   someone else holds now.
-- The 5 minutes bound the switch, not its effects: what the app wrote while it
-  was on (orders, edits) is on that server; the app may keep the tokens, cookies
-  and caches it got there, and send them to the usual server once it is off.
-- `resolve` connects a name elsewhere but keeps Host, SNI and the TLS check the
-  name's (from reading code, and the E2E test over plain HTTP): over HTTPS the
-  other server needs a certificate for that name, so it is the safer kind.
-- `modify_headers` presets change requests only: one on responses (`~s`) is
-  refused at load, as it could drop a page's protections (CSP, HSTS) or set
-  cookies on a host Safari shows. Its value is never shown.
-- Refused at load, so the target can be shown and checked: a `map_remote`
-  preset whose replacement is not `http://` or `https://`, a host and `/`, has
-  a user or password, takes its host from the request, or goes to a link-local
-  address; plain `http://` to anything but this computer or a LAN address
-  (`localhost`, `*.local`, a private address). On each request the rewritten
-  URL's scheme, host and port are checked against the target shown: a regex
-  that matched inside the URL gets a 502, never a request elsewhere (a test).
-- A `modify_headers` preset that is on applies after the plain rules, so its
-  header is the one sent (a test).
-- Shown: each preset's target (`map_remote`) or address (`resolve`) in `run`'s
-  ready block and log and `list_presets`, the ones on in `reqcove status`; never a filter, a
-  regex or a header's value. A flow a preset changed lists it in `presets`; the
-  skill and the server's instructions tell agents never to report such a
-  flow's answer as the usual server's.
-- `activate_preset` is not marked read-only, and asked about by clients that
-  ask before such tools; a client that allowed `"mcp__reqcove"` wholesale
-  allows it too. It takes every kind: allowing it without a prompt allows these
-  too (the guide's [example](guide.md#allow-the-tools) keeps it under `ask`).
-- The same bounds and visibility as mock presets: at most 5 minutes each time
-  (no `times` for these kinds), only on this computer, never over
+- **The 5 minutes bound the switch, not its effects.** What the app wrote
+  while it was on (orders, edits) is on that server; the app may keep the
+  tokens, cookies and caches it got there, and send them to the usual server
+  once it is off.
+- **`resolve` is the safer kind.** It connects a name elsewhere but keeps
+  Host, SNI and the TLS check the name's (from reading the code): over HTTPS
+  the other server needs a certificate for that name.
+- **`modify_headers` presets change requests only.** One on responses (`~s`)
+  is refused at load, as it could drop a page's protections (CSP, HSTS) or
+  set cookies on a host Safari shows. Its value is never shown. One that is
+  on applies after the plain rules, so its header is the one sent.
+- **Refused at load**, so the target can be shown and checked: a
+  `map_remote` preset whose replacement is not `http://` or `https://`, a
+  host and `/`, has a user or password, takes its host from the request, or
+  goes to a link-local address; plain `http://` to anything but this computer
+  or a LAN address (`localhost`, `*.local`, a private address).
+- **Checked on each request**: the rewritten URL's scheme, host and port,
+  against the target shown. A regex that matched inside the URL gets a 502,
+  never a request elsewhere.
+- **Shown**: each preset's target (`map_remote`) or address (`resolve`) in
+  `run`'s ready block and log and in `list_presets`, the ones on in
+  `reqcove status`; never a filter, a regex or a header's value. A flow a
+  preset changed lists it in `presets`; the skill and the server's
+  instructions tell agents never to report such a flow's answer as the usual
+  server's.
+- **`activate_preset` takes every kind.** It is not marked read-only, and is
+  asked about by clients that ask before such tools; a client that allowed
+  `"mcp__reqcove"` wholesale allows it too. Allowing it without a prompt
+  allows these kinds too (the guide's [example](guide.md#allow-the-tools)
+  keeps it under `ask`).
+- **The same bounds and visibility as mock presets**: at most 5 minutes each
+  time (no `times` for these kinds), only on this computer, never over
   `--mcp-http`, off after a reload or a restart, both clocks.
-- Not tried: what an app does with connections it opened before a preset
-  turned on or off (pooled HTTP/1, HTTP/2): it may keep using them, so a
-  switch may not take effect at once, or may last past the end. From reading
-  code: rules apply when a request starts, so a WebSocket, a stream or a long
-  upload begun while a `map_remote` or `resolve` preset was on stays with its
-  target after the preset is off, past the 5 minutes.
+- **Not tried:** what an app does with connections it opened before a preset
+  turned on or off (pooled HTTP/1, HTTP/2). It may keep using them, so a
+  switch may not take effect at once, or may last past the end.
+- **From reading the code:** rules apply when a request starts, so a
+  WebSocket, a stream or a long upload begun while a `map_remote` or
+  `resolve` preset was on stays with its target after the preset is off, past
+  the 5 minutes.
 
-## Rules (`--rules`)
+Checked: tests (the 502 for a URL rewritten outside the target shown; a
+preset's header applied after the plain rules); an E2E test over plain HTTP
+(what `resolve` keeps).
 
-Rules are yours, read from a file when mitmproxy starts; no tool changes them.
-With `run --rules-reload` the file is also read again whenever it
-changes, so whatever can write it (any process as your user, an agent with file
-access included) can then change where the devices' requests go while `run`
-runs; without it, the file is read only when mitmproxy starts (with `run`, or
-when reqcove restarts it after it exits).
-`modify_headers` takes header names that are HTTP tokens and values without
-a line break or NUL (they would start a header of their own on the wire); a
-value file read again for a later flow and given one since is dropped from
-that flow's headers. `resolve` names are host names only, so nothing in them
-reaches the log as control characters (tests).
-A request's Host is the app's to write, and mitmproxy connects where the app
-dialled whatever it says, while rules (`~d`) read the Host. So since v1.0 a
-header a rule sets (`modify_headers`, presets too) goes only to the host the
-request names, and one set on a response only to that host's response: when
-no `map_remote` or `resolve` sends the request on, the rules apply only if
-the address dialled is the Host as the app sent it (read before any rule), or
-over HTTPS that Host is the TLS name mitmproxy checks the server's
-certificate for (not through `--upstream-proxy`: mitmproxy then checks the
-proxy's certificate, and the server's is the proxy's to check), or its addresses, as this computer looks them up, include
-it. Nor do they apply to such a request when a rule changes its Host: a
-rule's own Host would vouch for itself (a token rule for the Host, then one
-setting Host to the address dialled), and where a request goes is for
-`map_remote` and `resolve` to change. A `map_remote` rule that changes only
-the path, the host staying the same, sends the request on as any other does:
-mitmproxy then connects to that host by its name, looked up on this
-computer, not to the address the app dialled, and the header rules apply
-(tried in mitmproxy's Python on made requests, not over the network).
-Otherwise the request goes on as the
-app sent it, and its response as the server sent it, their rewrites saying
-the rules were not applied (`explain_rules` names the condition). Tested with
-real mitmproxy: a stand-in server dialled with another host's Host gets no
-rule's value, over plain HTTP and over HTTPS with a valid certificate for its
-own name, nor with a rule setting Host to its address, and the app gets no
-response rule's value from it; a server without a certificate for the name
-asked gets no request (mitmproxy's own check); a request to its Host's
-address, and one a `resolve` rule sends on, get them, both ways. Names are
-compared in IDNA's ASCII form (HTTP/2's `:authority` comes decoded, SNI
-does not; tested on mitmproxy's own made flows, not over the network); a
-Host with İ, ı, ſ or K (as such or in `xn--` form) gets no rules, as `~d`,
-case-insensitive, matches it to an ASCII name it is not (`mysıte.com` to
-`mysite.com`; tested the same way). Each
-name is looked up on a thread of its own, one lookup at a time per name, 16
-names at most at once, and its answer kept 30 seconds: a stalled resolver
-leaves the loop's executor free and the process able to exit (tested in
-mitmproxy's Python with a lookup that never answers, not in a running
-mitmdump), and a request whose Host takes over 3 seconds, or comes while
-16 names are being looked up, goes without the rules. Up
-to v0.8, any app on a carried device, an allowed LAN address or any user of
-this computer through `--local-proxy` could have a rule's header sent to its
-own server so (reproduced with mitmproxy 12.3.1 through its SOCKS5 port; the
-other ways from reading code). This computer's lookup can
-disagree with the device's (the exit node asks `--dns`, 1.1.1.1 by default,
-and a CDN may answer resolvers differently): such a request then goes without
-the rule; a `resolve` rule for the name avoids that (from reading code, not
-tried with a CDN), except through `--upstream-proxy`, which takes no
-`resolve`: there such a request stays without the rule. Sending such a request to its Host instead was not done:
-mitmproxy would look the name up itself, past the exit node's refusals of this
-computer and the LAN (from reading its code).
-`map_remote` and `resolve` make mitmproxy connect, from this computer, where the
-rule says, this computer and the LAN included: the exit node's refusal of those
-addresses is about the devices' own connections, and a rule opens its target to
-every app on the carried devices that sends a request for the rule's host (a web
-page included). `resolve` takes IPv4 addresses only, never a name to look up, and
-refuses `0.0.0.0/8`, link-local, multicast and reserved ranges, Tailscale's
-100.100.100.100 and the cloud metadata addresses 169.254.169.254 and
-100.100.100.200; `map_remote` takes whatever it is given. A `resolve` rule
-without a port takes the request's port (the app's, or a `map_remote` URL's). TLS to a `resolve` target is
-checked against the rule's name, with mitmproxy's own CA list (certifi, from
-reading its code), so a request goes on only to a server with a certificate for
-that name (tried: one with a trusted certificate for another name gets a 502); plain HTTP is not checked. Each
-`resolve` name needs its own address: mitmproxy reuses a connection by address,
-so names sharing one would share one name's check, and are refused. A
-`map_remote` to a `resolve` target's address shares its connections, both ways:
-a request of one can ride on a connection made, and checked, for the other, and a
-failed connection fails both for as long as the app's connection lasts.
-A request a rule fails on (say, a `map_remote` making a bad port) is answered with
-a 502 rather than sent on as it was (a test), and a `map_remote` whose replacement
-cannot work at all stops `run` at start.
-A rules file from someone else is code: it can send your apps' requests, cookies
-and tokens included, anywhere.
-`reqcove mock add` writes a mock into a rules file for you, and runs only when
-its input and output are a terminal: a help against an agent running it
-unasked, not a guarantee (an agent that can run commands can give it a
-terminal, or edit the file itself). Writing rules stays yours: the skill tells agents never to run
-it. To have `run` check the file first, it reads `run`'s SOCKS5 password from
-the state directory (0600, your user); `run` checks the file it is pointed at
-without taking it (a test).
-A `mock` answers in the site's name: the app, and a web view's page, take it
-as the site's own answer (a script in it runs in that origin, a redirect is
-followed). It is for hosts in `--allow-hosts` only (refused otherwise), and its
-header values are checked as `modify_headers`'s are. The records say a flow was
-mocked, with the rule's number and status, never its text. A request a mock may
-answer is held whole until its body is in (the operation is in it): at most
-1 MiB when it says its length. A GET without one is held only while it has no
-body: over HTTP/2, one that sends a body anyway gets a 502 at its first body
-byte and its body is not held, as for `map_local`; one whose stream ends with
-an empty DATA frame is answered (until v0.8.0 the body was kept whole; tested
-with Go's HTTP/2 client, the stream's end as mitmproxy tells it from reading
-its code). While it waits for that byte or the stream's end, none of its body
-is held and no server is connected to (from reading code). With a mitmproxy
-other than 12.3.1 (another `--mitmproxy-spec`), a stream not ended with its
-headers gets the 502 at once (from reading code). No MCP tool writes a rule: a mock comes from the file the user wrote, and
-over `--mcp-http` an agent has no way to the file at all.
-`list_rules` and `explain_rules` (read-only, since v0.7) show each rule by kind
-and number with its preset, and only what is derived from it: a mock's method,
-URL, operation, status, delay and fault, a `map_remote` target's scheme and host
-(or "path only", or "not shown" when the rule does not write it out), a
-`modify_headers` header name and direction, a `resolve` name and address; never
-a filter, a regex, a header value, a body or a file's path (an E2E test with
-marker strings; a `map_local` rule shows its number only). `explain_rules` runs
-the request path's own code on a request it makes up, never sent, with a copy of
-the presets' state, so it uses no preset's count and turns none on or off
-(tests). Like the preset tools they are on `run`'s local socket and `reqcove
-mcp` only, never over `--mcp-http`: the targets say where the devices' requests
-can be sent.
+### A flags file (`--config`)
 
-## An upstream proxy (`--upstream-proxy`)
+`run --config FILE` (for `brew services` and `reqcove service install`) takes
+`run`'s flags from a file: what can write that file decides the next start's
+flags.
 
-Decrypted HTTP(S) requests then go on through that proxy, and Reqcove's mitmproxy
-does not connect to their servers itself (connection strategy lazy; a test counts
-the server's connections). Other protocols over TLS to an allowed host still go
-straight to their servers (from reading code; a review saw it). What changes:
+- The file must be yours and readable by you only (refused otherwise): it
+  may hold `--mask-values` patterns.
+- Errors name its lines, never a value.
+- Five flags are refused in it and stay on the command line: `--no-redact`
+  (takes masking off), `--web` (shows traffic unmasked), `--allow-hosts '*'`,
+  also through `@FILE` (records every site), `--rules-reload` (lets a file
+  change where requests go while running) and `--lan` (an open proxy on the
+  LAN).
+- Others, such as `--upstream-proxy` or `--rules`, are allowed there.
 
-- The proxy sees the requests and responses unmasked, and Burp, for one, keeps them
-  in its project, on disk. Its own MCP server or extensions give agents what
-  Reqcove's tools hold back, and the ability to send requests.
-- Checking the real server's certificate is the proxy's job: with the proxy's CA
-  (`--upstream-ca`, or Burp's fetched at start), Reqcove trusts only that CA, so it
-  checks the proxy, not the server. Burp's is fetched over plain HTTP from the
-  proxy's own listener (`http://127.0.0.1:PORT/cert`, no name looked up, so no
-  other server can answer), only when the proxy is on this computer, and only a
-  CA named "PortSwigger CA" is taken (a test; Burp answered there, checked with
-  curl). Burp, by
-  default, did not check (tried, a review).
-- Where the proxy connects is the proxy's choice. Reqcove hands it the address the
-  exit node allowed, but Burp connects by the name in the SNI, looked up again on
-  this computer (tried, a review): a name that resolves into this computer's LAN
-  reaches it, past the exit node's refusal. A site the iPhone visits can make
-  its own name do that only for the proxy's lookup (DNS rebinding: from reading
-  code, not tried), so keep `--allow-hosts` narrow; `run` warns when it is `'*'`.
-  `resolve` rules are refused with `--upstream-proxy` for this reason.
-- The CONNECT lines (an IP address and port) and plain HTTP reach the proxy
-  unencrypted: keep it on this computer, or on the tailnet.
-- The flag is read at start; no tool changes it.
+Checked: tests (the refusals).
 
-## The page (`--ui`)
+## Prompt injection
 
-`--ui` serves a read-only page of the records on the node's port 80, with what the
-MCP tools return, masked the same way. Who can read it (each a test):
+What the records hold was written by others. Response bodies, and also
+response headers, status reasons, redirect targets and error messages, are
+written by remote sites and may contain text meant to steer the agent. An app
+chooses its User-Agent, its TLS names and the JSON keys it sends, and a
+tailnet peer its device name.
 
-- Only your own devices on the tailnet (logged in as the same user as reqcove's
-  node, and untagged) and the `--device` devices, checked when a connection opens
-  and on every request; others get nothing.
-- Your own devices see every device's flows, with the device's name. A `--device`
-  device of another user sees only its own flows, in the list and by ID, and its
-  own counts and next steps (not the other devices', nor their names).
-- Only a browser holding the token: the link `run` prints sets it as an HttpOnly,
-  SameSite=Strict cookie kept 400 days. Another app on the same iPhone can reach
-  the port, but not read the page without the token. The token is kept in
-  `ui-token` in the state directory (0600) and is the same at each start, so a
-  link, a bookmark or a cookie keeps working until you delete that file and start
-  again; then they get 403. Your own devices and the `--device` devices reach the
-  page; a link that leaks works only from those.
-- Only requests that name the node (its MagicDNS name or tailnet address) in
-  `Host`: a site the iPhone visits cannot point its own name at the node and read
-  the page as its own (DNS rebinding).
-- GET and HEAD only, also when the request comes through the Remote Proxy; the
-  search form goes to the page itself (CSP `form-action 'self'`), and Clear only
-  hides flows from the list (a `since` in its URL), deleting nothing. The
-  page's only script is its own `/app.js` (the Content-Security-Policy allows no
-  other, and nothing inline), which asks `/flows.json` for the list once a second
-  and puts it in with DOM calls and `textContent` only, so what sites wrote into
-  headers and bodies stays text (a test runs it over a stand-in DOM in node); it is not cached
-  (`no-store`). Pages still go through Safari: its history may keep the URLs of
-  the flow pages viewed, and the first link with the token (useless without the
-  device; it lasts until `ui-token` is deleted), and the URLs of searches, with
-  what was searched (with `--no-redact`, a search for a secret's value keeps it
-  there). A JSON body nested deeper than 32 levels is
-  shown as it is, not indented (indenting deep nesting takes memory that grows
-  with the square of the depth).
+What an agent can do:
 
-The token appears only on `run`'s terminal and through `reqcove links`, as the
-login URL does: never in a log line or the MCP tools.
+- **Reqcove's tools read, with one exception.** An agent can turn on, for at
+  most 5 minutes each time (no cap on turning it on again), a rule you marked
+  as a preset: a mock ([Mock presets](#mock-presets)), or a `map_remote`,
+  `modify_headers` or `resolve` rule, which changes what requests carry or
+  where they go
+  ([those presets](#map_remote-modify_headers-and-resolve-presets)). It turns
+  on only what you wrote.
+- `add_marker` writes too, but only a marker in Reqcove's memory.
+- No tool writes or changes a rule; with no presets, nothing an agent calls
+  changes traffic. (`--rules` are yours, from a file, at start.)
+- **The agent may also hold other tools**: a shell, file writes, the
+  network, other MCP servers. Text a site wrote into a record can try to
+  steer it into using those (send a cookie somewhere, edit a file). Reqcove
+  cannot stop that from its side; your agent's own settings can.
 
-## mitmweb (`--web`)
+What to do:
 
-mitmweb listens on 127.0.0.1, with a password kept in `web-token` in the state
-directory (0600; the same at each start until you delete that file and start
-again) and passed through a 0600 file, never the command line. A link with it
-(`?token=`) opened by a browser through the node is answered, once mitmweb
-accepts it, with a redirect to the same URL without it (a test, with a stand-in
-for mitmweb), so the password does not stay in the address bar; whether
-Safari's history keeps the first URL is not checked. On a terminal `run` prints
-the links with the tokens (they stay in its scrollback, valid until the token
-files are deleted); off one it prints none. `reqcove links` prints them again,
-from `links` (0600) in the state directory. mitmweb's
-cookie does not outlast its restart (it signs it with a key made at each start,
-from reading its code), so after one the link is needed again. The node also relays
-its port 8081 to it for your own devices on the tailnet (the same user, untagged:
-not a `--device` device of another user, nor anyone else; checked when a
-connection opens and on every request, by the node's name or address in `Host`).
-The password still guards it, and it gives what it gives on this computer: with
-it, mitmweb's options can be changed (scripts included), which runs code on this
-computer. The link with the password is printed on `run`'s terminal and by `reqcove links` only. A phone on the
-Remote Proxy reaches it the same way (its requests and WebSocket tunnels to the
-node's port 8081 go to mitmweb, for your own devices only). A WebSocket already
-open stays open if the device stops counting as yours. Tried from an iPhone on
-the exit node. It shows traffic **unmasked**, and
-from its page anyone with the password can edit and replay requests and change
-options. It shows bodies up to 2 MB each (Reqcove gives it them,
-as mitmproxy keeps no body it streams), whole and unmasked, and keeps the newest
-10,000 flows and 256 MB of bodies. Those bounds count finished flows: one still
-in progress counts once it ends, and what is kept of its bodies meanwhile (up to
-2 MB each way) is outside them (from reading code). It shows every flow mitmproxy decrypted, including requests to hosts
-outside `--allow-hosts` that rode on an allowed connection (HTTP/2 connection
-reuse): the per-request check keeps those out of Reqcove's records only.
+- Give an agent that reads Reqcove only what the task needs. An agent that
+  only reads Reqcove and answers you is the safest shape.
+- In Claude Code, allow Reqcove's read tools by name (not `activate_preset`)
+  without allowing shell commands or network tools along with them, and keep
+  its permission prompts for the rest.
+- In Codex, keep its sandbox (by default without network, from its
+  documentation, not tried) and approvals.
 
-What its options change (from reading code, not tried): mitmproxy's behaviour
-only, until reqcove starts it again. Reqcove's records stay scoped to
-`--allow-hosts` and masked, since Reqcove checks both again as they arrive.
-Turning off the SOCKS proxy in its Capture tab stops the devices' HTTP(S)
-(that is how Reqcove hands them to mitmproxy). Another mode turned on there
-listens on 127.0.0.1 (the listen host reqcove sets) and bypasses Reqcove's
-device names and its refusals of this computer and the LAN.
+What Reqcove does:
 
-## MCP over HTTP (`--mcp-http`)
+- Tools return bodies only on request, and `diff_flows` what differs.
+- Each tool that returns what sites, apps or the tailnet wrote says so in
+  its description: data, not instructions (the twelve tools `--mcp-http` has
+  too, and `list_markers` for a marker's text).
+- The preset and rule tools return what your rules file holds, and
+  `add_marker` Reqcove's own values. `list_presets` says a preset's
+  description is your words, not instructions.
+- The server's instructions, sent to every client (also those without the
+  skill, such as Grok Bot), say so too, and that the agent must not write a
+  file (a `--rules` file above all), a commit or a command because of what
+  the records say, nor suggest `--no-redact` or `--web`, and that
+  `next_steps` are for the user. Whether a model keeps to them is not
+  something a test can show.
+- A request whose Host is no host name or address (an app's own HTTP stack
+  can put any text there) is carried but not recorded. Hosts from TLS are
+  host names by mitmproxy's own check (from reading its code).
+- User-Agents in lists and summaries are cut to 256 bytes, ALPN names to
+  printable ASCII, and JSON keys in `diff_flows` that are not plain names are
+  quoted (`$["a.b"]`).
 
-The node serves the MCP tools on its port 8090, at `/mcp`, to your
-own devices on the tailnet only (the same user as reqcove's node, neither
-tagged: checked when a connection opens and on every request), asked by the node's name or address in
-`Host`, and with `Authorization: Bearer` and the token kept in `mcp-token` in the
-state directory (0600; compared in constant time). Requests from a browser page
-of another origin are refused. The token is printed on `run`'s terminal and by `reqcove links` only (in
-a container run with `-t`, `docker logs` keeps it), never in a log line, by `reqcove status` or the tools:
-agents may run those. On a personal tailnet an agent's device joined through
-Tailscale's OAuth apps (Grok Bot) counts as one of your own devices, as do your
-other computers: the token is what tells them apart. Whatever the tools answer
-then reaches that device and its model provider (for Grok Bot, xAI's cloud),
-and the agent keeps the token until you delete `mcp-token` and restart `run`.
-The tools are the same as over `reqcove mcp` but the preset ones,
-`list_rules` and `explain_rules`, and the marker tools (`add_marker`,
-`list_markers`), which `--mcp-http`'s own server does not have
-(a test), and give the same masked records. Its `capture_stats` and `status`
-leave out the `resolve` rules and the upstream proxy's address (a test), but
-not `rules_error`: when a `--rules-reload` change fails on a `resolve` line,
-the error (and `status`'s `next_steps`, which quotes it) can name that line's
-host and address (found by a review; from reading code).
-`run` logs each tool call over HTTP with the calling device and the tool's
-name (not its arguments), and each request with no token or a wrong one.
-Each device may call about 10 times a second (30 at once); past that it gets
-`429 Too Many Requests` for the moment, logged once a minute (a test): a
-runaway agent on one device does not keep `run` busy for the others. A call
-ends when its caller disconnects (a test).
-Checked with tests (another user's device refused over a real tailnet; the
-token, `Host` and origin checks), from this Mac over the tailnet, and with
-Grok Bot.
+What a record cannot prove:
 
-## The local proxy (`--local-proxy`)
+- **A flow's host** is the request's Host, which the app chooses. Over plain
+  HTTP on a connection to any address, and over HTTPS on one to an allowed
+  host, it can name an allowed host, and the record shows that one. The
+  request still goes where the connection went (what that means for rules:
+  [Rules](#rules---rules)).
+- **A marker's `source`** (`cli`, `mcp`) is the channel, set by Reqcove from
+  how the call came (`reqcove mcp` never passes on an agent's client name),
+  not proof. An agent that can run commands on this computer can claim `cli`,
+  by running `reqcove mark` or by connecting to `run`'s socket (same user)
+  itself, and then push out the user's 100. An agent through `reqcove mcp`
+  gets `mcp` and cannot.
+- **A marker's text** is the user's or an agent's words: data, never
+  instructions (the server's instructions say so).
 
-An HTTP proxy on 127.0.0.1:8082 for this computer's own apps (the
-iOS Simulator), with no password: any process on this computer, of any user, can
-use it, and what it sends to `--allow-hosts` hosts is recorded as the device
-`local`. Its apps reach the LAN, VPNs and the tailnet as they would without it,
-by this computer's own lookups. It refuses IPv6, and a name that leads to this
-computer itself (loopback, its own addresses) or to a link-local address unless
-this computer's `/etc/hosts` gives it (a test): a page in a browser here could
-otherwise reach this computer's services through it by pointing its own name
-there (DNS rebinding). A page could still point its name at a LAN, VPN or
-tailnet address, and the proxy lets it on (so that names inside a VPN keep
-working). A browser going direct faces the same, but through the proxy it does
-not see the address, so its own protection for private networks (Chrome's
-Private Network Access) does not apply: keep `--local-proxy` on only while you
-need it. This computer, the LAN and the tailnet are
-in the system proxy's exceptions, so apps reach them directly, as without
-reqcove. Apple's hosts are not decrypted. On macOS, `run` points the system's web
-proxies at it while it runs, keeping what they were in the state directory
-(0600) to put back when it stops (also on SIGHUP), at the next start, or with
-`reqcove cleanup`; it never saves over settings not put back yet, and cleanup
-will not delete the state while it holds them. If reqcove is killed outright,
-apps here that use the system proxy cannot connect until they are put back.
-Reqcove never makes this computer trust its CA; `run` prints the command (TLS
-only, for this user). Once trusted, the CA's private key in `<state>/mitmproxy/`
-can impersonate any HTTPS site to this computer too, not only to the devices:
-keep the state directory, and its copies and backups, private, and remove the
-trust when done (`reqcove status` and `cleanup` print how, by its fingerprint).
-Tried with the real `networksetup` (set, and put back at Ctrl-C) and an iOS 27
-Simulator.
-
-## LAN mode (`--lan`)
-
-`run --lan` starts no tailnet node. An HTTP proxy listens on one address of
-this computer, that of one LAN interface (never 0.0.0.0, never a VPN's tunnel),
-on `--proxy-port`. There is no password; who may use it is decided here, by
-address:
-
-- A connection from outside that interface's network is closed as it is
-  accepted, as is one from an address not allowed: nothing is recorded, and
-  each new address is logged once, until the list of addresses seen (10,000)
-  fills and is emptied: then once more, and run asks again (tests). Each
-  request on a kept connection is checked again, so a `reqcove lan deny`
-  refuses new requests within two seconds; an HTTPS tunnel already open goes
-  on until it closes, or until no bytes went either way for 15 minutes. An
-  address keeps at most 256 tunnels open at once (tests, with smaller values).
-- The allowed addresses are kept in `<state>/lan-allowed` (0600, with when
-  each was allowed). They change through `reqcove lan allow|deny`, or through
-  run's question on its own terminal. The `lan` commands refuse to run unless
-  stdin and stdout are a terminal, as `reqcove links` does: an agent's shell
-  usually has neither (a help, not a guarantee: a script can give it one), and
-  no MCP tool changes the list. The question is asked only while run is the
-  terminal's foreground job, and input typed before it is dropped first, so an
-  earlier Enter or `y` does not answer it (tests through a seam; the terminal
-  calls themselves not tested).
-- An address is not a device: whoever has an allowed address later is allowed
-  too, on this network or on another with the same prefix (a café's
-  192.168.1.0/24 as your home's). The ready block, `reqcove status` and
-  `reqcove lan list` show the list.
-- `--lan` is refused in a `--config` file, so `brew services` and
-  `reqcove service install` (which refuses the file at install too) never
-  keep an open proxy running.
-
-What an allowed address reaches through this computer (tests): ports 80 and
-443 only (others refused, before any lookup), on public addresses, from your
-address; private ranges (10/8, 172.16/12, 192.168/16, 100.64/10), those behind
-this computer's VPN included, only by a name written exactly in
-`--allow-hosts` (no `*`). Never, even by an exact name: this computer (loopback,
-its addresses), link-local addresses, the network the proxy is on, this
-computer's other networks numbered from public space, special-purpose ranges,
-IPv6. Names are looked up with this computer's resolver, `/etc/hosts` first.
-`map_remote` and `resolve` targets are dialled by mitmproxy, outside these
-checks: a rule sending an allowed host to a server on this computer serves the
-LAN clients' requests too.
-
-The CA at `http://mitm.it` comes over plain HTTP, which anyone else on the LAN
-can swap. The ready block names the CA file, to send by AirDrop instead, and
-prints its SHA-256 as iOS shows it in the profile's More Details (checked on
-iOS 27.3, 2026-11-14: it matched). Use LAN mode on a network you trust, and
-stop it when done. Tried with an iPhone on a home Wi-Fi (iOS 27.3,
-2026-11-14): refused until allowed, then recorded; refused again after
-`reqcove lan deny`.
-
-## A computer shared with other users
-
-Reqcove trusts your OS user, not the others on the computer. File modes keep
-them out: the state directory is 0700, the files in it 0600, and so are the
-three sockets there (the MCP tools', mitmproxy's two), so another user
-cannot read the records, call the tools or take the keys (from reading code,
-where each is made; not tried with a second user). What another user can
-still see or reach:
-
-- `ps`: `run`'s and mitmproxy's command lines, with the device names, the
-  hosts in `--allow-hosts` and `--pass-hosts`, the paths of the rules file
-  and the state directory, the upstream proxy's address, and any
-  `--mask-names` or `--mask-values` given there rather than in an `@FILE`
-  (from reading code). Never the SOCKS5 password, the tokens or mitmweb's
-  password: those go in 0600 files.
-- `--local-proxy`: its port takes any user's requests, and records those to
-  allowed hosts as `local` ([above](#the-local-proxy---local-proxy)).
-  mitmproxy's SOCKS5 port and mitmweb's are on 127.0.0.1 too, behind their
-  passwords ([below](#other-processes-on-this-computer)).
-- The node's ports, when this computer itself is on your tailnet as you:
-  the node tells devices apart, not this computer's users, so another user's
-  programs here come to `--ui`, `--web` and `--mcp-http` as one of your own
-  devices, and to the exit node and the Remote Proxy when this computer is a
-  `--device`. The tokens are what keep them out of the first three (from
-  reading code; not tried with a second user).
-- What you write outside the state directory: a HAR file gets your shell's
-  mode, usually readable by others, and `/tmp` is everyone's.
-  `(umask 077; reqcove har > FILE)` makes a new file 0600 (tried with zsh).
-  A service's file (the LaunchAgent, the systemd unit) is 0644: it holds
-  paths, no token (from reading code).
-
-Not covered: root, and anyone who can become your user.
-
-## Other processes on this computer
-
-mitmproxy's SOCKS5 port is on 127.0.0.1, protected by a password made at each
-start (kept in a 0600 file, never in process arguments). Only reqcove knows it, so
-another local process can neither use the proxy nor pose as a device. reqcove
-binds the port itself, once per `run`, and hands the listening socket to each
-mitmdump it starts: mitmproxy (12.3.1) has no option for that, so reqcove's
-launcher (`mitm.py`, also used with another `--mitmproxy-spec`) has it serve on
-that socket instead of binding its own. When mitmdump dies, reqcove starts it
-again (visible in `ps`) while the port stays held, so no other process can take
-127.0.0.1 on that port in between, nor before the first mitmdump. A connection
-made meanwhile waits in the socket's queue for the next mitmdump; the devices'
-connections wait (15 seconds at most, then fail) until its addon says hello.
-mitmproxy runs with `proxyauth=any` and only reqcove's addon checks the
-password, so a connection queued there must not be read before the addon is
-loaded: the launcher has mitmproxy make its server on the socket without
-accepting, and the addon starts accepting when it is loaded, just before its
-hello. Tested with real mitmproxy (through uvx, macOS): two connections queued
-while mitmdump is down, with a wrong password sent all at once and step by
-step, are refused, and nothing they ask for is carried or recorded. With the
-launcher accepting at once and the addon's loading delayed 1.5 seconds (by
-hand), both were accepted and the test fails; without that delay, mitmproxy
-(12.3.1) happened to load the addon before reading the first connection, and
-refused them too.
-Tests: while mitmdump is down, and after reqcove gave up on it, binding the
-port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
-Linux too); with real mitmproxy (from the lock and through uvx, macOS), the
-same while it restarts, and a request sent then is carried and recorded by
-the next mitmdump. Were the launcher's change missed (a mitmproxy that binds
-another way), its own bind fails on the held port and it exits before its
-hello, never ready: tried with mitmproxy 12.3.1 and the change made too late
-(address already in use).
-Tried on macOS as the same user: binding 127.0.0.1 on the port fails even
-with SO_REUSEADDR and SO_REUSEPORT; binding 0.0.0.0 on it works with
-SO_REUSEADDR, but connections to 127.0.0.1 still reach the more specific
-socket, reqcove's, as they did before. Another user was not tried: as both
-kernels document it (not checked here), a second socket gets that address
-only if both set SO_REUSEPORT (on Linux, only for the same user), which
-reqcove's never does. Not covered: processes of your own user, which can read
-the password file anyway, and root.
-
-The state directory is checked itself, not the directories above it. Keep it
-(and `--state`) under directories only you can write: someone who can rename
-entries in a parent can swap the state directory for their own.
+Checked: tests (the tools' descriptions; clients get the instructions over
+stdio and HTTP, not their wording; a request with such a Host is not
+recorded; an agent through `reqcove mcp` gets `mcp`).
 
 ## mitmproxy's own code
 
-mitmproxy and its dependencies (44 packages) come from a lock file built into
-reqcove (`internal/capture/mitm.py.lock`): `run` writes it and a small
-launcher into the state directory and starts mitmproxy with
-`uv run --locked --script`, which installs exactly the files the lock names
-and checks each one's hash (tried: a lock with one package's hashes changed was
-refused, with an empty cache and with a full one). Plain `uvx`, which checks no
-hash even when given them (tried), is used for another `--mitmproxy-spec`,
-and for a `--uvx` whose file is not named `uvx` (a wrapper, whose `uv` is not
-known), from releases before a fixed date (`--exclude-newer`). CI
-checks that the lock matches the launcher and audits it for known
-vulnerabilities (pip-audit); the first audit found three in tornado 6.5.10,
-mitmweb's server, which mitmproxy 12.3.1 caps at that version: the lock
-overrides it, and pins 6.6.1: 6.6 fixed those three, and 6.6 itself has
-CVE-2026-126347 (Reqcove's `--web` test passes with 6.6.1; mitmproxy's own
-tests were not run). Through a `--uvx` wrapper, the default mitmproxy gets the
-lock's override too, with tornado from the lock's date: 6.6.1 (tried on
-2026-11-14 with uv 0.13.4: the other packages came at the lock's versions,
-and the `--web` tests passed), its hashes unchecked; up to v0.8.0 it got 6.5.10. Another
-`--mitmproxy-spec` gets the tornado its mitmproxy asks for, without the
-override (from reading code): for mitmproxy 12.3.1, 6.5.10 (tried), whose
-vulnerabilities are in mitmweb's server, which `--web` runs.
+- mitmproxy and its dependencies (44 packages) come from a lock file built
+  into Reqcove (`internal/capture/mitm.py.lock`). `run` writes it and a small
+  launcher into the state directory and starts mitmproxy with
+  `uv run --locked --script`, which installs exactly the files the lock names
+  and checks each one's hash.
+- Plain `uvx` checks no hash, even when given them. It is used for another
+  `--mitmproxy-spec`, and for a `--uvx` whose file is not named `uvx` (a
+  wrapper, whose `uv` is not known), from releases before a fixed date
+  (`--exclude-newer`).
+- CI checks that the lock matches the launcher and audits it for known
+  vulnerabilities (pip-audit).
+- The lock overrides one version. mitmproxy 12.3.1 caps tornado, mitmweb's
+  server, at 6.5.10, in which the audit found three vulnerabilities. The lock
+  pins 6.6.1: 6.6 fixed those three, and 6.6 itself has CVE-2026-126347.
+  mitmproxy's own tests were not run with it.
+- Through a `--uvx` wrapper, the default mitmproxy gets the lock's override
+  too, with tornado from the lock's date: 6.6.1, its hashes unchecked.
+- Another `--mitmproxy-spec` gets the tornado its mitmproxy asks for,
+  without the override (from reading the code): for mitmproxy 12.3.1,
+  6.5.10, whose vulnerabilities are in mitmweb's server, which `--web` runs.
 
-## The exit node's DNS
+Checked: tried (a lock with one package's hashes changed was refused, with an
+empty cache and with a full one; `uvx` given hashes checked none; mitmproxy
+12.3.1 as another `--mitmproxy-spec` got tornado 6.5.10). Tried on 2026-11-14
+with uv 0.13.4: through a wrapper the other packages came at the lock's
+versions, and the `--web` tests passed. Reqcove's `--web` test passes with
+tornado 6.6.1.
 
-The exit node answers DNS over HTTPS (Tailscale's PeerAPI) for devices that use it.
-It also answered this computer, which was not one of `--device`, when tried: other
-devices of the tailnet that may use the exit node can resolve names through it.
-They ask the same upstream as your devices: `1.1.1.1` by default. With `--dns system`,
-or a LAN resolver in `--dns`, that is your router's or your company's resolver, and
-they can look up names only it knows. (From reading Tailscale's code: it answers any
-peer the tailnet policy lets use an exit node.) Reqcove does not record DNS.
+## Your responsibilities
 
-From this computer to the upstream, DNS is plain, unencrypted DNS, for the exit
-node and for the Remote Proxy alike, and answers are not checked with DNSSEC
-(from reading code). So the network this computer is on (its Wi-Fi, the ISP) sees
-the names the devices look up, and someone on that path can answer falsely.
-Off the path that is hard: each query has a random ID and its own random port,
-and answers from any other address are dropped. A false answer gets little
-(from reading code, not tried): HTTPS still has to show a certificate for the
-name (mitmproxy checks it for decrypted hosts, the phone itself for the others),
-and an answer pointing at this computer, its LAN or loopback is refused like any
-connection there (tested). Plain HTTP can be sent elsewhere, as it can on any
-network. To hide the names, a local DNS-over-HTTPS relay could serve as
-`--dns 127.0.0.1:PORT`; that has not been tried.
+Reqcove leaves these to you:
 
-## What the devices can reach
+- **Consent.** Carry and record another person's device only with their
+  consent ([below](#other-peoples-devices)).
+- **The CA.** Remove its profile from each device when you stop, and keep
+  the state directory, its copies and its backups to yourself
+  ([The CA's private key](#the-cas-private-key),
+  [What `reqcove cleanup` leaves](#what-reqcove-cleanup-leaves)).
+- **A shared computer.** Other users can still see and reach some things
+  ([A computer shared with other users](#a-computer-shared-with-other-users)).
+- **What the agent may read and do.** Choose `--allow-hosts` narrowly, and
+  give the agent only the tools the task needs
+  ([Prompt injection](#prompt-injection)).
 
-Public IPv4 addresses. Reqcove refuses this computer's own addresses (those of every
-interface) and the networks those interfaces are on (so a LAN with public addresses,
-or a cloud server's subnet with its neighbours, is refused too), loopback, private
-and link-local ranges, the tailnet's range, multicast and the other special-purpose
-ranges, and all of IPv6, on the exit node and on the Remote Proxy. Public networks
-reached only through a route (behind a router, not on an interface's subnet) are
-not refused (from reading code). Pings (ICMP echo) follow the same rules: one
-from a device not in `--device`, or to a refused address, is dropped (tests send
-pings to 127.0.0.1 from both); a listed device's ping to a public address is
-answered by pinging from this computer (from reading code).
+### Other people's devices
 
-While a device's UDP flow lasts (2 minutes after its last packet, 30 seconds for
-DNS), only the address and port it was sent to can answer through it; datagrams
-from anyone else that reach its port on this computer are dropped (a test sends
-one from this computer).
+`--device` can name a device that is not yours, and LAN mode carries whatever
+address you allow.
 
-What it does not catch:
-
-- **Your network's public address.** It is not an address of this computer's
-  interfaces. A device that connects to it may reach what the router forwards
-  (port forwarding), or, on a cloud server, this computer. Not tested.
-
-## The login URL
-
-While the node is not logged in, `reqcove run` prints a login URL. Whoever opens it
-first puts this node in their own tailnet, so it is printed on `run`'s terminal
-only: the `status` tool, and with it the agent and its model provider, says where
-to find it but does not carry it.
-
-- `run`'s log lines do not carry it, nor the `--ui`, `--web`, `--mcp-http` tokens:
-  every line `run` logs (and the error it exits with) goes through one filter that replaces the tokens and any URL shaped
-  as a control server's login URL (Tailscale's `/a/<hex>`, Headscale's
-  `/register/…` and `/register?key=…`), and the
-  login URL itself once `run` has seen it. Under `--verbose` that covers tsnet's
-  own lines, which print it before `run` learns it (a test reads them from a test
-  control server). The filter knows those shapes only: a control server whose
-  login URL has another shape is masked from `run`'s first poll on (within 3 s).
-- Off a terminal (a service, `docker logs` without `-t`, an agent's shell), `run`
-  prints neither the URL nor the links, only that `reqcove links` prints them.
-- `login-url` (while login is pending) and `links` (the ones with tokens, once
-  `run` is ready) are kept in the state directory, 0600, and removed when `run`
-  starts and when it stops (after a crash, until the next start: `reqcove links`
-  does not check that `run` is up). 0600 keeps other users out, not a program running as you:
-  an agent with a shell can read them, as it can the node's key, the tokens and
-  the CA's key in the same directory. tsnet also keeps its own lines, the login
-  URL among them, in a buffer file there (`tsnet/tailscaled.log*.txt`, 0600),
-  also without `--verbose` (from reading code).
-- `reqcove links` refuses when its output is not a terminal: a help against an
-  agent running it, not a guarantee (a program can give it a terminal). Claude Code's
-  `!` gets nothing (tried 2026-11-13). The
-  skill and the server's instructions tell agents never to run it.
-- mitmweb's server logs a failed request's URL, `?token=` included, into
-  `mitmproxy.log`: the addon masks the token there first (checked by the
-  mitmweb E2E test).
-
-## Logs to Tailscale
-
-Reqcove's node does not send logs to Tailscale. A tailnet that requires data plane
-audit logs is not supported (`reqcove status` says so); Reqcove never turns logs on.
-
-## Reporting a vulnerability
-
-Please use GitHub's private vulnerability reporting on this repository rather than
-a public issue.
+- Carry and record a device only with the consent of the person who uses it.
+- Its requests to the allowed hosts are decrypted and recorded, and what an
+  agent reads of them goes to its model provider.
+- The device trusts a CA whose key you hold, for every site, until its
+  profile is removed ([The CA's private key](#the-cas-private-key)).
+- Reqcove asks no one and checks no consent (from reading the code).
+- Recording someone's traffic without consent may be against the law where
+  you are.
+- Your own device's traffic holds other people's words too (a chat's
+  messages), and personal data is not masked.

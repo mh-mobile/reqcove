@@ -47,6 +47,23 @@ Reqcove uses a fork of Tailscale's tsnet
 - Small, focused pull requests are easier to review. Open them against `dev`:
   `main` holds the released version only.
 
+## Keeping the docs from growing back
+
+docs/SECURITY.md is for someone deciding whether to trust Reqcove;
+docs/masking.md is for someone checking whether their app's format is masked.
+Neither is a log of what was fixed.
+
+- **A fix goes to the CHANGELOG, with its test.** docs/SECURITY.md changes only
+  when a property a reader relies on changes. History ("up to v0.8", "a review
+  found") stays in the CHANGELOG.
+- **A masking gap that is not fixed becomes one row in docs/masking.md**, never
+  a new clause in SECURITY.
+- **One point per bullet.** Mark only the exceptions where they stand ("not
+  tried", "from reading the code"); what a test or a trial covered goes in the
+  section's one "Checked:" line (「確認状況：」 in Japanese).
+- **English and Japanese change together**: the same headings, facts, tables
+  and warnings, each written as its own language.
+
 ## Reporting a bug
 
 Please include the output of `reqcove version` and `reqcove status`, your OS,
