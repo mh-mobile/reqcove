@@ -38,13 +38,13 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all or reload (reqcove reload)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover or reload (reqcove reload)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
 	PassHosts  []string `json:"pass_hosts,omitempty"`  // set
-	For        string   `json:"for,omitempty"`         // allow-all: how long, as 30m or 2h
-	End        bool     `json:"end,omitempty"`         // allow-all: end it now
+	For        string   `json:"for,omitempty"`         // allow-all, discover: how long, as 30m or 2h
+	End        bool     `json:"end,omitempty"`         // allow-all, discover: end it now
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -53,7 +53,7 @@ type ctlAnswer struct {
 	Message string `json:"message"`
 }
 
-const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end  [--state DIR]"
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end  [--state DIR]"
 
 func captureCmd(ctx context.Context, args []string) error {
 	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts", "for")
@@ -63,8 +63,8 @@ func captureCmd(ctx context.Context, args []string) error {
 	var allow, passHosts []string
 	fs.Func("allow-hosts", `with set: every host recorded, as run's --allow-hosts (not "*")`, func(v string) error { allow = append(allow, v); return nil })
 	fs.Func("pass-hosts", "with set: the allowed hosts carried undecrypted, as run's --pass-hosts", func(v string) error { passHosts = append(passHosts, v); return nil })
-	forD := fs.String("for", "", "with allow-all: how long every host is recorded, as 30m or 2h (at most 24h)")
-	end := fs.Bool("end", false, "with allow-all: end it now")
+	forD := fs.String("for", "", "with allow-all: how long every host is recorded; with discover: how long the names of the others are kept; as 30m or 2h (at most 24h)")
+	end := fs.Bool("end", false, "with allow-all or discover: end it now")
 	if err := parseFlags(fs, flags); err != nil {
 		return err
 	}
@@ -82,16 +82,20 @@ func captureCmd(ctx context.Context, args []string) error {
 // of the commands, a bad host, or "*" (every app's traffic is not a change
 // made in passing).
 func (r ctlRequest) normalized() (ctlRequest, error) {
-	if r.Cmd != "allow-all" && (r.For != "" || r.End) {
-		return r, fmt.Errorf("--for and --end go with capture allow-all (usage: %s)", captureUse)
+	if r.Cmd != "allow-all" && r.Cmd != "discover" && (r.For != "" || r.End) {
+		return r, fmt.Errorf("--for and --end go with capture allow-all and capture discover (usage: %s)", captureUse)
 	}
 	switch r.Cmd {
-	case "allow-all":
+	case "allow-all", "discover":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
-			return r, errors.New("capture allow-all takes no hosts: it records every host for a while (--for D), or ends that (--end)")
+			what := "records every host for a while (--for D), or ends that (--end)"
+			if r.Cmd == "discover" {
+				what = "keeps the names of the hosts outside the ones recorded for a while (--for D), or ends that (--end)"
+			}
+			return r, fmt.Errorf("capture %s takes no hosts: it %s", r.Cmd, what)
 		}
 		if r.End == (r.For != "") {
-			return r, errors.New("capture allow-all takes --for D (how long, as 30m or 2h; at most 24h) or --end")
+			return r, fmt.Errorf("capture %s takes --for D (how long, as 30m or 2h; at most 24h) or --end", r.Cmd)
 		}
 		if r.For != "" {
 			if _, err := allowAllFor(r.For); err != nil {
@@ -158,9 +162,9 @@ func allowAllFor(v string) (time.Duration, error) {
 func (r ctlRequest) String() string {
 	s := "capture " + r.Cmd
 	switch {
-	case r.Cmd == "allow-all" && r.End:
+	case (r.Cmd == "allow-all" || r.Cmd == "discover") && r.End:
 		return s + " --end"
-	case r.Cmd == "allow-all":
+	case r.Cmd == "allow-all" || r.Cmd == "discover":
 		return s + " --for " + r.For // a duration: ParseDuration took it
 	case r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save":
 		return s
@@ -320,6 +324,8 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		return save(cap, st, why)
 	case "allow-all":
 		return allowAll(ctx, cap, req, why)
+	case "discover":
+		return discover(ctx, cap, req, why)
 	case "reload":
 		return reload(ctx, cap, st, why)
 	}

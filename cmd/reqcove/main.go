@@ -81,6 +81,10 @@ Usage:
   reqcove capture allow-all --for D | capture allow-all --end
                      record every app's traffic for D (30m, 2h; at most 24h), not only
                      the allowed hosts', its records kept after; in your terminal only
+  reqcove capture discover --for D | capture discover --end
+                     for D (at most 24h), keep the names of the hosts outside the ones
+                     recorded and how often (nothing they send), for this computer's
+                     agents and reqcove status; in your terminal only
   reqcove reload     read the config, its hosts files and the --rules file again, and
                      put their hosts and rules in force together (all or nothing), in
                      your terminal only; other settings take a restart

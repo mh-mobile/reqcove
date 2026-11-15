@@ -357,6 +357,9 @@ func status(ctx context.Context, args []string) error {
 		ConfigFile   string                `json:"config_file"`
 		ConfigUnused string                `json:"config_unused"`
 		HostsFiles   []string              `json:"hosts_files"`
+		Seen         []mcpserver.OutHost   `json:"out_of_scope_hosts"`
+		SeenKept     int                   `json:"out_of_scope_hosts_kept"`
+		DiscUntil    string                `json:"discover_until"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -457,6 +460,7 @@ func status(ctx context.Context, args []string) error {
 		hosts += "; a change pending: " + out.Pending
 	}
 	fmt.Printf("  recorded:    %s\n", hosts)
+	printSeen(os.Stdout, out.Seen, out.SeenKept, out.DiscUntil != "")
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
 	presets, ok := c["presets"]
@@ -540,6 +544,33 @@ func loggedIn(tailscaledState []byte) bool {
 	var keys map[string][]byte
 	var profiles map[string]json.RawMessage
 	return json.Unmarshal(tailscaledState, &keys) == nil && json.Unmarshal(keys["_profiles"], &profiles) == nil && len(profiles) > 0
+}
+
+// printSeen prints discovery's names (status' out_of_scope_hosts): kept of
+// them, on: discovery is on now.
+func printSeen(w io.Writer, seen []mcpserver.OutHost, kept int, on bool) {
+	if len(seen) == 0 && !on {
+		return
+	}
+	what := "host discovery ended; seen outside them"
+	if on {
+		what = "host discovery on; seen outside them so far"
+	}
+	if len(seen) == 0 {
+		fmt.Fprintf(w, "  outside:     %s: none\n", what)
+		return
+	}
+	if kept > len(seen) {
+		what += fmt.Sprintf(" (the %d most seen of %d)", len(seen), kept)
+	}
+	fmt.Fprintf(w, "  outside:     %s (names from the traffic; to record one, in your terminal):\n", what)
+	for _, h := range seen {
+		add := h.Add
+		if add == "" {
+			add = "(no command: not a plain host name)"
+		}
+		fmt.Fprintf(w, "    %s (%d): %s\n", h.Host, h.Count, add)
+	}
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.

@@ -108,14 +108,14 @@ const presetRule = "Turn one on only for a test the user asked for in this conve
 
 // Servers are run's two MCP servers: local (its socket, `reqcove mcp`) with
 // the preset tools, and remote (--mcp-http) without them.
-func Servers(st *capture.Store, status func() StatusOut, remoteStatus func() StatusOut, p Presets) (local, remote *mcp.Server) {
-	local = New(st, status)
+func Servers(st *capture.Store, status func() StatusOut, remoteStatus func() StatusOut, p Presets, outside func() []OutHost) (local, remote *mcp.Server) {
+	local = newServer(st, status, st.Stats, outside)
 	AddPresetTools(local, st, p)
 	return local, newServer(st, func() StatusOut {
 		out := remoteStatus()
 		out.Capture = remoteStats(out.Capture)
 		return out
-	}, func() map[string]any { return remoteStats(st.Stats()) })
+	}, func() map[string]any { return remoteStats(st.Stats()) }, nil)
 }
 
 // AddPresetTools adds list_presets, activate_preset and deactivate_preset,

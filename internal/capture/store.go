@@ -196,6 +196,8 @@ type Store struct {
 	recording     string             // capture_stats' recording: "" (on), stopped (allow is none), allow-all (allow is all)
 	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
 	outOfScope    int64              // requests to hosts outside allow, seen here
+	discUntil     time.Time          // while discovery is on, its end: names outside the scope are counted (discover.go)
+	seen          map[string]int     // those names, masked, and how often
 	addonOOS      int64              // the same, seen by the addon
 	earlier       [3]int64           // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
@@ -503,6 +505,9 @@ func (s *Store) Apply(line []byte) {
 		}
 		return
 	case "skip": // a request outside --allow-hosts; only its count matters
+		return
+	case "seen": // discovery: a name outside the scope
+		s.seenHostLocked(e.Host)
 		return
 	case "rules": // --rules-reload took the file again, or could not
 		s.hello.Rules, s.hello.Resolve, s.hello.Presets, s.hello.PresetTargets, s.hello.RulesError = e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError

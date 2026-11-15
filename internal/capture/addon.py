@@ -1141,6 +1141,7 @@ class Reqcove:
         self.scope_gen = 0  # reqcove_scope_gen: the scope's generation, on what it admits
         self.stopped = False  # reqcove_stopped (reqcove capture stop): nothing recorded, no rule applies
         self.everything = False  # reqcove_allow_all (reqcove capture allow-all): every host recorded, the rules on the base alone
+        self.discover = False  # reqcove_discover (reqcove capture discover): names outside the scope told to reqcove
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
@@ -1163,6 +1164,9 @@ class Reqcove:
                         out = {"error": f"explain_rules failed: {type(e).__name__}"}
                 elif req.get("op") == "scope":  # a live scope change from run, whole
                     out = self._scope(req)
+                elif req.get("op") == "discover":  # reqcove capture discover --for / --end, or its end by time
+                    ctx.options.update(reqcove_discover=bool(req.get("on")))
+                    out = {"ok": True}
                 elif req.get("op") == "activate" and self.stopped:
                     out = {"error": STOPPED_PRESET}
                 elif req.get("op") == "check":  # reqcove mock add: the file as it would be, at path (next to target), checked as at start
@@ -1373,6 +1377,7 @@ class Reqcove:
         loader.add_option("reqcove_scope_gen", int, 0, "The generation of reqcove_allow_hosts (and allow_hosts), on the events it admits.")
         loader.add_option("reqcove_instance", str, "", "This mitmdump's name from reqcove, on its hello and its scope answers.")
         loader.add_option("reqcove_stopped", bool, False, "reqcove capture stop: nothing recorded, no rule applied (reqcove_allow_hosts is the scope kept for the start).")
+        loader.add_option("reqcove_discover", bool, False, "reqcove capture discover: tell reqcove the names of hosts outside the scope (SNI, Host), never more.")
         loader.add_option("reqcove_allow_all", bool, False, "reqcove capture allow-all: every host recorded (allow_hosts empty); the rules apply to reqcove_allow_hosts alone.")
 
     def configure(self, updated):
@@ -1391,6 +1396,7 @@ class Reqcove:
             self.rules["mock"].book.active.clear()  # presets go off at a stop, and stay off after the start
         self.stopped = ctx.options.reqcove_stopped
         self.everything = ctx.options.reqcove_allow_all
+        self.discover = ctx.options.reqcove_discover
         if "reqcove_allow_hosts" in updated:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
@@ -1649,6 +1655,8 @@ class Reqcove:
             flow.request.stream = True
             if flow.request.pretty_host.lower().rstrip(".") == "mitm.it":
                 return  # the CA's page: served, never recorded, and not "out of scope" either
+            if self.discover:
+                self._seen(flow.request.pretty_host, flow.request.port)
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
             # Decrypted all the same, a --pass-hosts host's too (coalesced onto an
@@ -2128,8 +2136,11 @@ class Reqcove:
         (Apple's): those it passes through itself, unrecorded. Script addons run
         before mitmproxy's own NextLayer (12.3.1), which leaves a layer chosen
         here; a change of that order fails TestPassHosts."""
-        if self.stopped or not self.passing or nl.layer is not None or len(nl.context.layers) != 1:
+        if nl.layer is not None or len(nl.context.layers) != 1:
             return
+        passing = bool(self.passing) and not self.stopped
+        if not (passing or self.discover):
+            return  # nothing read: discovery off costs nothing
         data = nl.data_client()
         if not starts_like_tls_record(data):
             return
@@ -2140,6 +2151,10 @@ class Reqcove:
         if hello is None:
             return  # more to come: mitmproxy asks again (it waits, as it has ignore_hosts: Apple's, always)
         ip, port = nl.context.server.address or ("", 443)
+        if self.discover:  # once a connection (the first layer's, with the whole hello: TestDiscoverE2E counts)
+            self._seen(hello.sni, port)
+        if not passing:
+            return
         # The name the client sent, or without one (an app dialing an address),
         # the address: what --pass-hosts names, and what status suggests.
         sni = (hello.sni or ip).lower().rstrip(".")
@@ -2154,6 +2169,20 @@ class Reqcove:
             "alpn": [_alpn(a) for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
+
+    def _seen(self, name, port):
+        """Discovery: a host name outside the scope (the base, and not passed
+        undecrypted), told to reqcove, which counts it: never the connection's
+        content, a path or a time. Not Apple's (mitmproxy's ignore_hosts, by
+        name and port as it matches them), nor mitm.it, nor a name that is no
+        host name. A connection without SNI (an address dialed) has no name,
+        and with ECH only the outer, public name is seen."""
+        name = (name or "").lower().rstrip(".")
+        if not name or name == "mitm.it" or not check.is_valid_host(name) or self._allowed(name) or self._passed(name):
+            return
+        if any(re.search(p, f"{name}:{port}") for p in ctx.options.ignore_hosts):
+            return
+        self.put_event({"v": VERSION, "ev": "seen", "host": name})
 
     def tcp_start(self, flow):
         p = flow.metadata.get("reqcove_pass")

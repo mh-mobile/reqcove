@@ -370,6 +370,57 @@ end, its records kept; a `--pass-hosts` host still undecrypted; mitmproxy
 killed just before the end comes back without it; the CLI's answers, status,
 markers); not on an iPhone, not across a real sleep of the Mac.
 
+#### Find the hosts an app reaches (`reqcove capture discover`)
+
+```sh
+reqcove capture discover --for 30m   # keep the names of the other hosts for 30 minutes (at most 24h)
+reqcove capture discover --end       # end it sooner
+```
+
+Since v1.1, for a while, Reqcove keeps the **names** of the hosts outside the
+ones recorded that the devices reach, and how often: the name a TLS
+connection asks for (its SNI), and the Host of a request on a connection that
+is decrypted but not recorded. Nothing they send is kept: no content, no URL
+path, no time. So you can see which hosts your app talks to, then add the
+ones you want.
+
+- **Where it shows:** `reqcove status` ("outside:", each with the `reqcove
+  capture add HOST` command that records it), and for this computer's agents
+  `status` and `summarize` (`out_of_scope_hosts`, `out_of_scope_hosts_kept`,
+  `discover_until`, `discover_left`). Never over `--mcp-http` nor on the
+  `--ui` page.
+- **Counts:** TLS connections and requests together. The 30 most seen are
+  shown, of at most 1,000 kept (past that, a new name takes the place of the
+  least seen). A host you add drops off the list.
+- **Left out:** Apple's hosts, mitm.it, names that are not plain host names
+  (shown masked, without a command, if masking changed them).
+- **Not every host:** a connection without a name (an address dialed), one
+  with ECH (only its outer, public name is seen) and connections that are not
+  TLS on a host outside the scope are missed (from reading the code, not
+  tried).
+- **Time-limited**, as allow-all: it ends by this computer's clock or by
+  `run`'s running time, whichever comes first; `--for` again moves the end.
+  A run with `--allow-hosts '*'` has nothing outside ("nothing changed").
+  At the end no name is taken from then on, whether mitmproxy was told or
+  not. The names seen **stay** until `run` restarts or discovery starts
+  again (a new `--for` after the end begins a new list). A restart of `run`
+  ends it (not saved).
+- The cost: each TLS connection's ClientHello is read once more (mitmproxy
+  reads it anyway to decide what to decrypt): about 22 µs for a 1.5 KB one,
+  from a micro-benchmark on an M1 Max Mac (mitmproxy 12.3.1, Python 3.14);
+  nothing when off (from reading the code).
+- As the other `capture` commands: in a terminal only (agents never run
+  it), refused in LAN mode, an older `run` named, and a trace (`run`'s log,
+  a `cli` marker, `scope_change`).
+
+Tried by tests only (unit: the names taken only while on, Apple's, mitm.it and
+bad names left out, masking, the bound, the end by either clock with
+mitmproxy silent; E2E with real mitmproxy: a TLS connection's SNI and a
+request's Host counted, once a connection, none of Apple's, nothing recorded
+of them, not in what `--mcp-http` and `--ui` read, none taken before or after,
+a host added dropping off; the summarize and status tools: on the local
+server alone); not on an iPhone.
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
