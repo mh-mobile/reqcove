@@ -124,7 +124,7 @@ func run(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		<-cap.Done() // mitmproxy gave up (or ctx ended): the node stops too
+		<-cap.Done() // mitmproxy failed for good (or ctx ended): the node stops too
 		cancel()
 	}()
 	var node nodeState

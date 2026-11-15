@@ -65,7 +65,7 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 
 #### `capture_stats`
 
-ドキュメントにあるフィールド：`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）。それ以外は[変わりえます](#変わりうるもの)。
+ドキュメントにあるフィールド：`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`retries`（v1.1 から。mitmproxy を続けて起動し直した回数）、`last_failure`（v1.1 から。最後に失敗した理由で、人が読むための文。失敗していなければ ""）、`next_attempt`（v1.1 から。次に試すのを待っている間だけ）、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）。それ以外は[変わりえます](#変わりうるもの)。
 
 ### ルールファイル（`--rules`）
 

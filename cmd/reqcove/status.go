@@ -131,10 +131,14 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		}
 	}
 	if st, _ := stats["state"].(string); st != "ready" {
-		steps = append(steps, fmt.Sprintf("mitmproxy is %s: %v (see mitmproxy.log in the state directory)", st, stats["state_detail"]))
+		retry := ""
+		if next, _ := stats["next_attempt"].(string); next != "" {
+			retry = fmt.Sprintf("; retry %v, the next at %s", stats["retries"], next)
+		}
+		steps = append(steps, fmt.Sprintf("mitmproxy is %s: %v%s (see mitmproxy.log in the state directory)", st, stats["state_detail"], retry))
 	}
 	if e, _ := stats["rules_error"].(string); e != "" {
-		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), or none, if mitmproxy restarted meanwhile")
+		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), after a restart of mitmproxy too")
 	}
 	if !allow.All && len(allow.Patterns) == 0 {
 		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")

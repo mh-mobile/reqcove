@@ -105,7 +105,7 @@ func TestLogsHoldNoSecrets(t *testing.T) {
 			t.Errorf("%s holds a secret:\n%s", name, l)
 		}
 	}
-	if !strings.Contains(reqcoveLog.String(), "restarting") {
+	if !strings.Contains(reqcoveLog.String(), "starting it again") {
 		t.Errorf("the restart was not logged: %q", reqcoveLog.String())
 	}
 }

@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A restarted mitmproxy gets the rules that loaded last**, from a private
+  copy in the state directory (`rules-loaded`, 0600, removed when `run`
+  stops), not the rules file as it is on disk then. Up to v1.0, a file broken
+  meanwhile ended `run` at the restart, or, with `--rules-reload`, the
+  restarted mitmproxy went on without any rules (a mock or `map_remote` lost
+  sends test requests to the real servers). Now, under `--rules-reload`, the
+  restarted one also looks at the file again and says why it does not load;
+  if the rules that loaded last no longer load (a file they name is gone),
+  `run` stops with the reason, with or without `--rules-reload`. E2E test
+  with real mitmproxy (file broken, mitmdump killed); unit tests with a
+  stand-in.
+- **mitmproxy is started again without end**: after it exits, and at the
+  start when it does not say hello within 2 minutes, it is retried after 1
+  second, each wait doubled up to 5 minutes. Up to v1.0, `run` stopped after 5
+  failed restarts in a row (or on a slow first start). `run` still stops with
+  an error on what retrying cannot mend: rules that do not load, and, before
+  mitmproxy has come up once, one that cannot be launched or exits before its
+  hello. `capture_stats` (and `status`, `reqcove status`) has `retries`,
+  `last_failure` and `next_attempt`; `reqcove status` says the retry and when
+  the next is (at the first start, before `run` answers status, only its log
+  does). Unit tests with a stand-in for mitmproxy.
+
 ## v1.0.0 — 2026-11-15
 
 ### Security

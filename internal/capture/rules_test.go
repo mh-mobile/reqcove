@@ -16,8 +16,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -801,6 +803,92 @@ func TestRulesReload(t *testing.T) {
 		waitRules("modify_headers:3", "the file is gone")
 		if req, _ := get("/r5"); req != "two" {
 			t.Errorf("after the file went: %q", req)
+		}
+	}
+}
+
+// TestRulesSurviveRestart: with the rules file broken on disk, a mitmdump
+// killed and started again applies the rules that loaded last, a value file
+// they name relative to the rules file included; under --rules-reload those
+// are the ones a reload took, and the new mitmdump says the file on disk
+// does not load. v1.0 ended the run here, or went on without rules.
+func TestRulesSurviveRestart(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Header.Get("X-Rule")) }))
+	defer srv.Close()
+	for _, reload := range []bool{false, true} {
+		dir := t.TempDir()
+		rules := filepath.Join(dir, "rules.yaml")
+		write := func(name, s string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write("value.txt", "one")
+		write("rules.yaml", "modify_headers:\n  - \"|~q|X-Rule|@value.txt\"\n")
+		h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
+			c.Rules, c.RulesReload, c.RestartDelay = rules, reload, 100*time.Millisecond
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		get := func() string {
+			t.Helper()
+			resp, err := h.client("dev").Get(srv.URL + "/r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return string(b)
+		}
+		waitError := func(problem string) {
+			t.Helper()
+			for deadline := time.Now().Add(10 * time.Second); !strings.Contains(fmt.Sprint(h.stats()["rules_error"]), problem); time.Sleep(100 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatalf("reload %v: rules_error %q, want %q", reload, h.stats()["rules_error"], problem)
+				}
+			}
+		}
+		want := "one"
+		if got := get(); got != want {
+			t.Fatalf("reload %v: first rules: %q", reload, got)
+		}
+		if reload {
+			want = "two"
+			write("rules.yaml", "modify_headers:\n  - \"|~q|X-Rule|two\"\n")
+			for deadline := time.Now().Add(10 * time.Second); get() != want; time.Sleep(100 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatal("the changed file was never taken")
+				}
+			}
+		}
+		write("rules.yaml", "modify_headers: [\n")
+		if reload {
+			waitError("at line")
+		}
+		b, _ := os.ReadFile(filepath.Join(h.c.cfg.Dir, "mitmdump.pid"))
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		if pid == 0 {
+			t.Fatal("no mitmdump.pid")
+		}
+		syscall.Kill(-pid, syscall.SIGKILL)
+		waitState(t, h.c, "ready", 1)
+		if got := get(); got != want {
+			t.Errorf("reload %v: after the restart X-Rule %q, want the last rules that loaded (%q); %v", reload, got, want, h.stats())
+		}
+		if reload {
+			waitError("at line") // the new mitmdump's look at the file on disk
+			if got := get(); got != want {
+				t.Errorf("after the broken file was looked at again: %q", got)
+			}
+		} else if e := h.stats()["rules_error"]; e != "" {
+			t.Errorf("rules_error %q without --rules-reload", e)
 		}
 	}
 }
