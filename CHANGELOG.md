@@ -300,6 +300,12 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   body before JSON's, so in a JSON body labelled XML a tag inside a string
   can take the quote JSON's reading needs, and a secret field after it
   passes (a test pins it).
+- SECURITY's "Not caught" and the skill add: a client that refuses
+  mitmproxy's certificate only after the TLS handshake (curl on OpenSSL 4.1)
+  leaves no TLS failure and no flow (tried with mitmproxy 12.3.1; not on an
+  iPhone).
+- COMPATIBILITY: `--uvx`, `--python` and `--mitmproxy-spec` move to "Not
+  stable", and which mitmproxy version a release runs is not promised.
 - The guide says that a `map_remote` rule that changes only the path sends
   the request on as any `map_remote` does: mitmproxy connects to the host by
   its name, and the header rules apply (tried in mitmproxy's Python).

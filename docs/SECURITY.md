@@ -198,7 +198,13 @@ remove it:
   a name in SNI, the connection is decrypted by its address, but one
   mitmproxy then carries as raw TCP is checked by its name and leaves
   nothing (its HTTP requests count as out of scope; tried with mitmproxy
-  12.3.1, 2026-11-15).
+  12.3.1, 2026-11-15). A client that finishes the TLS handshake and only then
+  refuses mitmproxy's certificate and closes leaves no TLS failure and no
+  flow: for mitmproxy the handshake succeeded (tried with curl on OpenSSL 4.1,
+  TLS 1.2 and 1.3, and mitmproxy 12.3.1, 2026-11-15; Python's and Go's clients
+  refuse during the handshake, and are listed). An app that checks the
+  certificate itself after the handshake (pinning) may leave nothing in the
+  same way (not tried on an iPhone).
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
   return them. A header, query
   parameter or body field is secret by its name: a name containing token,
