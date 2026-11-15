@@ -275,6 +275,11 @@
   installed and the command that starts it (`reqcove service restart`, `brew
   services restart reqcove`), for the service of that state directory. Unit
   test.
+- **`reqcove service install` and `service restart` wait** (at most 5 s) for
+  the run they started to take its state directory, so a `reqcove status`
+  right after says it is starting rather than not running; when it has not,
+  they say so, with the log. Unit test; the race seen by hand (`status` typed
+  with `service install`).
 
 ## v1.0.0 — 2026-11-15
 

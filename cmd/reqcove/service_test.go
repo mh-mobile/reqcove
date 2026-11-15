@@ -22,6 +22,7 @@ import (
 // No test reaches the real launchd or systemd: one that forgets fakeCtl panics.
 func init() {
 	serviceCtl = func(args ...string) error { panic("serviceCtl without fakeCtl: " + strings.Join(args, " ")) }
+	startWait = 0 // no run starts: install and restart do not wait for one
 }
 
 // fakeCtl records the commands; launchctl print and bootout and systemctl
@@ -638,5 +639,29 @@ func TestOfflineStatusNamesService(t *testing.T) {
 	}
 	if out := captureStdout(t, func() error { return offlineStatus(filepath.Join(t.TempDir(), "other"), "/nonexistent/uvx") }); strings.Contains(out, want) {
 		t.Errorf("another state:\n%s", out)
+	}
+}
+
+// install and restart wait for the run they started to take its state, so a
+// status right after says starting; not taken, they say so.
+func TestServiceWaitsForStart(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-w")
+	note := "note: not started after"
+	if out := captureStdout(t, func() error { return serviceInstall(runtime.GOOS, config, state, true) }); !strings.Contains(out, note) {
+		t.Errorf("install, no run:\n%s", out)
+	}
+	old := startWait
+	startWait = 2 * time.Second
+	t.Cleanup(func() { startWait = old })
+	go func() { // the run, taking its state a moment later
+		time.Sleep(200 * time.Millisecond)
+		if release, err := lockState(state); err == nil {
+			t.Cleanup(release)
+		}
+	}()
+	if out := captureStdout(t, func() error { return serviceRestart(runtime.GOOS) }); strings.Contains(out, note) || !stateHeld(state) {
+		t.Errorf("restart, run started: returned before it held its state (%v)\n%s", stateHeld(state), out)
 	}
 }

@@ -219,6 +219,8 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	for _, a := range argv {
 		cmd = append(cmd, shellWord(a))
 	}
+	// So that a status run right after says starting, not "not running".
+	started := waitState(state, startWait, true)
 	if again {
 		fmt.Printf("installed again %s: it ran %s; now it runs %s, restarted now (its records started empty) and at each login\n", file, orDash(shellWord(was)), strings.Join(cmd, " "))
 	} else {
@@ -235,6 +237,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if !uvx {
 		fmt.Println("note: uvx is not on this PATH; give --uvx /full/path/uvx in the config file, or install uv")
 	}
+	notStarted(started, state)
 	rc := selfCmd()
 	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; %[3]s service restart after it ended; %[3]s service uninstall stops and removes it\n", withState(rc+" links", state), withState(rc+" status", state), rc)
 	return nil
@@ -457,11 +460,31 @@ func serviceRestart(goos string) error {
 		// (RunAtLoad).
 		domain := "gui/" + strconv.Itoa(os.Getuid())
 		if serviceCtl("launchctl", "print", domain+"/"+serviceLabel) != nil {
-			return serviceCtl("launchctl", "bootstrap", domain, file)
+			err = serviceCtl("launchctl", "bootstrap", domain, file)
+		} else {
+			err = serviceCtl("launchctl", "kickstart", "-k", domain+"/"+serviceLabel)
 		}
-		return serviceCtl("launchctl", "kickstart", "-k", domain+"/"+serviceLabel)
+	} else {
+		err = serviceCtl("systemctl", "--user", "restart", serviceUnit)
 	}
-	return serviceCtl("systemctl", "--user", "restart", serviceUnit)
+	if err != nil {
+		return err
+	}
+	state := serviceState(goos, file)
+	notStarted(waitState(state, startWait, true), state)
+	return nil
+}
+
+// notStarted says so when the run a service started has not taken its state
+// yet: it may still start (a slow first start), or have failed.
+func notStarted(started bool, state string) {
+	if !started {
+		log := "journalctl --user -u reqcove"
+		if runtime.GOOS == "darwin" {
+			log = filepath.Join(state, serviceLog)
+		}
+		fmt.Printf("note: not started after %v: %s says whether it is starting; if not, the log says why: %s\n", startWait, withState(selfCmd()+" status", state), log)
+	}
 }
 
 // brewOpt is Homebrew's stable path to its reqcove, which brew upgrade
