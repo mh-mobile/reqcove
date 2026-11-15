@@ -346,7 +346,8 @@ headers and bodies, masked as the MCP tools return them.
   page's own requests are not recorded.
 
 Tried on an iPhone: opened from the camera, new flows following, search, Clear
-and Show all, and reopening the page in Safari after a restart of `run`.
+and Show all, and reopening the page in Safari after a restart of `run`; new
+flows following with `run` on Linux too (Ubuntu 24.04, arm64; 2026-11-15).
 
 ### As a HAR file (`reqcove har`)
 
@@ -397,7 +398,8 @@ code `run` (or `reqcove links`) prints.
   stops. The other modes there are not Reqcove's. Changes last until reqcove
   starts again.
 
-Tried: from an iPhone on the exit node. From reading code, not tried: with
+Tried: from an iPhone on the exit node, with `run` on macOS and on Linux
+(Ubuntu 24.04, arm64; 2026-11-15). From reading code, not tried: with
 options changed there, Reqcove's records stay scoped and masked.
 
 ## Record clients other than iPhone apps
