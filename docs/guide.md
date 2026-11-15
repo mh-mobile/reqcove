@@ -1521,7 +1521,8 @@ The main ones are in the [README](../README.md#limits). The rest:
 - mitmproxy holds each WebSocket message until it is complete, and inflates a
   compressed one (permessage-deflate) whole (from reading mitmproxy's code;
   compressed messages are recorded inflated and masked: an E2E test with Go's
-  client and server, not tried from iOS, whose servers so far refused it), so
+  client and server, and from an iPhone, iOS 27.3, to a server that accepts
+  it, 2026-11-15), so
   one huge message can use a lot of
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
   mitmproxy runs out, reqcove restarts it; when it is down again within a
