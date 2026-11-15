@@ -2,9 +2,9 @@
 
 [English](COMPATIBILITY.md) · [README](../README.ja.md)
 
-**v1.0.0 から適用します。** それより前（v0.x）は、ここに書いたことでもマイナーリリースで変わることがあり、実際に変わったものもあります。
+**v1.0.0 から適用します。** それより前の v0.x では、ここに書いたことでもマイナーリリースで変わることがあり、実際に変わったものもあります。
 
-メジャーバージョンの間は変わらないもの、どのリリースでも変わりうるもの、変更の知らせ方を書きます。一覧は記憶ではなくコード（MCP サーバーが登録するツール、各コマンドのフラグ、ルールファイルの読み込み処理）から取りました。テストで確かめた点は、その節の最後の行に書いています。それ以外はコードを読んで書いたものです。
+このページでは、メジャーバージョンの間は変わらないもの、どのリリースでも変わりうるもの、変更の知らせ方を説明します。一覧は記憶ではなくコード（MCP サーバーが登録するツール、各コマンドのフラグ、ルールファイルの読み込み処理）から取りました。テストで確かめた点はその節の最後の行にそう書いています。それ以外はコードを読んで書いたものです。
 
 1. [バージョン](#バージョン)
 2. [メジャーバージョンの間は変わらないもの](#メジャーバージョンの間は変わらないもの)
@@ -34,13 +34,13 @@ v1.0.0 から、バージョンは `major.minor.patch`（[セマンティック 
 
 ### MCP ツール
 
-このコンピュータから（`reqcove mcp` と `run` のソケット）使えるのは次の 19 個です。
+このコンピュータから `reqcove mcp` と `run` のソケットで使えるのは、次の 19 個です。
 
 `status`、`list_flows`、`wait_for_flows`、`search_flows`、`summarize`、`get_flow`、`list_ws_messages`、`diff_flows`、`list_devices`、`list_tls_failures`、`list_passthrough`、`capture_stats`、`list_presets`、`activate_preset`、`deactivate_preset`、`list_rules`、`explain_rules`、`add_marker`、`list_markers`
 
 `--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。そのサーバーは `/mcp` で答えます。ポートはノードの 8090 番です。認証は `Authorization: Bearer` で、トークンは `mcp-token`（下の状態ディレクトリ）にあります。
 
-v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
+v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除しました。
 
 | 削除したもの | 代わりに使うもの |
 |---|---|
@@ -48,32 +48,32 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 | `status` の `active_mock_presets`、`active_mock_presets_error` | `active_presets`、`active_presets_error` |
 | `capture_stats` の `mock_presets` | `presets` |
 
-各ツールのフィールド：
+各ツールのフィールドについては次のとおりです。
 
-- 入力：`run` が示すツール一覧の入力スキーマにあるフィールドです。新しい入力は、省略できるものとしてだけマイナーリリースで増えます。メジャーバージョンの間、入力を削除したり、必須にしたり、意味を変えたりはしません。
+- 入力：`run` が示すツール一覧の入力スキーマにあるフィールドです。マイナーリリースで増える新しい入力は、省略できるものだけです。メジャーバージョンの間、入力を削除したり、必須にしたり、意味を変えたりはしません。
 - 出力：`run` が示すツール一覧の出力スキーマにあるフィールドと、`status` と `capture_stats`（スキーマで中身を決めていないもの）については下に挙げたフィールドです。新しいフィールドはマイナーリリースで増えることがあるので、エージェントは知らないフィールドを無視してください。メジャーバージョンの間、フィールドを削除したり意味を変えたりはしません。
 - 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`）、`list_passthrough` の接続の `reason`（`pass_hosts`、`raw_tcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
 - 人が読む文を入れるフィールド（`next_steps`、`note`、`msg`、`list_rules` と `explain_rules` の `rules_error` や、`active_presets_error` などのエラーのフィールド）はなくなりませんが、文面は変わりえます。
 
 #### `status` と `reqcove status --json`
 
-`reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります。そのフィールド：
+`reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります。フィールドは次のとおりです。
 
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
-- `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のもので、約束しません。
+- `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
 確認状況：答える `run` がないときに標準出力に何も出さず、理由を標準エラーに出して終了コード 1 で終わることは、単体テストで確かめました。
 
 #### `capture_stats`
 
-ドキュメントにあるフィールド：`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）。それ以外は[変わりえます](#変わりうるもの)。
+ドキュメントにあるフィールドは、`flows`、`flows_with_truncated_bodies`、`evicted`、`checkpoint`、`oldest_flow`、`newest_flow`、`max_flows`、`max_bytes`、`state`、`started`、`redacting`、`out_of_scope`、`passed_through`、`raw_tcp`、`raw_tcp_hosts`、`refused_hosts`、`pass_hosts`、`mitmproxy`、`python`（それぞれのバージョン）、`presets`、`rules_loaded`（ルールファイルを一度読み込んだあと）、マスクが有効なあいだの `mask_names` と `mask_values`（名前ごと、パターン番号ごとの一致数）です。それ以外は[変わりえます](#変わりうるもの)。
 
 ### ルールファイル（`--rules`）
 
 最上位のキーは `mock`、`map_remote`、`map_local`、`modify_headers`、`resolve`（それぞれリスト）と `keep_host_header`（`true` か `false`）です。ほかのキーは拒否します。
 
-- `map_remote`、`map_local`、`modify_headers`：1 つのルールを 1 つの文字列で、mitmproxy 自身の書式で書き、mitmproxy のコードが読みます。Reqcove はロックする mitmproxy を更新し続けます（[下記](#変わりうるもの)）。こうしたルールの読み方が変わる更新はメジャーリリースまで待ちます（セキュリティ修正は例外）。
+- `map_remote`、`map_local`、`modify_headers`：1 つのルールを 1 つの文字列で、mitmproxy 自身の書式で書き、mitmproxy のコードが読みます。Reqcove はロックに書く mitmproxy を更新し続けます（[下記](#変わりうるもの)）。こうしたルールの読み方が変わる更新はメジャーリリースまで待ちます（セキュリティ修正は例外）。
 - `mock`（Reqcove 独自）：マッピングのリストで、キーは `match`（`url`。`method` と `operation` は省略可）、`status`、`headers`、`body` か `body_file`、`delay_ms`、`fault`（`close`。このとき `status`、`headers`、`body`、`body_file` は書かない）、`preset`、`description`（`preset` があるとき）です。
 - `resolve`（Reqcove 独自）：1 つのルールを 1 つの文字列で、`HOST=IPV4` または `HOST=IPV4:PORT`。
 - `keep_host_header`（Reqcove 独自）：`map_remote` がアプリの `Host` を残します。
@@ -84,7 +84,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 ### CLI
 
-コマンドとフラグ（各コマンドのフラグ定義から）：
+コマンドとフラグは次のとおりです。各コマンドのフラグ定義から取りました。
 
 | コマンド | フラグ |
 |---|---|
@@ -103,18 +103,18 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove mcp` | `--state` |
 | `reqcove version` | なし |
 
-`--uvx`、`--python`、`--mitmproxy-spec` はこの一覧に入れていません。変わりえます（[下記](#変わりうるもの)）。
+`--uvx`、`--python`、`--mitmproxy-spec` は変わりうるので、この一覧に入れていません（[下記](#変わりうるもの)）。
 
 ### `--config` のファイル
 
-- `run` のフラグを 1 行に 1 つ書き、コマンドラインのフラグより先に読みます。1 回だけ指定するフラグはコマンドラインのものが使われ、繰り返せるフラグ（`--device`、`--allow-hosts`）は足し合わされます。空行と `#` で始まる行は読み飛ばします。語はスペースで区切り、シェルと同じように `'…'` か `"…"`（中では `\"` と `\\`）でまとめます。`~/` で始まる語はホームディレクトリから始まります。
+- `run` のフラグを 1 行に 1 つ書き、コマンドラインのフラグより先に読みます。1 回だけ指定するフラグはコマンドラインのものが使われ、繰り返せるフラグ（`--device`、`--allow-hosts`）は足し合わされます。空行と `#` で始まる行は読み飛ばします。語はスペースで区切り、シェルと同じように `'…'` か `"…"`（中では `\"` と `\\`）でまとめます。`~/` で始まる語はホームディレクトリからのパスとして読みます。
 - 書けないもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、そしてどう書いても（`@FILE` でも）`--allow-hosts '*'`。
-- ファイルは通常のファイルで、自分のものであり、グループとほかの人に権限がないこと（`chmod 600`）。
+- ファイルは通常のファイルで、自分が所有し、グループとほかの人に権限がない（`chmod 600`）ものでなければなりません。
 - 置き場所：`reqcove service install`（その `--config` の既定値）と Homebrew なしの `reqcove setup` は `~/.config/reqcove/config`。Homebrew では `reqcove setup` が `$(brew --prefix)/etc/reqcove/config` に書き、`brew services` がそれを読みます。
 
 ### 状態ディレクトリ
 
-既定は `~/.reqcove` です（`--state DIR`）。利用者が触るファイル：
+既定は `~/.reqcove` で、`--state DIR` で変えられます。利用者が触るファイルは次のとおりです。
 
 - `mitmproxy/mitmproxy-ca-cert.pem`：CA の証明書。このコンピュータやブラウザに信頼させるときに使います（[ガイド](guide.ja.md#ios-シミュレーターを記録する--local-proxy)）。
 - `mitmproxy/` 全体と、その中の `mitmproxy/mitmproxy-ca.pem`（CA の秘密鍵と証明書）：別のコンピュータと同じ CA を使うときにコピーします（[ガイド](guide.ja.md#2-台のコンピュータで同じ-ca-を使う)）。
@@ -126,11 +126,11 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 ### Skill
 
-`reqcove init` は Skill を `~/.claude/skills/reqcove`（Claude Code）と `~/.agents/skills/reqcove`（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）に、または `--client` で指定したところだけに書きます。この置き場所と `init` のフラグは変わりません。Skill の文はバージョンごとに変わるので、アップデートしたら `reqcove init` をもう一度実行してください（入っている Skill が別のバージョンのものなら `reqcove status` がそう言います）。
+`reqcove init` は Skill を `~/.claude/skills/reqcove`（Claude Code）と `~/.agents/skills/reqcove`（Codex、Cursor、Gemini CLI、Copilot CLI、Devin）に、または `--client` で指定したところだけに書きます。この置き場所と `init` のフラグは変わりません。Skill の文はバージョンごとに変わるので、アップデートしたら `reqcove init` をもう一度実行してください（入っている Skill が別のバージョンのものなら `reqcove status` がそう伝えます）。
 
 ## 変わりうるもの
 
-次のものは、パッチリリースも含め、どのリリースでも変わりえます。
+次のものはパッチリリースも含め、どのリリースでも変わりえます。
 
 - ログの行：`run`、サービス、mitmproxy のもの。
 - `run` が出す準備完了の表示：文面とレイアウト。
@@ -146,8 +146,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 - MCP サーバーは、エージェントがつないだときに自分のバージョンを伝えます（`serverInfo`：名前は `reqcove`、バージョンは `reqcove version` が出すもの）。ソケット、`reqcove mcp`、`--mcp-http` のどれでも同じです。
 - `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです。
-- `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。両方を同じバージョンにすること、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます。
-- この `reqcove mcp` にあって `run` にないツール：プリセット、ルール、マーカーのツールは、動いている reqcove（そのバージョン）にそのツールがないと答えます。それ以外は `run` 自身のエラー（知らないツール）がそのまま返ります。
-- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードから判断したもの）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。
+- `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。注記は両方を同じバージョンにすることと、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます。
+- この `reqcove mcp` にあって `run` にないツールのうち、プリセット、ルール、マーカーのツールは、動いている reqcove のそのバージョンにはそのツールがない、と答えます。それ以外のツールには、知らないツールだという `run` 自身のエラーがそのまま返ります。
+- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` で呼ぶと、代わりのツールの名前を書いたエラーが返ります。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードから判断したもの）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。
 
 確認状況：テストで確かめたのは、出力スキーマを付けないツールの一覧、バージョンが違うときの注記、`run` にないツールへの 2 通りの答え、削除したツールを呼んだときのエラー、v1.0.0 の `reqcove status` が古い `run` のフィールドを読むことです。
