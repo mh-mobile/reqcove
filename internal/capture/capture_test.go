@@ -361,6 +361,27 @@ func TestEndToEnd(t *testing.T) {
 	if len(fails) == 0 || fails[0].Time == "" {
 		t.Errorf("TLS failure not recorded with its device: %+v (stats %v)", fails, h.stats())
 	}
+	// Not caught (SECURITY): a client that finishes the handshake and closes
+	// without a request (an app checking the certificate itself after it)
+	// leaves no TLS failure and no flow, for mitmproxy the handshake succeeded.
+	nFails, nFlows := len(h.c.Store.TLSFailures(Filter{Limit: 500})), len(listAll(h.c.Store, 100000))
+	socks, err := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: h.c.SocksSecret}, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := socks.Dial("tcp", strings.TrimPrefix(tlsBackend.URL, "https://")); err != nil {
+		t.Error(err)
+	} else {
+		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true})
+		if err := tc.Handshake(); err != nil {
+			t.Errorf("handshake: %v", err)
+		}
+		tc.Close()
+		time.Sleep(time.Second)
+		if n, m := len(h.c.Store.TLSFailures(Filter{Limit: 500})), len(listAll(h.c.Store, 100000)); n != nFails || m != nFlows {
+			t.Errorf("a handshake closed without a request left %d TLS failures, %d flows (had %d, %d)", n, m, nFails, nFlows)
+		}
+	}
 
 	if r, err := hc.Get(backend.URL + "/many-headers"); err == nil {
 		r.Body.Close()

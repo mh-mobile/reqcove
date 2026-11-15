@@ -301,8 +301,9 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
   can take the quote JSON's reading needs, and a secret field after it
   passes (a test pins it).
 - SECURITY's "Not caught" and the skill add: a client that refuses
-  mitmproxy's certificate only after the TLS handshake (curl on OpenSSL 4.1)
-  leaves no TLS failure and no flow (tried with mitmproxy 12.3.1; not on an
+  mitmproxy's certificate only after the TLS handshake (curl on OpenSSL 4.1),
+  or finishes it and closes without a request, leaves no TLS failure, no flow
+  and no count (tried with mitmproxy 12.3.1, and an E2E test; not on an
   iPhone).
 - COMPATIBILITY: `--uvx`, `--python` and `--mitmproxy-spec` move to "Not
   stable", and which mitmproxy version a release runs is not promised.
