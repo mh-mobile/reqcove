@@ -69,6 +69,8 @@ type event struct {
 	DroppedBodies int64       `json:"dropped_bodies"`
 	DroppedEvents int64       `json:"dropped_events"`
 	OutOfScope    int64       `json:"out_of_scope"`
+	Gen           int64       `json:"gen"`      // request, pass_open, tls_failed: the scope generation the addon admitted it under; hello: the addon's
+	Instance      string      `json:"instance"` // hello: the mitmdump's (reqcove_instance)
 	op            string      // the GraphQL operation, worked out before the lock (gqlURLOperation, gqlBodyOperation)
 	grpcTrailers  [][2]string // body: gRPC-Web's trailer frame, masked
 	view          string      // body: what the head was rendered as (Body.View)
@@ -95,6 +97,9 @@ type Flow struct {
 	answered     int64       // from the same counter, when it got its response or error first; 0 until then (wait_for_flows)
 	ws           *wsLog      // a WebSocket's kept messages
 	opNamed      bool        // the URL or a header named Operation: the body does not change it
+	rawHost      string      // the request's host as sent, normalized, for scope checks: Host is masked
+	checked      int64       // the newest scope generation its host was found in scope at (the gate's memo)
+	cut          bool        // its host left the scope once: nothing more of it is recorded
 	ID           string      `json:"id"`
 	Conn         string      `json:"conn,omitempty"` // the client connection; list_tls_failures uses the same IDs
 	Device       string      `json:"device,omitempty"`
@@ -186,13 +191,16 @@ type Store struct {
 	evicted       int64
 	names         map[string]string  // device StableID -> display name
 	firstSeen     map[string]float64 // device StableID -> its first request or connection this run (a few devices: only reqcove names them)
-	allow         HostRules          // hosts recorded (--allow-hosts)
+	allow         HostRules          // hosts recorded (--allow-hosts): the newest of scopes
+	scopes        []scopeAt          // every scope since the start, oldest first
 	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
 	outOfScope    int64              // requests to hosts outside allow, seen here
 	addonOOS      int64              // the same, seen by the addon
 	earlier       [3]int64           // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
-	helloRulesErr string        // the last hello's rules_error: a later rules event's does not count for spawn
+	helloRulesErr string // the last hello's rules_error: a later rules event's does not count for spawn
+	helloInst     string // the last hello's mitmdump instance and scope generation
+	helloGen      int64
 	seq           int64         // last Flow.seq (or Flow.answered) handed out
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
 	wake          chan struct{} // closed when a flow is answered, for Wait; nil until a waiter asks
@@ -241,6 +249,13 @@ func (s *Store) helloRulesError() string {
 	return s.helloRulesErr
 }
 
+// helloScope is the last hello's mitmdump instance and scope generation.
+func (s *Store) helloScope() (string, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.helloInst, s.helloGen
+}
+
 // badLine counts a line from the addon that could not be taken.
 func (s *Store) badLine() {
 	s.mu.Lock()
@@ -283,14 +298,82 @@ func (s *Store) mitmdumpExited(why string) {
 	s.addonDropped, s.addonOOS = [2]int64{}, 0
 }
 
-// SetScope sets which hosts are recorded and whether secrets are masked.
-// Call it before flows arrive.
+// SetScope sets which hosts are recorded (scope generation 0) and whether
+// secrets are masked. Call it before flows arrive.
 func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.allow = allow
+	s.allow, s.scopes = allow, []scopeAt{{0, allow}}
 	s.redact.Store(redact)
 }
+
+type scopeAt struct {
+	gen   int64
+	rules HostRules
+}
+
+// setScopeGen is a live scope change, generation gen (newer than the last):
+// the hosts recorded only, never masking. From now on, an event of a flow
+// whose host one of the scopes since its admission leaves out is not recorded.
+// ponytail: the history grows by one entry per change, never trimmed; a
+// change is a person's command, so it stays short.
+func (s *Store) setScopeGen(gen int64, allow HostRules) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allow = allow
+	s.scopes = append(s.scopes, scopeAt{gen, allow})
+}
+
+// inScopeSince: ok holds for every scope from the one in force at generation
+// gen to the newest. A queued event of an earlier generation (a stop, then a
+// start) is so never recorded.
+func (s *Store) inScopeSince(gen int64, ok func(HostRules) bool) bool {
+	for i := len(s.scopes) - 1; i >= 0; i-- {
+		if !ok(s.scopes[i].rules) {
+			return false
+		}
+		if s.scopes[i].gen <= gen {
+			return true
+		}
+	}
+	return true
+}
+
+func (s *Store) topGen() int64 {
+	if len(s.scopes) == 0 {
+		return 0
+	}
+	return s.scopes[len(s.scopes)-1].gen
+}
+
+// gateLocked says whether an event of f may be recorded: its host has been in
+// every scope since its admission (f.checked memoizes up to where, so between
+// changes an event costs one compare). The first event refused closes the
+// flow: an open WebSocket or request would otherwise never end.
+func (s *Store) gateLocked(f *Flow) bool {
+	if f.cut {
+		return false
+	}
+	top := s.topGen()
+	if f.checked == top {
+		return true
+	}
+	if s.inScopeSince(f.checked, func(r HostRules) bool { return r.Match(f.rawHost) }) {
+		f.checked = top
+		return true
+	}
+	f.cut = true
+	if f.State == "open" {
+		before := f.bytes()
+		f.State, f.Error = "error", ScopeCut
+		s.heldBytes += f.bytes() - before
+		s.answerLocked(f)
+	}
+	return false
+}
+
+// ScopeCut is the error of a flow whose host left the scope while it was open.
+const ScopeCut = "recording stopped: its host left the scope"
 
 // Redacting says whether secrets are masked (false: --no-redact).
 func (s *Store) Redacting() bool { return s.redact.Load() }
@@ -391,6 +474,7 @@ func (s *Store) Apply(line []byte) {
 	case "hello":
 		s.hello = e
 		s.hellos++
+		s.helloInst, s.helloGen = e.Instance, e.Gen
 		s.helloRulesErr = e.RulesError
 		if e.Rules != nil { // at start, and when a restarted mitmproxy takes the file again
 			s.rulesLoaded = time.Now()
@@ -409,9 +493,9 @@ func (s *Store) Apply(line []byte) {
 		return
 	case "pass_open":
 		switch {
-		case e.Raw && !s.allow.Match(e.SNI): // raw TCP of a host recorded as flows only: checked here too
+		case e.Raw && !s.inScopeSince(e.Gen, func(r HostRules) bool { return r.Match(e.SNI) }): // raw TCP of a host recorded as flows only: checked here too
 			return
-		case !e.Raw && (!s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI)): // passed through for an allowed --pass-hosts host only
+		case !e.Raw && !s.inScopeSince(e.Gen, func(r HostRules) bool { return r.Allowed(e.SNI) && r.Passed(e.SNI) }): // passed through for an allowed --pass-hosts host only
 			s.outOfScope++
 			return
 		}
@@ -449,7 +533,7 @@ func (s *Store) Apply(line []byte) {
 		if host == "" {
 			host = e.Host
 		}
-		if !s.allow.Allowed(host) {
+		if !s.inScopeSince(e.Gen, func(r HostRules) bool { return r.Allowed(host) }) {
 			s.outOfScope++ // only hosts in --allow-hosts are recorded, failures included
 			return
 		}
@@ -474,14 +558,18 @@ func (s *Store) Apply(line []byte) {
 			s.orphanUpdates++ // the request event was dropped, evicted or out of scope
 			return
 		}
-		if !s.allow.Match(e.Host) {
-			s.outOfScope++ // the addon should have skipped it; this is the second check
+		// The addon should have skipped it; this is the second check, against
+		// every scope since the one the addon admitted it under.
+		if !s.inScopeSince(e.Gen, func(r HostRules) bool { return r.Match(e.Host) }) {
+			s.outOfScope++
 			return
 		}
 		s.seq++
-		f = &Flow{ID: e.ID, State: "open", seq: s.seq}
+		f = &Flow{ID: e.ID, State: "open", seq: s.seq, rawHost: normHost(e.Host), checked: s.topGen()}
 		s.flows[e.ID] = f
 		s.order = append(s.order, e.ID)
+	} else if !s.gateLocked(f) {
+		return
 	}
 	before := f.bytes()
 	switch e.Ev {

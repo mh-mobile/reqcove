@@ -158,8 +158,11 @@ type StatusOut struct {
 	AllowHosts []string `json:"allow_hosts"`
 	// PassHosts is --pass-hosts: carried undecrypted, their connections listed
 	// by list_passthrough, never their contents.
-	PassHosts []string       `json:"pass_hosts,omitempty"`
-	Capture   map[string]any `json:"capture"` // capture_stats (presets: the presets' names)
+	PassHosts []string `json:"pass_hosts,omitempty"`
+	// ScopePending: a change of these hosts mitmproxy has not acknowledged
+	// yet (allow_hosts and pass_hosts are the ones it has); none when applied.
+	ScopePending string         `json:"scope_pending,omitempty"`
+	Capture      map[string]any `json:"capture"` // capture_stats (presets: the presets' names)
 	// ActivePresets are the presets an agent has turned on now, of every kind
 	// (not over --mcp-http, whose server has no preset tools); PresetsError:
 	// mitmproxy did not say which, so none listed means unknown.
