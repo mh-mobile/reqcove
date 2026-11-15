@@ -153,13 +153,13 @@ The commands and their flags, from each command's flag set:
 
 | Command | Flags |
 |---|---|
-| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config`, `--uvx`, `--python`, `--mitmproxy-spec` |
-| `reqcove status` | `--json`, `--state`, `--uvx` |
+| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config` |
+| `reqcove status` | `--json`, `--state` |
 | `reqcove har` | `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit`, `--state` (a HAR 1.2 file on standard output) |
 | `reqcove links` | `--state` |
 | `reqcove lan allow ADDR`, `lan deny ADDR`, `lan list` | `--state` |
 | `reqcove mark [TEXT]` (`-- TEXT` for one starting with `-`) | `--state` |
-| `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state`, `--uvx` |
+| `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
 | `reqcove service restart`, `service uninstall` | none |
@@ -168,8 +168,8 @@ The commands and their flags, from each command's flag set:
 | `reqcove mcp` | `--state` |
 | `reqcove version` | none |
 
-The defaults of `--mitmproxy-spec` and `--python` follow the lock: not stable
-([below](#not-stable)).
+`--uvx`, `--python` and `--mitmproxy-spec` are not in this list: they are not
+stable ([below](#not-stable)).
 
 ### The `--config` file
 
@@ -224,9 +224,12 @@ These may change in any release, a patch release included:
   descriptions and the server's instructions (only the "Deprecated" at the
   start of a deprecated tool's description is kept).
 - `reqcove status`' text (its `--json` is stable).
-- The mitmproxy Reqcove runs and its Python lock (`internal/capture/mitm.py.lock`),
-  and with them the defaults of `--mitmproxy-spec` and `--python`: updated for
-  security fixes, in any release.
+- The mitmproxy Reqcove runs and its Python lock (`internal/capture/mitm.py.lock`):
+  updated for security fixes, in any release. Which mitmproxy version a release
+  runs is not promised.
+- `--uvx`, `--python` and `--mitmproxy-spec` (of `run`; `--uvx` of `status` and
+  `mock add` too), and their defaults: they choose how mitmproxy is run (uv, a
+  Python, a mitmproxy version), and follow mitmproxy and uv.
 - `capture_stats`' fields not listed above: `held_bytes`, `restarts`,
   `state_detail`, `tls_failures`, `passed_through_open`, `addon_dropped_bodies`,
   `addon_dropped_events`, `bad_lines`, `masking_failed`, `unknown_version`,
