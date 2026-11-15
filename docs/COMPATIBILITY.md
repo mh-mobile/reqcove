@@ -133,6 +133,14 @@ exits 1, saying why on stderr. Its fields:
   `hosts_files` (the files `--allow-hosts=@FILE` and `--pass-hosts=@FILE`
   read). Absent from a run older than v1.1: `reqcove status` takes the
   version from `serverInfo` then.
+- Since v1.1, on this computer only (not over `--mcp-http`), host discovery
+  (`reqcove capture discover`): `discover_until` (RFC 3339) and
+  `discover_left` while it is on; `out_of_scope_hosts` (each with `host`,
+  `count`, and `add`, the command that records it, absent for a name that is
+  not a plain host name; at most 30, most seen first) and
+  `out_of_scope_hosts_kept` (how many names are kept), absent when none.
+  `summarize` gets `out_of_scope_hosts` too, the same, not narrowed by its
+  filters.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -203,6 +211,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
 | `reqcove capture save` (since v1.1) | `--state` |
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
+| `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |

@@ -140,10 +140,12 @@ func run(ctx context.Context, args []string) error {
 		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
 		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
 		captureEndCmd = withState("reqcove capture allow-all --end", o.state)
+		discoverEndCmd = withState("reqcove capture discover --end", o.state)
 		allowAllNotes = allowAllWarnings(o)
 		defer func() {
 			mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start"
 			captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil
+			discoverEndCmd = "reqcove capture discover --end"
 		}()
 	}
 	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
@@ -341,15 +343,16 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 	remoteStatus := func() mcpserver.StatusOut {
 		return liveStatus(node.get(), cap)
 	}
+	// The local server's alone: discovery's names, never --mcp-http's.
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
-		out := withFiles(remoteStatus(), o)
+		out := withDiscovery(withFiles(remoteStatus(), o), cap)
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
 			out.SetActivePresets(cap.Presets(ctx))
 		}
 		return out
-	}, remoteStatus, cap)
+	}, remoteStatus, cap, func() []mcpserver.OutHost { shown, _ := outsideHosts(cap); return shown })
 	var mcpHandler http.Handler
 	if o.mcpHTTP { // its own server: read-only, never the preset tools
 		mcpHandler = mcpserver.HTTP(remote, mcpToken, exitnode.Caller)

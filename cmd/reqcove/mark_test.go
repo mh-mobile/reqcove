@@ -25,7 +25,7 @@ func TestMark(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	st := capture.NewStore(10, 1<<20)
-	local, _ := mcpserver.Servers(st, nil, nil, nil)
+	local, _ := mcpserver.Servers(st, nil, nil, nil, nil)
 	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), local); err != nil {
 		t.Fatal(err)
 	}

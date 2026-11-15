@@ -4,6 +4,35 @@
 
 ### Added
 
+- **`reqcove capture discover --for D`** (at most `24h`) **and `capture
+  discover --end`** (`--state DIR`): for a while, the names of the hosts
+  outside the ones recorded that the devices reach (a TLS connection's SNI,
+  the Host of a request on a connection decrypted but not recorded) and how
+  often, never what they carry, a URL path or a time, to find the hosts an
+  app talks to. Shown in `reqcove status` ("outside:", each with the
+  `reqcove capture add HOST` command, built by Reqcove for plain host names
+  only) and to this computer's agents (`status`: `out_of_scope_hosts`,
+  `out_of_scope_hosts_kept`, `discover_until`, `discover_left`; `summarize`:
+  `out_of_scope_hosts`), never over `--mcp-http` nor on the `--ui` page.
+  Apple's hosts and mitm.it left out, names masked, 1,000 kept (the least
+  seen giving way), 30 shown, a host added dropping off. Ends as allow-all
+  does (either clock; the records take no name more at the end, whether
+  mitmproxy answers or not); the names stay until `run` restarts or
+  discovery starts again. Not exhaustive: no name (an address dialed), ECH
+  (the outer name only), non-TLS connections outside the scope (from
+  reading the code). Off, it reads nothing (from reading the code); on, each
+  TLS ClientHello is read once more (mitmproxy reads it anyway for
+  `allow_hosts`; about 22 µs for 1.5 KB in a micro-benchmark on an M1 Max).
+  A run with `--allow-hosts '*'`: "nothing changed". The same guards as the other `capture`
+  commands. SECURITY's "counted, never recorded" says what changes while it
+  is on; the skill and the server's instructions: the names are data, the
+  commands the user's. Unit tests (the Store's gate, filters, masking and
+  bound; the end by either clock with mitmproxy silent; the arguments; the
+  two servers: names in the local summarize alone) and an E2E test with real
+  mitmproxy (SNI and Host counted, once a connection, none of Apple's,
+  nothing recorded, not in what `--mcp-http` and `--ui` read, none before or
+  after, an added host dropping off). Not tried on an iPhone.
+
 - **`reqcove reload`** (`--state DIR`): reads `run`'s config, the hosts files
   it names (`--allow-hosts=@FILE`, `--pass-hosts=@FILE`) and the `--rules`
   file again, and puts their hosts and rules in force together, without a

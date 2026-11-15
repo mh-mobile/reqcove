@@ -189,6 +189,7 @@ type Capture struct {
 	// addon loads and puts in force with the scope; loaded, what it answered.
 	reloadRules string
 	loaded      map[string]int
+	discUntil   time.Time // discovery's end (SetDiscover), with its monotonic reading; zero when off
 }
 
 // proc is one mitmdump process.
@@ -499,6 +500,9 @@ func (c *Capture) mitmArgs() []string {
 	}
 	if c.allOn() {
 		args = append(args, "--set", "reqcove_allow_all=true")
+	}
+	if !c.discUntil.IsZero() {
+		args = append(args, "--set", "reqcove_discover=true")
 	}
 	for _, re := range mitmAllow(effective(c.want, c.stopped, c.allOn())) {
 		args = append(args, "--allow-hosts", re) // per connection: others pass through undecrypted
@@ -815,7 +819,11 @@ func (c *Capture) killLocked() {
 func (c *Capture) expire(ctx context.Context, mono, wall time.Time) {
 	c.scopeMu.Lock()
 	defer c.scopeMu.Unlock()
-	if !c.allOn() || mono.Before(c.allUntil) && wall.Round(0).Before(c.allUntil.Round(0)) {
+	if !c.discUntil.IsZero() && due(c.discUntil, mono, wall) { // discovery likewise
+		c.cfg.Logf("host discovery ended: its time is up (%s); the names seen stay until run restarts", c.discUntil.Round(0).Format(time.RFC3339))
+		c.endDiscoverLocked(ctx, "host discovery ended: its time is up")
+	}
+	if !c.allOn() || !due(c.allUntil, mono, wall) {
 		return
 	}
 	c.cfg.Logf("allow-all ended: its time is up (%s); the records made meanwhile stay", c.allUntil.Round(0).Format(time.RFC3339))

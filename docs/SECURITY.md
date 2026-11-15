@@ -38,6 +38,8 @@ than a public issue.
   shows them and they may be sent on to `--upstream-proxy`.
 - Requests and TLS failures outside the list are counted, never recorded,
   but while `reqcove capture allow-all` is on (below): then every host is.
+  While `reqcove capture discover` is on (below), their host **names** are
+  kept too, with a count: never what they carry.
 - A `--pass-hosts` host, and a connection mitmproxy carries as raw TCP, leave
   a record of the connection only, never of what it carried
   ([detail](masking.md#connections-recorded-without-their-content)).
@@ -275,7 +277,7 @@ Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
 
-`reqcove capture` (add, remove, set, stop, start, save, allow-all) changes which hosts `run` records, over
+`reqcove capture` (add, remove, set, stop, start, save, allow-all, discover) changes which hosts `run` records, over
 `ctl.sock` in the state directory (0600, a test), not over the MCP tools'
 socket: no tool changes what is recorded. It runs only when its input and
 output are a terminal, and the skill and the server's instructions tell agents
@@ -332,6 +334,27 @@ it, and `status` says `"recording": "allow-all"` with `allow_all_until`.
   test).
 - Connections decrypted meanwhile stay decrypted, unrecorded, until they
   close after it ends (an E2E test).
+
+`reqcove capture discover --for D` (at most 24 hours) keeps, for a while,
+the **names** of the hosts outside the ones recorded that the devices reach
+(a TLS connection's SNI, a request's Host on a connection decrypted but not
+recorded) and how often: never content, a URL path or a time. So while it is
+on, "counted, never recorded" holds for what those hosts carry, not for their
+names.
+- **Local only:** the names reach `reqcove status` and this computer's
+  agents (`status`, `summarize`), never `--mcp-http` nor the `--ui` page (an
+  E2E test: not in what `--mcp-http` and `--ui` read; a unit test of the two
+  servers). Agents read them as data,
+  not instructions, as other names from the traffic; they are masked as
+  other host fields, Apple's hosts and mitm.it are left out, and a command
+  to add one is built by Reqcove only for a plain host name.
+- **Time-limited** as allow-all (either clock, a sleep does not extend it):
+  at its end the records take no name more, whether mitmproxy answers or not
+  (unit tests). The names seen stay in memory until `run` restarts or
+  discovery starts again; never in a file. Bounded: 1,000 names.
+- **Not exhaustive:** a connection without a name, one with ECH (its outer
+  name only), and a non-TLS connection to a host outside the scope are not
+  seen (from reading the code, not tried). Who can turn it on: as `reqcove capture` (above).
 
 ## Masking
 
