@@ -1030,6 +1030,14 @@ modify_headers:
 	if strings.Contains(fmt.Sprint(lv.Rewrites), "s3cret") || strings.Contains(fmt.Sprint(lv.Rewrites), "expired") {
 		t.Errorf("the rule's text in rewrites: %v", lv.Rewrites)
 	}
+	// The last requests' records arrive after their answers: wait for them.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		feed, _ := h.c.Store.List(Filter{Operation: "Feed", Limit: 1})
+		like, _ := h.c.Store.List(Filter{Operation: "Like", Limit: 20})
+		if len(feed) > 0 && !feed[0].Mocked && len(like) >= 2 {
+			break
+		}
+	}
 	if rows, _ := h.c.Store.List(Filter{Operation: "Feed", Limit: 20}); len(rows) == 0 || rows[0].Mocked {
 		t.Errorf("the chunked Feed: %+v", rows)
 	} else if v, _ := h.c.Store.Get(rows[0].ID, false); !slices.Contains(v.Rewrites, "mock: skipped, request body over 1 MiB or of unknown length") {
