@@ -35,9 +35,11 @@ records through the reqcove MCP tools (`reqcove mcp`).
   (allow, deny, list): it decides which devices may send through this computer;
   a `reqcove lan allow` step in `next_steps` is for the user. Never run
   `reqcove mark`: it is the user's (source `cli`); yours go through `add_marker`.
-  Never run `reqcove capture` (add, remove, set): it changes which hosts are
-  recorded, the user's choice; a note or a step that gives `reqcove capture
-  add HOST` is for the user to run.
+  Never run `reqcove capture` (add, remove, set, stop, start): it changes which
+  hosts are recorded, the user's choice; a note or a step that gives `reqcove
+  capture add HOST` or `reqcove capture start` is for the user to run. While
+  `status` says `recording: stopped`, nothing new is recorded and no rule or
+  preset applies (`activate_preset` is refused): the app reaches the real servers.
   Never run `reqcove setup`: it asks the user and writes their config file;
   tell them to run it in their terminal. Never run `reqcove mock add`: it writes the user's rules file; only when the
   user asks, run it with `--print` (it writes nothing) and show them the YAML. (The `tailscale lock sign` step in `next_steps` names the

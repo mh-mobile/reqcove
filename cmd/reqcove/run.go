@@ -138,7 +138,8 @@ func run(ctx context.Context, args []string) error {
 	}
 	if !o.lanMode {
 		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
-		defer func() { mcpserver.CaptureAddCmd = "" }()
+		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
+		defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
 	}
 	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
 	if err != nil {

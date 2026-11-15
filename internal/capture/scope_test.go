@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -55,13 +56,13 @@ func TestScopeGate(t *testing.T) {
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
 	s.Apply(wsLine("f1"))
-	s.setScopeGen(1, rulesOf(t, "b.example.com"))
+	s.setScopeGen(1, rulesOf(t, "b.example.com"), false)
 	s.Apply(wsLine("f1"))
 	v, _ := s.Get("f1", false)
 	if v.WSMessages != 1 || v.State != "error" || v.Error != ScopeCut || v.answered == 0 {
 		t.Fatalf("after the removal: %d messages, %s %q, answered %d", v.WSMessages, v.State, v.Error, v.answered)
 	}
-	s.setScopeGen(2, rulesOf(t, "a.example.com", "b.example.com"))
+	s.setScopeGen(2, rulesOf(t, "a.example.com", "b.example.com"), false)
 	s.Apply(wsLine("f1"))
 	if n := wsCount(t, s, "f1"); n != 1 {
 		t.Errorf("a back: f1 resumed, %d messages", n)
@@ -82,8 +83,8 @@ func TestScopeGateStopStart(t *testing.T) {
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
 	s.Apply(wsLine("f1"))
-	s.setScopeGen(1, HostRules{})
-	s.setScopeGen(2, rulesOf(t, "a.example.com"))
+	s.setScopeGen(1, HostRules{}, false)
+	s.setScopeGen(2, rulesOf(t, "a.example.com"), false)
 	s.Apply(wsLine("f1"))
 	s.Apply(reqLine("f2", "a.example.com", 0))
 	s.Apply(fmt.Appendf(nil, `{"v":%d,"ev":"tls_failed","conn":"c9","ts":1,"sni":"a.example.com","msg":"x","gen":0}`, wireVersion))
@@ -105,13 +106,13 @@ func TestScopeGateMemo(t *testing.T) {
 	s := NewStore(100, 1<<20)
 	s.SetScope(rulesOf(t, "a.example.com"), true)
 	s.Apply(reqLine("f1", "a.example.com", 0))
-	s.setScopeGen(1, rulesOf(t, "a.example.com", "b.example.com"))
+	s.setScopeGen(1, rulesOf(t, "a.example.com", "b.example.com"), false)
 	s.Apply(wsLine("f1"))
 	if f := s.flows["f1"]; f.checked != 1 || wsCount(t, s, "f1") != 1 {
 		t.Fatalf("memo %d, %d messages", f.checked, wsCount(t, s, "f1"))
 	}
-	s.setScopeGen(2, rulesOf(t, "b.example.com"))
-	s.setScopeGen(3, rulesOf(t, "a.example.com"))
+	s.setScopeGen(2, rulesOf(t, "b.example.com"), false)
+	s.setScopeGen(3, rulesOf(t, "a.example.com"), false)
 	s.Apply(wsLine("f1"))
 	if n := wsCount(t, s, "f1"); n != 1 || !s.flows["f1"].cut {
 		t.Errorf("a out and back between two events: %d messages, cut %v", n, s.flows["f1"].cut)
@@ -129,7 +130,7 @@ func TestScopeGateMaskedHost(t *testing.T) {
 	}
 	s.SetScope(rulesOf(t, host), true)
 	s.Apply(reqLine("f", host, 0))
-	s.setScopeGen(1, rulesOf(t, host, "b.example.com"))
+	s.setScopeGen(1, rulesOf(t, host, "b.example.com"), false)
 	s.Apply(wsLine("f"))
 	v, _ := s.Get("f", false)
 	if v.WSMessages != 1 || v.State != "open" || strings.Contains(v.Host, "abcdefghij") {
@@ -307,5 +308,85 @@ func TestSetScopeOrder(t *testing.T) {
 	c.syncScope(ctx)
 	if c.ScopePending() != "" || !slices.Equal(c.Scope().Hosts, []string{"b.example.com"}) || ops()[len(ops())-1]["gen"] != float64(c.wantGen) {
 		t.Errorf("after the hello: pending %q, scope %v, last op %v", c.ScopePending(), c.Scope().Hosts, ops()[len(ops())-1])
+	}
+}
+
+// TestStoppedArgs: while stopped, mitmproxy decrypts mitm.it alone (never an
+// empty allow_hosts, which decrypts everything), with "*" as the base too; the
+// addon keeps the base (its rules are checked against it) and the generation.
+// A stop narrows the Store first, unacknowledged too; a start reaches it once
+// acknowledged; a change while stopped changes the base only.
+func TestStoppedArgs(t *testing.T) {
+	ctx := context.Background()
+	mitmIt := `^mitm\.it(:\d+)?$`
+	base, err := rulesOf(t, "a.example.com", "b.example.com").WithPass([]string{"b.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []HostRules{base, rulesOf(t, "*")} {
+		c := scopeCapture(t, r)
+		c.stopped, c.wantGen = true, 7
+		args := c.mitmArgs()
+		var allow []string
+		for i, a := range args {
+			if a == "--allow-hosts" {
+				allow = append(allow, args[i+1])
+			}
+		}
+		joined := strings.Join(args, " ")
+		if !slices.Equal(allow, []string{mitmIt}) || !strings.Contains(joined, "reqcove_stopped=true") || !strings.Contains(joined, "reqcove_scope_gen=7") {
+			t.Errorf("%v stopped: --allow-hosts %q, args %s", r.Hosts, allow, joined)
+		}
+		hosts, _ := json.Marshal(addonHosts(r))
+		if !slices.Contains(args, "reqcove_allow_hosts="+string(hosts)) {
+			t.Errorf("%v stopped: the addon is not given the base: %s", r.Hosts, joined)
+		}
+		if op := scopeOp(r, 7, false, true); !slices.Equal(op["allow_hosts"].([]string), []string{mitmIt}) || op["stopped"] != true {
+			t.Errorf("%v stopped: the op %v", r.Hosts, op)
+		}
+	}
+
+	c := scopeCapture(t, base)
+	var mode atomic.Value
+	mode.Store("silent")
+	fakeControl(t, c.cfg.Dir, func(op map[string]any) map[string]any {
+		if mode.Load() == "silent" {
+			return nil
+		}
+		return map[string]any{"ok": true, "gen": op["gen"], "instance": "inst-1"}
+	})
+	storeHas := func(host string) bool {
+		return c.Store.inScopeSince(c.Store.topGen(), func(r HostRules) bool { return r.Match(host) })
+	}
+	if _, err := c.SetStopped(ctx, "capture stop", true); !errors.Is(err, ErrPending) {
+		t.Fatalf("stop, mitmproxy silent: %v, want pending", err)
+	}
+	if storeHas("a.example.com") || !c.Store.Stopped() || c.Stopped() || c.ScopePending() != PendingNarrowed || !strings.Contains(strings.Join(c.mitmArgs(), " "), "reqcove_stopped=true") {
+		t.Errorf("stop before the ack: store a %v, store stopped %v, status stopped %v, pending %q", storeHas("a.example.com"), c.Store.Stopped(), c.Stopped(), c.ScopePending())
+	}
+	mode.Store("ok")
+	if _, err := c.SetStopped(ctx, "capture stop", true); !errors.Is(err, ErrUnchanged) {
+		t.Errorf("stop again: %v", err)
+	}
+	c.Store.Apply(fmt.Appendf(nil, `{"v":%d,"ev":"hello","instance":"inst-1","gen":0}`, wireVersion))
+	c.syncScope(ctx) // a new mitmdump: told
+	if !c.Stopped() || c.ScopePending() != "" {
+		t.Errorf("after the hello: stopped %v, pending %q", c.Stopped(), c.ScopePending())
+	}
+	var saw bool
+	if err := c.ChangeScope(ctx, "capture add c.example.com", func(r HostRules, stopped bool) (HostRules, error) {
+		saw = stopped
+		return rulesOf(t, "a.example.com", "c.example.com"), nil
+	}); err != nil || !saw {
+		t.Fatalf("add while stopped: %v, told stopped %v", err, saw)
+	}
+	if storeHas("c.example.com") || !c.Stopped() || !slices.Equal(c.Scope().Hosts, []string{"a.example.com", "c.example.com"}) {
+		t.Errorf("add while stopped: store c %v, stopped %v, base %v", storeHas("c.example.com"), c.Stopped(), c.Scope().Hosts)
+	}
+	if b, err := c.SetStopped(ctx, "capture start", false); err != nil || !slices.Equal(b.Hosts, []string{"a.example.com", "c.example.com"}) {
+		t.Fatalf("start: %v %v", b.Hosts, err)
+	}
+	if !storeHas("c.example.com") || c.Store.Stopped() || c.Stopped() || strings.Contains(strings.Join(c.mitmArgs(), " "), "reqcove_stopped") {
+		t.Errorf("started: store c %v, stopped %v %v", storeHas("c.example.com"), c.Store.Stopped(), c.Stopped())
 	}
 }

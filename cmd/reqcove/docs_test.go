@@ -210,8 +210,8 @@ func parseDocumented(words []string) error {
 		_, args = wordsAndFlags(args)
 	}
 	if words[0] == "capture" && len(args) > 0 { // capture add HOST…: its subcommand first, then hosts among the flags
-		if !slices.Contains([]string{"add", "remove", "set"}, args[0]) {
-			return fmt.Errorf("capture takes add, remove or set, not %q", args)
+		if !slices.Contains([]string{"add", "remove", "set", "stop", "start"}, args[0]) {
+			return fmt.Errorf("capture takes add, remove, set, stop or start, not %q", args)
 		}
 		_, args = wordsAndFlags(args[1:], "allow-hosts", "pass-hosts")
 	}

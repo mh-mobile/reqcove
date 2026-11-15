@@ -193,6 +193,7 @@ type Store struct {
 	firstSeen     map[string]float64 // device StableID -> its first request or connection this run (a few devices: only reqcove names them)
 	allow         HostRules          // hosts recorded (--allow-hosts): the newest of scopes
 	scopes        []scopeAt          // every scope since the start, oldest first
+	stopped       bool               // reqcove capture stop: allow is none (capture_stats' recording)
 	redact        atomic.Bool        // mask secrets as they arrive (off: --no-redact); set before events, read outside mu by Apply
 	outOfScope    int64              // requests to hosts outside allow, seen here
 	addonOOS      int64              // the same, seen by the addon
@@ -317,10 +318,10 @@ type scopeAt struct {
 // whose host one of the scopes since its admission leaves out is not recorded.
 // ponytail: the history grows by one entry per change, never trimmed; a
 // change is a person's command, so it stays short.
-func (s *Store) setScopeGen(gen int64, allow HostRules) {
+func (s *Store) setScopeGen(gen int64, allow HostRules, stopped bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.allow = allow
+	s.allow, s.stopped = allow, stopped
 	s.scopes = append(s.scopes, scopeAt{gen, allow})
 }
 
@@ -370,6 +371,13 @@ func (s *Store) gateLocked(f *Flow) bool {
 		s.answerLocked(f)
 	}
 	return false
+}
+
+// Stopped says whether recording is stopped (reqcove capture stop) here.
+func (s *Store) Stopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopped
 }
 
 // ScopeCut is the error of a flow whose host left the scope while it was open.

@@ -101,6 +101,23 @@ reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # まとめ�
 
 確認状況：テストだけです（単体テストと、本物の mitmproxy での E2E テスト：追加すると新しい接続を記録し、外すと記録しないこと、マーカーと status）。iPhone では試していません。`reqcove capture` が返す保留の答えと、`mock` ルールによる拒否は、コードから判断したものです（そのもとになる変更の仕組み、保留の状態、拒否そのものには、それぞれテストがあります）。
 
+#### しばらく記録を止める
+
+```sh
+reqcove capture stop     # 新しく記録しない。記録は読めるまま残る
+reqcove capture start    # 同じホストをまた記録する
+```
+
+止めている間、mitmproxy は新しく復号しません（CA を配る mitm.it だけ）。新しく記録もせず、**`--rules` ファイルのルールはどれも効きません**。mock、map_local、map_remote、modify_headers、resolve のすべてで、プリセットも含みます（オンのものはオフにし、`activate_preset` は拒否します）。そのため、アプリのリクエストは送ったとおりに本物のサーバーへ届きます。モックしていた API へのものもです。`stop` の答えはこのことを警告し、残っている記録の数を伝えます。
+
+- すでに復号している接続は、閉じるまで復号されたままですが、その上のものは記録せず、新しいリクエストにルールも効きません（止めたときに途中だったリクエストは、始まったとおりに終わります。コードから判断したものです）。開いている WebSocket のフローは「recording stopped: its host left the scope」で閉じます。
+- `start` は、また記録するホストを伝えます。記録するのは新しい接続と WebSocket だけです（アプリを開き直します）。止める前から開いていたものは、また記録することはありません。プリセットは、エージェントがオンにするまでオフのままです。
+- 止めている間の `capture add`、`remove`、`set` は、`start` で記録するホストを変えます（答えがそう伝えます）。それまでは何も記録しません。
+- mitmproxy が再起動しても止まったままです。`run` を再起動すると、また記録します（保存しません）。
+- `reqcove status` は「recorded: nothing: stopped」と残しているホストを表示します。`--json` と MCP の `status` は `"recording": "stopped"`、`allow_hosts: []`、残しているホストを `base_allow_hosts`（`base_pass_hosts`）で返します。`next_steps` は `reqcove capture start` を伝えます。ほかと同じく、LAN モードでは拒否します。
+
+確認状況：テストだけです（本物の mitmproxy での E2E テスト：開いている WebSocket はそれ以上記録せず、`start` のあとも再開しないこと、新しいものは記録すること。モックしていた URL が、新しい接続でも、止める前に復号した接続でもサーバーに届くこと。プリセットがオフになり、オンにできないこと。止めている間に mitmproxy を強制終了しても、止まったまま戻ること。CLI の答え、status、マーカー）。iPhone では試していません。
+
 ### 2 台のコンピュータで同じ CA を使う
 
 状態ディレクトリが同じであれば、CA も同じままです。秘密鍵を含む `~/.reqcove/mitmproxy/` をディレクトリごと、もう 1 台の `~/.reqcove/` にコピーします。コピー先の reqcove は止めておくか、初めて起動する前にコピーしてください。

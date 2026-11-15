@@ -61,8 +61,14 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 
 // liveStatus is statusOut as run answers it: the scope mitmproxy has
 // acknowledged (it may have changed since the start), and what is pending.
+// While stopped allow_hosts is [] (nothing is recorded), the base kept in
+// base_allow_hosts.
 func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
 	out := statusOut(n, cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices())
+	out.Recording, out.BaseAllowHosts, out.BasePassHosts = "on", out.AllowHosts, out.PassHosts
+	if cap.Stopped() {
+		out.Recording, out.AllowHosts, out.PassHosts = "stopped", []string{}, nil
+	}
 	out.ScopePending = cap.ScopePending()
 	if at, why := cap.LastChange(); !at.IsZero() {
 		out.ScopeChangedAt, out.ScopeChange = at.Format(time.RFC3339), why
@@ -151,7 +157,9 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	if e, _ := stats["rules_error"].(string); e != "" {
 		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), after a restart of mitmproxy too")
 	}
-	if !allow.All && len(allow.Patterns) == 0 {
+	if stats["recording"] == "stopped" {
+		steps = append(steps, "recording is stopped: nothing new is recorded and the --rules file's rules do not apply (mocks, map_remote: the app reaches the real servers); to record again, in your terminal: "+mcpserver.CaptureStartCmd)
+	} else if !allow.All && len(allow.Patterns) == 0 {
 		if mcpserver.CaptureAddCmd != "" {
 			steps = append(steps, "nothing is recorded: add your app's hosts, in your terminal: "+mcpserver.CaptureAddCmd+" api.example.com")
 		} else { // LAN mode: its hosts are set at the start
@@ -289,6 +297,9 @@ func status(ctx context.Context, args []string) error {
 		Service      string                `json:"service"`
 		AllowHosts   []string              `json:"allow_hosts"`
 		PassHosts    []string              `json:"pass_hosts"`
+		Recording    string                `json:"recording"`
+		BaseAllow    []string              `json:"base_allow_hosts"`
+		BasePass     []string              `json:"base_pass_hosts"`
 		Pending      string                `json:"scope_pending"`
 		ChangedAt    string                `json:"scope_changed_at"`
 		Change       string                `json:"scope_change"`
@@ -322,6 +333,12 @@ func status(ctx context.Context, args []string) error {
 	hosts := orDash(strings.Join(out.AllowHosts, ", "))
 	if len(out.PassHosts) > 0 {
 		hosts += "; passed undecrypted: " + strings.Join(out.PassHosts, ", ")
+	}
+	if out.Recording == "stopped" {
+		hosts = "nothing: stopped (no rule applies); `reqcove capture start` records " + orDash(strings.Join(out.BaseAllow, ", "))
+		if len(out.BasePass) > 0 {
+			hosts += "; passed undecrypted: " + strings.Join(out.BasePass, ", ")
+		}
 	}
 	if out.ChangedAt != "" {
 		if t, err := time.Parse(time.RFC3339, out.ChangedAt); err == nil {

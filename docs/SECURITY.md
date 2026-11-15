@@ -273,7 +273,7 @@ Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
 
-`reqcove capture` (add, remove, set) changes which hosts `run` records, over
+`reqcove capture` (add, remove, set, stop, start) changes which hosts `run` records, over
 `ctl.sock` in the state directory (0600, a test), not over the MCP tools'
 socket: no tool changes what is recorded. It runs only when its input and
 output are a terminal, and the skill and the server's instructions tell agents
@@ -284,6 +284,17 @@ more hosts. `run` checks each request itself: `"*"` is refused, and so is a
 change in LAN mode (tests). Each change leaves a line in `run`'s log, a
 marker with source `cli` and `scope_change` in `status` (an E2E test), so
 one you did not make shows.
+
+`reqcove capture stop` turns the `--rules` file off with the recording: no
+mock, map_local, map_remote, modify_headers or resolve rule applies while
+stopped, presets included (turned off, and `activate_preset` refused), so
+the app's requests go to the real servers as it sends them: test requests a
+mock or map_remote kept off production reach it then. The answer of `stop`
+warns of it, and `status` says `"recording": "stopped"` (E2E tests: a mocked
+URL reaches the server, on a new connection and on one decrypted before the
+stop; a preset cannot be turned on). mitmproxy decrypts mitm.it alone
+meanwhile, never an empty list (which would decrypt everything); connections
+decrypted before stay decrypted until they close, unrecorded (an E2E test).
 
 ## Masking
 
