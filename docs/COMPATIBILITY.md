@@ -114,6 +114,13 @@ exits 1, saying why on stderr. Its fields:
   and `pass_hosts` absent (nothing is recorded); `base_allow_hosts` and
   `base_pass_hosts` are the hosts recorded when it is on (absent when none),
   while stopped the ones `start` records. Absent from a run older than v1.1.
+- Since v1.1, `recording` is also `allow-all` (`reqcove capture allow-all
+  --for D`, until it ends): `allow_hosts` is `["*"]`, `pass_hosts` the hosts
+  still passed undecrypted, `base_allow_hosts` the hosts recorded after it;
+  `allow_all_until` (RFC 3339) and `allow_all_left` (a Go duration, such as
+  `29m10s`) say when it ends, absent when off. `records_outside_scope`: the
+  records kept whose host `base_allow_hosts` does not record (allow-all's,
+  kept after it ends, or those of hosts removed since); absent when none.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -134,8 +141,8 @@ Its documented fields: `flows`, `flows_with_truncated_bodies`, `evicted`,
 v1.1: attempts in a row to start mitmproxy again), `last_failure` (since v1.1:
 why it last failed, text for people; "" when it has not), `next_attempt` (since
 v1.1: while it waits to try again), `rules_loaded`
-(once a rules file was taken), `recording` (since v1.1: `on` or `stopped`, as
-`status`'s; while stopped, `pass_hosts` is none), and, while masking is on, `mask_names` and
+(once a rules file was taken), `recording` (since v1.1: `on`, `stopped` or
+`allow-all`, as `status`'s; while stopped, `pass_hosts` is none), and, while masking is on, `mask_names` and
 `mask_values` (the matches per name and per pattern number). The others are
 [not stable](#not-stable).
 
@@ -182,6 +189,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture set` (since v1.1) | `--allow-hosts`, `--pass-hosts`, `--state` |
 | `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
 | `reqcove capture save` (since v1.1) | `--state` |
+| `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |

@@ -4,6 +4,37 @@
 
 ### Added
 
+- **`reqcove capture allow-all --for D`** (at most `24h`) **and `capture
+  allow-all --end`** (`--state DIR`): record every host for a while, as
+  `--allow-hosts '*'` does, without a restart, to see what the other apps
+  send. Apple's hosts and the `--pass-hosts` ones still pass undecrypted; the
+  `--rules` file's rules apply to the hosts allowed alone (a `modify_headers`
+  rule naming no host is not sent to the others). It ends by the wall clock
+  or `run`'s monotonic clock, whichever comes first (a sleep does not extend
+  it), within about a second, and fails closed: the records first, then
+  mitmproxy, which is restarted without it if it does not answer; a restart
+  of mitmproxy keeps it until its end only, a restart of `run` ends it. The
+  records made meanwhile are kept after it ends. The answer repeats `'*'`'s
+  warnings (every app's traffic readable by agents and their providers;
+  pinned apps such as banks fail meanwhile; `--upstream-proxy`,
+  `--mcp-http`, `--web`, `--local-proxy` when on). `--for` again moves the
+  end; `capture stop` ends it; refused while stopped; `capture add`,
+  `remove` and `set` meanwhile change the hosts recorded after it. `status`
+  gets `recording` `allow-all`, `allow_hosts` `["*"]`, `allow_all_until`,
+  `allow_all_left` and `records_outside_scope` (the records kept of hosts
+  outside the ones recorded); `capture_stats`' `recording` too; `next_steps`
+  gives the time left and `reqcove capture allow-all --end`; `explain_rules`
+  says no rule applies to the other hosts. Same rules as the other `capture`
+  commands (a terminal only, refused in LAN mode, an older run named, the
+  trace; the end by time leaves a log line and `scope_change`). Unit tests
+  (the duration's bounds, mitmproxy's arguments, a stop ending it, an add
+  changing the base, the end by either clock with mitmproxy silent: the
+  records narrowed first, mitmproxy killed) and E2E tests with real
+  mitmproxy (a host outside the base recorded with no rule applied, not
+  after the end, its records kept; a `--pass-hosts` host undecrypted;
+  mitmproxy killed just before the end comes back without it; the CLI's
+  answers, status and markers). Not tried on an iPhone, nor across a real
+  sleep.
 - **`reqcove capture save`** (`--state DIR`): write the hosts recorded now
   (the base scope, while stopped too) into the hosts file `run` read them
   from (`--allow-hosts=@FILE`), for the next start. `reqcove setup` now writes

@@ -264,6 +264,60 @@ stop; a preset is turned off and cannot be turned on; mitmproxy killed while
 stopped comes back stopped; the CLI's answers, status, markers); not on an
 iPhone.
 
+#### See what every app sends, for a while
+
+```sh
+reqcove capture allow-all --for 30m   # record every host for 30 minutes (at most 24h)
+reqcove capture allow-all --end       # end it sooner
+```
+
+For a while every host is decrypted and recorded, as `--allow-hosts '*'`
+does, not only the ones you allowed: to see what the other apps send. Apple's
+hosts still pass through undecrypted, and so do the `--pass-hosts` ones. The
+answer repeats what `'*'` warns of: every app's and site's traffic is
+recorded and readable by agents and their model providers; apps that pin
+their certificates (banks, say) fail meanwhile; and, when they apply,
+`--upstream-proxy` (every request goes on to it), `--mcp-http`, `--web`,
+`--local-proxy`.
+
+- **Time-limited.** It ends at the time the answer gives, by this computer's
+  clock or by `run`'s own running time, whichever comes first (a sleeping Mac
+  does not keep it on longer), within a second or so. `--for` again moves the
+  end to now plus the new time.
+- **The records made meanwhile stay** after it ends, until evicted or `run`
+  restarts. Other apps' traffic fills `max_flows` and `max_bytes` too, so your
+  app's older records are evicted sooner (from reading the code).
+- **The rules** (`--rules`) apply to the hosts you allowed alone, never to
+  the other hosts recorded meanwhile: a `modify_headers` rule naming no host
+  does not send its header to them.
+- **New connections only**, both ways: reopen an app to see it; once it
+  ends, connections decrypted meanwhile stay decrypted (unrecorded) until
+  they close.
+- `capture add`, `remove` and `set` meanwhile change the hosts recorded after
+  it (the answer says so). `capture stop` ends it; `allow-all` while stopped
+  is refused (`capture start` first). A run started with `--allow-hosts '*'`
+  has nothing to add ("nothing changed").
+- **Never kept past its end:** a restart of mitmproxy meanwhile keeps it
+  until its end, not longer; when its end comes and mitmproxy does not
+  answer, reqcove stops recording the other hosts first, then restarts
+  mitmproxy without it. A restart of `run` ends it (not saved).
+- `reqcove status` says "every host: allow-all until …" with the time left
+  and the hosts recorded after it; `--json` and the MCP `status` say
+  `"recording": "allow-all"`, `allow_hosts: ["*"]`, `allow_all_until`,
+  `allow_all_left` and `base_allow_hosts`; `next_steps` gives the time left
+  and `reqcove capture allow-all --end`. After it, `records_outside_scope`
+  counts the records of hosts outside the ones recorded. The trace, the LAN
+  refusal and "in a terminal only" as the others; the end by time is in
+  `run`'s log and `scope_change` ("allow-all ended: its time is up"), with no
+  marker.
+
+Tried by tests only (unit: the arguments, the order, a stop ending it, the
+end by either clock with mitmproxy silent; E2E with real mitmproxy: a host
+outside the ones allowed recorded, with no rule applied, and not after the
+end, its records kept; a `--pass-hosts` host still undecrypted; mitmproxy
+killed just before the end comes back without it; the CLI's answers, status,
+markers); not on an iPhone, not across a real sleep of the Mac.
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole

@@ -36,7 +36,8 @@ than a public issue.
 - A connection to an allowed host can carry requests to other hosts (HTTP/2
   connection reuse). Those are decrypted with it and not recorded, but `--web`
   shows them and they may be sent on to `--upstream-proxy`.
-- Requests and TLS failures outside the list are counted, never recorded.
+- Requests and TLS failures outside the list are counted, never recorded,
+  but while `reqcove capture allow-all` is on (below): then every host is.
 - A `--pass-hosts` host, and a connection mitmproxy carries as raw TCP, leave
   a record of the connection only, never of what it carried
   ([detail](masking.md#connections-recorded-without-their-content)).
@@ -57,7 +58,8 @@ than a public issue.
 
 - Whatever a tool returns is sent to the agent's model provider. Choose
   `--allow-hosts` with that in mind: `--allow-hosts '*'` sends other apps' and
-  sites' traffic too, and Reqcove warns when it starts.
+  sites' traffic too, and Reqcove warns when it starts; `reqcove capture
+  allow-all` does for a while, and its answer warns.
 - Besides the traffic, the `status` and `list_devices` tools carry the node's
   MagicDNS name (which includes the tailnet's name), its tailnet addresses and
   the devices' machine names; not your login (from reading the code).
@@ -273,15 +275,16 @@ Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
 
-`reqcove capture` (add, remove, set, stop, start, save) changes which hosts `run` records, over
+`reqcove capture` (add, remove, set, stop, start, save, allow-all) changes which hosts `run` records, over
 `ctl.sock` in the state directory (0600, a test), not over the MCP tools'
 socket: no tool changes what is recorded. It runs only when its input and
 output are a terminal, and the skill and the server's instructions tell agents
 never to run it. The terminal check is a guard against mistakes, not a
 boundary: any process of your user (an agent that can run commands among
 them) can give it a terminal, or write to `ctl.sock` itself, and so record
-more hosts. `run` checks each request itself: `"*"` is refused, and so is a
-change in LAN mode (tests). Each change leaves a line in `run`'s log, a
+more hosts, every host for up to 24 hours with `allow-all`. `run` checks each
+request itself: `"*"` is refused (but as `allow-all --for`, time-limited),
+and so is a change in LAN mode (tests). Each change leaves a line in `run`'s log, a
 marker with source `cli` and `scope_change` in `status` (an E2E test), so
 one you did not make shows.
 
@@ -295,6 +298,31 @@ URL reaches the server, on a new connection and on one decrypted before the
 stop; a preset cannot be turned on). mitmproxy decrypts mitm.it alone
 meanwhile, never an empty list (which would decrypt everything); connections
 decrypted before stay decrypted until they close, unrecorded (an E2E test).
+
+`reqcove capture allow-all --for D` records **everything** for a while (at
+most 24 hours), as `--allow-hosts '*'` does: every app's and site's
+traffic on the devices but Apple's and the `--pass-hosts` hosts (an E2E
+test), readable by agents and their model providers, sent on to
+`--upstream-proxy` and shown by `--web` if they are on (from reading the
+code). Apps that pin their certificates fail meanwhile. The answer warns of
+it, and `status` says `"recording": "allow-all"` with `allow_all_until`.
+- **Time-limited:** it ends by this computer's clock or by `run`'s own
+  running time, whichever comes first, so a sleep does not extend it, and
+  fails closed: reqcove stops recording the other hosts first, then tells
+  mitmproxy; if mitmproxy does not answer, it is restarted without it (unit
+  tests, with either clock; an E2E test kills mitmproxy just before the end:
+  the one started next does not decrypt the other hosts). Never kept past a
+  restart of `run`, and never written to a file: `capture save` writes the
+  hosts you allowed, never `"*"`. Not tried across a real sleep.
+- **Kept after:** the records made meanwhile stay in memory until evicted or
+  `run` stops (the maintainer's choice), so agents can still read other apps'
+  traffic after it ends; `status`'s `records_outside_scope` counts them. A
+  restart of `run` empties them, as all records.
+- **The rules** apply to the hosts you allowed alone: a `modify_headers`
+  rule naming no host (a token, say) is not sent to the other hosts (an E2E
+  test).
+- Connections decrypted meanwhile stay decrypted, unrecorded, until they
+  close after it ends (an E2E test).
 
 ## Masking
 

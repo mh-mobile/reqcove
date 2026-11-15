@@ -163,18 +163,25 @@ type Capture struct {
 
 	// The scope (SetScope). scopeMu orders the changes and spawn's use of
 	// them: want is the base scope asked for last, the one a new mitmdump
-	// starts with, and stopped the overlay over it (SetStopped: nothing
-	// recorded, no rule applies); storeGen the newest generation the Store
-	// has; instance names the mitmdump spawned last, whose answers alone count.
+	// starts with, and at most one overlay over it: stopped (SetStopped:
+	// nothing recorded, no rule applies) or allow-all until allUntil
+	// (SetAllowAll: every host recorded; zero when off); storeGen the newest
+	// generation the Store has; instance names the mitmdump spawned last,
+	// whose answers alone count, proc is it, and instAll says whether it was
+	// started with allow-all on.
 	scopeMu  sync.Mutex
 	want     HostRules
 	stopped  bool
+	allUntil time.Time // with its monotonic reading: see expire
 	wantGen  int64
 	storeGen int64
 	instance string
+	proc     *proc
+	instAll  bool
 	ackMu    sync.Mutex // acked alone, for status: never held across a call to mitmdump
 	acked    HostRules  // what mitmdump acknowledged last
 	ackStop  bool       // and whether stopped
+	ackAll   time.Time  // and allow-all's end (zero: off)
 	pending  string     // ScopePending
 	changeAt time.Time  // LastChange
 	change   string
@@ -377,6 +384,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	c.CA, _ = ReadCA(cfg.Confdir) // mitmproxy has made it by now if it was missing
 	ctx, c.cancel = context.WithCancel(ctx)
 	go c.supervise(ctx, p, fails)
+	go c.expireLoop(ctx)
 	return c, nil
 }
 
@@ -407,7 +415,7 @@ func (c *Capture) retryWait(ctx context.Context, err error, n int) bool {
 func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
 	c.scopeMu.Lock()
-	c.instance = rand.Text()
+	c.instance, c.instAll = rand.Text(), c.allOn()
 	args := c.mitmArgs()
 	c.scopeMu.Unlock()
 	p := &proc{cmd: exec.Command(c.bin, args...), done: make(chan struct{})}
@@ -421,6 +429,9 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 		}
 		return nil, err
 	}
+	c.scopeMu.Lock()
+	c.proc = p // for endAllLocked to restart
+	c.scopeMu.Unlock()
 	// If reqcove dies without Stop (SIGKILL, a crash), mitmdump outlives it
 	// in its own process group; the next Start stops it (killStale).
 	os.WriteFile(filepath.Join(c.cfg.Dir, "mitmdump.pid"), []byte(strconv.Itoa(p.cmd.Process.Pid)), 0o600)
@@ -466,10 +477,10 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 }
 
 // mitmArgs is mitmdump's arguments with the scope asked for last and its
-// generation, so a restarted mitmdump keeps a change, a stop too (and the
-// Store's gate takes what it admits). The addon gets the base (its rules are
-// checked against it), mitmproxy the effective allow_hosts. Called with
-// scopeMu held.
+// generation, so a restarted mitmdump keeps a change, a stop or allow-all too
+// (allow-all until it ends; never in c.args) (and the Store's gate takes
+// what it admits). The addon gets the base (its rules are checked against
+// it), mitmproxy the effective allow_hosts. Called with scopeMu held.
 func (c *Capture) mitmArgs() []string {
 	hosts, _ := json.Marshal(addonHosts(c.want))
 	args := append(slices.Clone(c.args), "--set", "reqcove_allow_hosts="+string(hosts),
@@ -477,31 +488,56 @@ func (c *Capture) mitmArgs() []string {
 	if c.stopped {
 		args = append(args, "--set", "reqcove_stopped=true")
 	}
-	for _, re := range mitmAllow(c.want, c.stopped) {
+	if c.allOn() {
+		args = append(args, "--set", "reqcove_allow_all=true")
+	}
+	for _, re := range mitmAllow(effective(c.want, c.stopped, c.allOn())) {
 		args = append(args, "--allow-hosts", re) // per connection: others pass through undecrypted
 	}
 	return args
 }
 
-// mitmAllow is mitmproxy's allow_hosts for base r: while stopped mitm.it
-// alone, never empty, which decrypts everything (Apple's still ignored); "*"
-// (r.All) the empty list.
-func mitmAllow(r HostRules, stopped bool) []string {
-	if stopped {
-		return HostRules{}.mitmAllowHosts()
-	}
+// allOn: allow-all is asked for. Called with scopeMu held.
+func (c *Capture) allOn() bool { return !c.allUntil.IsZero() }
+
+// mitmAllow is mitmproxy's allow_hosts for the effective scope r: while
+// stopped mitm.it alone, never empty, which decrypts everything (Apple's
+// still ignored); "*" (r.All, allow-all too) the empty list.
+func mitmAllow(r HostRules) []string {
 	if allow := r.mitmAllowHosts(); allow != nil {
 		return allow
 	}
 	return []string{}
 }
 
-// effective is the scope recorded: none while stopped, else the base.
-func effective(base HostRules, stopped bool) HostRules {
-	if stopped {
+// effective is the scope recorded: none while stopped; with allow-all every
+// host, the base's --pass-hosts still passed undecrypted; else the base.
+func effective(base HostRules, stopped, all bool) HostRules {
+	switch {
+	case stopped:
 		return HostRules{}
+	case all && !base.All:
+		r, _ := HostRules{All: true, Hosts: []string{"*"}}.WithPass(base.PassHosts) // parsed before: no error
+		return r
 	}
 	return base
+}
+
+// What status's recording and capture_stats' say.
+const (
+	RecordingOn       = "on"
+	RecordingStopped  = "stopped"
+	RecordingAllowAll = "allow-all"
+)
+
+func recording(stopped, all bool) string {
+	switch {
+	case stopped:
+		return RecordingStopped
+	case all:
+		return RecordingAllowAll
+	}
+	return RecordingOn
 }
 
 // addonHosts is the addon's reqcove_allow_hosts: the hosts it records.
@@ -523,6 +559,9 @@ func (c *Capture) syncScope(ctx context.Context) {
 	default:
 		if err := c.applyLocked(ctx); err != nil {
 			c.cfg.Logf("the scope asked for (generation %d) is not applied yet: %v", c.wantGen, err)
+			if c.instAll && !c.allOn() { // started with allow-all, ended since: never left on
+				c.killLocked()
+			}
 		}
 	}
 }
@@ -549,6 +588,22 @@ func (c *Capture) Stopped() bool {
 	return c.ackStop
 }
 
+// AllowAllUntil is when the allow-all mitmproxy has acknowledged ends; zero
+// when off.
+func (c *Capture) AllowAllUntil() time.Time {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.ackAll
+}
+
+// Recorded is the scope mitmproxy has acknowledged with its overlay: none
+// while stopped, every host (but --pass-hosts) during allow-all, else Scope.
+func (c *Capture) Recorded() HostRules {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return effective(c.acked, c.ackStop, !c.ackAll.IsZero())
+}
+
 // ScopePending is "" when the scope asked for last is the one acknowledged
 // (Scope), else PendingNarrowed or PendingAsked.
 func (c *Capture) ScopePending() string {
@@ -569,7 +624,7 @@ func (c *Capture) ScopePending() string {
 // it, and one that says hello again is told it again. Any other error: nothing
 // changed.
 func (c *Capture) SetScope(ctx context.Context, r HostRules) error {
-	return c.ChangeScope(ctx, "", func(HostRules, bool) (HostRules, error) { return r, nil })
+	return c.ChangeScope(ctx, "", func(HostRules, string) (HostRules, error) { return r, nil })
 }
 
 // ErrPending: a change was taken, but mitmdump has not acknowledged it yet.
@@ -577,29 +632,145 @@ var ErrPending = errors.New("the change is pending")
 
 // ChangeScope is SetScope of what f makes of the base scope asked for last
 // (a pending one included), under the lock every change takes, so two never
-// undo each other. f is also told whether capture is stopped (SetStopped):
-// then the base changes, and nothing is recorded until a start. An error of
-// f is returned as it is, and nothing changes. why, when not "", is kept with
-// the time once the change is taken (applied or pending): LastChange.
-func (c *Capture) ChangeScope(ctx context.Context, why string, f func(base HostRules, stopped bool) (HostRules, error)) error {
+// undo each other. f is also told the overlay (Recording*): while stopped or
+// allow-all, the base changes, what is recorded once the overlay ends. An
+// error of f is returned as it is, and nothing changes. why, when not "", is
+// kept with the time once the change is taken (applied or pending):
+// LastChange.
+func (c *Capture) ChangeScope(ctx context.Context, why string, f func(base HostRules, recording string) (HostRules, error)) error {
 	c.scopeMu.Lock()
 	defer c.scopeMu.Unlock()
-	r, err := f(c.want, c.stopped)
+	r, err := f(c.want, recording(c.stopped, c.allOn()))
 	if err != nil {
 		return err
 	}
 	var ack scopeAck
-	if err := c.control(ctx, scopeOp(r, c.wantGen+1, true, c.stopped), &ack); err != nil {
+	if err := c.control(ctx, scopeOp(r, c.wantGen+1, true, c.stopped, c.allOn()), &ack); err != nil {
 		if errors.Is(err, ErrNoControl) || errors.Is(err, ErrUncertain) {
 			return fmt.Errorf("mitmproxy did not answer (restarting?): nothing changed")
 		}
 		return err // refused: the rules' conflicts
 	}
-	return c.changeLocked(ctx, why, r, c.stopped)
+	return c.changeLocked(ctx, why, r, c.stopped, c.allUntil)
 }
 
-// ErrUnchanged: SetStopped found capture stopped (or started) already.
+// ErrUnchanged: SetStopped found capture stopped (or started) already;
+// SetAllowAll, every host recorded already ("*"); EndAllowAll, allow-all off.
 var ErrUnchanged = errors.New("unchanged")
+
+// ErrStopped: SetAllowAll while stopped (the overlays exclude each other).
+var ErrStopped = errors.New("recording is stopped")
+
+// MaxAllowAll bounds SetAllowAll's d.
+const MaxAllowAll = 24 * time.Hour
+
+// SetAllowAll records every host (but the base's --pass-hosts, and Apple's,
+// which mitmproxy ignores) for d, at most MaxAllowAll, from now: until, by
+// this process's monotonic clock or the wall clock, whichever comes first
+// (expire). The base does not change, and the rules are checked and applied
+// against it alone. On already, its end moves to now+d (was: the end before).
+// mitmproxy first, then the Store (a widening): ErrPending while mitmproxy has
+// not acknowledged it. Never kept past a restart of run (it is in no file),
+// nor past its end in a restarted mitmdump (mitmArgs).
+func (c *Capture) SetAllowAll(ctx context.Context, why string, d time.Duration) (until, was time.Time, err error) {
+	if d <= 0 || d > MaxAllowAll {
+		return time.Time{}, time.Time{}, fmt.Errorf("allow-all lasts more than 0 and at most %v, not %v", MaxAllowAll, d)
+	}
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	switch {
+	case c.stopped:
+		return time.Time{}, time.Time{}, ErrStopped
+	case c.want.All:
+		return time.Time{}, time.Time{}, ErrUnchanged
+	}
+	until, was = time.Now().Add(d), c.allUntil
+	if c.allOn() { // the same scope: its end alone moves
+		c.allUntil = until
+		c.ackMu.Lock()
+		if !c.ackAll.IsZero() {
+			c.ackAll = until
+		}
+		c.changeAt, c.change = time.Now(), why
+		c.ackMu.Unlock()
+		return until, was, nil
+	}
+	return until, was, c.changeLocked(ctx, why, c.want, false, until)
+}
+
+// EndAllowAll ends allow-all now, as its time running out does (expire):
+// ErrUnchanged when off; ErrPending when mitmproxy was not told (it is then
+// restarted without it).
+func (c *Capture) EndAllowAll(ctx context.Context, why string) error {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	if !c.allOn() {
+		return ErrUnchanged
+	}
+	return c.endAllLocked(ctx, why)
+}
+
+// endAllLocked ends allow-all, failing closed: the Store first (nothing
+// outside the base is recorded from now), then mitmproxy; one that does not
+// acknowledge it (silent, restarting, refusing) is killed, and the one
+// supervise starts next has no allow-all (mitmArgs). The records made
+// meanwhile stay. Never checked against the rules: the base is unchanged.
+func (c *Capture) endAllLocked(ctx context.Context, why string) error {
+	c.allUntil = time.Time{}
+	c.wantGen++
+	c.toStoreLocked()
+	c.setPending(PendingNarrowed)
+	c.ackMu.Lock()
+	c.changeAt, c.change = time.Now(), why
+	c.ackMu.Unlock()
+	if err := c.applyLocked(ctx); err != nil {
+		c.cfg.Logf("allow-all ended in reqcove's records, mitmproxy not told (%v): restarting it without allow-all", err)
+		c.killLocked()
+		return fmt.Errorf("mitmproxy restarted without allow-all: %w", ErrPending)
+	}
+	return nil
+}
+
+// killLocked kills the mitmdump spawned last, if it still runs: supervise
+// starts the next one with the scope asked for now.
+func (c *Capture) killLocked() {
+	if p := c.proc; p != nil {
+		select {
+		case <-p.done:
+		default:
+			syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+}
+
+// expire ends allow-all once mono (with a monotonic reading) or wall (the
+// wall clock) reaches its end, whichever first: the monotonic clock stops
+// while the computer sleeps (macOS, Linux), so by it the end would come that
+// much late; the wall clock can be set back.
+func (c *Capture) expire(ctx context.Context, mono, wall time.Time) {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	if !c.allOn() || mono.Before(c.allUntil) && wall.Round(0).Before(c.allUntil.Round(0)) {
+		return
+	}
+	c.cfg.Logf("allow-all ended: its time is up (%s); the records made meanwhile stay", c.allUntil.Round(0).Format(time.RFC3339))
+	c.endAllLocked(ctx, "allow-all ended: its time is up")
+}
+
+// expireLoop calls expire every second until ctx ends.
+func (c *Capture) expireLoop(ctx context.Context) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			now := time.Now()
+			c.expire(ctx, now, now)
+		}
+	}
+}
 
 // SetStopped stops recording (stop) or starts it again with the base scope:
 // a stop records nothing new (the Store first, then mitmproxy decrypts mitm.it
@@ -614,17 +785,17 @@ func (c *Capture) SetStopped(ctx context.Context, why string, stop bool) (base H
 	if c.stopped == stop {
 		return c.want, ErrUnchanged
 	}
-	return c.want, c.changeLocked(ctx, why, c.want, stop)
+	return c.want, c.changeLocked(ctx, why, c.want, stop, time.Time{}) // a stop ends allow-all
 }
 
-// changeLocked takes base r and stopped stop as the scope asked for, a new
-// generation: to the Store first if the scope recorded narrows, then to
-// mitmdump.
-func (c *Capture) changeLocked(ctx context.Context, why string, r HostRules, stop bool) error {
+// changeLocked takes base r, stopped stop and allow-all until as the scope
+// asked for, a new generation: to the Store first if the scope recorded
+// narrows, then to mitmdump.
+func (c *Capture) changeLocked(ctx context.Context, why string, r HostRules, stop bool, until time.Time) error {
 	gen := c.wantGen + 1
-	old, oldStop := c.want, c.stopped
-	c.want, c.stopped, c.wantGen = r, stop, gen
-	if narrows(effective(old, oldStop), effective(r, stop)) {
+	old, oldStop, oldUntil := c.want, c.stopped, c.allUntil
+	c.want, c.stopped, c.allUntil, c.wantGen = r, stop, until, gen
+	if narrows(effective(old, oldStop, !oldUntil.IsZero()), effective(r, stop, !until.IsZero())) {
 		c.toStoreLocked()
 		c.setPending(PendingNarrowed)
 	} else {
@@ -634,6 +805,9 @@ func (c *Capture) changeLocked(ctx context.Context, why string, r HostRules, sto
 	var refused *refusal
 	if errors.As(err, &refused) { // the rules changed since the check (--rules-reload): back to the scope before
 		c.want, c.stopped, c.wantGen = old, oldStop, gen+1
+		if !until.IsZero() { // never back into an allow-all this change ended
+			c.allUntil = oldUntil
+		}
 		c.toStoreLocked() // with a newer generation than r's, so the Store and mitmdump agree again
 		if err := c.applyLocked(ctx); err != nil {
 			c.cfg.Logf("the scope before (generation %d) is not applied yet: %v", c.wantGen, err)
@@ -684,15 +858,15 @@ type scopeAck struct {
 
 // scopeOp is the addon's scope op for base r: the rules are checked against
 // the base, mitmproxy's allow_hosts is the effective scope's.
-func scopeOp(r HostRules, gen int64, check, stopped bool) map[string]any {
-	return map[string]any{"op": "scope", "gen": gen, "allow_hosts": mitmAllow(r, stopped), "rules": addonHosts(r), "check": check, "stopped": stopped}
+func scopeOp(r HostRules, gen int64, check, stopped, all bool) map[string]any {
+	return map[string]any{"op": "scope", "gen": gen, "allow_hosts": mitmAllow(effective(r, stopped, all)), "rules": addonHosts(r), "check": check, "stopped": stopped, "allow_all": all}
 }
 
 // applyLocked tells the mitmdump spawned last the scope asked for last; on
 // its acknowledgment (its instance, the generation) the scope is applied.
 func (c *Capture) applyLocked(ctx context.Context) error {
 	var ack scopeAck
-	err := c.control(ctx, scopeOp(c.want, c.wantGen, false, c.stopped), &ack)
+	err := c.control(ctx, scopeOp(c.want, c.wantGen, false, c.stopped, c.allOn()), &ack)
 	switch {
 	case errors.Is(err, ErrNoControl), errors.Is(err, ErrUncertain):
 		return fmt.Errorf("mitmproxy did not answer (restarting?): %w", ErrPending)
@@ -709,13 +883,13 @@ func (c *Capture) applyLocked(ctx context.Context) error {
 func (c *Capture) appliedLocked() {
 	c.toStoreLocked()
 	c.ackMu.Lock()
-	c.acked, c.ackStop, c.pending = c.want, c.stopped, ""
+	c.acked, c.ackStop, c.ackAll, c.pending = c.want, c.stopped, c.allUntil, ""
 	c.ackMu.Unlock()
 }
 
 func (c *Capture) toStoreLocked() {
 	if c.storeGen < c.wantGen {
-		c.Store.setScopeGen(c.wantGen, effective(c.want, c.stopped), c.stopped)
+		c.Store.setScopeGen(c.wantGen, effective(c.want, c.stopped, c.allOn()), recording(c.stopped, c.allOn()))
 		c.storeGen = c.wantGen
 	}
 }

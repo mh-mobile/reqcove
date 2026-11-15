@@ -75,6 +75,9 @@ Usage:
   reqcove capture stop | capture start
                      record nothing new (and apply no --rules rule: the app reaches the
                      real servers) until start; the records stay, in your terminal only
+  reqcove capture allow-all --for D | capture allow-all --end
+                     record every app's traffic for D (30m, 2h; at most 24h), not only
+                     the allowed hosts', its records kept after; in your terminal only
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
