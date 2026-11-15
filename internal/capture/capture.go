@@ -169,23 +169,24 @@ type Capture struct {
 	// generation the Store has; instance names the mitmdump spawned last,
 	// whose answers alone count, proc is it, and instAll says whether it was
 	// started with allow-all on.
-	scopeMu  sync.Mutex
-	want     HostRules
-	stopped  bool
-	allUntil time.Time // with its monotonic reading: see expire
-	wantGen  int64
-	storeGen int64
-	instance string
-	proc     *proc
-	instAll  bool
-	instDisc bool       // and whether with discovery on
-	ackMu    sync.Mutex // acked alone, for status: never held across a call to mitmdump
-	acked    HostRules  // what mitmdump acknowledged last
-	ackStop  bool       // and whether stopped
-	ackAll   time.Time  // and allow-all's end (zero: off)
-	pending  string     // ScopePending
-	changeAt time.Time  // LastChange
-	change   string
+	scopeMu   sync.Mutex
+	want      HostRules
+	stopped   bool
+	allUntil  time.Time // with its monotonic reading: see expire
+	wantGen   int64
+	storeGen  int64
+	instance  string
+	proc      *proc
+	instAll   bool
+	instDisc  bool       // and whether with discovery on
+	loggedGen int64      // the generation whose retry failure was logged last
+	ackMu     sync.Mutex // acked alone, for status: never held across a call to mitmdump
+	acked     HostRules  // what mitmdump acknowledged last
+	ackStop   bool       // and whether stopped
+	ackAll    time.Time  // and allow-all's end (zero: off)
+	pending   string     // ScopePending
+	changeAt  time.Time  // LastChange
+	change    string
 	// reloadRules, set by Reload for its one scope op: the rules file the
 	// addon loads and puts in force with the scope; loaded, what it answered.
 	reloadRules string
@@ -593,7 +594,10 @@ func (c *Capture) syncScope(ctx context.Context) {
 // killed: never left on.
 func (c *Capture) retryScopeLocked(ctx context.Context) {
 	if err := c.applyLocked(ctx); err != nil {
-		c.cfg.Logf("the scope asked for (generation %d) is not applied yet: %v", c.wantGen, err)
+		if c.loggedGen != c.wantGen { // once a generation: retryPending tries every few seconds
+			c.loggedGen = c.wantGen
+			c.cfg.Logf("the scope asked for (generation %d) is not applied yet: %v", c.wantGen, err)
+		}
 		if c.instAll && !c.allOn() {
 			c.killLocked()
 		}
