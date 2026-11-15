@@ -8,7 +8,8 @@ anything here, and some did.
 What stays as it is within a major version, what may change in any release, and
 how changes are announced. The lists come from the code (the tools as the MCP
 server registers them, each command's flags, the rules file's loader), not from
-memory. Points checked by tests say so; the rest comes from reading code.
+memory. Where tests check a point, the last line of its section says so; the
+rest comes from reading code.
 
 1. [Versions](#versions)
 2. [Stable within a major version](#stable-within-a-major-version)
@@ -94,7 +95,7 @@ Each tool's fields:
 
 `reqcove status --json` prints the `status` tool's JSON. When no run answers
 (none runs, or one is starting or stopping), it prints nothing on stdout and
-exits 1, saying why on stderr (unit test). Its fields:
+exits 1, saying why on stderr. Its fields:
 
 - `mode`, `next_steps`, `allow_hosts`, `pass_hosts`, `service`, `capture`
   (`capture_stats`' fields, below), `active_presets` and `active_presets_error`.
@@ -108,6 +109,9 @@ exits 1, saying why on stderr (unit test). Its fields:
   Tailscale's, not Reqcove's: not promised.
 - `lan`, in LAN mode only: `interface`, `network`, `listen`, `stopped`,
   `allowed` (each with `addr` and `allowed_at`), `refused`, `refused_more`.
+
+Checked by a unit test: nothing on stdout and exit status 1 when no run
+answers.
 
 #### `capture_stats`
 
@@ -246,19 +250,23 @@ These may change in any release, a patch release included:
   `reqcove mcp`, and over `--mcp-http`.
 - `reqcove mcp` lists its own version's tools, not those of the `run` it
   connects to, and without their output schemas, so that a `run` of another
-  version is not refused for its answers (tests).
+  version is not refused for its answers.
 - When `run`'s version is not `reqcove mcp`'s, the first answer after it
   connects carries a note: run both at one version, restart `reqcove run` with
-  the newer one, then reconnect the agent's MCP server (tests).
+  the newer one, then reconnect the agent's MCP server.
 - A tool this `reqcove mcp` has and the `run` lacks: a preset, rule or marker
-  tool answers that the running reqcove (its version) has no such tool (tests);
-  any other gets `run`'s own error, an unknown tool (tests).
+  tool answers that the running reqcove (its version) has no such tool; any
+  other gets `run`'s own error, an unknown tool.
 - Mixed versions are not supported beyond these notes: run `reqcove run` and
   `reqcove mcp` at one version. A v1.0.0 `reqcove mcp` has no
   `list_mock_presets`, `activate_mock` or `deactivate_mock`, even against an
   older `run`; a call to one of them, to `run` or to `reqcove mcp`, gets a tool
-  error naming what replaced it (tests). A v1.0.0 `reqcove status` still reads
-  an older `run`'s `active_mock_presets` and `mock_presets` (tests); a v0.6 or
-  v0.7 `reqcove status` against a v1.0.0 `run` shows no preset on, since
-  those versions read only the old names (from reading their code); their
+  error naming what replaced it. A v1.0.0 `reqcove status` still reads an
+  older `run`'s `active_mock_presets` and `mock_presets`; a v0.6 or v0.7
+  `reqcove status` against a v1.0.0 `run` shows no preset on, since those
+  versions read only the old names (from reading their code); their
   `reqcove mcp` passes `run`'s answer on as it is.
+
+Checked by tests: the tools listed without output schemas, the note when the
+versions differ, both answers for a tool the `run` lacks, the error for a
+removed tool, and a v1.0.0 `reqcove status` reading an older `run`'s fields.
