@@ -10,7 +10,7 @@ Reqcove（レクコーブ）という名称は、request（リクエスト）と
 
 [English](README.md)
 
-iPhone はあなたのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータ上で動く Reqcove（単一のバイナリ）が通信を中継し、許可したホストの通信を [mitmproxy](https://mitmproxy.org) で復号して、フローを [MCP](https://modelcontextprotocol.io) でエージェントに提供します。iPhone 側で必要な設定は Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
+iPhone はお使いのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータでは Reqcove が単一のバイナリとして動き、通信を中継します。許可したホストの通信は [mitmproxy](https://mitmproxy.org) で復号し、記録したフローを [MCP](https://modelcontextprotocol.io) でエージェントに渡します。iPhone 側で必要な設定は Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
 
 ```text
 iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mitmproxy ──▶ インターネット
@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：v1.0 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。今のところ試したのは作者だけで、macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone を使って試しました。試していないことは、ドキュメントにその旨を書いています。
+> **開発状況：v1.0 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。今のところ試したのは作者だけです。macOS（Apple シリコン）と Ubuntu 24.04（arm64）で、iPhone と組み合わせて試しました。試していないことは、ドキュメントにそう書いています。
 
 ## 必要なもの
 
@@ -32,7 +32,7 @@ Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデ�
 
 ## インストール
 
-Homebrew で入れます（macOS と Linux。ソースからビルドし、uv も一緒に入ります）。
+macOS でも Linux でも、Homebrew で入れられます。Homebrew はソースからビルドし、uv も一緒に入れます。
 
 ```sh
 brew trust --formula mh-mobile/tap/reqcove   # Homebrew 7 は、公式以外の tap の formula を信頼してから読み込む
@@ -96,8 +96,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
 
 - `summarize`、`list_flows`、`search_flows`、`get_flow` などの MCP ツールで記録を読みます（[ツールの一覧](docs/guide.ja.md#mcp-ツール)）。
 - RoamRun などで iPhone を操作したあとは、その操作で送られたリクエストを `wait_for_flows` で待って受け取れます。
-- `--rules` のファイルでプリセットにしたルールがあれば、そのルールを一度に数分ずつ有効にすることもできます（`activate_preset`、[プリセット](docs/guide.ja.md#エージェントが有効にできるプリセット)）。エラーをアプリがどう扱うかを見るためのモックや、アプリをステージングのサーバーへ向ける `map_remote` や `resolve` のルールです。
-- ツールでルールを書いたり変えたりはできません（ファイルを書けるエージェントがルールを書くのは、あなたが頼んだときだけです）。
+- `--rules` のファイルでプリセットにしたルールがあれば、エージェントはそのルールを、1 回につき数分のあいだ有効にすることもできます（`activate_preset`、[プリセット](docs/guide.ja.md#エージェントが有効にできるプリセット)）。たとえば、アプリがエラーをどう扱うかを見るためのモックや、アプリをステージングのサーバーへ向ける `map_remote` や `resolve` のルールです。
+- エージェントがツールを使ってルールを書いたり変えたりすることはできません。ファイルを書けるエージェントがルールを書くのは、あなたが頼んだときだけです。
 
 すべてを元に戻す手順は `reqcove cleanup` が表示します。停止・再起動・アップデートは[ガイド](docs/guide.ja.md#停止再起動アップデート)にあります。
 
@@ -125,18 +125,18 @@ reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
 
 ### Tailscale を使わずに（LAN モード）
 
-同じネットワークなら、Tailscale なしで、iPhone がこのコンピュータを Wi-Fi のプロキシとして使うこともできます。
+iPhone とこのコンピュータが同じネットワークにあれば、Tailscale を使わずに、iPhone からこのコンピュータを Wi-Fi のプロキシとして使うこともできます。
 
 ```sh
 reqcove run --lan --allow-hosts api.example.com
 ```
 
-Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありません。このコンピュータで許可したアドレスは、このコンピュータを通して通信できます。手順（iPhone のプロキシ設定、アドレスの許可、CA の信頼）、届く先、つながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。自宅の Wi-Fi の iPhone（iOS 27.3）で試しました。
+使えるのは Wi-Fi だけで、ポートも 80 番と 443 番だけです。パスワードはなく、このコンピュータで許可したアドレスは、このコンピュータを通して通信できます。手順（iPhone のプロキシ設定、アドレスの許可、CA の信頼）、届く先、つながらない原因は[ガイド](docs/guide.ja.md#tailscale-を使わずに同じネットワークでつなぐ--lan)にあります。自宅の Wi-Fi の iPhone（iOS 27.3）で試しました。
 
 ## セキュリティ
 
 - 記録するのは `--allow-hosts` のホストへのリクエストだけです。Apple のホストへの接続は常に復号せずに通します。
-- 許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあります（HTTP/2 の接続の再利用）。このリクエストも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` に転送されることがあります。
+- HTTP/2 で接続が再利用されると、許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあります。このリクエストも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` に転送されることがあります。
 - Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません**（`--mask-names` や `--mask-values` で足せます）。メールアドレスなどの個人情報もマスクしません。
 - エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、サイトがその中でエージェントに指示しようとすることがあります。
 - Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
@@ -148,8 +148,8 @@ Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありま
 
 - 証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。[`--pass-hosts`](docs/guide.ja.md#証明書ピンニングをするアプリを通す--pass-hosts) を見てください。
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
-- 許可したホストへの接続のうち、mitmproxy が HTTP として読まないものは、接続としてだけ記録します。その接続が運ぶものはフローになりません。ほかのプロトコルの接続、知らない ALPN の接続のうちサーバーが先に送信するものとクライアントのバイト列が HTTP に見えないもの、`101` でアップグレードした先がこれに当たります。[raw TCP](docs/guide.ja.md#http-として読まれない接続raw-tcp) を見てください。
-- IPv6 は拒否し、QUIC は（Apple 宛て以外）ドロップします。アプリは IPv4 と TCP にフォールバックします。
+- 許可したホストへの接続のうち、mitmproxy が HTTP として読まないものは、接続としてだけ記録します。その接続が運ぶものはフローになりません。これに当たるのは、ほかのプロトコルの接続、mitmproxy が知らない ALPN の接続のうちサーバーが先に送信するものかクライアントのバイト列が HTTP に見えないもの、そして `101` でアップグレードした先です。[raw TCP](docs/guide.ja.md#http-として読まれない接続raw-tcp) を見てください。
+- IPv6 は拒否し、QUIC は Apple 宛てを除いてドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
 - iPhone が使っている間に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。
 - コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません。
