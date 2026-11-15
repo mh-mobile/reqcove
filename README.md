@@ -92,12 +92,16 @@ the agent.
    `reqcove status` says what is left, such as approving the exit node.
 2. **On the iPhone: choose the exit node.** In the Tailscale app, choose the
    exit node `reqcove`.
-3. **On the iPhone: trust Reqcove's CA.** Scan the CA's QR code with the
-   Camera: `reqcove links` prints it, and so does `reqcove run` started in a
-   terminal. (Or open `http://mitm.it` in Safari, typing the `http://`.)
-   Install the profile (Settings › Profile Downloaded), and trust it in
-   Settings › General › About › Certificate Trust Settings. It is named
-   `Reqcove CA (<computer>, <date>)`.
+3. **On the iPhone: trust Reqcove's CA.** Once trusted, the CA lets this
+   computer read the iPhone's HTTPS to any site, not only the hosts you
+   allow, for as long as its profile stays on the iPhone
+   ([SECURITY](docs/SECURITY.md#the-cas-private-key)).
+
+   Scan the CA's QR code with the Camera: `reqcove links` prints it, and so
+   does `reqcove run` started in a terminal. (Or open `http://mitm.it` in
+   Safari, typing the `http://`.) Install the profile (Settings › Profile
+   Downloaded), and trust it in Settings › General › About › Certificate
+   Trust Settings. It is named `Reqcove CA (<computer>, <date>)`.
 4. **Give your agent the tools**, and the skill that teaches it how to use
    them. For Claude Code:
 
@@ -109,8 +113,15 @@ the agent.
    The first line is the one setup printed. `reqcove init` adds the skill:
    setup has done it already if you answered `y`.
 
-   Then ask it things like "which requests to api.example.com failed in the
-   last ten minutes?"
+Then check that it works. On the iPhone, open the app and do one thing that
+sends a request to a host you allowed. Ask the agent "what did the iPhone
+just send to api.example.com?" It works when the agent answers with that
+request: its method, its URL and its status. If the agent finds nothing,
+`reqcove status` says what is missing
+([troubleshooting](docs/guide.md#troubleshooting)).
+
+After that, ask it things like "which requests to api.example.com failed in
+the last ten minutes?"
 
 Without `setup`, step 1 by hand is one command in a terminal, naming the
 iPhone (as in `tailscale status`) and the hosts to record:
@@ -201,10 +212,11 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 - Apps that pin certificates refuse Reqcove's; see [`--pass-hosts`](docs/guide.md#apps-that-pin-certificates---pass-hosts).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
-- A connection to an allowed host that mitmproxy does not read as HTTP (another
-  protocol, some connections with an ALPN it does not know, what a `101`
-  upgrades to) is recorded as a connection only: what it carries has no flows.
-  See [raw TCP](docs/guide.md#connections-not-read-as-http-raw-tcp).
+- A connection to an allowed host that mitmproxy does not read as HTTP is
+  recorded as a connection only: what it carries has no flows. That is
+  another protocol, an ALPN mitmproxy does not know when the server speaks
+  first or the client's bytes do not look like HTTP, and what a `101`
+  upgrades to. See [raw TCP](docs/guide.md#connections-not-read-as-http-raw-tcp).
 - IPv6 is refused and QUIC dropped (except to Apple); apps fall back to IPv4 and TCP.
 - The phone cannot reach this computer or its LAN directly; a rule can send an
   allowed host's requests there.

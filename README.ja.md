@@ -68,7 +68,9 @@ go build -o reqcove ./cmd/reqcove
 
    初回はログインが必要です。ログイン用の URL は `reqcove links` で表示できます。Exit Node の承認など、残っている手順は `reqcove status` で確認できます。
 2. **iPhone で Exit Node を選びます。** Tailscale アプリで、Exit Node に `reqcove` を選びます。
-3. **iPhone で Reqcove の CA を信頼します。** CA の QR コードをカメラで読み取ります。QR コードは `reqcove links` が表示し、ターミナルで起動した `reqcove run` も表示します。Safari で `http://mitm.it` を開く方法もあります（`http://` から入力します）。続いて「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です。
+3. **iPhone で Reqcove の CA を信頼します。** この CA を信頼すると、プロファイルが iPhone にある間、このコンピュータは iPhone の HTTPS を、許可したホストに限らずどのサイトについても読めるようになります（[SECURITY](docs/SECURITY.ja.md#ca-の秘密鍵)）。
+
+   CA の QR コードをカメラで読み取ります。QR コードは `reqcove links` が表示し、ターミナルで起動した `reqcove run` も表示します。Safari で `http://mitm.it` を開く方法もあります（`http://` から入力します）。続いて「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です。
 4. **エージェントにツールを渡します。** ツールの使い方を教える Skill も入れます。Claude Code の場合は次のとおりです。
 
    ```sh
@@ -78,7 +80,9 @@ go build -o reqcove ./cmd/reqcove
 
    1 行目は setup が表示したコマンドです。`reqcove init` は Skill を入れます。setup で `y` と答えていれば、Skill はもう入っています。
 
-   あとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
+最後に、動いていることを確かめます。iPhone でアプリを開き、許可したホストへリクエストが送られる操作を 1 つしてください。そのあとエージェントに「いま iPhone から api.example.com に何を送った？」と聞きます。エージェントがそのリクエストのメソッド、URL、ステータスを答えれば、うまく動いています。エージェントが何も見つけられないときは、足りないものを `reqcove status` で確認できます（[うまくいかないとき](docs/guide.ja.md#うまくいかないとき)）。
+
+そのあとは「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」のように聞いてみてください。
 
 setup を使わない場合は、手順 1 をターミナルのコマンド 1 つで行います。中継する iPhone（`tailscale status` に表示される名前）と、記録するホストを指定します。
 
@@ -144,7 +148,7 @@ Wi-Fi のみ、80 番と 443 番ポートのみで、パスワードはありま
 
 - 証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。[`--pass-hosts`](docs/guide.ja.md#証明書ピンニングをするアプリを通す--pass-hosts) を見てください。
 - mitmproxy を通るのは TCP の 80 番と 443 番ポートだけです。ほかのポートはそのまま中継します。
-- 許可したホストへの接続のうち、mitmproxy が HTTP として読まないもの（ほかのプロトコル、知らない ALPN の接続の一部、`101` でアップグレードした先）は、接続としてだけ記録します。その接続が運ぶものはフローになりません。[raw TCP](docs/guide.ja.md#http-として読まれない接続raw-tcp) を見てください。
+- 許可したホストへの接続のうち、mitmproxy が HTTP として読まないものは、接続としてだけ記録します。その接続が運ぶものはフローになりません。ほかのプロトコルの接続、知らない ALPN の接続のうちサーバーが先に送信するものとクライアントのバイト列が HTTP に見えないもの、`101` でアップグレードした先がこれに当たります。[raw TCP](docs/guide.ja.md#http-として読まれない接続raw-tcp) を見てください。
 - IPv6 は拒否し、QUIC は（Apple 宛て以外）ドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
 - iPhone が使っている間に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。

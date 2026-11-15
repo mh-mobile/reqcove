@@ -110,8 +110,8 @@ exits 1, saying why on stderr. Its fields:
 - `lan`, in LAN mode only: `interface`, `network`, `listen`, `stopped`,
   `allowed` (each with `addr` and `allowed_at`), `refused`, `refused_more`.
 
-Checked by a unit test: nothing on stdout and exit status 1 when no run
-answers.
+Checked by a unit test: when no run answers, nothing on stdout, exit status 1
+and the reason on stderr.
 
 #### `capture_stats`
 

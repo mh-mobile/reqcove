@@ -7,13 +7,15 @@ detail, for checking whether what your app sends is covered: the names and
 shapes that count as secrets, how each kind of body is read, what a record
 keeps, and which connections leave no record. It describes v1.0.
 
-Secrets are masked as they arrive, so no tool can return them. `--no-redact`
-turns masking off.
+The secrets Reqcove recognises are masked as they arrive, so no tool can
+return them. A secret it does not recognise can stay readable: the tables
+below say in bold where (**Not masked**, **Not caught**, **Not found**).
+`--no-redact` turns masking off.
 
 A point that was not tried, or that comes from reading code, says so where it
 stands. What tests and trials covered is in the "Checked:" line that ends a
-section. Tried with mitmproxy 12.3.1 and an iPhone on iOS 27.3, unless a line
-names something else.
+section. mitmproxy is 12.3.1 throughout. A trial was on an iPhone only where
+its line says so (iOS 27.3).
 
 ## Names that count as secret
 
@@ -93,6 +95,8 @@ Read as JSON whatever the content type says.
 | A lone `code` | Masked in a request, kept in a response |
 | A secret under a name that does not say so: `{"data": "…"}` | **Not masked.** `--mask-names` or `--mask-values` can add it |
 
+Checked: tests and the fuzz test.
+
 ### Forms
 
 | In a form | Result |
@@ -100,7 +104,8 @@ Read as JSON whatever the content type says.
 | A field with a secret name, a lone `code` included | Masked. A body that looks like a form counts as one: one line, which a newline may end |
 | SAML's POST binding: the assertion as a base64 `SAMLResponse` field | **Not masked**: the field is not decoded |
 
-Checked: a test (the `SAMLResponse` field passes).
+Checked: tests and the fuzz test; a test for the `SAMLResponse` field, which
+passes.
 
 ### Text: `name: value` and `name=value` lines
 
@@ -356,8 +361,8 @@ as HTTP, has no flow for what it carries. Only the connection is recorded, in
 | The scope | The record is checked against `--allow-hosts` and `--pass-hosts` again, so a host outside the first or in the second leaves nothing |
 
 Checked: an E2E test over plain HTTP (the `101`, and what is recorded); a
-test (the scope check). Tried 2026-11-15: the unknown ALPN name, and the
-`101` over TLS.
+test (the scope check). Tried with mitmproxy 12.3.1, 2026-11-15, not on an
+iPhone: the unknown ALPN name, and the `101` over TLS.
 
 ## Connections that leave no record
 
@@ -369,13 +374,19 @@ itself fire none of its hooks (from reading mitmproxy 12.3.1's code).
 | Apple's hosts; hosts outside `--allow-hosts` | Passed through by mitmproxy | From reading the code |
 | A connection mitmproxy knows by its address only | Passed through, unless `--allow-hosts` names the address | From reading the code |
 | TLS without SNI | Known by its address only. That holds on the Remote Proxy, LAN mode and the local proxy too: the name in `CONNECT` does not reach mitmproxy | From reading the code |
-| Plain TCP (ports 80 and 443 go to mitmproxy) whose first bytes do not name an allowed host as mitmproxy reads them: not HTTP, a server that speaks first, HTTP/2 without TLS (h2c with prior knowledge, which mitmproxy 12.3.1 does not take), HTTP/1.0 without `Host`, `Host:` with no space after the colon | Known by its address only | Tried 2026-11-15 |
+| Plain TCP (ports 80 and 443 go to mitmproxy) whose first bytes do not name an allowed host as mitmproxy reads them: not HTTP, a server that speaks first, HTTP/2 without TLS (h2c with prior knowledge, which mitmproxy 12.3.1 does not take), HTTP/1.0 without `Host`, `Host:` with no space after the colon | Known by its address only | Tried with mitmproxy 12.3.1, 2026-11-15, not on an iPhone |
 | An allowed host's HTTP/2 requests riding a connection the client opened for a name outside the list, which shares its certificate and address | They go with that connection, undecrypted. URLSession reuses connections so (HTTP/2 connection coalescing, from Apple's WWDC 2020 session "Boost performance and security with modern networking"), and CDNs give sibling hosts one certificate: an allowed host's requests can be missing when the app reached a sibling first. Allow the names that share the certificate (`*.example.com`) | Tried 2026-11-15 with Go's HTTP/2 client; not on an iPhone |
 | TLS with Encrypted Client Hello | mitmproxy sees only the provider's public name, so unless that name is allowed the connection passes through. iOS does not use ECH by default, by public sources, but an app can turn it on for its own connections | Tried 2026-11-15 with Go's ECH client and server; not tried on an iPhone |
-| An HTTP/1 connection to an allowed host (by SNI) whose first request names one of Apple's hosts in `Host` | Carried whole, decrypted, its later requests too: mitmproxy checks the name again after TLS | Tried 2026-11-15 |
-| An address in `--allow-hosts` and a name in SNI | The connection is decrypted by its address. Its HTTP requests count as out of scope, and one mitmproxy then carries as raw TCP is checked by its name and leaves nothing | Tried 2026-11-15 |
+| An HTTP/1 connection to an allowed host (by SNI) whose first request names one of Apple's hosts in `Host` | Carried whole, decrypted, its later requests too: mitmproxy checks the name again after TLS | Tried with mitmproxy 12.3.1, 2026-11-15, not on an iPhone |
+| An address in `--allow-hosts` and a name in SNI | The connection is decrypted by its address. Its HTTP requests count as out of scope, and one mitmproxy then carries as raw TCP is checked by its name and leaves nothing | Tried with mitmproxy 12.3.1, 2026-11-15, not on an iPhone |
 | A client that finishes the TLS handshake and only then refuses mitmproxy's certificate and closes | No TLS failure, no flow, no count: for mitmproxy the handshake succeeded | Tried 2026-11-15 with curl on OpenSSL 4.1, TLS 1.2 and 1.3 |
 | A client that finishes the handshake and closes without a request | The same | An E2E test |
-| A client that refuses during the handshake: Python's and Go's | Listed as a TLS failure | Tried with TLS 1.2 and 1.3; Go's, an E2E test |
-| An iPhone app that pins by refusing in URLSession's delegate or in Network.framework's verify block | It refuses during the handshake, and is listed | Tried on an iPhone, 2026-11-15 |
 | An iPhone app that lets the handshake finish, checks the certificate itself and closes | Leaves nothing, as above | Tried on an iPhone, 2026-11-15 |
+
+A client that refuses during the handshake is not one of these. It is listed
+as a TLS failure (`list_tls_failures`):
+
+| Listed as a TLS failure | How it was checked |
+|---|---|
+| Python's and Go's clients, which refuse during the handshake | Tried with TLS 1.2 and 1.3; Go's, an E2E test |
+| An iPhone app that pins by refusing in URLSession's delegate or in Network.framework's verify block | Tried on an iPhone, 2026-11-15 |

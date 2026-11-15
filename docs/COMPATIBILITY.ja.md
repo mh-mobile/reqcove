@@ -63,7 +63,7 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のもので、約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
-確認状況：答える `run` がないときに標準出力に何も出さず、終了コード 1 で終わることは、単体テストで確かめました。
+確認状況：答える `run` がないときに標準出力に何も出さず、理由を標準エラーに出して終了コード 1 で終わることは、単体テストで確かめました。
 
 #### `capture_stats`
 

@@ -99,9 +99,11 @@ turns logs on.
 
 ## What is stored, and who can read it
 
-What Reqcove keeps on disk is in the state directory. It is 0700 and the
-files in it 0600: open to your OS user only, and to any process running as
-that user. The records themselves are in memory only.
+The keys and the tokens are in the state directory. It is 0700 and the files
+in it 0600: open to your OS user only, and to any process running as that
+user. The records themselves are in memory only. A service's files and
+Homebrew's log are outside it
+([what `reqcove cleanup` leaves](#what-reqcove-cleanup-leaves)).
 
 | In the state directory | What it holds |
 |---|---|
@@ -201,6 +203,8 @@ links and the `--mcp-http` token until the container is removed.
 How to run it: [container.md](container.md).
 [Details](guide.md#security-container).
 
+<a id="trust"></a>
+
 ## Who can use it
 
 - **Your OS user is trusted.** The state directory and the MCP socket in it
@@ -245,7 +249,8 @@ second user). Another user can still:
 
 - see `run`'s and mitmproxy's command lines in `ps`: the device names, the
   hosts, and any `--mask-names` or `--mask-values` given there rather than in
-  an `@FILE`; never the SOCKS5 password, the tokens or mitmweb's password;
+  an `@FILE` (from reading the code); never the SOCKS5 password, the tokens
+  or mitmweb's password;
 - send requests through `--local-proxy`, whose port takes any user's;
 - reach the node's ports, when this computer itself is on your tailnet as
   you: the tokens are what keep them out of `--ui`, `--web` and `--mcp-http`
@@ -279,8 +284,10 @@ return them. `--no-redact` turns masking off.
 - **By shape.** `Bearer`, `Basic` and `Token` credentials, JWTs and keys
   with well-known prefixes are masked wherever they appear.
 - **By format.** JSON, forms, text lines, GraphQL, XML, HTML and JavaScript,
-  `multipart/form-data`, protobuf, gRPC and WebSocket messages are each read
-  for secret names.
+  `multipart/form-data`, gRPC and WebSocket messages are each read for secret
+  names. Protobuf, gRPC's protobuf messages too, is read for names only with
+  your schema (`--proto`): without one it shows its structure, never a
+  string's text, and is not masked by name.
 - **By your own rules.** `--mask-names` and `--mask-values` add names and
   patterns.
 
@@ -306,10 +313,11 @@ each was tried, are in
 [masking.md](masking.md#connections-that-leave-no-record).
 
 - Connections mitmproxy passes through itself: Apple's hosts, hosts outside
-  `--allow-hosts`, and connections it knows by their address only.
-- TLS without SNI, unless `--allow-hosts` names the address.
-- Plain TCP on port 80 or 443 whose first bytes do not name an allowed host
-  as mitmproxy reads them: HTTP/2 without TLS, for one.
+  `--allow-hosts`, and connections it knows by their address only, unless
+  `--allow-hosts` names the address. It knows two kinds by address only:
+  - TLS without SNI;
+  - plain TCP on port 80 or 443 whose first bytes do not name an allowed
+    host as mitmproxy reads them: HTTP/2 without TLS, for one.
 - An allowed host's HTTP/2 requests riding a connection the app opened for a
   sibling name outside the list. Allow the names that share the certificate
   (`*.example.com`).
@@ -317,8 +325,9 @@ each was tried, are in
   allowed.
 - A connection to an allowed host whose first HTTP/1 request names one of
   Apple's hosts in `Host`: carried whole, decrypted.
-- A connection allowed by its address but named otherwise in SNI, once
-  mitmproxy carries it as raw TCP.
+- Raw TCP to a host you allowed by its address only, when the client names
+  the host in SNI: `list_passthrough` does not list it, as the record is
+  checked by that name.
 - A client that finishes the TLS handshake and only then refuses Reqcove's
   certificate and closes, or closes without a request. A pinning app that
   checks the certificate itself does this; one that refuses during the
@@ -366,9 +375,10 @@ pages viewed and of searches. [Details](guide.md#security-ui).
 The node serves the MCP tools to your own devices that send the token. On a
 personal tailnet an agent's device joined through Tailscale's OAuth apps
 (Grok Bot) counts as one of your own devices, and whatever the tools answer
-reaches it and its model provider. It gets the same masked records, without
-the preset, rule and marker tools. The agent keeps the token until you delete
-`mcp-token` and restart `run`. [Details](guide.md#security-mcp-http).
+reaches it and its model provider (for Grok Bot, xAI's cloud). It gets the
+same masked records, without the preset, rule and marker tools. The agent
+keeps the token until you delete `mcp-token` and restart `run`.
+[Details](guide.md#security-mcp-http).
 
 ### The local proxy (`--local-proxy`)
 
