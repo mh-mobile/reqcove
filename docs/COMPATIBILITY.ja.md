@@ -4,7 +4,7 @@
 
 **v1.0.0 から適用します。** それより前（v0.x）は、ここに書いたことでもマイナーリリースで変わることがあり、実際に変わったものもあります。
 
-メジャーバージョンの間は変わらないもの、どのリリースでも変わりうるもの、変更の知らせ方を書きます。一覧は記憶ではなくコード（MCP サーバーが登録するツール、各コマンドのフラグ、ルールファイルの読み込み処理）から取りました。テストで確かめた点はそう書いています。それ以外はコードを読んで書いたものです。
+メジャーバージョンの間は変わらないもの、どのリリースでも変わりうるもの、変更の知らせ方を書きます。一覧は記憶ではなくコード（MCP サーバーが登録するツール、各コマンドのフラグ、ルールファイルの読み込み処理）から取りました。テストで確かめた点は、その節の最後の行に書いています。それ以外はコードを読んで書いたものです。
 
 1. [バージョン](#バージョン)
 2. [メジャーバージョンの間は変わらないもの](#メジャーバージョンの間は変わらないもの)
@@ -57,11 +57,13 @@ v1.0.0 で削除したもの（v0.8.0 から非推奨。v0.6 の名前）：
 
 #### `status` と `reqcove status --json`
 
-`reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります（ユニットテスト）。そのフィールド：
+`reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります。そのフィールド：
 
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のもので、約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
+
+確認状況：答える `run` がないときに標準出力に何も出さず、終了コード 1 で終わることは、単体テストで確かめました。
 
 #### `capture_stats`
 
@@ -143,7 +145,9 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 ## `reqcove mcp` と別のバージョンの `run`
 
 - MCP サーバーは、エージェントがつないだときに自分のバージョンを伝えます（`serverInfo`：名前は `reqcove`、バージョンは `reqcove version` が出すもの）。ソケット、`reqcove mcp`、`--mcp-http` のどれでも同じです。
-- `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです（テスト）。
-- `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。両方を同じバージョンにすること、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます（テスト）。
-- この `reqcove mcp` にあって `run` にないツール：プリセット、ルール、マーカーのツールは、動いている reqcove（そのバージョン）にそのツールがないと答えます（テスト）。それ以外は `run` 自身のエラー（知らないツール）がそのまま返ります（テスト）。
-- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります（テストで確認）。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます（テストで確認）。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードを読んだだけです）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。
+- `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです。
+- `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。両方を同じバージョンにすること、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます。
+- この `reqcove mcp` にあって `run` にないツール：プリセット、ルール、マーカーのツールは、動いている reqcove（そのバージョン）にそのツールがないと答えます。それ以外は `run` 自身のエラー（知らないツール）がそのまま返ります。
+- これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` に呼ぶと、代わりのツールの名前を書いたエラーが返ります。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードから判断したもの）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。
+
+確認状況：テストで確かめたのは、出力スキーマを付けないツールの一覧、バージョンが違うときの注記、`run` にないツールへの 2 通りの答え、削除したツールを呼んだときのエラー、v1.0.0 の `reqcove status` が古い `run` のフィールドを読むことです。
