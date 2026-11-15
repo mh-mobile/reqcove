@@ -103,10 +103,10 @@ exits 1, saying why on stderr. Its fields:
   `header`, `host`, `address`, `method`, `url`, `operation`, `status`,
   `delay_ms`, `fault`, `active`, `remaining`, `expires_at` (as `list_presets`'
   presets).
-- Since v1.1, while the hosts are changed live (`reqcove capture`):
+- Since v1.1, while the hosts are changed live (`reqcove capture`, `reqcove reload`):
   `scope_pending` (a change mitmproxy has not acknowledged yet, text for
   people; absent when none), `scope_changed_at` (RFC 3339) and `scope_change`
-  (the command, such as `capture add api.example.com`), absent before the
+  (the command, such as `capture add api.example.com` or `reload`), absent before the
   first change. `allow_hosts` and `pass_hosts` are the hosts mitmproxy has
   acknowledged.
 - Since v1.1, `recording`: `on`, or `stopped` (`reqcove capture stop`, until
@@ -203,6 +203,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
 | `reqcove capture save` (since v1.1) | `--state` |
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
+| `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |

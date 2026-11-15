@@ -160,7 +160,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	c, o := start("--allow-hosts", "cli.example.com")
 	logged := logTo(t)
 	sctx, stopCtl := context.WithCancel(ctx)
-	if err := serveCtl(sctx, state, c, false, o.origin); err != nil {
+	if err := serveCtl(sctx, state, c, o); err != nil {
 		t.Fatal(err)
 	}
 	change := func(req ctlRequest) string {

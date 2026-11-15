@@ -118,6 +118,24 @@ reqcove capture save     # いま記録しているホストを、ホストの�
 
 確認状況：テストだけです（単体テスト：書く中身と残すもの、それぞれの拒否。本物の mitmproxy での E2E テスト：ホストのファイルを読む config とコマンドラインのホストで `run` を起動し、追加し、そのコマンドラインのホストを外し、保存したあと、その config で起動した新しい `run` が追加したホストを記録すること）。iPhone と `brew services` では試していません。
 
+#### ファイルを編集して `reqcove reload`
+
+```sh
+reqcove reload     # config、そのホストのファイル、--rules のファイルを読み直す
+```
+
+v1.1 から、config、config が指すホストのファイル（`--allow-hosts=@FILE`）、`--rules` のファイルを編集したあと、`reqcove reload` を実行すると、再起動せずにそのホストとルールを適用します。そのため記録は残ります。既定以外のノードには `--state DIR` を付けます。
+
+- **すべて適用するか、何も変えないか。** 先にファイルを読み、まとめて確かめます。config のフラグ、ホストのファイル、新しいホストに対するルールです（ホストと、それを挙げる `mock` を、1 回の編集で一緒に足したり外したりできます）。どれかが読み込めないときは何も変えず、答えが理由を伝えます（行番号だけで、行の中身は伝えません）。
+- **ホスト**は、いま記録しているホストと置き換えます（止めている間や allow-all の間は、その後に記録するホストです）。`run` のコマンドラインで指定したホストは残ります。`reqcove capture` で変えて保存していない変更は、ファイルのものに置き換わります。答えがその変更を伝えます。
+- **ルール**は読み直し、ホストと同時に適用します。答えは、読み込んだルールの数を種類ごとに伝えます。プリセットはオフになります（新しいルールにするとオフになります。エージェントがまたオンにできます）。`--rules-reload` はこれまでどおり動きます。
+- **ほかの設定**（`--device`、`--mcp-http`、`--proto`、`--mask-values` など）は再起動で適用します。答えは、変わった設定の名前を 1 行で伝え（値は伝えません）、どれも適用しません。`--rules` のファイルを足したとき、外したとき、別のパスにしたときも同じです。
+- フラグだけで起動した `run`（`--config`、`--allow-hosts=@FILE`、`--rules` のどれもない）には、**読み直すものがありません**。
+- `capture add` や `remove` と同じく、**新しい接続だけ**です。
+- `capture` のコマンドと同じく、端末でだけ動きます。LAN モードでは拒否し、古い `run` はそう伝え、痕跡（`run` のログ、`cli` のマーカー、`scope_change` の `reload`）が残ります。
+
+確認状況：テストだけです（単体テスト：`run` の引数の読み直しが終了もログ出力もしないこと、伝える設定の名前。本物の mitmproxy での E2E テスト：ホストとそのモックを一緒に足すと、モックが答えること。壊れたルールのファイルでは何も変わらず、ホストのファイルの編集も適用しないこと。ホストとそのモックを一緒に外せること。保存していない `capture add` を、置き換えたものとして伝えること。プリセットがオフになること。足した `--mcp-http` を伝えること）。iPhone とサービスでは試していません。
+
 #### しばらく記録を止める
 
 ```sh
@@ -733,7 +751,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 
 #### ファイルを読み込むタイミング（`--rules-reload`）
 
-ファイルは `run` の起動時に読み込みます。reqcove が mitmproxy を再起動するときは、そのときディスクにあるファイルではなく、最後に読み込めたルール（状態ディレクトリの非公開のコピー `rules-loaded`）を渡します。途中でファイルが壊れても、mitmproxy がルールなしで動くことはありません。ルールが名前を挙げるファイル（`map_local`、`@file` の値、モックのボディ）は、これまでどおりルールファイルからの相対パスでディスクから読みます。最後に読み込めたルールが読み込めなくなったとき（そうしたファイルが消えたときなど）は、ルールなしで続けず、理由を表示して `run` が止まります。
+ファイルは `run` の起動時に読み込みます。v1.1 からは `reqcove reload` でも、ホストと一緒に読み直します（[編集して reload](#ファイルを編集して-reqcove-reload)）。reqcove が mitmproxy を再起動するときは、そのときディスクにあるファイルではなく、最後に読み込めたルール（状態ディレクトリの非公開のコピー `rules-loaded`）を渡します。途中でファイルが壊れても、mitmproxy がルールなしで動くことはありません。ルールが名前を挙げるファイル（`map_local`、`@file` の値、モックのボディ）は、これまでどおりルールファイルからの相対パスでディスクから読みます。最後に読み込めたルールが読み込めなくなったとき（そうしたファイルが消えたときなど）は、ルールなしで続けず、理由を表示して `run` が止まります。
 
 `--rules-reload` を付けると、変更が落ち着いた時点で読み直します。新しいルールはそのあとに始まるリクエストから適用します。処理中のリクエストは始まったときのルールのままです。
 
@@ -1079,13 +1097,13 @@ Exit Node とのほかの違いは次のとおりです。
 | 起動 | `reqcove run`（Ctrl-C で止まる） | `reqcove service install`：すぐに起動し、ログインのたびにも起動 | `brew services start reqcove`：すぐに起動し、ログインのたびにも起動 |
 | 終わったあと | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
 | アップデートのあと | Ctrl-C のあと `reqcove run` | `reqcove service restart`。別のバイナリ（別のパスや Homebrew のもの）に移ったときは `reqcove service install` | `brew upgrade reqcove` のあと `brew services restart reqcove` |
-| 設定ファイルやホストのファイルを編集したあと | Ctrl-C のあと `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| 設定ファイル、ホストのファイル、ルールのファイルを編集したあと | ホストとルールは `reqcove reload`。ほかは Ctrl-C のあと `reqcove run` | `reqcove reload`。ほかは `reqcove service restart` | `reqcove reload`。ほかは `brew services restart reqcove` |
 | 次のログインまで止める | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove` | `brew services kill reqcove`（Homebrew のヘルプによるもので、試していません） |
 | 止めて取り除く | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
 | ログ | ターミナル | macOS：状態ディレクトリの `service.log`。Linux：`journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |
 
 - 再起動のたびに記録は空になります。記録はメモリにあるためです。先に `reqcove har > flows.har` で残してください。
-- 記録するホストは、再起動せずに変えられます。`reqcove capture add HOST`（`remove`、`set`）で変え、次の起動のために残すなら `reqcove capture save` を実行します（[記録するものを変える](#動かしたまま記録するものを変える)）。ほかを変えるときは、ファイルを編集してから、上の表のとおりに再起動します。
+- 記録するホストは、再起動せずに変えられます。`reqcove capture add HOST`（`remove`、`set`）で変え、次の起動のために残すなら `reqcove capture save` を実行します（[記録するものを変える](#動かしたまま記録するものを変える)）。config、そのホストのファイル、ルールのファイルを編集したあとは、`reqcove reload` で、再起動せずにホストとルールを適用します（[編集して reload](#ファイルを編集して-reqcove-reload)）。ほかを変えるときは、上の表のとおりに再起動します。
 - アップデートのあとは、新しい `reqcove status` がそう伝えます。動いている `run` のバージョンと自分のバージョンを比べ、`run` を起動したものに合わせて、再起動するコマンドを 1 つ示します。それまでは、`brew upgrade` のあとでも、`run` は古いバイナリのまま動き続けます（動いているプロセスは自分のファイルを持ち続けます）。
 - `reqcove status` はほかに、`run` を起動したもの（ターミナル、`reqcove service install` のサービス、`brew services`）と、`run` が読んだ設定ファイルとホストのファイルを表示します。reqcove のサービスが同時に 2 つ入っているときや、`reqcove service install` のサービスが、消えたバイナリやこのバイナリでないものを起動するときは、警告します（`reqcove service install` をもう一度実行すると、このバイナリを指すようにします）。
 - サービスと同じ状態ディレクトリで、ターミナルから `run` を起動すると「使用中」と断られます。先にサービスを止めてください。

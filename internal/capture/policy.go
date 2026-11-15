@@ -43,35 +43,9 @@ func flatName(name string) string {
 // whose matches are masked wherever they appear. Errors never quote a
 // pattern: it may be a secret itself.
 func SetMaskPolicy(names, values []string) error {
-	m := map[string]*atomic.Int64{}
-	for _, n := range names {
-		f := flatName(n)
-		if f == "" {
-			return fmt.Errorf("--mask-names: %q has no letters or digits", n)
-		}
-		m[f] = new(atomic.Int64)
-	}
-	if len(values) > maxMaskValues {
-		return fmt.Errorf("--mask-values: %d patterns, at most %d", len(values), maxMaskValues)
-	}
-	var vs []userValue
-	for i, v := range values {
-		if len(v) > maxMaskPattern {
-			return fmt.Errorf("--mask-values: pattern %d is longer than %d bytes", i+1, maxMaskPattern)
-		}
-		re, err := regexp.Compile(v)
-		if err != nil {
-			why := "not a valid pattern"
-			var se *syntax.Error
-			if errors.As(err, &se) {
-				why = string(se.Code) // the kind of error, without the pattern's text
-			}
-			return fmt.Errorf("--mask-values: pattern %d: %s (RE2 syntax)", i+1, why)
-		}
-		if re.MatchString("") {
-			return fmt.Errorf("--mask-values: pattern %d matches empty text", i+1)
-		}
-		vs = append(vs, userValue{re: re})
+	m, vs, err := maskPolicyOf(names, values)
+	if err != nil {
+		return err
 	}
 	if len(m) == 0 {
 		maskNames.Store(nil)
@@ -84,6 +58,46 @@ func SetMaskPolicy(names, values []string) error {
 		maskValues.Store(&vs)
 	}
 	return nil
+}
+
+// CheckMaskPolicy is SetMaskPolicy's error, the policy left as it is.
+func CheckMaskPolicy(names, values []string) error {
+	_, _, err := maskPolicyOf(names, values)
+	return err
+}
+
+func maskPolicyOf(names, values []string) (map[string]*atomic.Int64, []userValue, error) {
+	m := map[string]*atomic.Int64{}
+	for _, n := range names {
+		f := flatName(n)
+		if f == "" {
+			return nil, nil, fmt.Errorf("--mask-names: %q has no letters or digits", n)
+		}
+		m[f] = new(atomic.Int64)
+	}
+	if len(values) > maxMaskValues {
+		return nil, nil, fmt.Errorf("--mask-values: %d patterns, at most %d", len(values), maxMaskValues)
+	}
+	var vs []userValue
+	for i, v := range values {
+		if len(v) > maxMaskPattern {
+			return nil, nil, fmt.Errorf("--mask-values: pattern %d is longer than %d bytes", i+1, maxMaskPattern)
+		}
+		re, err := regexp.Compile(v)
+		if err != nil {
+			why := "not a valid pattern"
+			var se *syntax.Error
+			if errors.As(err, &se) {
+				why = string(se.Code) // the kind of error, without the pattern's text
+			}
+			return nil, nil, fmt.Errorf("--mask-values: pattern %d: %s (RE2 syntax)", i+1, why)
+		}
+		if re.MatchString("") {
+			return nil, nil, fmt.Errorf("--mask-values: pattern %d matches empty text", i+1)
+		}
+		vs = append(vs, userValue{re: re})
+	}
+	return m, vs, nil
 }
 
 // userName: flat is one of --mask-names (and counts it).

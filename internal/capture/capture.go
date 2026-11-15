@@ -185,6 +185,10 @@ type Capture struct {
 	pending  string     // ScopePending
 	changeAt time.Time  // LastChange
 	change   string
+	// reloadRules, set by Reload for its one scope op: the rules file the
+	// addon loads and puts in force with the scope; loaded, what it answered.
+	reloadRules string
+	loaded      map[string]int
 }
 
 // proc is one mitmdump process.
@@ -208,9 +212,13 @@ func (p *proc) stop() {
 
 // rulesCopy is the private copy (0600, in Dir) of the --rules file as it last
 // loaded: written at Start, replaced by the addon when --rules-reload takes the
-// file again, and what a restarted mitmdump loads, never the file on disk,
-// which may be broken by then. rulesCopy+".new" is the addon's while it checks.
-const rulesCopy = "rules-loaded"
+// file again (and by Reload), and what a restarted mitmdump loads, never the
+// file on disk, which may be broken by then. rulesCopy+".new" is the addon's
+// while it checks; reloadCopy, Reload's.
+const (
+	rulesCopy  = "rules-loaded"
+	reloadCopy = "rules-reload"
+)
 
 // permanent marks a failure that trying again cannot mend: Start returns it,
 // supervise ends with it.
@@ -391,6 +399,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 func removeRulesCopy(dir string) {
 	os.Remove(filepath.Join(dir, rulesCopy))
 	os.Remove(filepath.Join(dir, rulesCopy+".new"))
+	os.Remove(filepath.Join(dir, reloadCopy))
 }
 
 // retryWait notes err, the n-th failure in a row, and waits before the next
@@ -654,6 +663,62 @@ func (c *Capture) ChangeScope(ctx context.Context, why string, f func(base HostR
 	return c.changeLocked(ctx, why, r, c.stopped, c.allUntil)
 }
 
+// Reload is reqcove reload: base r and, when rules is not nil, the --rules
+// file's new bytes, both or neither. The addon checks the new rules against r
+// (never the rules in force: a host and the mock naming it go out together),
+// then gets both in one scope op, so no request meets one without the other.
+// The private copy (rulesCopy) holds the new rules before that op: a mitmdump
+// restarted meanwhile starts with them and r (mitmArgs), never one without
+// the other; a refusal puts the old copy back. New rules turn every preset
+// off. loaded is the rules by kind, as the addon loaded them (nil without
+// rules). Errors are ChangeScope's: ErrPending, the change taken; else
+// nothing changed. The addon's event loop serializes this op with
+// --rules-reload's look at the file.
+func (c *Capture) Reload(ctx context.Context, why string, r HostRules, rules []byte) (loaded map[string]int, err error) {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	op := scopeOp(r, c.wantGen+1, true, c.stopped, c.allOn())
+	copyPath, staged := filepath.Join(c.cfg.Dir, rulesCopy), filepath.Join(c.cfg.Dir, reloadCopy)
+	if rules != nil {
+		if c.cfg.Rules == "" {
+			return nil, errors.New("this run has no --rules file")
+		}
+		defer os.Remove(staged)
+		if err := os.WriteFile(staged, rules, 0o600); err != nil {
+			return nil, err
+		}
+		op["rules_file"] = staged
+	}
+	var ack scopeAck
+	if err := c.control(ctx, op, &ack); err != nil {
+		if errors.Is(err, ErrNoControl) || errors.Is(err, ErrUncertain) {
+			return nil, fmt.Errorf("mitmproxy did not answer (restarting?): nothing changed")
+		}
+		return nil, err // refused: why the rules do not load, or name hosts r leaves out
+	}
+	var old []byte
+	if rules != nil {
+		if old, err = os.ReadFile(copyPath); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(staged, copyPath); err != nil {
+			return nil, err
+		}
+		c.reloadRules, c.loaded = copyPath, nil
+	}
+	err = c.changeLocked(ctx, why, r, c.stopped, c.allUntil)
+	c.reloadRules = ""
+	if errors.As(err, new(*refusal)) && rules != nil { // the scope went back (changeLocked): the rules too
+		if werr := os.WriteFile(copyPath, old, 0o600); werr != nil {
+			c.cfg.Logf("the rules that loaded last could not be put back in %s: %v", copyPath, werr)
+		}
+	}
+	if rules == nil {
+		return nil, err
+	}
+	return c.loaded, err
+}
+
 // ErrUnchanged: SetStopped found capture stopped (or started) already;
 // SetAllowAll, every host recorded already ("*"); EndAllowAll, allow-all off.
 var ErrUnchanged = errors.New("unchanged")
@@ -851,9 +916,10 @@ type refusal struct{ error }
 
 // scopeAck is the addon's answer to a scope op.
 type scopeAck struct {
-	OK       bool   `json:"ok"`
-	Gen      int64  `json:"gen"`
-	Instance string `json:"instance"`
+	OK       bool           `json:"ok"`
+	Gen      int64          `json:"gen"`
+	Instance string         `json:"instance"`
+	Loaded   map[string]int `json:"rules_loaded"` // the rules Reload put in force, by kind
 }
 
 // scopeOp is the addon's scope op for base r: the rules are checked against
@@ -866,7 +932,11 @@ func scopeOp(r HostRules, gen int64, check, stopped, all bool) map[string]any {
 // its acknowledgment (its instance, the generation) the scope is applied.
 func (c *Capture) applyLocked(ctx context.Context) error {
 	var ack scopeAck
-	err := c.control(ctx, scopeOp(c.want, c.wantGen, false, c.stopped, c.allOn()), &ack)
+	op := scopeOp(c.want, c.wantGen, false, c.stopped, c.allOn())
+	if c.reloadRules != "" { // Reload's op alone: never again (a revert, a later hello's)
+		op["rules_file"], c.reloadRules = c.reloadRules, ""
+	}
+	err := c.control(ctx, op, &ack)
 	switch {
 	case errors.Is(err, ErrNoControl), errors.Is(err, ErrUncertain):
 		return fmt.Errorf("mitmproxy did not answer (restarting?): %w", ErrPending)
@@ -875,6 +945,7 @@ func (c *Capture) applyLocked(ctx context.Context) error {
 	case !ack.OK || ack.Instance != c.instance || ack.Gen != c.wantGen:
 		return fmt.Errorf("mitmproxy answered for another generation or process: %w", ErrPending)
 	}
+	c.loaded = ack.Loaded
 	c.appliedLocked()
 	return nil
 }

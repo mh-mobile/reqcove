@@ -288,6 +288,15 @@ and so is a change in LAN mode (tests). Each change leaves a line in `run`'s log
 marker with source `cli` and `scope_change` in `status` (an E2E test), so
 one you did not make shows.
 
+`reqcove reload` (since v1.1) goes the same way, with the same guards and
+trace: it reads the config, its hosts files and the `--rules` file again and
+puts their hosts and rules in force. So whatever can write those files and
+run it (or write to `ctl.sock`) changes what is recorded and where requests
+go while `run` runs, without `--rules-reload`. It never takes `--no-redact`,
+`--web` or any other setting but the hosts and the rules: those take a
+restart (a unit test names every other flag as taking one; that none of them
+applies is from reading the code).
+
 `reqcove capture stop` turns the `--rules` file off with the recording: no
 mock, map_local, map_remote, modify_headers or resolve rule applies while
 stopped, presets included (turned off, and `activate_preset` refused), so
@@ -472,7 +481,8 @@ apps' requests, cookies and tokens included, anywhere. `map_remote` and
 `resolve` connect from this computer, this computer and the LAN included, and
 a `mock` answers in the site's name. With `--rules-reload`, whatever can
 write the file (an agent with file access included) can change where the
-devices' requests go while `run` runs. A mitmproxy that reqcove restarts gets
+devices' requests go while `run` runs; without it, what can write the file
+and run `reqcove reload` (since v1.1, [above](#other-processes-on-this-computer)). A mitmproxy that reqcove restarts gets
 the rules that loaded last from a private copy (0600, tokens included, removed
 when `run` stops); if those no longer load, `run` stops rather than go on
 without rules. [Details](guide.md#security-rules).

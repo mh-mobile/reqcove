@@ -4,6 +4,28 @@
 
 ### Added
 
+- **`reqcove reload`** (`--state DIR`): reads `run`'s config, the hosts files
+  it names (`--allow-hosts=@FILE`, `--pass-hosts=@FILE`) and the `--rules`
+  file again, and puts their hosts and rules in force together, without a
+  restart. Everything is checked first, the rules against the new hosts (a
+  host and the `mock` naming it go in or out in one edit), and on any failure
+  nothing changes and the answer says why. The answer says what changed,
+  which changes made with `reqcove capture` and not saved it replaces, how
+  many rules of each kind loaded (presets go off: new rules turn them off),
+  and in one line the other settings that changed, which take a restart
+  (names only, never values). A run from flags alone has "nothing to
+  reload". The same guards as `reqcove capture` (a terminal only, refused in
+  LAN mode, an older run named, the trace: `scope_change` `reload`).
+  `--rules-reload` works as before. `reqcove setup`'s last lines name it.
+  Unit tests (the parse of `run`'s arguments again never exits, logs or
+  dials `--upstream-proxy` (that it sets no mask policy and loads no
+  `--proto` is from reading the code); every flag of `run`
+  reloaded or named; nothing to reload) and an E2E test with real mitmproxy
+  (a host and its mock added together, then a broken rules file changing
+  nothing, its hosts file's edit included, then both taken out; an unsaved
+  add named; a preset off; `--mcp-http` named). Not tried on an iPhone or
+  with a service.
+
 - **`reqcove status` says what runs, and how to restart it after an
   update.** The running `run`'s version against this `reqcove`'s (from
   `serverInfo`, so a v1.0.0 `run` too), and when they differ the one command

@@ -29,24 +29,37 @@ var protoSchema atomic.Pointer[protoregistry.Files]
 // LoadProtoSchema reads the --proto file. Errors give at most the names of
 // the schema's own types (the user's file), never message data.
 func LoadProtoSchema(path string) (messages int, err error) {
+	files, messages, err := protoSchemaOf(path)
+	if err == nil {
+		protoSchema.Store(files)
+	}
+	return messages, err
+}
+
+// CheckProtoSchema is LoadProtoSchema without loading it.
+func CheckProtoSchema(path string) (messages int, err error) {
+	_, messages, err = protoSchemaOf(path)
+	return messages, err
+}
+
+func protoSchemaOf(path string) (files *protoregistry.Files, messages int, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	var set descriptorpb.FileDescriptorSet
 	if err := proto.Unmarshal(b, &set); err != nil || len(set.File) == 0 {
-		return 0, errors.New("not a FileDescriptorSet (protoc --descriptor_set_out=FILE --include_imports)")
+		return nil, 0, errors.New("not a FileDescriptorSet (protoc --descriptor_set_out=FILE --include_imports)")
 	}
-	files, err := protodesc.NewFiles(&set)
+	files, err = protodesc.NewFiles(&set)
 	if err != nil {
-		return 0, fmt.Errorf("its files do not resolve (protoc --include_imports puts the imports in): %w", err)
+		return nil, 0, fmt.Errorf("its files do not resolve (protoc --include_imports puts the imports in): %w", err)
 	}
 	files.RangeFiles(func(f protoreflect.FileDescriptor) bool {
 		messages += f.Messages().Len()
 		return true
 	})
-	protoSchema.Store(files)
-	return messages, nil
+	return files, messages, nil
 }
 
 // protoMessageType finds the message type a body carries: the content type's

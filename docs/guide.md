@@ -238,6 +238,47 @@ real mitmproxy: `run` started from a config with a hosts file and a host on
 the command line, add, remove that host, save, then a new `run` from the
 config records the host added); not on an iPhone, not with `brew services`.
 
+#### Edit the files, then `reqcove reload`
+
+```sh
+reqcove reload     # read the config, its hosts files and the --rules file again
+```
+
+Since v1.1, after you edit the config, the hosts file it names
+(`--allow-hosts=@FILE`) or the `--rules` file, `reqcove reload` puts their
+hosts and rules in force without a restart, so the records stay. `--state
+DIR` for a node other than the default one.
+
+- **All or nothing.** It reads the files first and checks them together: the
+  config's flags, the hosts files, and the rules against the new hosts (a
+  host and the `mock` naming it can go in, or out, in one edit). If anything
+  does not load, nothing changes, and the answer says why (a line number, never
+  a line's text).
+- **The hosts** replace those recorded now (the base, while stopped or during
+  allow-all: what is recorded once it ends). Hosts given on `run`'s command
+  line stay. Changes made with `reqcove capture` and not saved are replaced by
+  the files': the answer names them.
+- **The rules** are read again and loaded with the hosts at once; the answer
+  says how many of each kind are loaded. Presets go off (new rules turn them
+  off; an agent turns one on again). `--rules-reload` works as before.
+- **Other settings** (`--device`, `--mcp-http`, `--proto`, `--mask-values`,
+  …) take a restart: the answer names, in one line, those that changed
+  (never their values), and applies none of them. So does a `--rules` file
+  added, removed or moved to another path.
+- **Nothing to reload** for a `run` started from flags alone (no `--config`,
+  no `--allow-hosts=@FILE`, no `--rules`).
+- **New connections only**, as `capture add` and `remove`.
+- As the `capture` commands: in a terminal only, refused in LAN mode, an
+  older `run` named, and a trace (`run`'s log, a `cli` marker, `scope_change`
+  `reload`).
+
+Tried by tests only (unit: the parse of `run`'s arguments again, which never
+exits nor logs, and the settings named; E2E with real mitmproxy: a host and a
+mock for it added together, then answered by the mock; a broken rules file
+changing nothing, the hosts file's edit neither; the host and its mock taken
+out together; an unsaved `capture add` named as replaced; a preset off after;
+`--mcp-http` added named); not on an iPhone, not with a service.
+
 #### Stop recording for a while
 
 ```sh
@@ -1386,7 +1427,8 @@ connection, reached GitHub.
 
 #### When the file is read (`--rules-reload`)
 
-The file is read when `run` starts. When reqcove restarts mitmproxy, it gives
+The file is read when `run` starts, and again by `reqcove reload` (since v1.1,
+with the hosts: [edit, then reload](#edit-the-files-then-reqcove-reload)). When reqcove restarts mitmproxy, it gives
 it the rules that loaded last (a private copy, `rules-loaded` in the state
 directory), not the file as it is on disk then: a file broken meanwhile never
 leaves mitmproxy without its rules. Files the rules name (`map_local`, `@file`
@@ -2148,7 +2190,7 @@ no internet; turn the exit node off then.
 | Start | `reqcove run` (Ctrl-C stops it) | `reqcove service install`: now and at each login | `brew services start reqcove`: now and at each login |
 | After it ended | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
 | After an update | Ctrl-C, then `reqcove run` | `reqcove service restart`; after moving to another binary (a new path, or Homebrew's), `reqcove service install` | `brew upgrade reqcove`, then `brew services restart reqcove` |
-| After editing the config or hosts file | Ctrl-C, then `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove service restart` | `reqcove reload`; for the rest, `brew services restart reqcove` |
 | Stop until the next login | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user stop reqcove` | `brew services kill reqcove` (from Homebrew's help, not tried) |
 | Stop and remove | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
 | The log | the terminal | macOS: `service.log` in the state directory; Linux: `journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |
@@ -2158,7 +2200,10 @@ no internet; turn the exit node off then.
 - **To change the hosts recorded, no restart**: `reqcove capture add HOST`
   (`remove`, `set`), then `reqcove capture save` to keep them for the next
   start ([change what is recorded](#change-what-is-recorded-while-it-runs)).
-  Any other change: edit the file, then restart as above.
+  After editing the config, its hosts file or the rules file, `reqcove reload`
+  takes their hosts and rules, no restart
+  ([edit, then reload](#edit-the-files-then-reqcove-reload)); any other
+  change: restart as above.
 - **After an update**, `reqcove status` (the new one) says so: the running
   version against its own, and the one command that restarts it under what
   started it. `run` keeps running the old binary until then, even after
