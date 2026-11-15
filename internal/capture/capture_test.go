@@ -361,7 +361,7 @@ func TestEndToEnd(t *testing.T) {
 	if len(fails) == 0 || fails[0].Time == "" {
 		t.Errorf("TLS failure not recorded with its device: %+v (stats %v)", fails, h.stats())
 	}
-	// Not caught (SECURITY): a client that finishes the handshake and closes
+	// Not caught (docs/masking.md): a client that finishes the handshake and closes
 	// without a request (an app checking the certificate itself after it)
 	// leaves no TLS failure and no flow, for mitmproxy the handshake succeeded.
 	nFails, nFlows := len(h.c.Store.TLSFailures(Filter{Limit: 500})), len(listAll(h.c.Store, 100000))
