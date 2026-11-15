@@ -74,7 +74,7 @@ Usage:
                      only (-h for its flags; --print shows it without writing)
   reqcove mcp        the MCP server for an agent: claude mcp add reqcove -- reqcove mcp
   reqcove har > flows.har
-                     the recorded flows as a HAR file, masked (-h for filters)
+                     the recorded flows as a HAR file, masked unless --no-redact (-h for filters)
   reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall
                      start run now and at login without Homebrew (launchd or
                      systemd), with run's flags in FILE (~/.config/reqcove/config)
@@ -104,6 +104,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), sigs...)
 	defer stop()
+	if os.Args[1] == "run" {
+		// A write to a closed stdout or stderr fails instead of killing run (Go
+		// kills on EPIPE there unless SIGPIPE is notified: os/signal): with
+		// `run … 2>&1 | tee`, Ctrl-C stops tee too, and run must still put the
+		// system proxy back.
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
+	}
 	var err error
 	if c, ok := commands[os.Args[1]]; ok {
 		err = c(ctx, os.Args[2:])

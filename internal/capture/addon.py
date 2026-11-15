@@ -31,6 +31,7 @@ import socket
 import sys
 import threading
 import time
+import types
 import urllib.parse
 import zlib
 from pathlib import Path
@@ -57,6 +58,7 @@ for _name in ("tornado.access", "tornado.application", "tornado.general"):
     logging.getLogger(_name).addFilter(_NoWebToken())
 from mitmproxy.net import check
 from mitmproxy.net.tls import starts_like_tls_record
+from mitmproxy.proxy.layers import http as http_layer
 from mitmproxy.proxy.layers import tcp as tcp_layer
 from mitmproxy.proxy.layers.tls import parse_client_hello
 from mitmproxy.utils import strutils
@@ -81,6 +83,12 @@ def _brotli_ok():
 
 
 BROTLI_OK = _brotli_ok()  # CVE-2026-111497: never decode br with an older brotli
+
+
+def _alpn(a):
+    """An ALPN protocol id as the client sent it: printable ASCII only, cut
+    (protocol ids are short)."""
+    return "".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32]
 
 
 def _device(flow):
@@ -113,6 +121,13 @@ def _headers(h):
     return out, ""
 
 
+# ponytail: gzip members or zstd frames decoded in one body. Each new one copies
+# the rest of its chunk (zlib's unused_data), so many empty ones would cost
+# CPU on mitmproxy's loop; past this the head stops, cut. Raise it if a real
+# body needs more.
+MAX_MEMBERS = 1024
+
+
 class _Decoder:
     """Incrementally decodes one content-encoding with a bounded output."""
 
@@ -128,22 +143,42 @@ class _Decoder:
         elif enc not in ("", "identity"):
             raise ValueError("cannot decode Content-Encoding " + json.dumps(enc))  # quoted: the site's text
         self.raw_deflate_tried = False
+        self.members, self.capped = 1, False
 
     def feed(self, data, limit):
         if self.d is None:
             return data[:limit]
         if self.enc == "br":
             return self.d.process(data, output_buffer_limit=limit)
-        if self.enc == "zstd":
-            return self.d.decompress(data, max_length=limit)
-        try:
-            return self.d.decompress(data, limit)
-        except zlib.error:
-            if self.enc == "deflate" and not self.raw_deflate_tried:
-                self.raw_deflate_tried = True  # some servers send raw deflate
-                self.d = zlib.decompressobj(-15)
+        if self.enc == "deflate":
+            try:
                 return self.d.decompress(data, limit)
-            raise
+            except zlib.error:
+                if not self.raw_deflate_tried:
+                    self.raw_deflate_tried = True  # some servers send raw deflate
+                    self.d = zlib.decompressobj(-15)
+                    return self.d.decompress(data, limit)
+                raise
+        # gzip and zstd: a body can be several members (frames), one after another,
+        # each read by a decompressor of its own.
+        out = b""
+        while len(out) < limit:
+            if self.d.eof:
+                data = self.d.unused_data + data
+                if self.enc != "zstd":
+                    data = data.lstrip(b"\0")  # zero padding after a member, skipped as gzip.decompress does
+                if not data:
+                    break
+                if self.members == MAX_MEMBERS:
+                    self.capped = True
+                    break
+                self.members += 1
+                self.d = zstd.ZstdDecompressor() if self.enc == "zstd" else zlib.decompressobj(47)
+            out += self.d.decompress(data, limit - len(out))
+            data = b""
+            if not self.d.eof:
+                break
+        return out
 
 
 class _Head:
@@ -162,6 +197,7 @@ class _Head:
         self.encoding = headers.get("content-encoding", "").strip().lower()[:64]
         self.note = ""
         self.sent_len = -1
+        self.sent_size = 0
         self.last_flush = time.monotonic()
         try:
             if "," in self.encoding:
@@ -187,7 +223,7 @@ class _Head:
                     self.head += out[:room]
                 except Exception as e:
                     self.decoding, self.note = False, ("decode error: " + str(e))[:SHORT]
-                if len(self.head) >= self.limit:
+                if len(self.head) >= self.limit or self.dec and self.dec.capped:
                     self.truncated = True
                     self.decoding = False  # stop decoding once the head is full
                     self._send()
@@ -202,11 +238,18 @@ class _Head:
             pass  # never break the flow
         return data  # always bytes; b"" at the end
 
+    def flush(self):
+        """The flow failed: what came of the body since the last send, not final
+        (one that had ended was sent final, with this size)."""
+        if self.size != self.sent_size:
+            self.sent_len = -1  # sent even with the head as it was: its size is not
+            self._send()
+
     def _send(self, final=False):
         self.last_flush = time.monotonic()
         if len(self.head) == self.sent_len and not final:
             return
-        self.sent_len = len(self.head)
+        self.sent_len, self.sent_size = len(self.head), self.size
         self.addon.put_body({
             "v": VERSION, "ev": "body", "id": self.flow_id, "dir": self.dir,
             "head": bytes(self.head), "size": self.size, "final": final,
@@ -220,6 +263,41 @@ class _Head:
 RULE_KINDS = ("mock", "map_remote", "map_local", "modify_headers", "resolve")  # mock and resolve are reqcove's own
 RULE_SETTINGS = ("keep_host_header",)  # reqcove's own: map_remote keeps the app's Host
 MAP_LOCAL_BODY = 1 << 20  # map_local answers only requests whose body is known to be this small
+# Where a request is held while only its stream's end can say it has no body
+# (HTTP/2 without a length): server_connect refuses it, so if a body comes after
+# all, mitmproxy's start at streaming it (_start_held) fails there (a 502),
+# never on to a server.
+HOLD = ("reqcove-hold.invalid", 1)
+HOLD_REFUSED = "reqcove: a body came with this request of unknown length that a mock or map_local may answer: refused, not held in memory"
+_start_request_stream = http_layer.HttpStream.start_request_stream
+
+
+def _start_held(self):
+    """mitmproxy's HttpStream.start_request_stream, for a request at HOLD: it
+    connects only once a body byte comes. A client can end a bodyless stream
+    with an empty DATA frame instead of with its headers (Go's does, for a body
+    of unknown length that turns out empty): that one is answered, as one
+    that ended with its headers is."""
+    if "reqcove_hold" not in self.flow.metadata:
+        yield from _start_request_stream(self)
+        return
+    self.client_state = types.MethodType(_held, self)
+
+
+def _held(self, event):
+    if isinstance(event, http_layer.RequestData):
+        if not event.data:
+            return  # an empty DATA frame: no body yet
+        yield from _start_request_stream(self)  # to HOLD: refused, a 502; the body goes nowhere
+    else:  # its end (or trailers): no body after all, on to request() as one that ended with its headers
+        self.client_state = self.state_consume_request_body
+    yield from self.client_state(event)
+
+
+# The HttpStream read for this: another mitmproxy gives such a stream the 502.
+# A new lock's mitmproxy: read it again, then change the version (TestHTTP2EmptyDataEnd fails until then).
+if mitmproxy_version.VERSION == "12.3.1":
+    http_layer.HttpStream.start_request_stream = _start_held
 
 
 def _parse_rule(kind, spec, base):
@@ -340,6 +418,48 @@ def _origin(url):
     return f"{u.scheme}://{host}" + (f":{port}" if port is not None and (u.scheme, port) not in (("http", 80), ("https", 443)) else "")
 
 
+def _ip(s):
+    """s as an IP address (an IPv4-mapped one as IPv4), or None."""
+    try:
+        a = ipaddress.ip_address(s.split("%", 1)[0])
+    except ValueError:
+        return None
+    return getattr(a, "ipv4_mapped", None) or a
+
+
+# Characters Python's re.IGNORECASE matches to an ASCII letter: İ ı ſ K.
+CASE_FOLDS_TO_ASCII = "\u0130\u0131\u017f\u212a"
+
+
+def _unicode(s):
+    """A host name with its xn-- labels decoded, as ~d reads it."""
+    try:
+        return s.encode("ascii").decode("idna") if s.isascii() else s
+    except UnicodeError:
+        return s
+
+
+def _idna(s):
+    """A host name as SNI carries it (lowercase, IDNA's ASCII form, no final
+    dot: HTTP/2's :authority comes decoded), or None for one with no such
+    form, which then matches nothing."""
+    s = s.lower().rstrip(".")
+    if not s.isascii():
+        try:
+            s = s.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    return s or None
+
+
+NAME_LOOKUP_SECONDS = 3  # how long a request (or its response) waits on its Host's lookup (_addresses)
+LOOKUPS_AT_ONCE = 16  # names looked up at once; past them, a name has no addresses (the rules not applied)
+NAMES_KEPT, NAME_KEEP_SECONDS = 1024, 30  # lookups' answers kept, per name
+NOT_NAMED = "modify_headers request: not applied, the request goes to an address not known to be its Host's"
+HOST_SET = "modify_headers request: not applied, a rule changed Host (map_remote or resolve changes where a request goes)"
+NOT_NAMED_RESPONSE = "modify_headers response: not applied, the response comes from an address not known to be its request's Host's"
+
+
 class RuleError(ValueError):
     """A rule refused by reqcove itself: its message quotes nothing of the rule."""
 
@@ -416,7 +536,7 @@ class Resolve:
 MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 MOCK_DELAY_MS = 30000  # under URLSession's default timeout (60 s): slow, not a timeout
 PRESET_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
-PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_mock's bounds (Go checks them too)
+PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_preset's bounds (Go checks them too)
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
@@ -578,8 +698,6 @@ class Presets:
     modify_headers, resolve), by name: what an agent may turn on. Kept with the
     rules, so a reload (new Presets) turns every one off."""
 
-    KINDS = ("mock", "map_remote", "modify_headers", "resolve")
-
     def __init__(self):
         self.entries = {}  # name -> (kind, match key, what list shows)
         self.specs = {"map_remote": [], "modify_headers": []}  # kind -> [(name, mitmproxy's rule)]
@@ -596,8 +714,8 @@ class Presets:
             raise RuleError("another rule has this preset name")
         self.entries[name] = (kind, key, info)
 
-    def names(self, kind=None):
-        return [n for n, (k, _, _) in self.entries.items() if kind in (None, k)]
+    def names(self):
+        return list(self.entries)
 
     def on(self, name):
         """Whether preset name is on now; one past its time is turned off.
@@ -619,25 +737,19 @@ class Presets:
 
     def control(self, req):
         """An agent's request through reqcove (activate_preset and the others):
-        the answer, or ValueError with why not. kind, when given, limits it to
-        presets of that kind (activate_mock and the other v0.6 tools: mocks only)."""
-        op, only = req.get("op"), req.get("kind")
-        if only is not None and only not in self.KINDS:
-            raise ValueError("unknown kind")
+        the answer, or ValueError with why not."""
+        op = req.get("op")
         if op == "list":
             out = []
             for name, (kind, _, info) in self.entries.items():
-                if only not in (None, kind):
-                    continue
                 on = self.on(name)
                 a = self.active.get(name)
                 out.append(dict(info, name=name, kind=kind, active=on, remaining=a[1] if a else None, expires_at=a[2] if a else None))
             return {"presets": out}
         name = req.get("name")
         entry = self.entries.get(name) if isinstance(name, str) else None
-        if entry is None or only not in (None, entry[0]):
-            what = "mock preset" if only == "mock" else "preset"
-            raise ValueError(f"no {what} named {name!r}" if isinstance(name, str) and PRESET_NAME.fullmatch(name) else f"no {what} by that name")
+        if entry is None:
+            raise ValueError(f"no preset named {name!r}" if isinstance(name, str) and PRESET_NAME.fullmatch(name) else "no preset by that name")
         if op == "deactivate":
             on = self.on(name)
             self.active.pop(name, None)
@@ -985,6 +1097,7 @@ class Reqcove:
         self.allow = []
         self.passing = []  # --pass-hosts: allowed hosts carried undecrypted, their connections' metadata recorded
         self.conn_device = {}  # client connection id -> device (SOCKS5 user), while connected
+        self.upgraded = {}  # client connection id -> the host a 101 (not a WebSocket) switched: tcp_start's name without SNI
         self.resolve_sni = {}  # (client connection id, (ip, port)) -> the name a resolve rule sent there
         self.rules = None  # load_rules(), or None without --rules
         self.web_keep = 0  # --web: bodies up to this many bytes kept for mitmweb
@@ -992,6 +1105,8 @@ class Reqcove:
         self.web_flows = collections.deque()  # (flow, bytes kept): mitmweb's flows, oldest first
         self.web_bytes = 0
         self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
+        self.names = {}  # host name -> (until when, its addresses): _addresses' answers
+        self.looking = {}  # host name -> the future its lookup (on its own thread) settles
         self.rules_stamp = None  # the file's (mtime, size, inode) when loaded, for --rules-reload
         self.rules_watch = None
         self.upstream = None  # (host, port) of --upstream-proxy
@@ -1104,11 +1219,17 @@ class Reqcove:
             flow = tflow.tflow(req=r.copy())  # content-length 0: a small body
             d = _dry_rules(rules, unknown, also)
             mocks = d["mock"].candidates(flow)
+            q = flow.request
+            at, sent = (q.data.host, q.data.port), q.headers.copy()
             try:
                 done = self._rewrite_request(flow, d, mocks=bool(mocks), dry=True, op=op or False)
             except Exception as e:  # as requestheaders: a 502, never sent on
                 return {"rewrites": [f"rules failed: {type(e).__name__}"]}, mocks
             m = flow.metadata
+            if flow.response is None and (q.data.host, q.data.port) == at and q.headers.get_all("host") != sent.get_all("host"):
+                q.headers = sent  # as _rewrite_sent: a rule's Host, with nothing moving the request, takes them all back
+                m.pop("reqcove_presets", None)
+                done = [x for x in done if not x.startswith("modify_headers request:")] + [HOST_SET]
             res = {"rewrites": done, "mocked": bool(m.get("reqcove_mocked"))}
             if not m.get("reqcove_close"):  # a response, made or the server's: response rules apply to it
                 if flow.response is None:
@@ -1142,7 +1263,9 @@ class Reqcove:
             cannot += [f"mock[{i}]: its method and URL match; it answers one GraphQL operation (pass operation)" for i in wants_op]
         out["cannot_tell"] = cannot
         if seen or any(s.startswith(("mock", "map_local")) for s in said):
-            conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped)")
+            conditions.append("a mock or map_local answers only a request whose body is known to be at most 1 MiB; a larger one, or a POST of unknown length, goes on to the server (its rewrites say skipped); over HTTP/2, a GET of unknown length that sends a body anyway gets a 502")
+        if any(s.startswith("modify_headers") for s in said + now.get("response_rewrites", []) + [x for v in if_on.values() for x in v]):
+            conditions.append("modify_headers apply only to a request that goes to its Host, and to its response: one sent to its Host's address (looked up on this computer), or over HTTPS with its Host as the TLS name, or that map_remote or resolve sends on; otherwise it goes on as the app sent it, and its response as the server sent it (their rewrites say not applied). A rule that changes Host is not applied to a request that map_remote or resolve does not send on (nor are the others)")
         if conditions:
             out["conditions"] = conditions
         return out
@@ -1158,7 +1281,7 @@ class Reqcove:
         loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
-        loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns mock presets on and off.")
+        loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns presets on and off.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -1270,8 +1393,13 @@ class Reqcove:
 
     def client_disconnected(self, client):
         self.conn_device.pop(client.id, None)
+        self.upgraded.pop(client.id, None)
         for k in [k for k in self.resolve_sni if k[0] == client.id]:
             del self.resolve_sni[k]
+
+    def server_connect(self, data):
+        if data.server.address == HOLD:
+            data.server.error = HOLD_REFUSED
 
     def tls_start_server(self, data):
         # A connection a resolve rule made: TLS says, and is checked for, the
@@ -1280,6 +1408,16 @@ class Reqcove:
         name = self.resolve_sni.get((data.context.client.id, data.conn.address))
         if name:
             data.conn.sni = name
+        # grpc-swift offers ALPN grpc-exp before h2, and some servers pick it
+        # (demo.connectrpc.com, tried). mitmproxy offers the server what the
+        # client did, then gives the client the server's choice, and grpc-exp
+        # is not HTTP to it: it reads the client's HTTP/2 as HTTP/1 and drops
+        # the connection, the call failing. So the server is offered h2 without
+        # it. Runs before mitmproxy's TlsConfig (12.3.1), which keeps offers
+        # already set; a change of that order fails TestGRPCExpE2E.
+        offers = data.context.client.alpn_offers or ()
+        if not data.conn.alpn_offers and b"grpc-exp" in offers and b"h2" in offers:
+            data.conn.alpn_offers = tuple(a for a in offers if a != b"grpc-exp")
 
     def _via_upstream(self, flow):
         """Send a request on through --upstream-proxy. HTTPS goes in a CONNECT
@@ -1372,7 +1510,7 @@ class Reqcove:
             return
         self._put(msg, size)
 
-    def requestheaders(self, flow):
+    async def requestheaders(self, flow):
         # A Host that is no host name or address (an app's own HTTP stack can
         # send any text there) is never recorded: it would show as a host.
         if not check.is_valid_host(flow.request.pretty_host) or not self._in_scope(flow.request.pretty_host):
@@ -1407,14 +1545,25 @@ class Reqcove:
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
             mocks = rules["mock"].candidates(flow)
-            if mocks and self._small_body(r):
+            small = self._small_body(r)
+            if small is None and (mocks or any(m.matches(flow) for m in rules["map_local"].replacements)):
+                # HTTP/2 without a length: mitmproxy streams it only if a body
+                # follows the headers (it alone knows the stream's end), and then
+                # to HOLD once a body byte comes (_start_held). One that ended
+                # with them, or with an empty DATA frame, goes on to request().
+                flow.metadata["reqcove_hold"] = (r.data.host, r.data.port)
+                r.data.host, r.data.port = HOLD
+                r.stream = True
+                flow.metadata["reqcove_pending"] = ev
+                return
+            if mocks and small:
                 # A mock may answer it: decided in request(), once the body (and a
                 # GraphQL operation in it) is in. Not streamed, so buffered: at most
                 # MAP_LOCAL_BODY. The event goes then, with what the rules did.
                 flow.metadata["reqcove_pending"] = ev
                 return
             try:
-                ev["rewrites"] = self._rewrite_request(flow, rules)
+                ev["rewrites"] = await self._rewrite_sent(flow, rules)
                 if mocks:  # a mock would need the body whole: say why none answered
                     ev["rewrites"].append("mock: skipped, request body over 1 MiB or of unknown length")
             except Exception as e:
@@ -1436,6 +1585,121 @@ class Reqcove:
         self._via_upstream(flow)
         r.stream = _Head(self, flow, "request", r.headers)
 
+    async def _rewrite_sent(self, flow, rules, mocks=False):
+        """_rewrite_request for a request that is sent: header values a rule
+        set go only to the host the request names. mitmproxy connects where
+        the app dialled (in SOCKS mode, the address), whatever its Host says,
+        and ~d reads the Host: a forged one would carry the user's token to
+        any server. So while the request still goes to the dialled address
+        (no map_remote or resolve moved it: those go where the rule says),
+        the header rules stand only if that address is the Host, or (HTTPS)
+        the Host is the TLS name mitmproxy checks the server's certificate
+        for, or the Host's addresses (this computer's lookup) include it.
+        Else the request goes on as the app sent it, its rewrites saying so.
+        The Host checked is the app's, taken before any rule: a rule's own Host
+        would vouch for itself (a token rule for the Host, then one setting it
+        to the address dialled). And when a rule changes the Host of such a
+        request, none of its header rules apply: ~d would read a name the
+        request does not go to. Changing where a request goes is map_remote's
+        and resolve's. Its response's rules are held to the same answer
+        (responseheaders). Not sending it to the Host instead: mitmproxy would
+        look that up itself, past the exit node's refusals of this computer
+        and the LAN."""
+        r = flow.request
+        name, dialled, sent = r.pretty_host, (r.data.host, r.data.port), r.headers.copy()
+        done = self._rewrite_request(flow, rules, mocks)
+        if flow.response is not None or (r.data.host, r.data.port) != dialled or any(d.startswith("resolve") for d in done):
+            return done  # answered here, or sent where a rule says (resolve's address can be the one dialled)
+        flow.metadata["reqcove_named"] = (name, dialled[0])  # _goes_to_host decides it, once
+        if r.headers.fields == sent.fields:
+            return done
+        if r.headers.get_all("host") != sent.get_all("host"):  # HTTP/2's :authority is no header: rules cannot change it
+            why = HOST_SET
+        elif not await self._goes_to_host(flow):
+            why = NOT_NAMED
+        else:
+            return done
+        r.headers = sent
+        # Nothing moved the request, so the presets in it are modify_headers ones.
+        flow.metadata.pop("reqcove_presets", None)
+        return [d for d in done if not d.startswith("modify_headers request:")] + [why]
+
+    async def _goes_to_host(self, flow):
+        """Whether a request _rewrite_sent left where the app dialled goes to
+        the host it names, decided once (its response's rules get the same
+        answer); True for one answered here or sent where a rule says."""
+        named = flow.metadata.get("reqcove_named", True)
+        if isinstance(named, tuple):
+            named = flow.metadata["reqcove_named"] = await self._to_named_host(flow, *named)
+        return named
+
+    async def _to_named_host(self, flow, name, dialled):
+        """Whether dialled (where mitmproxy connects) is name (the Host as the
+        app sent it), or one of its addresses as this computer looks them up,
+        or, over HTTPS, name is the TLS name mitmproxy checks the server's
+        certificate for. Names are compared in IDNA's ASCII form."""
+        if any(c in _unicode(name) for c in CASE_FOLDS_TO_ASCII):
+            return False  # ~d matches it case-insensitively to an ASCII name it is not (mysıte.com to mysite.com)
+        name = _idna(name)
+        if name is None:
+            return False
+        if name == _idna(dialled) or _ip(name) is not None and _ip(name) == _ip(dialled):
+            return True
+        # mitmproxy verifies the server's certificate for this name (ssl_insecure is off);
+        # through --upstream-proxy, the proxy's only: the server's is the proxy's to check.
+        if flow.request.scheme == "https" and not self.upstream and name == _idna(flow.server_conn.sni or flow.client_conn.sni or ""):
+            return True
+        want = _ip(dialled)
+        if want is None or _ip(name) is not None:
+            return False
+        return want in await self._addresses(name)
+
+    async def _addresses(self, name):
+        """name's addresses as this computer looks them up, or none if that
+        takes over NAME_LOOKUP_SECONDS. Kept NAME_KEEP_SECONDS; one lookup at
+        a time per name, LOOKUPS_AT_ONCE names at most (past them, none: the
+        rules are not applied). Each on a daemon thread of its own, not an
+        executor's: a lookup cannot be cancelled, and a stalled resolver must
+        hold neither the loop's executor (other work waits on it) nor
+        mitmdump's exit (an executor's threads are joined then)."""
+        kept = self.names.get(name)
+        if kept and kept[0] > time.monotonic():
+            return kept[1]
+        fut = self.looking.get(name)
+        if fut is None:
+            if len(self.looking) >= LOOKUPS_AT_ONCE:
+                return frozenset()
+            loop = asyncio.get_running_loop()
+            fut = self.looking[name] = loop.create_future()
+            try:
+                threading.Thread(target=self._look_up, args=(loop, fut, name), daemon=True).start()
+            except RuntimeError:  # no thread to be had: no lookup, none left pending
+                del self.looking[name]
+                return frozenset()
+        try:
+            return await asyncio.wait_for(asyncio.shield(fut), NAME_LOOKUP_SECONDS)
+        except TimeoutError:
+            return frozenset()
+
+    def _look_up(self, loop, fut, name):
+        try:
+            found = frozenset(_ip(i[4][0]) for i in socket.getaddrinfo(name, None, type=socket.SOCK_STREAM))
+        except Exception:  # OSError; a bad IDNA name's UnicodeError; anything else: no addresses, the slot freed all the same
+            found = frozenset()
+
+        def settle():
+            self.looking.pop(name, None)
+            if len(self.names) >= NAMES_KEPT:
+                self.names.clear()  # ponytail: all at once (the names are the apps' to choose); oldest first if lookups show
+            self.names[name] = (time.monotonic() + NAME_KEEP_SECONDS, found)
+            if not fut.done():
+                fut.set_result(found)
+
+        try:
+            loop.call_soon_threadsafe(settle)
+        except RuntimeError:  # the loop is closed: mitmdump is stopping
+            pass
+
     def _rewrite_request(self, flow, rules, mocks=False, dry=False, op=False):
         """Apply --rules in requestheaders, before the body streams: mitmproxy's
         map_remote and map_local run in request(), after the body, too late.
@@ -1454,7 +1718,7 @@ class Reqcove:
             # Its index, preset name and status, never its text.
             done.append(f"mock[{i}]" + (f" preset {preset}" if preset else "") + f": {status}" + (f", after {delay} ms" if delay else ""))
             return done
-        if self._small_body(flow.request):
+        if mocks or self._small_body(flow.request):  # mocks: from request(), the body is in
             rules["map_local"].request(flow)
         elif any(s.matches(flow) for s in rules["map_local"].replacements):
             # A local answer would make mitmproxy buffer the whole request body
@@ -1505,7 +1769,9 @@ class Reqcove:
 
     @staticmethod
     def _small_body(r):
-        """Whether a request's body is known to be at most MAP_LOCAL_BODY bytes."""
+        """Whether a request's body is known to be at most MAP_LOCAL_BODY bytes;
+        None: HTTP/2 (or 3) with no length, of a method that usually has no body,
+        where only the stream's end tells."""
         cl = r.headers.get("content-length")
         if cl is not None:
             try:
@@ -1513,7 +1779,9 @@ class Reqcove:
             except ValueError:
                 return False
         # No length: a body may follow (chunked, HTTP/2) unless the method takes none.
-        return r.method in ("GET", "HEAD", "OPTIONS", "DELETE") and "transfer-encoding" not in r.headers
+        if r.method not in ("GET", "HEAD", "OPTIONS", "DELETE") or "transfer-encoding" in r.headers:
+            return False
+        return None if r.is_http2 or r.is_http3 else True  # HTTP/1: no length and no chunks is no body
 
     @staticmethod
     def _modify_headers(flow, headers, direction, rules):
@@ -1537,7 +1805,7 @@ class Reqcove:
         return [f"modify_headers {direction}: {n}" for n in dict.fromkeys(names)]  # names, never values
 
     async def request(self, flow):
-        self._request(flow)
+        await self._request(flow)
         # A mock's delay_ms, then its answer or fault: close. Awaited, so the
         # loop (other flows, other HTTP/2 streams) goes on meanwhile.
         if delay := flow.metadata.pop("reqcove_delay", 0):
@@ -1548,11 +1816,13 @@ class Reqcove:
             else:  # never on to the server: the mock answered for it
                 flow.response = http.Response.make(502, b"reqcove: a mock's fault: close could not close this request")
 
-    def _request(self, flow):
+    async def _request(self, flow):
+        if hold := flow.metadata.pop("reqcove_hold", None):
+            flow.request.data.host, flow.request.data.port = hold  # its stream ended with the headers: no body
         ev = flow.metadata.pop("reqcove_pending", None)
         if ev is not None:
             try:
-                ev["rewrites"] = self._rewrite_request(flow, self.flow_rules[flow.id], mocks=True)
+                ev["rewrites"] = await self._rewrite_sent(flow, self.flow_rules[flow.id], mocks=True)
             except Exception as e:
                 flow.response = http.Response.make(502, f"reqcove: a --rules rule failed on this request ({type(e).__name__})".encode())
                 ev["rewrites"] = [f"rules failed: {type(e).__name__}"]
@@ -1571,6 +1841,8 @@ class Reqcove:
             self._copy_whole(flow, "request", flow.request)  # buffered, not streamed
         elif flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "request", flow.request)
+        elif isinstance(head := flow.request.stream, _Head) and head.sent_len == -1:
+            head._send(final=True)  # no body to stream (an HTTP/1 GET): mitmproxy never called it, not even with its end
         self._give_web(flow, "request", flow.request)
 
     def _give_web(self, flow, direction, msg):
@@ -1610,13 +1882,22 @@ class Reqcove:
         h(msg.raw_content or b"")
         h(b"")
 
-    def responseheaders(self, flow):
+    async def responseheaders(self, flow):
         if flow.metadata.get("reqcove_skip"):
             flow.response.stream = True
             return
         s = flow.response
         rules = self.flow_rules.get(flow.id)
-        rewrites = self._modify_headers(flow, s.headers, "response", rules) if rules else []
+        rewrites = []
+        if rules:
+            got = s.headers.copy()
+            rewrites = self._modify_headers(flow, s.headers, "response", rules)
+            # A response from a server the request does not name gets no rule's
+            # value either: an app would keep a cookie so set for the Host, and
+            # send it there, to the same server, next time.
+            if s.headers.fields != got.fields and not await self._goes_to_host(flow):
+                s.headers = got
+                rewrites = [NOT_NAMED_RESPONSE]
         headers, note = _headers(s.headers)
         self.put_event({
             "v": VERSION, "ev": "response", "id": flow.id, "ts": s.timestamp_start,
@@ -1633,8 +1914,12 @@ class Reqcove:
         self._web_done(flow)
         if flow.metadata.get("reqcove_skip"):
             return
+        if flow.response.status_code == 101 and not flow.websocket:
+            self.upgraded[flow.client_conn.id] = flow.request.pretty_host  # plain HTTP has no SNI: tcp_start's host
         if flow.metadata.get("reqcove_local"):
             self._copy_whole(flow, "response", flow.response)
+        elif isinstance(head := flow.response.stream, _Head) and head.sent_len == -1:
+            head._send(final=True)  # no body to stream (a 204, a 304, a 101): never called, not even with its end
         done = {"v": VERSION, "ev": "done", "id": flow.id, "ts_end": flow.response.timestamp_end}
         if flow.response.trailers:  # HTTP/2's, set before this hook also when streamed: gRPC's status
             done["trailers"], done["note"] = _headers(flow.response.trailers)
@@ -1647,6 +1932,9 @@ class Reqcove:
             return
         if ev := flow.metadata.pop("reqcove_pending", None):
             self.put_event(ev)  # it failed before its body was in: recorded as it came
+        for m in (flow.request, flow.response):  # a body cut off: the head that came, and its size
+            if m is not None and isinstance(m.stream, _Head):
+                m.stream.flush()
         msg = flow.error.msg[:SHORT]
         if flow.metadata.get("reqcove_close"):
             msg = "closed by a mock (fault: close)" + (f", preset {flow.metadata['reqcove_preset']}" if flow.metadata.get("reqcove_preset") else "")
@@ -1734,22 +2022,40 @@ class Reqcove:
         layer = tcp_layer.TCPLayer(nl.context, ignore=False)
         layer.flow.metadata["reqcove_pass"] = {
             "device": self.conn_device.get(nl.context.client.id), "sni": sni, "up": 0, "down": 0,
-            # The client's own bytes: printable ASCII only, cut (protocol ids are short).
-            "alpn": ["".join(c if " " <= c <= "~" else "?" for c in a.decode("latin-1"))[:32] for a in hello.alpn_protocols[:8]],
+            "alpn": [_alpn(a) for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
 
     def tcp_start(self, flow):
         p = flow.metadata.get("reqcove_pass")
+        c = flow.client_conn
         if p is None:
-            return
+            # Not a --pass-hosts connection: one mitmproxy carries as raw TCP,
+            # not read as HTTP. Its NextLayer (12.3.1) does so for an ALPN it
+            # does not know when the server spoke first or the client's bytes
+            # do not look like HTTP, and its HTTP layer after a 101 that is not
+            # a WebSocket: what it carries has no flow, so it is recorded as a
+            # connection (raw: never its bytes). Ignored connections (Apple's,
+            # hosts outside --allow-hosts) fire no hook. A plain HTTP 101's
+            # connection is named by its request's host.
+            ip = (flow.server_conn.address or ("",))[0]
+            host = (c.sni or self.upgraded.pop(c.id, None) or ip).lower().rstrip(".")
+            if not host or not check.is_valid_host(host) or not self._in_scope(host):
+                return
+            p = flow.metadata["reqcove_pass"] = {
+                "device": self.conn_device.get(c.id), "sni": host, "up": 0, "down": 0, "raw": True,
+                "alpn": [_alpn(a) for a in (c.alpn_offers or ())[:8]],
+            }
         s = flow.server_conn
         addr = s.peername or s.address
-        self.put_event({
-            "v": VERSION, "ev": "pass_open", "conn": flow.client_conn.id, "device": p["device"],
+        ev = {
+            "v": VERSION, "ev": "pass_open", "conn": c.id, "device": p["device"],
             "sni": p["sni"], "alpn": p["alpn"], "server": f"{addr[0]}:{addr[1]}" if addr else None,
-            "ts": flow.client_conn.timestamp_start or time.time(),
-        })
+            "ts": c.timestamp_start or time.time(),
+        }
+        if p.get("raw"):
+            ev["raw"], ev["alpn_negotiated"] = True, _alpn(c.alpn) if c.alpn else ""
+        self.put_event(ev)
 
     def tcp_end(self, flow):
         self._pass_closed(flow)

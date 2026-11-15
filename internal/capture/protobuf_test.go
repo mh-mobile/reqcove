@@ -122,6 +122,7 @@ func TestProtoStructure(t *testing.T) {
 func FuzzProtoStructure(f *testing.F) {
 	f.Add([]byte("\x08\x96\x01\x12\x03abc"), true)
 	f.Fuzz(func(t *testing.T, b []byte, request bool) {
+		defer fuzzSlow(t, 2*len(b))()
 		renderProtoStructure(b, request, false)
 		msg := append(append([]byte(nil), b...), pbBytes(15, []byte(fuzzSecret))...)
 		if out := renderProtoStructure(msg, request, false); leak(out, fuzzSecret) != "" {

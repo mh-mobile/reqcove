@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # the check below reads test.yml's runs
 
 jobs:
   release:
@@ -19,6 +20,18 @@ jobs:
       # script: a ref name can hold $(…) and quotes.
       VERSION: ${{ github.ref_name }}
     steps:
+      # Only a commit that passed the whole test workflow (macOS and Linux,
+      # end to end with mitmproxy, the container, the checks) is released.
+      - name: tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq length)
+          if [ "$runs" -eq 0 ]; then
+            echo "::error::$GITHUB_SHA has no successful run of test.yml: push it to dev or main (or open a pull request), wait for test.yml to pass, then re-run this job"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # nothing here pushes; keep the token out of .git/config

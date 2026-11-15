@@ -28,9 +28,11 @@ func withSystemProxy(state string, on bool, f func() error) error {
 	}
 	log.Printf("this computer's web proxies point at the local proxy until reqcove stops; the LAN, the tailnet and this computer bypass it")
 	defer func() {
-		log.Printf("putting the system's web proxies back (a few seconds; no need to press Ctrl-C again)")
+		// Back first, then said: a write to stderr can wait (a pipe no one reads).
 		if err := restoreSystemProxy(state); err != nil {
 			log.Printf("WARN: could not put the system's web proxies back: %v. System Settings, Network, Details, Proxies; or %s", err, withState("reqcove cleanup", state))
+		} else {
+			log.Printf("the system's web proxies are back as they were")
 		}
 	}()
 	return f()

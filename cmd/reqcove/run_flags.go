@@ -99,6 +99,9 @@ func parseRunFlags(args []string) (*runOpts, error) {
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
+	if *proxyPort < 0 || *proxyPort > 65535 { // LAN mode took 65616 as 80 (16 bits)
+		return nil, fmt.Errorf("--proxy-port %d: a port is 1 to 65535 (0 turns the Remote Proxy off)", *proxyPort)
+	}
 	if err := lanFlags(fs, *lanMode, *proxyPort); err != nil {
 		return nil, err
 	}

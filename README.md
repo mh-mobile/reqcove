@@ -28,8 +28,10 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: early** (v0.8). Tried on macOS (Apple silicon) and Ubuntu 24.04
-> (arm64) with an iPhone; where something has not been tried, the docs say so.
+> **Status: v1.0.** The MCP tools, the CLI and the rules file stay compatible
+> until a v2 ([COMPATIBILITY](docs/COMPATIBILITY.md)). Tried by its author so
+> far, on macOS (Apple silicon) and Ubuntu 24.04 (arm64) with an iPhone; where
+> something has not been tried, the docs say so.
 
 ## What you need
 
@@ -146,6 +148,7 @@ All of them: [the guide](docs/guide.md#options).
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
 - [Run it as a service](docs/guide.md#run-it-as-a-service), [troubleshooting](docs/guide.md#troubleshooting)
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
+- [Compatibility](docs/COMPATIBILITY.md): what stays stable from v1.0.0, and how it changes
 
 ### Without Tailscale (LAN mode)
 
@@ -187,6 +190,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
 
 - Apps that pin certificates refuse Reqcove's; see [`--pass-hosts`](docs/guide.md#apps-that-pin-certificates---pass-hosts).
 - Only TCP ports 80 and 443 go through mitmproxy; other ports are carried as they are.
+- A connection mitmproxy does not read as HTTP (an ALPN it does not know, when the server speaks first or the bytes do not look like HTTP; another protocol; what a `101` upgrades to) is recorded as a connection only: what it carries has no flows. See [raw TCP](docs/guide.md#connections-not-read-as-http-raw-tcp).
 - IPv6 is refused and QUIC dropped (except to Apple); apps fall back to IPv4 and TCP.
 - The phone cannot reach this computer or its LAN directly; a rule can send an
   allowed host's requests there.

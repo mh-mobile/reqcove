@@ -36,22 +36,21 @@ func TestPresetsNoAnswer(t *testing.T) {
 	c := &Capture{cfg: Config{Dir: dir}}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := c.Presets(ctx, ""); !errors.Is(err, ErrNoAnswer) {
+	if _, err := c.Presets(ctx); !errors.Is(err, ErrNoAnswer) {
 		t.Errorf("list: %v", err)
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel2()
-	if _, err := c.Activate(ctx2, "p", "", 60, 0); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_presets to see") {
+	if _, err := c.Activate(ctx2, "p", 60, 0); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_presets to see") {
 		t.Errorf("activate: %v", err)
 	}
-	// The mock tools (v0.6's) point to list_mock_presets: a v0.6 reqcove mcp has no list_presets.
 	ctx3, cancel3 := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel3()
-	if _, err := c.Deactivate(ctx3, "p", "mock"); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_mock_presets to see") {
-		t.Errorf("deactivate_mock: %v", err)
+	if _, err := c.Deactivate(ctx3, "p"); !errors.Is(err, ErrUncertain) || !strings.HasSuffix(err.Error(), "call list_presets to see") {
+		t.Errorf("deactivate: %v", err)
 	}
 	ln.Close()
-	if _, err := c.Activate(context.Background(), "p", "", 60, 0); !errors.Is(err, ErrNoControl) {
+	if _, err := c.Activate(context.Background(), "p", 60, 0); !errors.Is(err, ErrNoControl) {
 		t.Errorf("no socket: %v", err)
 	}
 }
@@ -82,14 +81,14 @@ func TestCheckRulesPythonCancel(t *testing.T) {
 	}
 }
 
-// capture_stats' presets holds every preset's name; mock_presets (v0.6's
-// name, removed in v1.0) the same until then.
+// capture_stats' presets holds every preset's name; v0.6's mock_presets is
+// gone (removed in v1.0).
 func TestStatsPresetNames(t *testing.T) {
 	s := NewStore(10, 1<<20)
 	s.Apply([]byte(`{"v":2,"ev":"hello","presets":["mx","staging"]}`))
 	st := s.Stats()
 	got, _ := st["presets"].([]string)
-	if old, _ := st["mock_presets"].([]string); !slices.Equal(got, []string{"mx", "staging"}) || !slices.Equal(old, got) {
+	if _, old := st["mock_presets"]; !slices.Equal(got, []string{"mx", "staging"}) || old {
 		t.Errorf("presets %v, mock_presets %v", st["presets"], st["mock_presets"])
 	}
 }

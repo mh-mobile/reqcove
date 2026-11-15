@@ -7,13 +7,13 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 1. [セットアップする](#セットアップする)：[初回の起動](#初回の起動ログインと承認) · [停止・再起動・アップデート](#停止再起動アップデート) · [2 台で同じ CA](#2-台のコンピュータで同じ-ca-を使う) · [元に戻す](#元に戻すreqcove-cleanup)
 2. [エージェントに通信を読ませる](#エージェントに通信を読ませる)：[ツールを許可する](#ツールを許可する) · [Skill](#使い方を教える-skill-を入れるreqcove-init) · [マーカー](#マーカーを置くreqcove-mark) · [ほかのデバイスのエージェント](#ほかのデバイスのエージェントから使う--mcp-http)
 3. [自分でフローを見る](#自分でフローを見る)：[iPhone で](#iphone-で見る--ui) · [HAR ファイルで](#har-ファイルに書き出すreqcove-har) · [mitmweb で](#mitmweb-で見る--web)
-4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
+4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
 5. [リクエストの行き先を変える](#リクエストの行き先を変える)：[ルール](#ルールを書く--rules) · [モック](#ここで応答するmock) · [プリセット](#エージェントが有効にできるプリセット) · [ルールが当たった理由](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules) · [上流プロキシ](#上流プロキシに回す--upstream-proxy)
 6. [Tailscale を使わずに同じネットワークでつなぐ（LAN モード）](#tailscale-を使わずに同じネットワークでつなぐ--lan)
 7. [サービスとして動かす](#サービスとして動かす)：[`brew services`](#常駐させるbrew-services) · [`reqcove service install`](#homebrew-なしで常駐させるreqcove-service-install)
 8. [コンテナで動かす](#コンテナで動かす)
 9. [うまくいかないとき](#うまくいかないとき)
-10. リファレンス：[オプション](#オプション) · [MCP ツール](#mcp-ツール) · [制限事項](#制限事項) · [セキュリティ](#セキュリティ)
+10. リファレンス：[オプション](#オプション) · [MCP ツール](#mcp-ツール) · [制限事項](#制限事項) · [セキュリティ](#セキュリティ) · [互換性](COMPATIBILITY.ja.md)
 
 ## セットアップする
 
@@ -70,6 +70,8 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - iPhone から CA のプロファイルを削除します（[SECURITY](SECURITY.ja.md#ca-の秘密鍵)）。
 - サービスを止めます（`brew services stop reqcove` か `reqcove service uninstall`）。止めないと、サービスは次のログインで `run` をまた起動し、状態ディレクトリを作り直します。
 
+cleanup が削除しないもの（tailnet のノード、サービスのファイル、Skill、HAR ファイル、バックアップ、エージェントの会話の記録）は、[SECURITY](SECURITY.ja.md#reqcove-cleanup-のあとに残るもの) にあります。
+
 ## エージェントに通信を読ませる
 
 `claude mcp add reqcove -- reqcove mcp`（README の手順 4）を実行すると、このコンピュータのエージェントが [MCP ツール](#mcp-ツール)を使えるようになります。Codex なら `codex mcp add reqcove -- reqcove mcp` です。`run` が両方を表示します。
@@ -83,8 +85,8 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 ### ツールを許可する
 
 - 読むツールには読み取り専用の印（`readOnlyHint`）を付けています。クライアントが確認を減らすのに使えます（どのクライアントでも確かめていません）。
-- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`、非推奨の v0.6 の `activate_mock`、`deactivate_mock`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
-- Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の印のないツールも許可されます（v0.6 からは `activate_mock`、v0.7 からはプリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
+- 読み取り専用の印を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
+- Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の印のないツールも許可されます（プリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
 
 たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによるもので、ここでは試していません）。
 
@@ -96,15 +98,13 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
-              "mcp__reqcove__list_mock_presets"],
-    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset",
-            "mcp__reqcove__activate_mock", "mcp__reqcove__deactivate_mock"]
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
+    "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
 ```
 
-それぞれのリストの最後にある v0.6 のもの（`list_mock_presets`、`activate_mock`、`deactivate_mock`）は非推奨で、v1.0 で削除します。
+v1.0 で削除したもの（v0.8 で非推奨）：ツールの `list_mock_presets`、`activate_mock`、`deactivate_mock` です。それより前に書いたリストでは、`mcp__reqcove__list_mock_presets`、`mcp__reqcove__activate_mock`、`mcp__reqcove__deactivate_mock` を `mcp__reqcove__list_presets`、`mcp__reqcove__activate_preset`、`mcp__reqcove__deactivate_preset` に置き換えてください。`activate_preset` はモックだけでなくほかの種類も有効にするので、例では `activate_preset` と `deactivate_preset` を `ask` に置いています。スクリプトでは、`active_mock_presets`、`active_mock_presets_error`、`mock_presets` の代わりに、`status` の `active_presets` と `active_presets_error`、`capture_stats` の `presets` を読んでください。削除したツールを呼ぶと、代わりのツールの名前を返します（ユニットテスト）。
 
 注意点は次のとおりです。
 
@@ -148,7 +148,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --mcp-http
 
 `run` は、次のものを除いた同じツールを、ノードから HTTP で提供します。
 
-- プリセットのツール：`list_presets`、`activate_preset`、`deactivate_preset`、非推奨の `list_mock_presets`、`activate_mock`、`deactivate_mock`
+- プリセットのツール：`list_presets`、`activate_preset`、`deactivate_preset`
 - ルールのツール：`list_rules`、`explain_rules`
 - マーカーのツール：`add_marker`、`list_markers`
 
@@ -194,7 +194,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 - リンクは起動のたびに同じなので、再起動後もブックマークから開けるはずです。リンクを変えるには、状態ディレクトリの `ui-token` を削除して起動し直します。
 - Tailscale はオンにしておく必要があります。Exit Node や [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) は使っていなくてもかまいません。このページ自身の通信は記録されません。
 
-確認状況：iPhone で確認しました（カメラから開く、新しいフローを追う、検索、Clear と Show all、`run` の再起動後に Safari で開き直す）。
+確認状況：iPhone で確認しました（カメラから開く、新しいフローを追う、検索、Clear と Show all、`run` の再起動後に Safari で開き直す）。Linux（Ubuntu 24.04、arm64）で動かした `run` でも、新しいフローを追うことを確認しました（2026-11-15）。
 
 ### HAR ファイルに書き出す（`reqcove har`）
 
@@ -207,7 +207,7 @@ reqcove har > flows.har
 フローを HAR 1.2 のファイルに、古い順で書き出します。デフォルトは新しい 1000 件です（`--limit 0` ですべて）。`--host`、`--device`、`--since 10m`、`--until`、`--status 4xx`、`--method`、`--user-agent` で絞り込めます。
 
 - 中身は MCP ツールが返すものと同じです。届いた時点でマスク済みで、ボディは先頭だけです（切り詰めたボディは、コメントにその旨が入ります）。マスクで確認できなかったボディは含まれません。`run --no-redact` のときは何もマスクされず、ファイルのコメントにその旨が入ります。
-- ファイルのパーミッションはシェルの設定に従うので、ほかのユーザーから読めることがあります（[SECURITY](SECURITY.ja.md#記録するもの)）。
+- ファイルのパーミッションはシェルの設定に従うので、ほかのユーザーから読めることがあります（[SECURITY](SECURITY.ja.md#記録するもの)）。ほかの人も使うコンピュータでは、`(umask 077; reqcove har > flows.har)` とすれば自分だけが読めるファイルになります。そうしないなら `/tmp` には置かず、リポジトリの中にも置かないでください。
 
 確認状況：Chrome の開発者ツール（Network）に読み込めることを確認しました（リクエスト、マスクされたヘッダー、レスポンスが見えます）。未確認：Charles、Proxyman で開くこと。仕様から：HAR 1.2 の必須項目を出力します（検証ツールは実行していません）。
 
@@ -221,11 +221,11 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --web
 
 mitmdump の代わりに mitmweb が起動します。このコンピュータでは `http://127.0.0.1:8081`（ほかの run が 8081 を使っていれば 8091〜8099。[アドレスは 2 つ](several-exit-nodes.ja.md#ポート)）、tailnet にある自分のデバイスからはノードの 8081 番ポートで、`run`（または `reqcove links`）が表示するリンクか QR コードから開けます。
 
-- 何もマスクされません（[SECURITY](SECURITY.ja.md#mitmweb--web)）。ボディは 1 つ 2 MB まで表示し、新しい 1 万件のフローと、合計 256 MB までのボディを保持します。
+- 何もマスクされません（[SECURITY](SECURITY.ja.md#mitmweb--web)）。ボディは 1 つ 2 MB まで表示し、新しい 1 万件のフローと、合計 256 MB までのボディを保持します。この上限が数えるのは、終わったフローだけです。まだ続いているフロー（届き続けるダウンロードやイベントストリーム、応答を待っているリクエスト）は終わったときに数えます。それまで Reqcove が mitmweb のために保持するボディ（向きごとに 2 MB まで）は、この上限の外です（コードを読んだもので、測っていません）。
 - リンクは起動のたびに同じです（トークンは状態ディレクトリの `web-token`）。再起動後はリンクをもう一度開いてください。トークンなしのブックマークでは、トークンの入力を求められます。
 - Capture タブの「Run SOCKS Proxy」は、オンのままにしてください。オフにすると、デバイスの HTTP(S) が止まります。そこにあるほかのモードは、Reqcove では使いません。変更した設定は、reqcove を再起動すると元に戻ります。
 
-確認状況：Exit Node を使っている iPhone から確認しました。コードから（未確認）：mitmweb で設定を変えても、Reqcove の記録の範囲とマスクは変わりません。
+確認状況：Exit Node を使っている iPhone から、macOS と Linux（Ubuntu 24.04、arm64）で動かした `run` で確認しました（2026-11-15）。コードから（未確認）：mitmweb で設定を変えても、Reqcove の記録の範囲とマスクは変わりません。
 
 ## iPhone アプリ以外のクライアントを記録する
 
@@ -258,6 +258,14 @@ reqcove run --device iphone --allow-hosts '*' --pass-hosts @pass-hosts.txt   # 1
 - 自分のアプリなら、ピンニングを外したビルドを使ってください。Android のアプリが CA を拒否するのは、別の理由です（[Android](#android-を記録する)）。
 
 確認状況：iPhone で確認しました。pass host の復号されたリクエストが `--upstream-proxy` を通ることはテストで、`--rules` が効かないことはコードを読んで確認しました。
+
+### HTTP として読まれない接続（raw TCP）
+
+mitmproxy は、許可したホストへの接続をどう読むかを決めます（TLS なら復号してから）。HTTP だと判断しなかった接続は raw TCP として中継します。知らない ALPN の名前で、サーバーが先に話すか、クライアントのバイトが HTTP に見えないもの（それ以外は HTTP/1 として読むので、ほかのプロトコルを話すクライアントは失敗します）、HTTP に見えないバイト、そしてリクエストが WebSocket 以外の `101` でアップグレードした先です（そのリクエスト自体はフローになります）。アプリは動きますが、その接続が運ぶものはフローとして記録されません。Reqcove はその代わりに接続を記録します。`list_passthrough` が `reason: raw_tcp` として返し（ホスト、接続先サーバー、時刻、クライアントが出したプロトコルと決まったプロトコル、向きごとのバイト数。TLS なら TLS の内側の数です。バイトそのものは返しません）、`capture_stats` が数え（`raw_tcp`。デバイスとホストごとには `raw_tcp_hosts`。多い順に 30 件）、`list_devices` がデバイスごとに数え（`raw_tcp`）、`reqcove status` が次の手順でそのホストを示します。ホストで絞った `list_flows`、`search_flows`、`summarize`、`wait_for_flows` も、そうしたホストなら `note` でそう伝えます（`--local-proxy` を通して、`openssl s_client -alpn grpc-exp` で demo.connectrpc.com に試しました。2026-11-15。`note` はユニットテスト）。こうした接続は、`--pass-hosts` のものとは別に、1000 件まで保ちます（ユニットテスト）。iPhone の grpc-swift の呼び出しは、Reqcove がサーバーに `h2` を出すようになるまで、こうなっていました（[gRPC](#grpc)）。
+
+拾えないもの（何も記録されず、数えられもしません。詳しくは [SECURITY](SECURITY.ja.md#記録するもの)）：mitmproxy が自分で素通しする接続は、mitmproxy のフックを 1 つも呼びません。Apple のホスト、`--allow-hosts` にないホスト、そして mitmproxy がアドレスでしか知らない接続（SNI のない TLS。最初のバイトから mitmproxy が許可したホストを読み取れない平文の TCP。h2c、サーバーが先に話すもの、`Host` のない HTTP/1.0 など）です。`--allow-hosts` にそのアドレスを書いたときは別です。また、一覧にない兄弟の名前のためにアプリが開いた、証明書を共有する接続に乗った、許可したホストの HTTP/2 のリクエスト（両方を許可してください：`*.example.com`）と、外側の名前がプロバイダーのものである、Encrypted Client Hello を使う TLS も拾えません。フックを呼ばないことは mitmproxy 12.3.1 のコードを読んだもので、どの場合も mitmproxy 12.3.1 で 2026-11-15 に試しました。iPhone ではどれも試していません。
+
+確認状況：E2E テスト（本物の mitmproxy。先に話すサーバーとの知らない ALPN が、サイズ付きで記録され、そのあとの HTTPS のリクエストもこれまでどおり記録されること。平文の HTTP を `101` でアップグレードすると、そのリクエストはフローに、そのあとの接続はリクエストのホストの名前で記録されること）で確認しました。知らない ALPN で HTTP/1 のバイトを送るものと、待っているサーバーにほかのバイトを送るもの、TLS の上の `101` は、mitmproxy 12.3.1 で 2026-11-15 に試しました。iPhone では試していません。
 
 ### gRPC
 
@@ -296,6 +304,8 @@ protobuf のボディ（gRPC のメッセージや、`application/x-protobuf` �
 gRPC-core の上に作ったアプリ（Google の SDK など）は、iPhone が信頼する CA ではなく、自前の CA の一覧を使うので、呼び出しは TLS の失敗として出ます（gRPC のメーリングリストによるもので、試していません）。gRPC のライブラリに信頼する証明書を指定するアプリも同じです。デバッグ版で Reqcove の CA を信頼させれば別です（試していません）。
 
 確認状況：確かめたのは 2 つです。1 つは iPhone の試験用アプリで、URLSession（システムの信頼。CA を入れた状態）から Connect のデモサーバーを Connect、gRPC-Web、gRPC で呼び、`--proto` も付けました（ステータスはトレーラーと gRPC-Web の最後のフレームから、メッセージは名前付きで。ただし gRPC のレスポンスは、試したビルドでは出ませんでした。そのあと直し、テストで確かめましたが、iPhone では試し直していません。スキーマなしの表示はテストだけです）。もう 1 つは E2E テストで、mitmproxy を通した HTTP/2 上の gRPC の形（トレーラーにステータスが入る 64 KiB を超えるボディと、trailers-only のエラー）です。
+
+grpc-swift（2。どちらのトランスポートも。1 も同じであることはソースから読んだもの）は、ALPN で `h2` より先に `grpc-exp` を出します。これを選ぶサーバーもあります（Connect のデモサーバーがそうです）。Reqcove はサーバーに `grpc-exp` を外して `h2` を出すので、こうした呼び出しも HTTP/2 で通り、記録されます。確かめたのは、この Mac 上の grpc-swift 2 から Connect のデモサーバーを呼んだもの（どちらのトランスポートも。CA は信頼するルートとして渡しました。mitmproxy には Exit Node と同じつなぎ方で中継しました）、E2E テスト、iPhone（iOS 27.3、どちらのトランスポートも）です。iPhone ではそれまで、サーバーの HTTP/2 の設定が先に届き、mitmproxy が呼び出しを raw TCP として中継していて、記録されませんでした（[raw TCP](#http-として読まれない接続raw-tcp)）。`h2` を受け付けず `grpc-exp` だけを受け付けるサーバーでは、こうした呼び出しは Reqcove を通すと失敗します。クライアントが `h2` も出すときは、サーバーに `grpc-exp` を出さないためです（コードを読んだもの。そうしたサーバーは見つかっていません）。
 
 ### Android を記録する
 
@@ -395,10 +405,12 @@ reqcove run --device iphone --allow-hosts api.example.com --rules rules.yaml
 
 - `map_remote`、`map_local`、`modify_headers` は mitmproxy の機能で、mitmproxy 自身のコードが処理します。相対パスは、ルールファイルの場所が基準です。
 - `map_remote` は URL を書き換えるので、`keep_host_header` を true にしない限り、`Host` ヘッダーも変わります。上の例のように、スキームも書いてください。アプリは `https` で送り、平文のサーバーは TLS に応答できないためです。
-- `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET にも応答し、一緒に送られてきたボディはすべてメモリに保持します。`--device` のデバイス上のアプリや Web ページも（`--local-proxy` なら、このコンピュータのアプリも）、ルールに合うホストへのこうしたリクエストの送り手になりえます。とても大きなボディだと mitmproxy のメモリが尽き（reqcove が起動し直します）、その間デバイスの通信が止まります。
+- リクエストを別のサーバーへ送るには、`Host` を変える `modify_headers` のルールではなく、`map_remote`（か `resolve`）を使います。v1.0 から、そうした `modify_headers` のルールは、それだけでは効きません（次の項目）。パスだけを変えてホストはそのままの `map_remote` も、リクエストを別の先へ送るルールとして働きます。mitmproxy は、アプリが接続したアドレスではなく、そのホストに名前で接続し（名前解決はこのコンピュータで行います）、ヘッダーのルールは効きます（mitmproxy の Python で、作ったリクエストに対して試したもの。ネットワーク越しではありません）。
+- v1.0 から、`modify_headers` が効くのは、その `Host` へ行くリクエストと、そのレスポンスだけです。Host のアドレスへ送られたリクエスト、HTTPS でその TLS の名前へ送られたリクエスト、または `map_remote` か `resolve` が送り先を決めたリクエストです。`Host` を変えるルールは、この 2 つのどちらかと一緒のときだけ効きます。それだけでは、そのリクエストのヘッダーのルールはどれも効きません。効かなかったときは、記録の `rewrites` にそう出ます（[SECURITY](SECURITY.ja.md#ルール--rules)）。
+- `map_local` が応答するのは、ボディが 1 MiB 以下で長さが分かっているリクエストだけです。それ以外は本来の宛先へ送ります（記録にその旨が残ります）。長さのない HTTP/2 の GET（HEAD、OPTIONS、DELETE も）には、ボディなしでストリームが終わったときに応答します。ボディのない GET と同じくヘッダーで終わったときと、空の DATA フレームで終わったときです（Go のクライアントは、長さの分からないボディが空だったときにこれを送ります）。それでもボディを送ってきたものには 502 を返してエラーとして記録し、そのボディは保持しません（v0.8.0 までは、すべてメモリに保持していました）。Go の HTTP/2 クライアントから mitmproxy を通して試しました。macOS の URLSession は、GET と HEAD のストリームをヘッダーで終え、DELETE と OPTIONS には長さ 0 を付けるので、どれも 502 になりません（mitmproxy を通さず、テスト用のサーバーで試しました）。iPhone のアプリでは試していません。mitmproxy がストリームの終わりを知る仕組みはコードを読んだものです。12.3.1 以外の mitmproxy（別の `--mitmproxy-spec`）では、ヘッダーで終わらなかったストリームは、空の DATA フレームでも 502 になります（コードを読んでの記述）。
 - 他人が作ったルールファイルは、中身を読んでから使ってください。ルールはアプリのリクエストを Cookie やトークンごと、書かれた先へ送れます。
 
-確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。これらのテストにないもの：長さのない HTTP/2 の GET への `map_local`、mitmproxy のメモリが尽きるほど大きなボディ。
+確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST のボディ、終わっていない POST、SSE への `map_remote`（どちらも流れるままに相手に届くこと）と `keep_host_header`、GET と POST に応答する `map_local` と、2 MiB のボディは本来の宛先へ送ること、両方向の `modify_headers`、`--allow-hosts` の外のリクエストには触れないこと、ルールの値が記録に入らないこと、読み込みで断るものです。長さのない HTTP/2 の GET への `map_local` とモックも、ボディなし（応答します）、空の DATA フレームで終わるもの（応答します）、終わりのないボディと 1 バイトのボディ（すぐに 502）で確かめました。
 
 #### 接続先だけを変える（`resolve`）
 
@@ -436,7 +448,7 @@ mock:                           # Reqcove 独自。最初に一致したもの�
 - **`method`** と **`operation`** は省略できます。`operation` は GraphQL の operation です（`operationName`、Apollo の `X-APOLLO-OPERATION-NAME` ヘッダー、または文書の最初の名前付き operation）。
 - **応答**：`status` は 100〜599 で、省略すると 200 です。ボディは書くかファイルで指定し、1 MiB までです。`HEAD`、204、304 にはボディを付けません。`Cache-Control` を書かなければ `no-store` を付けます。
 - **`modify_headers` との関係**：リクエストに対する `modify_headers` のルールは一致を調べる前に効き、応答に対するものはモックにも効きます。
-- **保持するもの**：モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送り、`rewrites` に `mock: skipped, …` と残します。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持し、HTTP/2 で一緒に送られてきたボディは、すべてメモリに保持します。
+- **保持するもの**：モックが応答するかもしれないリクエスト（メソッドと URL が一致するもの）は、ボディが届くまで全体を保持します。長さが 1 MiB を超えるものや、長さの分からない POST は、モックせずに本来の宛先へ送り、`rewrites` に `mock: skipped, …` と残します。`map_local` と同じく、長さのない GET（HEAD、OPTIONS、DELETE も）も保持します。HTTP/2 で、それでもボディを送ってきたものには、保持せずに 502 を返します（空の DATA フレームはボディではありません）。
 - **記録**にその旨が残ります。一覧の行に `mocked: true`、`rewrites` にルールの番号とステータス（`mock[0]: 401`）、HAR には注記が入ります。`capture_stats` の `rules_loaded` は、ファイルを最後に読み込んだ時刻です。
 
 確認状況：E2E テスト（本物の mitmproxy）で確認しました。確認したのは、POST に対するヘッダー付きの 401、ボディの GraphQL operation による一致、`*` で終わる URL、HEAD、サーバーに届かないこと、拒否するルール（範囲外のステータス、ヘッダーの改行、ないファイル、`--allow-hosts` にないホスト）です。iPhone では、Safari（httpbin.org）への 401 と、GitHub アプリの GraphQL の operation 1 つをモックできることを確認しました（同じ接続のほかの operation は GitHub に届きました）。
@@ -490,7 +502,7 @@ mock:
     fault: close                    # 応答しない。HTTP/1 は接続を閉じ、HTTP/2 はストリームをリセットする
 ```
 
-- ツールは `list_presets`、`activate_preset(name, minutes, times)`（最長 5 分。省略すると 5 分。`times` を付けると、最大 20 件のリクエストに応答したら無効になる）、`deactivate_preset(name)` です。v0.6 の `list_mock_presets`、`activate_mock`、`deactivate_mock` も、モックに限って同じことをします（非推奨。v1.0 で削除します）。使えるのはこのコンピュータのエージェント（`reqcove mcp` と `run` のソケット）だけで、`--mcp-http` からは使えません。
+- ツールは `list_presets`、`activate_preset(name, minutes, times)`（最長 5 分。省略すると 5 分。`times` を付けると、最大 20 件のリクエストに応答したら無効になる）、`deactivate_preset(name)` です。使えるのはこのコンピュータのエージェント（`reqcove mcp` と `run` のソケット）だけで、`--mcp-http` からは使えません。
 - 有効なプリセットは、ほかのモックより先に応答します。無効なプリセットは、モックとして扱いません。同じ match（メソッド、URL、operation）で有効にできるプリセットは 1 つです。同じ match の別のプリセットを有効にすると、先のものは無効になります。有効なものをもう一度有効にすると、期限と回数が置き換わります。
 - 一致したリクエストは、誰が送ったものでも（Safari、別のデバイス、アプリの再試行）回数を使います。一覧の行には `preset: 名前` が付き、閉じたものの error には、モックが閉じたと書かれます。
 - `delay_ms` と `fault: close` は、普通のモックでも使えます。`delay_ms` が遅らせるのはモックの応答だけです（サーバーからの応答は遅らせません）。
@@ -513,7 +525,7 @@ resolve:
   - {rule: "api.example.com=192.168.1.20", preset: api-lan}
 ```
 
-- ツールは `list_presets`（すべての種類。`kind` 付き）、`activate_preset(name, minutes)`、`deactivate_preset(name)` です。`list_mock_presets`、`activate_mock`、`deactivate_mock` は v1.0 まで残し（非推奨）、モック専用にしました。v0.6 で `activate_mock` を許可したエージェントは、これらを有効にできません。`times` はモック専用で、ほかの種類は時間だけで無効になります。
+- ツールは `list_presets`（すべての種類。`kind` 付き）、`activate_preset(name, minutes)`、`deactivate_preset(name)` です。`times` はモック専用で、ほかの種類は時間だけで無効になります。
 - 有効な間、`map_remote` のプリセットは、一致したリクエストをアプリの Cookie、トークン、ボディごと送り先へ送ります。`resolve` はその名前の接続先を指定のアドレスにします（Host、SNI、TLS の検証は名前のまま）。5 分で終わるのは切り替えで、その影響ではありません。アプリが書いたものはそのサーバーに残り、アプリはそこで得たトークンやキャッシュを持ち続けることがあります（[SECURITY](SECURITY.ja.md#map_remotemodify_headersresolve-のプリセット)）。
 - `list_presets`、起動時の表示、`reqcove status` に出すのは、`map_remote` の送り先（スキームとホスト）、`modify_headers` のヘッダー名（値は出しません）、`resolve` の名前とアドレスです。フィルターや正規表現は出しません。
 - 読み込みで断るもの：
@@ -524,9 +536,9 @@ resolve:
 - 送らずに 502 を返すもの：書き換えた URL が表示している送り先の外になるリクエスト（正規表現が URL の途中に一致したもの）。
 - 同じ一致条件で有効にできるのは、種類ごとに 1 つです（`map_remote` は同じフィルターと正規表現、`modify_headers` は同じフィルターとヘッダー、`resolve` は同じ名前）。有効な `resolve` のプリセットは、同じ名前の普通の `resolve` より先に使います。有効な `map_remote` のプリセットは普通のルールより先に、`modify_headers` のプリセットは普通のルールのあとに当てます（プリセットのヘッダーが残ります）。
 - 名前は種類をまたいで共通です（モックと `resolve` のプリセットの両方を `staging` にはできません）。一覧の行の `presets` には、そのリクエストを変えたか応答したプリセットがすべて入ります（`preset` は、応答したモックのものとして残します）。
-- `reqcove status` と `status` ツールの `active_presets` には、有効なものがすべての種類で入ります（`kind` 付き。mitmproxy から答えがなければ `active_presets_error`）。`capture_stats` の `presets` には、すべてのプリセットの名前が入ります。v0.6 の名前（`active_mock_presets`、`active_mock_presets_error`、`mock_presets`）にも v1.0 までは同じものが入りますが、非推奨で、v1.0 で削除します。
+- `reqcove status` と `status` ツールの `active_presets` には、有効なものがすべての種類で入ります（`kind` 付き。mitmproxy から答えがなければ `active_presets_error`）。`capture_stats` の `presets` には、すべてのプリセットの名前が入ります。
 
-確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`activate_mock` と `list_mock_presets` がこれらに触れないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）。LAN モードの iPhone で試しました（iOS 27.3、2026-11-14）：このコンピュータの開発サーバーへの `map_remote` のプリセットを MCP で有効にすると Safari に開発サーバーの応答が返り、行に載りました（無効にするとサーバー自身の応答）。`times: 1` のモックのプリセットは 503 を 1 回返し、そのあとはサーバーの応答でした。iPhone で試していないもの：`resolve` と `modify_headers` のプリセット。コードから：ルールはリクエストの始まりで当てるので、`map_remote` や `resolve` のプリセットが有効な間に始まった WebSocket、ストリーム、長いアップロードは、プリセットが無効になったあとも、その送り先のままです。
+確認状況：E2E テスト（本物の mitmproxy、平文の HTTP）で確認しました。確認したのは、`map_remote`、`modify_headers`、`resolve` のプリセットがそれぞれ有効な間だけリクエストを変えること、行に載ること、ヘッダーの値を出さないこと、`times` を断ること、ファイルの変更で無効になること、読み込みで断るもの（mitmproxy の Python で）です。未確認：アプリの接続が開いたまま（HTTP/1 の使い回し、HTTP/2）`map_remote` や `resolve` のプリセットを有効にしたときの HTTPS（前に開いた接続を使い続けることがあります）。LAN モードの iPhone で試しました（iOS 27.3、2026-11-14）：このコンピュータの開発サーバーへの `map_remote` のプリセットを MCP で有効にすると Safari に開発サーバーの応答が返り、行に載りました（無効にするとサーバー自身の応答）。`times: 1` のモックのプリセットは 503 を 1 回返し、そのあとはサーバーの応答でした。iPhone で試していないもの：`resolve` と `modify_headers` のプリセット。コードから：ルールはリクエストの始まりで当てるので、`map_remote` や `resolve` のプリセットが有効な間に始まった WebSocket、ストリーム、長いアップロードは、プリセットが無効になったあとも、その送り先のままです。
 
 #### ルールが当たった理由、当たらなかった理由（`list_rules`、`explain_rules`）
 
@@ -601,7 +613,7 @@ reqcove run --lan --allow-hosts api.example.com
 - 許可するのはデバイスではなくアドレスです。あとでそのアドレスを持ったものも許可されます。リストは状態ディレクトリ（`lan-allowed`）に保存されるので、同じプレフィックスの別のネットワークでも許可されたままです（カフェの 192.168.1.0/24 と自宅の 192.168.1.0/24 など）。使い終わったら `reqcove lan list` と `lan deny` で整理してください。未確認：iPhone のプライベート Wi-Fi アドレスが、同じネットワークで長く変わらないか。
 - 許可したアドレスは、このコンピュータを通って、あなたのアドレスからインターネットに出られます（80 番と 443 番ポートのみ）。`--allow-hosts` に完全な名前（`*` なし）で書いたプライベートなホストにも届きます。このコンピュータの VPN の先のものも含みます。このコンピュータ、リンクローカルアドレス、プロキシのあるネットワークには、完全な名前でも届きません。許可したホストへのリクエストは記録されます。
 - `--rules` の `map_remote` と `resolve` の宛先には mitmproxy が接続するので、これらの確認の外です。許可したホストをこのコンピュータのサーバーに送るルールがあると、LAN のクライアントのリクエストもそこに届きます。
-- `lan deny` は 2 秒以内に新しい接続を拒否しますが、すでに開いている HTTPS のトンネルは閉じるまで続きます。
+- `lan deny` は 2 秒以内に新しい接続を拒否しますが、すでに開いている HTTPS のトンネルは閉じるまで（または 15 分間やりとりがなくなるまで。[制限事項](#制限事項)）続きます。
 - 信頼できるネットワークで使い、使い終わったら止めてください。
 
 Exit Node とのほかの違いは、次のとおりです。
@@ -703,6 +715,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | アプリのリクエストが失敗し、`reqcove status` がそのホストを表示する（証明書ピンニング） | [証明書ピンニングをするアプリを通す](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | Android のアプリが CA を拒否する | [Android を記録する](#android-を記録する) |
 | gRPC のアプリの呼び出しが TLS の失敗として出る | [gRPC](#grpc) |
+| 許可したホストの通信が見当たらず、`reqcove status` がその接続は raw TCP として中継されたと伝える | [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) |
 | `--local-proxy` で、`kill -9` や異常終了のあとこのコンピュータのアプリがつながらない、許可したホストがこのコンピュータのアプリでつながらない | [iOS シミュレーターを記録する](#ios-シミュレーターを記録する--local-proxy) |
 | ルールが当たらなかった | [ルールが当たった理由、当たらなかった理由](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules) |
 | ルールのファイルが読み込めない、変更が反映されない | [ファイルを読み込むタイミング](#ファイルを読み込むタイミング--rules-reload) |
@@ -755,7 +768,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 | | |
 |---|---|
-| `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力。`--uvx PATH` |
+| `reqcove status` | reqcove の状態と次の手順。`--json` で `status` ツールの JSON を出力（答える run がないときは、標準出力には何も出さず、終了ステータス 1 で、理由を標準エラーに出します）。`--uvx PATH` |
 | `reqcove links` | ログイン用の URL と、`--ui`、`--web`、`--mcp-http` のリンクを QR コード付きでもう一度表示。出力先がターミナルのときだけ（[初回の起動](#初回の起動ログインと承認)） |
 | `reqcove mark` | `[TEXT]`（`-` で始まるものは `-- TEXT`）。記録の中に、あなたの（`cli`）[マーカー](#マーカーを置くreqcove-mark)を置く。ターミナルでのみ |
 | `reqcove mock add` | `--rules FILE --url URL` とモックのフラグ。[ファイルにモックを足す](#ターミナルからモックを足すreqcove-mock-add)（確かめてから）。ターミナルでのみ（`--print` での表示はどこでも）。`--uvx PATH` |
@@ -770,7 +783,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_flows`、試験用アプリでの `diff_flows`（二重に送ったリクエスト）、`list_ws_messages`、`--proto`。テストのみ：`--mask-values`、`max_body`、`--mcp-http` の回数制限、`multipart/form-data`、XML のボディ（mitmproxy を通した SOAP のリクエストの E2E テストも）。
 
-コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`、`status --json`。
+コードから（フラグのヘルプに基づく記述で、このガイドでは未確認）：`--proxy-port 0`、`--hostname`、`--verbose`、`--uvx`、`--python`、`--mitmproxy-spec`。`status --json` は、Ubuntu での LAN モードの確認で使いました。答える run がないときの終了ステータス 1 は、単体テストで確かめました。
 
 ## MCP ツール
 
@@ -785,15 +798,12 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 | `summarize` | ホスト、User-Agent、ステータスコード、メソッド、デバイス、Content-Type、gRPC のステータス（`by_grpc_status`）、エンドポイントごとの件数。エンドポイント（`by_endpoint`）は、メソッド、ホスト、クエリを除いたパス（ID は `{id}`）、GraphQL なら operation（`GET api.example.com/v1/users/{id}`、`POST api.example.com/graphql Login`）。絞り込みと `similar_hosts` は同じ |
 | `list_devices` | 中継しているデバイス（LAN モードでは `lan:ADDR`）と、それぞれの件数、この実行での最初と最後のアクティビティ |
 | `list_tls_failures` | デバイスが拒否した TLS ハンドシェイク。多くは証明書ピンニングか、まだ信頼されていない CA が原因 |
-| `list_passthrough` | `--pass-hosts` のホストへの接続。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
+| `list_passthrough` | 運ぶものがフローとして記録されない接続。`reason` 付きで、`--pass-hosts` のホストへの接続（`pass_hosts`）と、許可したホストへの接続のうち mitmproxy が HTTP として読まずに raw TCP として中継したもの（`raw_tcp`。クライアントに決まった ALPN 付き：[raw TCP](#http-として読まれない接続raw-tcp)）。ホスト、接続先サーバー、時刻、バイト数。URL や中身はなし |
 | `capture_stats` | mitmproxy の状態、記録がカバーしている期間、ドロップ数 |
-| `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。v0.6 の `active_mock_presets` も同じだが、非推奨で v1.0 で削除。`--mcp-http` では出しません。プリセットのツールがないため） |
+| `status` | モード（`tailnet` か `lan`。`lan` では許可したアドレスと拒否したアドレスも）、セットアップが完了しているか。未完了なら次の手順。有効にしたプリセット。すべての種類（`active_presets`。`kind` 付き。`--mcp-http` では出しません。プリセットのツールがないため） |
 | `list_presets` | `--rules` のファイルの[プリセット](#エージェントが有効にできるプリセット)。すべての種類（`kind`）。モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名、`resolve` の名前とアドレス。有効か、無効になる時刻。ボディ、ヘッダーの値、フィルター、正規表現は返さない。`--mcp-http` からは使えない |
 | `activate_preset` | どの種類のプリセットも有効にする。最長 5 分（`minutes`。モックは `times` で最大 20 件）。`wait_for_flows` 用の `checkpoint` と、同じ一致条件で無効にしたプリセットを返す。`--mcp-http` からは使えない |
 | `deactivate_preset` | プリセットを無効にする。`--mcp-http` からは使えない |
-| `list_mock_presets` | 非推奨（v1.0 で削除）。`list_presets` のモックだけ（v0.6）。`--mcp-http` からは使えない |
-| `activate_mock` | 非推奨（v1.0 で削除）。`activate_preset` のモックだけ（v0.6）。`map_remote`、`modify_headers`、`resolve` のプリセットは有効にしない。`--mcp-http` からは使えない |
-| `deactivate_mock` | 非推奨（v1.0 で削除）。モックのプリセットを無効にする（v0.6）。`--mcp-http` からは使えない |
 | `list_rules` | `--rules` のファイルの[ルール](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules)を種類と番号で。プリセットと、ルールから導いたもの（モックの match と応答、`map_remote` の送り先、`modify_headers` のヘッダー名と向き、`resolve` の名前とアドレス）。フィルター、正規表現、ヘッダーの値、ボディ、パスは返さない。`--mcp-http` からは使えない |
 | `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
 | `add_marker` | [マーカー](#マーカーを置くreqcove-mark)を置く（`text` は 1 行で 80 文字まで、マスクする）。`id`、`time`（`since` 用）、`checkpoint`（`wait_for_flows` の `after` 用）を返す。デバイスには何も変えない。`--mcp-http` からは使えない |
@@ -805,8 +815,9 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 
 - IPv6 は拒否します。アプリはすぐに IPv4 にフォールバックします。
 - QUIC は Apple 宛てを除いてドロップするので、アプリは TCP にフォールバックします。判定はホストではなくアドレスで行うため、`--allow-hosts` にないホストの QUIC も（`--allow-hosts` を指定しないときも）フォールバックします。443 番以外のポートの QUIC はそのまま通し、記録しません。
-- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します（mitmproxy のコードを読んだもので、圧縮されたメッセージは試していません）。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` が止まります。
+- mitmproxy は WebSocket のメッセージを、届ききるまで 1 つずつ保持します。圧縮されたもの（permessage-deflate）は丸ごと展開します（mitmproxy のコードを読んだもの。圧縮されたメッセージは、展開されたうえでマスクされて記録されます。Go のクライアントとサーバーを使った E2E テストと、iPhone（iOS 27.3）から圧縮を受け付けるサーバーへ 2026-11-15 に確かめたものです）。そのため巨大なメッセージが来ると、メモリを多く使います。Reqcove の 4 KiB の上限は、Reqcove が残す分にかかるもので、mitmproxy のメモリにはかかりません。mitmproxy がメモリ不足で落ちると reqcove が再起動し、再起動しても 1 分以内に落ちることが 5 回続くと、`run` はエラーで止まります（終了ステータスは 1 で、Ctrl-C の 0 とは違います。サービスとして動かしていれば、失敗と表示されます。終了し続ける mitmproxy の代役で試しました）。
 - reqcove が mitmproxy に渡す接続は、mitmproxy がサーバーにつながるのを待ちます。直接つなぐ接続がサーバーを待つのと同じく、最長 10 秒です。そのときログには `<アドレス>:<ポート> did not answer within 10s (through mitmproxy)` と出ます。先にアプリがあきらめたときは `the client left before <アドレス>:<ポート> answered (through mitmproxy)` と出ます。どちらも、そのときサーバーが遅かったか、このコンピュータから届かなかったということです（応答しないアドレスで試しました。実際のアプリで出た 2 件が遅かった理由はわかっていません）。
+- Remote Proxy、LAN モード、`--local-proxy` では、1 つのクライアント（アドレス 1 つ。`--local-proxy` では、このコンピュータのアプリすべてで 1 つ）が同時に開けるトンネル（CONNECT。HTTPS や WebSocket）は 256 本までです。それを超えると、どれかが閉じるまで 503 を返します。どちらの向きにも 15 分間バイトが流れないトンネルは閉じます。やりとりが続く WebSocket やイベントストリームは開いたままです（2 本と 300 ミリ秒で試しました）。Exit Node 自身の接続には、どちらの制限もありません（コードを読んだもの）。
 - Exit Node 経由の通話は未確認です。
 - 機能ごとの制限事項はそれぞれの節にあります：[`--ui`](#iphone-で見る--ui)、[`--web`](#mitmweb-で見る--web)、[`--local-proxy`](#ios-シミュレーターを記録する--local-proxy)、[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)、[ルール](#ルールを書く--rules)、[上流プロキシ](#上流プロキシに回す--upstream-proxy)。
 
@@ -817,5 +828,6 @@ iPhone で確認：`--mask-names`、RoamRun で操作したあとの `wait_for_f
 - [記録するもの](SECURITY.ja.md#記録するもの)：`--allow-hosts` のホストだけで、Apple のホストは対象外です。マスクで見つかるものと、見つからないものがあります。
 - [エージェントが読んだものの行き先](SECURITY.ja.md#エージェントが読んだものの行き先)：モデルの提供元に渡ります。ボディがエージェントに指示しようとすることもあります（[プロンプトインジェクション](SECURITY.ja.md#プロンプトインジェクション)）。
 - [デバイスから届く範囲](SECURITY.ja.md#デバイスから届く範囲)：このコンピュータ、LAN、tailnet には届きません。
-- [CA の秘密鍵](SECURITY.ja.md#ca-の秘密鍵)：状態ディレクトリにあります。
+- [CA の秘密鍵](SECURITY.ja.md#ca-の秘密鍵)：状態ディレクトリと、そのバックアップにあります。デバイスは、プロファイルを削除するまで、この CA をすべてのサイトについて信頼します。
+- [ほかの人のデバイス](SECURITY.ja.md#ほかの人のデバイス)：その人の同意が必要です。[ほかのユーザーと共有するコンピュータ](SECURITY.ja.md#ほかのユーザーと共有するコンピュータ)、[`cleanup` のあとに残るもの](SECURITY.ja.md#reqcove-cleanup-のあとに残るもの)。
 - [Exit Node の DNS](SECURITY.ja.md#exit-node-の-dns)（`--dns`）と、[コンテナ](SECURITY.ja.md#コンテナで動かす場合)。

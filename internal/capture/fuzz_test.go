@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -13,7 +14,7 @@ import (
 // so any 5 of them in the output came from the secret.
 const fuzzSecret = "S3crQt7VxLu9Kz"
 
-const fuzzShapes = 26
+const fuzzShapes = 37 // a shape with no case of its own is the default one
 
 // fuzzMarkup is the shape whose body is the fuzzer's own text, # standing for
 // the secret: XML masking never panics on it, and a secret element and
@@ -77,12 +78,34 @@ func secretIn(shape uint8, filler, secret string) (body, contentType string, at 
 		return pre(`{"errors":[{"message":"`+filler+`",`, `"doc":"{ login(password: \"`+secret+`\") { ok } }"}]}`, "application/json")
 	case 21: // a STOMP frame's header line
 		return pre("CONNECT\naccept-version:1.2\nlogin:"+filler, "\npasscode:"+secret+"\n\n\x00", "text/plain")
+	case 30: // a secret-named line whose value also holds a token's shape
+		return pre("note: "+filler+"\n", "password: "+secret+" Bearer OtherToken456\n", "text/plain")
+	case 31: // a .env file's line
+		return pre("NAME="+filler+"\n", "export API_KEY="+secret+"\n", "text/plain")
 	case 22: // SOAP: a namespaced element
 		return pre(`<s:Envelope xmlns:s="urn:s"><s:Body><m:Note>`+filler+`</m:Note>`, `<wsse:Password>`+secret+`</wsse:Password></s:Body></s:Envelope>`, "application/soap+xml")
 	case 23: // an XML attribute
 		return pre(`<Login note="`+filler+`" `, `api_key="`+secret+`"/>`, "text/xml")
 	case 24: // a plist: the value after a secret key
 		return pre(`<plist><dict><key>note</key><string>`+filler+`</string>`, `<key>sessionToken</key><string>`+secret+`</string></dict></plist>`, "application/xml")
+	case 26: // an OAuth form_post: a response's hidden field
+		return pre(`<form method="post"><input type="hidden" name="state" value="`+filler+`">`, `<input type="hidden" name="code" value="`+secret+`"></form>`, "text/html")
+	case 27: // a CSRF token in a meta tag
+		return pre(`<head><meta name="description" content="`+filler+`">`, `<meta name="csrf-token" content="`+secret+`"></head>`, "text/html")
+	case 28: // the value before the name that says it is secret
+		return pre(`<p>`+filler+`</p>`, `<input value="`+secret+`" type="hidden" name="authenticity_token">`, "text/html")
+	case 29: // a script's object, its key unquoted
+		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: "`+secret+`"};</script>`, "text/html")
+	case 32: // a script's string that would open an attribute, then a field
+		return pre(`<script>var s="<a x='";</script><p>`+filler+`</p>`, `<input type="hidden" name="csrf" value="`+secret+`">`, "text/html")
+	case 33: // a comment's quote, then a field
+		return pre(`<!-- it's <a x=' `+filler+` -->`, `<input name="authenticity_token" value="`+secret+`">`, "text/html")
+	case 34: // a comment between a script's key and its value
+		return pre(`<script>var s = {note: "`+filler+`", `, `accessToken: /* c */ '`+secret+`'};</script>`, "text/html")
+	case 35: // a script's string continued on the next line
+		return pre(`var c = {note: "`+filler+`", `, "idToken: \"x\\\n"+secret+"\"};", "application/javascript")
+	case 36: // a JSON body labelled HTML: a tag's unquoted value runs over its string's end
+		return pre(`{"html":"`+filler+`<b data-token=x\"",`, ` "password":"`+secret+`"}`, "text/html")
 	default: // a secret name hidden by an escape, in a URL in a string
 		return pre(`{"msg":"`+filler, ` https://x.example/cb?\u0074oken=`+secret+`"}`, "application/json")
 	}
@@ -131,6 +154,18 @@ func percentUnescapeAll(s string) string {
 	})
 }
 
+// fuzzSlow, deferred around masking, fails an input whose masking takes
+// seconds (a 64 KiB head takes milliseconds): go test -fuzz then hunts inputs
+// that grow faster than their size too, as TestMaskingLinear's units do.
+func fuzzSlow(t *testing.T, n int) func() {
+	start := time.Now()
+	return func() {
+		if d := time.Since(start); d > 2*slow*time.Second {
+			t.Errorf("masking %d bytes took %v", n, d)
+		}
+	}
+}
+
 // FuzzMaskBody: no 5 characters of a secret in a known shape survive masking,
 // read as written or decoded, whatever comes around it and wherever the head
 // is cut (a cut inside the value masks to the end): every cut over the part
@@ -154,6 +189,7 @@ func FuzzMaskBody(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, shape uint8, filler string, cut int) {
 		if shape%fuzzShapes == fuzzMarkup {
+			defer fuzzSlow(t, 2*len(filler))()
 			maskBody([]byte(strings.ReplaceAll(filler, "#", fuzzSecret)), "text/xml", true)
 			// The filler may hold pieces of the secret itself: past the
 			// prefix, the output must start with it masked.
@@ -178,7 +214,8 @@ func FuzzMaskBody(f *testing.F) {
 			if cut > 0 && cut < len(head) {
 				head = head[:cut]
 			}
-			got := string(maskBody(head, ct, shape%fuzzShapes != 20))
+			defer fuzzSlow(t, len(head))()
+			got := string(maskBody(head, ct, shape%fuzzShapes != 20 && shape%fuzzShapes != 26)) // 20, 26: responses
 			if l := leak(got, fuzzSecret); l != "" {
 				t.Errorf("shape %d, cut %d: %q survived:\n%s", shape%fuzzShapes, cut, l, got[max(0, len(got)-200):])
 			}

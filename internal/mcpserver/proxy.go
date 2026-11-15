@@ -1,7 +1,6 @@
 package mcpserver
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +30,7 @@ func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error 
 	p := &proxy{sock: sock, notRunning: notRunning, ctx: ctx, client: mcp.NewClient(&mcp.Implementation{Name: "reqcove-mcp", Version: Version}, nil)}
 	defer p.close()
 	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, &mcp.ServerOptions{Instructions: Instructions})
+	s.AddReceivingMiddleware(answerRemoved) // a removed tool: what replaces it, not "unknown tool"
 	for _, tool := range tools {
 		// This process outlives `run`s of other versions: their answers are not
 		// checked against this one's output schemas.
@@ -170,7 +170,7 @@ func (p *proxy) takeNote(cs *mcp.ClientSession) string {
 }
 
 // call forwards one tool call. A connection that closed (`run` restarted) is
-// dialled again and a read-only call sent once more; a write (activate_mock)
+// dialled again and a read-only call sent once more; a write (activate_preset)
 // never is, since it may have landed. `run`'s own answers, errors included,
 // go back as they are; a `run` without the tool (an older one) answers that
 // it does not have it.
@@ -210,7 +210,10 @@ func (p *proxy) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallTo
 			}
 			return nil, err // `run`'s own answer (an unknown tool, say), one too big, or the agent's cancel or a signal
 		case writeTools[req.Params.Name]:
-			see := cmp.Or(map[string]string{"add_marker": "list_markers", "activate_mock": "list_mock_presets", "deactivate_mock": "list_mock_presets"}[req.Params.Name], "list_presets")
+			see := "list_presets"
+			if req.Params.Name == "add_marker" {
+				see = "list_markers"
+			}
 			return toolError("the connection to reqcove run closed during the call: it may or may not have taken effect; call " + see + " to see"), nil
 		case try == 1:
 			return p.down(), nil

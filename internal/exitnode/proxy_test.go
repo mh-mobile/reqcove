@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,6 +152,139 @@ func TestRemoteProxyPoolsPerDevice(t *testing.T) {
 	if pa == rp.reverseProxy(b, Device{ID: "nB"}) {
 		t.Error("two devices share a pool")
 	}
+}
+
+// tunnelHarness is a Remote Proxy whose CONNECT tunnels reach an echo server.
+func tunnelHarness(t *testing.T) func() (net.Conn, string) {
+	t.Helper()
+	return tunnelHarnessDial(t, func(c net.Conn) net.Conn { return c })
+}
+
+// tunnelHarnessDial: tunnelHarness, each dialled connection passed through wrap.
+func tunnelHarnessDial(t *testing.T, wrap func(net.Conn) net.Conn) func() (net.Conn, string) {
+	t.Helper()
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { echo.Close() })
+	go func() {
+		for {
+			c, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() { io.Copy(c, c); c.Close() }()
+		}
+	}()
+	lo := netip.MustParseAddr("127.0.0.1")
+	p := &policy{devices: map[netip.Addr]Device{lo: {ID: "nPHONE"}}, allowSrc: []netip.Addr{lo}, socks: true}
+	rp := &remoteProxy{policy: func() *policy { return p },
+		resolve: func(context.Context, string) (netip.Addr, error) { return netip.MustParseAddr("203.0.113.5"), nil },
+		dial: func(ctx context.Context, _ verdict, _ string, _ netip.AddrPort) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(ctx, "tcp", echo.Addr().String())
+			if err != nil {
+				return nil, err
+			}
+			return wrap(c), nil
+		}}
+	srv := httptest.NewServer(rp)
+	t.Cleanup(srv.Close)
+	return func() (net.Conn, string) {
+		t.Helper()
+		c, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		fmt.Fprint(c, "CONNECT app.test:443 HTTP/1.1\r\nHost: app.test:443\r\n\r\n")
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		r, err := http.ReadResponse(bufio.NewReader(c), nil)
+		c.SetReadDeadline(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c, r.Status
+	}
+}
+
+// A client gets at most maxTunnels tunnels open at once: the next is a 503,
+// and one closing makes room.
+func TestRemoteProxyTunnelCap(t *testing.T) {
+	defer func(n int) { maxTunnels = n }(maxTunnels)
+	maxTunnels = 2
+	open := tunnelHarness(t)
+	first, st1 := open()
+	_, st2 := open()
+	if st1 != "200 Connection Established" || st2 != "200 Connection Established" {
+		t.Fatalf("two tunnels: %q %q", st1, st2)
+	}
+	if _, st := open(); !strings.HasPrefix(st, "503") {
+		t.Errorf("a third tunnel: %q, want a 503", st)
+	}
+	first.Close()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		c, st := open()
+		c.Close()
+		if st == "200 Connection Established" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a tunnel closed, another still refused: %q", st)
+		}
+	}
+}
+
+// A tunnel with no bytes either way for tunnelIdle is closed; one that keeps
+// talking stays open past it.
+func TestRemoteProxyTunnelIdle(t *testing.T) {
+	defer func(d time.Duration) { tunnelIdle = d }(tunnelIdle)
+	tunnelIdle = 300 * time.Millisecond
+	open := tunnelHarness(t)
+	quiet, _ := open()
+	talking, _ := open()
+	buf := make([]byte, 1)
+	for range 10 { // 1 s, a byte each way every 100 ms
+		talking.Write([]byte("x"))
+		talking.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := io.ReadFull(talking, buf); err != nil {
+			t.Fatalf("a talking tunnel closed: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	quiet.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := quiet.Read(buf); err != io.EOF {
+		t.Errorf("a quiet tunnel after %v: %v, want it closed", tunnelIdle, err)
+	}
+}
+
+// A tunnel that ended keeps no idle timer, nor through it its connections,
+// till the timer would fire: the dialled connections of ended tunnels can be
+// collected.
+func TestRemoteProxyTunnelTimerStopped(t *testing.T) {
+	defer func(d time.Duration) { tunnelIdle = d }(tunnelIdle)
+	tunnelIdle = time.Hour
+	var freed atomic.Int64
+	open := tunnelHarnessDial(t, func(c net.Conn) net.Conn {
+		w := &struct{ net.Conn }{c}
+		runtime.SetFinalizer(w, func(any) { freed.Add(1) })
+		return w
+	})
+	const n = 200
+	for range n {
+		c, _ := open()
+		c.Write([]byte("x"))
+		io.ReadFull(c, make([]byte, 1))
+		c.Close()
+	}
+	for range 100 {
+		runtime.GC()
+		if freed.Load() >= n*9/10 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("of %d ended tunnels, %d dialled connections were collected", n, freed.Load())
 }
 
 // Failed plain requests are logged by host only: paths and queries carry secrets.
@@ -456,6 +590,33 @@ func TestSOCKSDialTimeout(t *testing.T) {
 	}
 }
 
+// TestRelayHalfClose: through SOCKS, a client that is done sending (nc -N)
+// still gets the answer the server sends after that.
+func TestRelayHalfClose(t *testing.T) {
+	fs := startFakeSOCKS(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			relay(c, netip.MustParseAddrPort("100.64.0.2:5000"), netip.MustParseAddrPort("203.0.113.5:443"), socks, "dev", fs.addr, "pw", nil, false)
+		}
+	}()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	io.WriteString(c, "ping")
+	c.(*net.TCPConn).CloseWrite()
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if b, _ := io.ReadAll(c); string(b) != "pingbye" {
+		t.Errorf("got %q, want the echo and the answer after the half-close", b)
+	}
+}
+
 // TestDialWaitsForReady: a SOCKS dial goes to the port only once ready says
 // mitmproxy is up; while it is not, nothing reaches the port, and the dial
 // fails after socksHold. Direct dials do not wait.
@@ -507,5 +668,163 @@ func TestDialWaitsForReady(t *testing.T) {
 	dialVia(context.Background(), direct, "dev", "", "", notReady, netip.MustParseAddrPort(ln.Addr().String()))
 	if d := time.Since(start); d >= socksHold {
 		t.Errorf("a direct dial was held %v", d)
+	}
+}
+
+// fakeConn records holdConn's writes, one per call; werr fails the next ones.
+type fakeConn struct {
+	net.Conn // nil: holdConn uses only what is below
+	writes   []string
+	werr     error
+	reads    []string
+	closed   bool
+	halfShut bool
+}
+
+func (f *fakeConn) Write(p []byte) (int, error) {
+	if f.werr != nil {
+		return 0, f.werr
+	}
+	f.writes = append(f.writes, string(p))
+	return len(p), nil
+}
+
+func (f *fakeConn) Read(p []byte) (int, error) {
+	if len(f.reads) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, f.reads[0])
+	f.reads = f.reads[1:]
+	return n, nil
+}
+
+func (f *fakeConn) Close() error      { f.closed = true; return nil }
+func (f *fakeConn) CloseWrite() error { f.halfShut = true; return nil }
+
+// TestHoldConn: a first write too short for mitmproxy is joined with the
+// next (TestLANEndToEnd: with real mitmproxy), or sent when holdWait passes or
+// the server speaks; other first bytes go at once; CloseWrite sends what is
+// held; when what was held cannot be sent, nothing after it is (the request
+// would arrive without its start) and the connection is closed. With a fake
+// connection and holdWait's timer run by hand: what each write to mitmproxy
+// held, not when TCP's reads cut it.
+func TestHoldConn(t *testing.T) {
+	orig := holdTimer
+	defer func() { holdTimer = orig }()
+	var fire func()
+	holdTimer = func(f func()) func() bool { fire = f; return func() bool { fire = nil; return true } }
+	pair := func() (*holdConn, *fakeConn) {
+		fire = nil
+		f := &fakeConn{}
+		return &holdConn{Conn: f}, f
+	}
+	same := func(what string, got []string, want ...string) {
+		t.Helper()
+		if strings.Join(got, "|") != strings.Join(want, "|") || len(got) != len(want) {
+			t.Errorf("%s: wrote %q, want %q", what, got, want)
+		}
+	}
+	for _, w := range [][2]string{{"\x16", "\x03\x01\x02"}, {"\x16\x03", "\x01"}, {"G", "ET / HTTP/1.1\r\n"}, {"GE", "T / HTTP/1.1\r\n"}, {"GET /a", "b HTTP/1.1\r\n"}, {"GET /caf\xc3\xa9", " HTTP/1.1\r\n"}, {"GET /a\tb", " HTTP/1.1\r\n"}} {
+		h, f := pair()
+		h.Write([]byte(w[0]))
+		if len(f.writes) != 0 || fire == nil {
+			t.Errorf("%q not held: %q", w[0], f.writes)
+		}
+		h.Write([]byte(w[1]))
+		same(fmt.Sprintf("%q then %q", w[0], w[1]), f.writes, w[0]+w[1])
+		if fire != nil {
+			t.Errorf("%q: the timer was not stopped", w[0])
+		}
+	}
+	h, f := pair()
+	h.Write([]byte("\x16"))
+	fire() // holdWait passed
+	same("after holdWait", f.writes, "\x16")
+	h.Write([]byte("\x03")) // after: as it comes
+	same("after the first send", f.writes, "\x16", "\x03")
+	for _, first := range []string{"\x00", "\x16\x01", "GET / HTTP/1.1\r\n", "SSH-2.0-x\r\n", "\x16\x03\x01", "A\x00\x01binary", "AB\x80", "Ab1", "GET /\x01", "GET\x7f"} {
+		h, f := pair()
+		h.Write([]byte(first))
+		same(fmt.Sprintf("%q", first), f.writes, first)
+		if fire != nil {
+			t.Errorf("%q: a timer", first)
+		}
+	}
+	// The server spoke first: mitmproxy has decided, and the reply goes at once,
+	// what was held before it too.
+	b := make([]byte, 16)
+	for _, reply := range []string{"QUIT", "A\x00\x01binary", "\x16", "GE"} {
+		h, f := pair()
+		f.reads = []string{"220 hello\r\n"}
+		h.Read(b)
+		h.Write([]byte(reply))
+		same(fmt.Sprintf("%q after a greeting", reply), f.writes, reply)
+	}
+	h, f = pair()
+	h.Write([]byte("PO"))
+	f.reads = []string{"220 hello\r\n"}
+	h.Read(b)
+	h.Write([]byte("ST"))
+	same("held, then a greeting", f.writes, "PO", "ST")
+	h, f = pair()
+	h.Write([]byte("PO"))
+	h.CloseWrite()
+	same("CloseWrite", f.writes, "PO")
+	if !f.halfShut {
+		t.Error("CloseWrite did not half-close")
+	}
+
+	// What was held cannot be sent: neither can anything after it.
+	boom := fmt.Errorf("boom")
+	for name, fail := range map[string]func(*holdConn, *fakeConn) error{
+		"holdWait":   func(*holdConn, *fakeConn) error { fire(); return nil },
+		"a greeting": func(h *holdConn, f *fakeConn) error { f.reads = []string{"220 hello\r\n"}; h.Read(b); return nil },
+		"CloseWrite": func(h *holdConn, _ *fakeConn) error { return h.CloseWrite() },
+		"next write": func(h *holdConn, _ *fakeConn) error { _, err := h.Write([]byte("ST / HTTP/1.1\r\n")); return err },
+	} {
+		h, f := pair()
+		h.Write([]byte("PO"))
+		f.werr = boom
+		if err := fail(h, f); name == "CloseWrite" || name == "next write" {
+			if err != boom {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+		f.werr = nil
+		if !f.closed {
+			t.Errorf("%s: not closed after the failed send", name)
+		}
+		if _, err := h.Write([]byte("ST / HTTP/1.1\r\n")); err != boom {
+			t.Errorf("%s: a later write: %v", name, err)
+		}
+		if err := h.CloseWrite(); err != boom || f.halfShut {
+			t.Errorf("%s: CloseWrite after: %v (half-closed %v)", name, err, f.halfShut)
+		}
+		same(name+": after the failed send", f.writes)
+	}
+
+	// The real timer, over TCP: what is held goes when holdWait passes.
+	defer func(w time.Duration) { holdWait = w }(holdWait)
+	holdWait = 50 * time.Millisecond
+	holdTimer = orig
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	s, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	(&holdConn{Conn: c}).Write([]byte("\x16"))
+	s.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.ReadFull(s, b[:1]); err != nil || b[0] != 0x16 {
+		t.Errorf("after holdWait, over TCP: %q %v", b[:1], err)
 	}
 }

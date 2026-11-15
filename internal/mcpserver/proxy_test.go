@@ -127,7 +127,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s: annotations %+v, want read-only, not destructive", tool.Name, a)
 		}
 	}
-	if len(names) != 22 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
+	if len(names) != 19 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {

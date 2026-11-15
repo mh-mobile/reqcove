@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -41,7 +42,16 @@ var mitmPy []byte
 var mitmLock []byte
 
 // scriptFiles are what Start writes into the state directory for mitmproxy.
-var scriptFiles = []string{"addon.py", "mitm.py", "mitm.py.lock"}
+var scriptFiles = map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock, "mitm-overrides.txt": []byte(lockOverrides)}
+
+// mitm.py's exclude-newer and override-dependencies (TestLockMeta keeps them
+// in step), for the locked mitmproxy through uvx (a --uvx wrapper): the
+// lock's tornado, not the older one mitmproxy 12.3.1 caps it at; the other
+// packages from before UVExcludeNewer, as for another spec; no hashes.
+const (
+	lockExcludeNewer = "2026-11-14T00:00:00Z"
+	lockOverrides    = "tornado>=6.6.1\n"
+)
 
 // LockedMitmSpec is the mitmproxy that mitm.py.lock pins. With another
 // --mitmproxy-spec, mitmproxy comes through uvx, its files unchecked.
@@ -55,7 +65,11 @@ func PyCommand(cfg Config, tool string) (string, []string) {
 		uv := filepath.Join(filepath.Dir(cfg.Uvx), "uv") // "uv" itself when uvx is on PATH
 		return uv, []string{"run", "--locked", "--no-project", "--python", cfg.Python, "--script", filepath.Join(cfg.Dir, "mitm.py"), tool}
 	}
-	args := []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer, "--from", cfg.MitmSpec, tool}
+	args := []string{"--python", cfg.Python, "--exclude-newer", UVExcludeNewer}
+	if cfg.MitmSpec == LockedMitmSpec { // a wrapper: the lock's tornado
+		args = append(args, "--exclude-newer-package", "tornado="+lockExcludeNewer, "--overrides", filepath.Join(cfg.Dir, "mitm-overrides.txt"))
+	}
+	args = append(args, "--from", cfg.MitmSpec, tool)
 	if tool != "python" { // mitmdump and mitmweb through the launcher too, for the SOCKS socket (mitm.py)
 		args = append(args[:len(args)-1], "python", filepath.Join(cfg.Dir, "mitm.py"), tool)
 	}
@@ -108,6 +122,7 @@ type Config struct {
 	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
 	webMaxFlows  int                           // tests: fewer flows kept in mitmweb than its default
+	trustCA      string                        // tests: the one CA mitmproxy trusts upstream, as with --upstream-ca, without an upstream proxy
 }
 
 // WebKeep is the largest body (on the wire) given to mitmweb whole (--web).
@@ -118,6 +133,9 @@ const WebKeep = 2 << 20
 const (
 	maxRestarts = 5
 	stableAfter = time.Minute
+	// drainWait bounds how long an exited mitmdump's lines, still in its
+	// socket, are waited for before its open flows are closed.
+	drainWait = 2 * time.Second
 )
 
 type Capture struct {
@@ -139,6 +157,7 @@ type Capture struct {
 	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
 	restarted bool
 	err       error
+	readers   atomic.Int64 // ingest connections still being read
 }
 
 // proc is one mitmdump process.
@@ -188,13 +207,13 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		}
 		os.Remove(sock)
 		os.Remove(filepath.Join(cfg.Dir, "socks-secret"))
-		for _, f := range scriptFiles {
+		for f := range scriptFiles {
 			os.Remove(filepath.Join(cfg.Dir, f))
 		}
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
-	for f, b := range map[string][]byte{"addon.py": addonPy, "mitm.py": mitmPy, "mitm.py.lock": mitmLock} {
+	for f, b := range scriptFiles {
 		if err := os.WriteFile(filepath.Join(cfg.Dir, f), b, 0o600); err != nil {
 			return fail(err)
 		}
@@ -280,6 +299,9 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		if cfg.UpstreamCA != "" {
 			c.args = append(c.args, "--set", "ssl_verify_upstream_trusted_ca="+cfg.UpstreamCA)
 		}
+	}
+	if cfg.trustCA != "" {
+		c.args = append(c.args, "--set", "ssl_verify_upstream_trusted_ca="+cfg.trustCA)
 	}
 	if cfg.WebPort != 0 {
 		c.args = append(c.args, "--set", "web_host=127.0.0.1", "--set", fmt.Sprintf("web_port=%d", cfg.WebPort), "--set", "web_open_browser=false")
@@ -375,6 +397,12 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 		// First: from now connections wait in the listener's queue for the next one.
 		c.setUp(false)
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) // whatever is left of its group would still accept on the port
+		// Its lines still in the socket come first: one read after
+		// mitmdumpExited would open a flow nothing closes, and count its
+		// counters twice. Its connections end at their EOF, now it is gone.
+		for deadline := time.Now().Add(drainWait); c.readers.Load() > 0 && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
 		err := fmt.Errorf("mitmdump exited: %v", p.err)
 		c.Store.mitmdumpExited(err.Error())
 		if time.Since(p.ready) >= stableAfter {
@@ -468,7 +496,7 @@ func (c *Capture) Stop() {
 	os.Remove(filepath.Join(c.cfg.Dir, "mitmdump.pid"))
 	os.Remove(filepath.Join(c.cfg.Dir, "socks-secret")) // a run's secret ends with the run
 	os.Remove(filepath.Join(c.cfg.Dir, ControlSock))
-	for _, f := range scriptFiles {
+	for f := range scriptFiles {
 		os.Remove(filepath.Join(c.cfg.Dir, f))
 	}
 	if c.WebURL != "" {
@@ -482,7 +510,9 @@ func (c *Capture) accept() {
 		if err != nil {
 			return
 		}
+		c.readers.Add(1)
 		go func() {
+			defer c.readers.Add(-1)
 			defer conn.Close()
 			r := bufio.NewReaderSize(conn, 1<<16)
 			for {

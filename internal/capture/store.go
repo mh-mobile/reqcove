@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,8 +39,10 @@ type event struct {
 	FromClient  bool        `json:"from_client"`
 	Conn        string      `json:"conn"`
 	SNI         string      `json:"sni"`
-	Server      string      `json:"server"` // pass_open: where the connection went
-	ALPN        []string    `json:"alpn"`   // pass_open: what the client offered
+	Server      string      `json:"server"`          // pass_open: where the connection went
+	ALPN        []string    `json:"alpn"`            // pass_open: what the client offered
+	Raw         bool        `json:"raw"`             // pass_open: carried as raw TCP (not read as HTTP), not a --pass-hosts host's
+	ALPNNeg     string      `json:"alpn_negotiated"` // pass_open, raw: the protocol the client got
 	Up, Down    int64       // pass_close: bytes from and to the client
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
@@ -163,7 +166,7 @@ type TLSFailure struct {
 // bytes of the body heads it holds (FIFO eviction).
 type Store struct {
 	mu            sync.Mutex
-	rulesLog      func(rules map[string]int, resolve, presets []string, problem string) // SetRulesLog
+	rulesLog      func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string) // SetRulesLog; called with s.mu let go
 	maxFlows      int
 	maxBytes      int
 	flows         map[string]*Flow
@@ -171,9 +174,10 @@ type Store struct {
 	heldBytes     int
 	hello         event
 	tlsFailures   []TLSFailure
-	passes        []*passthrough          // --pass-hosts connections, oldest first, at most maxPasses
+	passes        []*passthrough          // --pass-hosts and raw TCP connections, oldest first, at most maxPasses of each
 	passByConn    map[string]*passthrough // the open ones
-	passCount     int                     // all seen, evicted included
+	passCount     int                     // --pass-hosts connections seen, evicted included
+	rawCount      int                     // raw TCP connections seen, evicted included
 	addonDropped  [2]int64                // bodies, events
 	badLines      int64
 	maskFailed    int64 // lines masking panicked on (counted in badLines too)
@@ -225,7 +229,9 @@ func (s *Store) helloCount() int64 {
 
 // mitmdumpExited closes the flows the dead process left open and keeps its
 // counters, since the next process counts from zero.
-// ponytail: lines still buffered from the dead process can land after this; they only reopen nothing (orphans count).
+// supervise calls it once the dead process's lines are read, or after drainWait.
+// ponytail: a line read past drainWait (a child of mitmdump outside its group
+// holding the socket) still lands after this: a request in it stays open.
 func (s *Store) mitmdumpExited(why string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -259,10 +265,14 @@ func (s *Store) SetScope(allow HostRules, redact bool) {
 	s.redact.Store(redact)
 }
 
+// Redacting says whether secrets are masked (false: --no-redact).
+func (s *Store) Redacting() bool { return s.redact.Load() }
+
 // SetRulesLog has f told of each --rules-reload: the rules now in force (counts
-// by kind, and resolve's targets), and why the file did not load when it did not
-// (the rules before it then stay).
-func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, problem string)) {
+// by kind, resolve's targets, the presets and the targets of those that send
+// requests elsewhere), and why the file did not load when it did not (the rules
+// before it then stay). f is called with the store unlocked: it may call it.
+func (s *Store) SetRulesLog(f func(rules map[string]int, resolve, presets []string, targets map[string]string, problem string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rulesLog = f
@@ -332,6 +342,12 @@ func (s *Store) Apply(line []byte) {
 			e.wsHead, e.wsNote = s.wsHead(&e)
 		}
 	}
+	var after func() // a callback, called once the lock is let go (it may call the store)
+	defer func() {
+		if after != nil {
+			after()
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -359,23 +375,39 @@ func (s *Store) Apply(line []byte) {
 		if e.RulesError == "" {
 			s.rulesLoaded = time.Now()
 		}
-		if s.rulesLog != nil {
-			s.rulesLog(e.Rules, e.Resolve, e.Presets, e.RulesError)
+		if f := s.rulesLog; f != nil {
+			after = func() { f(e.Rules, e.Resolve, e.Presets, e.PresetTargets, e.RulesError) }
 		}
 		return
 	case "pass_open":
-		if !s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI) { // passed through for an allowed --pass-hosts host only: checked here too
+		switch {
+		case e.Raw && !s.allow.Match(e.SNI): // raw TCP of a host recorded as flows only: checked here too
+			return
+		case !e.Raw && (!s.allow.Allowed(e.SNI) || !s.allow.Passed(e.SNI)): // passed through for an allowed --pass-hosts host only
 			s.outOfScope++
 			return
 		}
-		p := &passthrough{conn: e.Conn, device: e.Device, host: e.SNI, server: e.Server, alpn: e.ALPN, start: e.TS}
+		p := &passthrough{conn: e.Conn, device: e.Device, host: s.mask(e.SNI), server: e.Server, alpn: e.ALPN, start: e.TS, raw: e.Raw, alpnNeg: e.ALPNNeg}
 		s.seenLocked(e.Device, e.TS)
 		s.passes = append(s.passes, p)
 		s.passByConn[e.Conn] = p
-		s.passCount++
-		if len(s.passes) > maxPasses {
-			delete(s.passByConn, s.passes[0].conn)
-			s.passes = s.passes[1:]
+		if e.Raw {
+			s.rawCount++
+		} else {
+			s.passCount++
+		}
+		kept, oldest := 0, 0
+		for i, q := range s.passes {
+			if q.raw == p.raw {
+				if kept == 0 {
+					oldest = i
+				}
+				kept++
+			}
+		}
+		if kept > maxPasses {
+			delete(s.passByConn, s.passes[oldest].conn)
+			s.passes = slices.Delete(s.passes, oldest, oldest+1)
 		}
 		return
 	case "pass_close":
@@ -398,7 +430,7 @@ func (s *Store) Apply(line []byte) {
 			msg = "not passed through (--pass-hosts did not apply to this connection): " + msg
 		}
 		s.seenLocked(e.Device, e.TS) // a client whose CA is not trusted yet has only these
-		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, host, msg, e.TS})
+		s.tlsFailures = append(s.tlsFailures, TLSFailure{e.Conn, e.Device, e.Client, s.mask(host), msg, e.TS})
 		if len(s.tlsFailures) > 1000 {
 			s.tlsFailures = s.tlsFailures[1:]
 		}
@@ -428,7 +460,7 @@ func (s *Store) Apply(line []byte) {
 	case "request":
 		f.Device, f.Client, f.Start, f.Conn = e.Device, e.Client, e.TS, e.Conn
 		s.seenLocked(e.Device, e.TS)
-		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, e.Host, e.Path, e.HTTPVersion
+		f.Method, f.URL, f.Host, f.Path, f.HTTPVersion = e.Method, e.URL, s.mask(strings.TrimSuffix(e.Host, ".")), e.Path, e.HTTPVersion // the root's dot: found by the name
 		f.ReqHeaders = e.Headers
 		if e.Note != "" {
 			f.Notes = append(f.Notes, "request headers: "+e.Note)
@@ -490,17 +522,28 @@ func (s *Store) Apply(line []byte) {
 }
 
 // maskEvent masks, in place, what an event brings that a site or an app
-// wrote: URLs, headers, a reason (free text from the site), an error.
+// wrote: URLs, headers, a reason (free text from the site), an error, what is
+// copied from them (a body's Content-Encoding, a decoder's note). A host (a
+// request's Host, an SNI) is masked where it is stored, after its scope is
+// checked as sent.
 func (s *Store) maskEvent(e *event) {
 	switch e.Ev {
 	case "request":
 		e.URL, e.Path, e.MappedURL, e.Headers = s.mask(e.URL), s.mask(e.Path), s.mask(e.MappedURL), s.maskHeaders(e.Headers)
+		e.Method, e.HTTPVersion = s.mask(e.Method), s.mask(e.HTTPVersion)
 		if e.op = gqlURLOperation(e.URL); e.op == "" {
 			e.op = gqlName(header(e.Headers, "x-apollo-operation-name")) // Apollo's, as mocks read it
 		}
 	case "response":
 		e.Reason, e.Headers = s.mask(e.Reason), s.maskHeaders(e.Headers)
-	case "error", "tls_failed":
+	case "body":
+		e.Encoding, e.Note = s.mask(e.Encoding), s.maskError(e.Note)
+	case "pass_open":
+		for i := range e.ALPN {
+			e.ALPN[i] = s.mask(e.ALPN[i])
+		}
+		e.ALPNNeg = s.mask(e.ALPNNeg)
+	case "error", "tls_failed", "pass_close":
 		e.Msg = s.maskError(e.Msg)
 	case "done":
 		e.Trailers = s.maskHeaders(e.Trailers)

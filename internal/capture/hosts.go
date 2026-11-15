@@ -132,7 +132,8 @@ func (r HostRules) Match(host string) bool {
 }
 
 // mitmAllowHosts is the value for mitmproxy's allow_hosts, which matches
-// "host:port" strings with re.search: anchored, with an optional port.
+// "host:port" strings with re.search: anchored, with an optional port and
+// the root's dot (a plain HTTP Host may end in one: Allowed takes it too).
 // mitm.it, where iPhones get the CA, is always decrypted (and never recorded).
 // nil means "decrypt everything" (All).
 func (r HostRules) mitmAllowHosts() []string {
@@ -141,7 +142,7 @@ func (r HostRules) mitmAllowHosts() []string {
 	}
 	out := []string{`^mitm\.it(:\d+)?$`}
 	for _, p := range r.Patterns {
-		out = append(out, strings.TrimSuffix(p, "$")+`(:\d+)?$`)
+		out = append(out, strings.TrimSuffix(p, "$")+`\.?(:\d+)?$`)
 	}
 	return out
 }

@@ -49,6 +49,7 @@ type DeviceInfo struct {
 	Flows        int    `json:"flows"`
 	TLSFailures  int    `json:"tls_failures"`
 	Passthroughs int    `json:"passthroughs"`         // --pass-hosts connections kept
+	RawTCP       int    `json:"raw_tcp"`              // connections kept that mitmproxy carried as raw TCP
 	FirstSeen    string `json:"first_seen,omitempty"` // its first request or connection this run (kept when its records are not)
 	LastSeen     string `json:"last_seen,omitempty"`  // newest request start
 }
@@ -83,7 +84,11 @@ func (s *Store) Devices() []DeviceInfo {
 	}
 	for _, p := range s.passes {
 		if p.device != "" {
-			get(p.device).Passthroughs++
+			if d := get(p.device); p.raw {
+				d.RawTCP++
+			} else {
+				d.Passthroughs++
+			}
 			last[p.device] = max(last[p.device], p.start)
 		}
 	}
@@ -110,6 +115,7 @@ type FlowView struct {
 	RespBodyText string `json:"response_body_head,omitempty"`
 	RespBodyEnc  string `json:"response_body_head_encoding,omitempty"`
 	WSKept       int    `json:"websocket_messages_kept,omitempty"` // list_ws_messages returns these: the socket's first 5 and its newest 100
+	Note         string `json:"note,omitempty"`                    // the MCP tools': masking is off
 }
 
 func (s *Store) Get(id string, bodies bool) (FlowView, error) {
@@ -132,7 +138,7 @@ func (s *Store) Get(id string, bodies bool) (FlowView, error) {
 
 // omittedBody is what a head that is not text says instead: nothing in it can
 // be checked for secrets, so it is not handed out while masking is on.
-const omittedBody = "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
+const omittedBody = "omitted: not text, so it cannot be checked for secrets (not returned while masking is on)"
 
 // bodyOut: the caller holds s.mu.
 func (s *Store) bodyOut(b Body, headers [][2]string) (string, string) {
@@ -204,6 +210,12 @@ func (s *Store) Stats() map[string]any {
 			newest = unixTime(t).Format("2006-01-02T15:04:05.000Z07:00")
 		}
 	}
+	passOpen := 0
+	for _, p := range s.passByConn {
+		if !p.raw {
+			passOpen++
+		}
+	}
 	truncated := 0
 	for _, f := range s.flows {
 		if f.ReqBody.Truncated || f.RespBody.Truncated {
@@ -220,12 +232,12 @@ func (s *Store) Stats() map[string]any {
 		"bad_lines": s.badLines, "masking_failed": s.maskFailed, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
 		"out_of_scope": s.outOfScope + s.earlier[2] + s.addonOOS, "all_hosts": s.allow.All, "redacting": s.redact.Load(),
 		"tls_failures":   len(s.tlsFailures),
-		"passed_through": s.passCount, "passed_through_open": len(s.passByConn),
+		"passed_through": s.passCount, "passed_through_open": passOpen,
+		"raw_tcp": s.rawCount, "raw_tcp_hosts": s.rawHostsLocked(),
 		"pass_hosts": orNone(s.allow.PassHosts), "refused_hosts": s.refusedLocked(),
 		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream, "presets": orNone(s.hello.Presets),
-		"mock_presets": orNone(s.hello.Presets), // v0.6's name for presets, removed in v1.0
 	}
 	if !s.rulesLoaded.IsZero() {
 		out["rules_loaded"] = s.rulesLoaded.Format("2006-01-02T15:04:05.000Z07:00") // an agent that saved the file sees whether it was taken
@@ -260,8 +272,6 @@ func isText(b []byte) bool {
 	return utf8.Valid(b) && !bytes.Contains(b, []byte{0})
 }
 
-// PresetTargets are the map_remote and resolve presets' targets, by name, for
-// run's terminal (not capture_stats: a remote agent reads that).
 // RulesLoaded is when the --rules file was last taken (zero: never).
 func (s *Store) RulesLoaded() time.Time {
 	s.mu.Lock()
@@ -269,6 +279,9 @@ func (s *Store) RulesLoaded() time.Time {
 	return s.rulesLoaded
 }
 
+// PresetTargets are the map_remote and resolve presets' targets, by name, for
+// run's terminal, not capture_stats (a remote agent reads that; --mcp-http's
+// server leaves resolve and upstream out of it: mcpserver.remoteStats).
 func (s *Store) PresetTargets() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

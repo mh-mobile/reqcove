@@ -93,7 +93,7 @@ func (s *Store) wsHead(e *event) (head, note string) {
 		text = strings.ReplaceAll(text, "\x1e", "\n")
 	}
 	if !strictText([]byte(text)) {
-		return "", "omitted: not text, so it cannot be checked for secrets (reqcove run --no-redact returns it)"
+		return "", "omitted: not text, so it cannot be checked for secrets (not returned while masking is on)"
 	}
 	return maskWSMessage(string(t), e.FromClient), ""
 }
@@ -278,6 +278,7 @@ type WSPage struct {
 	Total        int      `json:"total"` // messages on the socket so far, kept or not
 	Open         bool     `json:"open"`
 	Close        *WSClose `json:"close,omitempty"`
+	Note         string   `json:"note,omitempty"` // the MCP tools': masking is off
 }
 
 // WSQuery selects messages for WSList.

@@ -15,7 +15,9 @@ import (
 // content type: a JSON body may come labelled as a form), the values of such
 // form fields (when the body is, or looks like, a form), and anywhere,
 // values whose shape gives them away (maskTokens) and secret parameters of
-// URLs in it (maskURLs). An XML body is masked by names first (maskXML).
+// URLs in it (maskURLs). An XML body is masked by names first (maskXML),
+// an HTML page by its tags' names (maskHTML), and a page's or a script's
+// object fields with unquoted names (maskScript).
 // The head may be cut anywhere, so it is scanned as
 // text, not parsed: a value cut before its closing quote is masked to the end.
 // Heads that are not text are left alone here and never handed out while
@@ -27,6 +29,7 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 		return head
 	}
 	s := string(head)
+	html := isHTML(contentType, s)
 	if isXML(contentType, s) { // by names first; the text masking below still applies
 		s = maskXML(s, request)
 	}
@@ -34,6 +37,14 @@ func maskBody(head []byte, contentType string, request bool) []byte {
 	// one); those in JSON strings are found by maskJSON.
 	s, isDoc := maskGraphQLDoc(s, request)
 	s = maskJSON(s, request, 0)
+	// After JSON's: a tag's masked value can take a quote JSON's reading
+	// keys on ({"html": "<b data-token=x\"", "password": …} as text/html).
+	if html {
+		s = maskHTML(maskTokensHTML(s)) // shapes first: masking a tag's unquoted value (to a space) would take "Bearer" from its token
+	}
+	if html || isScript(contentType) {
+		s = maskScript(s, request)
+	}
 	if strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded") || looksLikeForm(s) {
 		s = maskForm(s, request)
 	}
@@ -95,7 +106,7 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteString(s[last:keyStart])
 				b.WriteString(m)
 				last = keyEnd + 1
-			} else if depth <= 1 && strings.Contains(lit, `\u`) || depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) {
+			} else if escaped(lit, depth) {
 				if m, ok := maskDecodedString(lit, loneCode, depth); ok {
 					b.WriteString(s[last:keyStart])
 					b.WriteString(m)
@@ -162,10 +173,10 @@ func maskJSON(s string, loneCode bool, depth int) string {
 				b.WriteByte('"')
 			}
 			last = valEnd + 1
-		case valClosed && (depth == 0 && (strings.Contains(s[j:valEnd], `\"`) || strings.Contains(s[j:valEnd], `\n`)) || depth <= 1 && strings.Contains(s[j:valEnd], `\u`)):
+		case valClosed && escaped(s[j:valEnd], depth):
 			// A string with escapes is looked at decoded, as diff_flows and the
 			// agent read it: JSON inside it (one level), and shapes and URLs that
-			// \u escapes can hide (\u0073k-… is sk-…), also with quotes around.
+			// escapes can hide (\u0073k-… is sk-…, Basic\t… is Basic and a tab).
 			if m, ok := maskDecodedString(s[j:valEnd+1], loneCode, depth); ok {
 				b.WriteString(s[last:j])
 				b.WriteString(m)
@@ -280,13 +291,13 @@ func containerEnd(s string, open int) (int, bool) {
 // closed one is read decoded: JSON in it (at depth 0), and shapes and URLs
 // escapes can hide. Only escaped ones are looked at, as closed ones.
 func cutSecret(lit string, loneCode bool, depth int) bool {
-	if !(depth == 0 && (strings.Contains(lit, `\"`) || strings.Contains(lit, `\n`)) || depth <= 1 && strings.Contains(lit, `\u`)) {
+	if !escaped(lit, depth) {
 		return false
 	}
 	var v string
 	if json.Unmarshal([]byte(trimCutEscape(lit)+`"`), &v) != nil {
 		// Not JSON (a page's script, raw newlines): undo the common escapes.
-		v = strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(lit[1:])
+		v = cutEscapes.Replace(uEscapeRE.ReplaceAllStringFunc(lit[1:], undoUEscape))
 	}
 	m := v
 	if depth == 0 {
@@ -297,6 +308,23 @@ func cutSecret(lit string, loneCode bool, depth int) bool {
 	}
 	return maskTokens(maskURLs(m)) != v
 }
+
+// escaped: a string literal at this depth is read decoded too (every escape
+// can hide a shape: \t, \/, \u…), at the top level and in JSON in a string.
+func escaped(lit string, depth int) bool { return depth <= 1 && strings.Contains(lit, `\`) }
+
+// uEscapeRE: a \u escape, a surrogate pair as one.
+var uEscapeRE = regexp.MustCompile(`\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}`)
+
+func undoUEscape(e string) string {
+	var r string
+	if json.Unmarshal([]byte(`"`+e+`"`), &r) != nil {
+		return e
+	}
+	return r
+}
+
+var cutEscapes = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\/`, `/`, `\t`, "\t", `\r`, "\r", `\n`, "\n", `\b`, "\b", `\f`, "\f")
 
 // trimCutEscape drops an escape the head's end cut (a lone \, or \u with
 // fewer than four digits) from a cut string literal.
@@ -334,9 +362,10 @@ func jsonKey(raw string) string {
 	return raw
 }
 
-// looksLikeForm: no JSON, XML or HTML, one line, and name=value at the start.
+// looksLikeForm: no JSON, XML or HTML, one line (a newline may end it), and
+// name=value at the start.
 func looksLikeForm(s string) bool {
-	t := strings.TrimLeft(s, " \t\r\n")
+	t := strings.TrimSpace(s)
 	if t == "" || strings.ContainsAny(t[:1], "{[<\"") {
 		return false
 	}
@@ -409,22 +438,31 @@ func b64JSONSecret(v string) bool {
 	return maskJSON(d, true, 2) != d || maskTokens(d) != d
 }
 
-// A "name: value" line (STOMP's passcode:, YAML, headers written into a body)
-// whose name is secret: the rest of the line is masked.
-var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*:[ \t]*)([^\r\n]+)`)
+// A "name: value" or "name=value" line (STOMP's passcode:, YAML, headers
+// written into a body, a .env file's lines, export too) whose name is
+// secret: the rest of the line is masked.
+var lineFieldRE = regexp.MustCompile(`(?m)^([ \t]*(?:export[ \t]+)?)([A-Za-z][A-Za-z0-9_.-]{0,63})([ \t]*[:=][ \t]*)([^\r\n]+)`)
+
+// maskedValueRE: a value masking already wrote, whole (a marker, quoted or
+// not, or a scheme and a marker); a value that only starts with one is masked.
+var maskedValueRE = regexp.MustCompile(`^(?:"\[redacted\]"|\[redacted\]|REDACTED|[A-Za-z][A-Za-z0-9-]{0,31} \[redacted\])[ \t,;]*$`)
 
 func maskLines(s string, loneCode bool) string {
-	if !strings.Contains(s, ":") {
+	if !strings.ContainsAny(s, ":=") {
 		return s
 	}
 	return lineFieldRE.ReplaceAllStringFunc(s, func(m string) string {
 		sub := lineFieldRE.FindStringSubmatch(m)
-		v := sub[4]
-		if !secretKind(sub[2], loneCode) || strings.HasPrefix(v, "[redacted]") || strings.HasPrefix(v, `"[redacted]`) || strings.HasPrefix(v, "REDACTED") {
+		v, done := sub[4], sub[4]
+		if strings.Contains(sub[3], "=") {
+			done, _, _ = strings.Cut(v, "&") // a form's field (password=[redacted]&user=bob): its value ends at &
+		}
+		if !secretKind(sub[2], loneCode) || maskedValueRE.MatchString(done) {
 			return m
 		}
-		if maskTokens(v) != v {
-			return m // its shape is masked anyway, and "Bearer [redacted]" keeps the scheme
+		// The whole value; "Bearer [redacted]" keeps the scheme when the value is that credential alone.
+		if c := schemeRE.FindStringSubmatchIndex(v); c != nil && c[0] == 0 && c[1] == len(strings.TrimRight(v, " \t")) && credentialLike(v[c[6]:c[7]]) {
+			return sub[1] + sub[2] + sub[3] + v[c[2]:c[5]] + "[redacted]"
 		}
 		return sub[1] + sub[2] + sub[3] + "[redacted]"
 	})
@@ -515,6 +553,35 @@ func maskTokens(s string) string {
 	return maskShapes(s)
 }
 
+// maskTokensHTML is maskTokens before maskHTML. A scheme's "credential" that
+// holds '=' before its padding is the next unquoted attribute (class=token
+// name=password): masked, it would take the name maskHTML reads. It is left,
+// and the search goes on from it, so that attribute's own value (class=token
+// value=Bearer x) is still found. The last maskTokens masks what is left.
+func maskTokensHTML(s string) string {
+	if !containsFold(s, "bearer") && !containsFold(s, "basic") && !containsFold(s, "token") {
+		return maskShapes(s)
+	}
+	var b strings.Builder
+	i := 0
+	for m := schemeRE.FindStringSubmatchIndex(s); m != nil; m = schemeRE.FindStringSubmatchIndex(s[i:]) {
+		cred, at := s[i+m[6]:i+m[7]], i+m[6]
+		switch {
+		case strings.Contains(strings.TrimRight(cred, "="), "="):
+			b.WriteString(s[i:at])
+			i = at // past the scheme at least: the loop ends
+		case credentialLike(cred):
+			b.WriteString(s[i:at] + "[redacted]")
+			i += m[7]
+		default:
+			b.WriteString(s[i : i+m[1]])
+			i += m[1]
+		}
+	}
+	b.WriteString(s[i:])
+	return maskShapes(b.String())
+}
+
 // maskShapes masks the tokenShapes, and the matches of --mask-values.
 func maskShapes(s string) string {
 	s = maskUserValues(s)
@@ -569,7 +636,7 @@ func (s *Store) maskHeaders(h [][2]string) [][2]string {
 		case name == "cookie":
 			out[i][1] = maskCookies(kv[1], "; ", false)
 		case name == "set-cookie":
-			out[i][1] = maskCookies(kv[1], ";", true)
+			out[i][1] = maskSetCookie(kv[1])
 		case name == "sec-websocket-protocol":
 			out[i][1] = maskTokens(maskWSProtocols(kv[1]))
 		case strings.HasSuffix(name, "-authenticate"):
@@ -623,7 +690,10 @@ func secretKind(name string, loneCode bool) bool {
 		everyday = everyday || everydayWords[w]
 	}
 	for _, w := range words {
-		if !shortSecretWords[w] {
+		if w == "auth0" { // the Auth0 service's name (Auth0-Client, auth0Client), not auth
+			continue
+		}
+		if w = strings.TrimRight(w, "0123456789"); !shortSecretWords[w] { // key1, pin2: the word with a number after it
 			continue
 		}
 		switch {
@@ -640,8 +710,11 @@ var strongSecretParts = []string{
 	"token", "secret", "password", "passwd", "passphrase", "passcode", "credential",
 	"signature", "session", "sessid", "jwt", "apikey", "privatekey", "authorization",
 	"authentication", "csrf", "xsrf",
-	"ticket", // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
-	"dpop",   // a DPoP proof, a JWT already, also when not shaped like one
+	"ticket",              // a WebSocket's or a login's (wsTicket, ticket=): one use lets in
+	"dpop",                // a DPoP proof, a JWT already, also when not shaped like one
+	"hmac",                // a request's signature (X-Hmac, hmacSha256)
+	"verifier",            // OAuth 1's oauth_verifier, PKCE's code_verifier
+	"privkey", "mnemonic", // a private key; a wallet's recovery phrase
 }
 
 var shortSecretWords = map[string]bool{
@@ -654,7 +727,7 @@ var everydayWords = map[string]bool{
 	"error": true, "status": true, "reason": true, "response": true, "http": true, "result": true,
 	"country": true, "currency": true, "lang": true, "language": true, "locale": true, "region": true,
 	"zip": true, "postal": true, "area": true, "state": true, "iso": true, "sort": true, "order": true,
-	"primary": true, "foreign": true,
+	"foreign": true, // primary is not: primaryKey is a key
 }
 
 // notSecretNames look secret but carry what debugging needs (letters and digits only).
@@ -708,11 +781,37 @@ func maskCookies(v, sep string, oneCookie bool) string {
 		}
 		if name, _, ok := strings.Cut(p, "="); ok {
 			parts[i] = name + "=[redacted]"
-		} else if i == 0 {
-			parts[i] = "[redacted]" // a value without a name
+		} else if strings.TrimSpace(p) != "" {
+			parts[i] = "[redacted]" // a value without a name, first or not
 		}
 	}
 	return strings.Join(parts, sep)
+}
+
+// A comma that starts another cookie in a Set-Cookie line joining several (a
+// server can send one line for many): a name and = follow. A date's comma
+// (Expires=Wed, 21 Oct …) is followed by a word and a space.
+var cookieJoinRE = regexp.MustCompile(`,[ \t]*[^=;, \t]+=`)
+
+// maskSetCookie masks each cookie of a Set-Cookie value, its attributes kept.
+// Only a comma among a cookie's attributes starts another: one before its
+// first ; may be its value's (v1,QUJD…==), so cookies joined with no
+// attributes are masked as one value.
+func maskSetCookie(v string) string {
+	var b strings.Builder
+	last, semi := 0, strings.IndexByte(v, ';')
+	for _, m := range cookieJoinRE.FindAllStringIndex(v, -1) {
+		if semi < 0 || semi > m[0] {
+			continue
+		}
+		b.WriteString(maskCookies(v[last:m[0]], ";", true) + ",")
+		last = m[0] + 1
+		if semi = strings.IndexByte(v[last:], ';'); semi >= 0 {
+			semi += last
+		}
+	}
+	b.WriteString(maskCookies(v[last:], ";", true))
+	return b.String()
 }
 
 // A name=value after ?, &, ; or # (OAuth's implicit flow puts the token in the

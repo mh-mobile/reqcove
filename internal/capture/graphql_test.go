@@ -329,7 +329,9 @@ func FuzzGraphQLGrammar(f *testing.F) {
 			if cut > 0 && cut < len(head) {
 				head = head[:cut]
 			}
+			done := fuzzSlow(t, len(head))
 			got := string(maskBody([]byte(head), "application/json", c.request))
+			done()
 			if l := leak(got, fuzzSecret) + leak(got, gqlSecretNumber); l != "" {
 				t.Fatalf("%q survived in\n%s\n -> %s", l, head, got)
 			}

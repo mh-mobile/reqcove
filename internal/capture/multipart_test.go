@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,11 +128,33 @@ func TestMultipartReview(t *testing.T) {
 		mpBody("Content-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nbefore\r\n--XyZabc\r\n\r\n" + S),
 		mpBody("Content-Disposition: form-data; name=\"x\"\r\nCookie: sid=" + S + "\r\n\r\nplain"),
 		mpBody("Content-Disposition: form-data; name=\"x\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(`{"password":"`+S+`"}`))),
+		// v0.8.0 review: folded headers are read unfolded; a part naming no field or file shows no content
+		mpBody("Content-Disposition: form-data;\r\n name=\"password\"\r\n\r\n" + S),
+		mpBody("Content-Disposition: form-data; name=\"x\"\r\nCookie: a=1\r\n ; b=" + S + "\r\n\r\nplain"),
+		mpBody("Content-Disposition: form-data\r\n\r\n" + S),
+		mpBody(" Content-Disposition: form-data; name=\"password\"\r\n\r\n" + S),
 	} {
 		got := string(renderMultipart([]byte(body), "XyZ", true, false))
 		if leak(got, S) != "" || strings.Contains(got, base64.StdEncoding.EncodeToString([]byte(`{"password":"`))) {
 			t.Errorf("%q\n->\n%s", body, got)
 		}
+	}
+	// #85's re-check: an encoding that is not a known one is not repeated in the note.
+	if got := string(renderMultipart([]byte(mpBody("Content-Disposition: form-data; name=\"note\"\r\nContent-Transfer-Encoding: sk-aaaaaaaaaaaaaaaaaaaa\r\n\r\nabcde")), "XyZ", true, false)); strings.Contains(got, "aaaaaaaaaaaaaaaaaaaa") || !strings.Contains(got, "[encoded: 5 bytes]") {
+		t.Errorf("encoding: %q", got)
+	}
+	// Many short folds are joined once: linear, not quadratic (counted in bytes allocated, which the race detector does not change much).
+	folds := []byte(mpBody("Content-Disposition: form-data; name=\"x\"" + strings.Repeat("\r\n a", 20000) + "\r\n\r\nplain"))
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	renderMultipart(folds, "XyZ", true, false)
+	runtime.ReadMemStats(&after)
+	if n := after.TotalAlloc - before.TotalAlloc; n > 32<<20 {
+		t.Errorf("20,000 folds (%d bytes) allocated %d MB", len(folds), n>>20)
+	}
+	// Unfolded, a field's name reads and its content shows.
+	if got := string(renderMultipart([]byte(mpBody("Content-Disposition: form-data;\r\n\tname=\"note\"\r\n\r\nhello")), "XyZ", true, false)); !strings.Contains(got, "name=\"note\"\r\n\r\nhello") {
+		t.Errorf("folded disposition: %q", got)
 	}
 	// Two uploads whose files differ at the same size are never the same.
 	s := NewStore(10, 1<<20)

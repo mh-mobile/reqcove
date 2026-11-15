@@ -31,6 +31,8 @@ func TestRunLANRefuses(t *testing.T) {
 		{[]string{"--hostname", "x"}, "--hostname does not go with --lan"},
 		{[]string{"--dns", "1.1.1.1"}, "--dns does not go with --lan"},
 		{[]string{"--proxy-port", "0"}, "--lan needs a --proxy-port"},
+		{[]string{"--proxy-port", "65616"}, "--proxy-port 65616: a port is 1 to 65535"}, // not 80 (65616 as 16 bits)
+		{[]string{"--proxy-port", "-1"}, "--proxy-port -1: a port is 1 to 65535"},
 	} {
 		err := run(context.Background(), append(append([]string{}, base...), c.args...))
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -40,6 +42,10 @@ func TestRunLANRefuses(t *testing.T) {
 	err := run(context.Background(), []string{"--device", "phone", "--lan-interface", "en0", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
 	if err == nil || !strings.Contains(err.Error(), "--lan-interface goes with --lan") {
 		t.Errorf("--lan-interface alone: %v", err)
+	}
+	err = run(context.Background(), []string{"--device", "phone", "--allow-hosts", "api.example.com", "--proxy-port", "70000", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"})
+	if err == nil || !strings.Contains(err.Error(), "--proxy-port 70000: a port is 1 to 65535") {
+		t.Errorf("the Remote Proxy on 70000: %v", err)
 	}
 	// --web and --local-proxy go with it: run goes on to look for uv.
 	err = run(context.Background(), append(append([]string{}, base...), "--web", "--lan-interface", loopback(t)))
@@ -247,6 +253,10 @@ func TestStatusLAN(t *testing.T) {
 	steps = strings.Join(statusOut(s, ready, allow, capture.CA{}, devs).NextSteps, "\n")
 	if !strings.Contains(steps, "not allowed: 192.168.1.40") || !strings.Contains(steps, "no traffic from lan:192.168.1.23 yet") {
 		t.Errorf("steps:\n%s", steps)
+	}
+	// One with only raw TCP connections has traffic.
+	if steps := strings.Join(statusOut(s, ready, allow, capture.CA{}, []capture.DeviceInfo{{ID: "lan:192.168.1.23", Carried: true, RawTCP: 1}}).NextSteps, "\n"); strings.Contains(steps, "no traffic") {
+		t.Errorf("raw TCP only:\n%s", steps)
 	}
 	s.LAN.Listen, s.LAN.Stopped = "", "en0 is on another network now"
 	if steps := strings.Join(statusOut(s, ready, allow, capture.CA{}, devs).NextSteps, "\n"); !strings.Contains(steps, "not listening: en0 is on another network now") {

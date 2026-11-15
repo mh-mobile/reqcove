@@ -24,7 +24,7 @@ func TestMaskBody(t *testing.T) {
 		{"form", "application/x-www-form-urlencoded; charset=UTF-8", `grant_type=authorization_code&code=S3CRET-6&client_secret=S3CRET-7&redirect_uri=x`,
 			[]string{"S3CRET-6", "S3CRET-7"}, []string{"grant_type=authorization_code", "redirect_uri=x"}},
 		{"shapes anywhere in text", "text/plain",
-			"auth: Bearer S3CRET8abcdefgh jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRET9sigsig key AKIAS3CRETS3CRETABCD gh ghp_S3CRET0123456789012345678901234567 sk-S3CRETaaaaaaaaaaaaaaaaaa",
+			"auth: Bearer S3CRET8abcdefgh\njwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRET9sigsig key AKIAS3CRETS3CRETABCD gh ghp_S3CRET0123456789012345678901234567 sk-S3CRETaaaaaaaaaaaaaaaaaa",
 			[]string{"S3CRET8", "S3CRET9", "AKIAS3CRET", "ghp_S3CRET", "sk-S3CRET"}, []string{"auth: Bearer [redacted]"}},
 		{"run-together and acronym names", "application/json", `{"accesstoken":"S3CRET-10","APIToken":"S3CRET-11","verification_code":"S3CRET-12","token_type":"Bearer","error_code":"E1"}`,
 			[]string{"S3CRET-10", "S3CRET-11", "S3CRET-12"}, []string{`"token_type":"Bearer"`, `"error_code":"E1"`}},
@@ -185,6 +185,85 @@ func TestSecondReviewLeaks(t *testing.T) {
 	}
 }
 
+// The v0.8.0 review: escapes that hide a credential's shape (\t, \r, \/),
+// in a cut string too, and a secret-named line with a token in its value.
+func TestV080ReviewBodies(t *testing.T) {
+	suffix := `","note":"Basic\tdXNlcjpwYXNzd29yZA==`
+	at64K := `{"pad":"` + strings.Repeat("a", 64<<10-len(`{"pad":"`)-len(suffix)) + suffix
+	for in, secrets := range map[string][]string{
+		`{"note":"Basic\tdXNlcjpwYXNzd29yZA=="}`:           {"dXNlcjpwYXNzd29yZA"},
+		`{"note":"Basic YWJj\/ZGVmZ2hpamtsbW5vcA=="}`:      {"ZGVmZ2hpamtsbW5vcA"},
+		`["Basic\rdXNlcjpwYXNzd29yZA=="]`:                  {"dXNlcjpwYXNzd29yZA"},
+		`{"a":1,"note":"Basic\tdXNlcjpwYXNzd29yZA==`:       {"dXNlcjpwYXNzd29yZA"},
+		`{"a":1,"note":"\x Basic\tdXNlcjpwYXNzd29yZA==`:    {"dXNlcjpwYXNzd29yZA"}, // cut, and not JSON
+		`{"d":"{\"n\":\"Basic\\tdXNlcjpwYXNzd29yZA==\"}"}`: {"dXNlcjpwYXNzd29yZA"},
+		at64K: {"dXNlcjpwYXNzd29yZA"},
+		"password: plainSecret123 Bearer OtherToken456": {"plainSecret123", "OtherToken456"},
+		// #85's re-check: a value that only starts like a marker, and a \u escape in a cut string that is not JSON
+		"password: [redacted] plainSecret123":                   {"plainSecret123"},
+		`password: "[redacted]" plainSecret123`:                 {"plainSecret123"},
+		"password: REDACTED plainSecret123":                     {"plainSecret123"},
+		"password: REDACTED_plainSecret123":                     {"plainSecret123"},
+		`{"note":"\x \u0073k-aaaaaaaaaaaaaaaaaaaa`:              {"aaaaaaaaaaaaaaaaaaaa"},
+		`{"note":"\x \ud83d\ude00 \u0073k-aaaaaaaaaaaaaaaaaaaa`: {"aaaaaaaaaaaaaaaaaaaa"},
+	} {
+		got := string(maskBody([]byte(in), "", true))
+		for _, s := range secrets {
+			if leak(got, s) != "" {
+				t.Errorf("%s left in %.200q", s, got[max(0, len(got)-200):])
+			}
+		}
+	}
+	// What the line keeps: its name, and a scheme only when the value is that credential alone.
+	for in, want := range map[string]string{
+		"password: plainSecret123 Bearer OtherToken456": "password: [redacted]",
+		"authorization: Bearer OtherToken456  ":         "authorization: Bearer [redacted]",
+		"auth: Basic dXNlcjpwYXNzd29yZA== extra":        "auth: [redacted]",
+		"password: [redacted]":                          "password: [redacted]", // masked already: as it is
+		`password: "[redacted]",`:                       `password: "[redacted]",`,
+		"authorization: Bearer [redacted]":              "authorization: Bearer [redacted]",
+	} {
+		if got := string(maskBody([]byte(in), "text/plain", true)); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+	// Escaped strings with nothing to mask are left as they were written.
+	for _, in := range []string{`{"url":"https:\/\/h.example\/a\/b?x=1","t":"a\tb"}`, `["line\r\nnext"]`} {
+		if got := string(maskBody([]byte(in), "application/json", true)); got != in {
+			t.Errorf("%q -> %q", in, got)
+		}
+	}
+}
+
+// v1.0's final review: an unquoted HTML value with a scheme and a token
+// (masked whole in v0.8.0, which had no HTML masking) keeps no token.
+func TestHTMLUnquotedScheme(t *testing.T) {
+	for _, in := range []string{
+		`<input name=password value=Bearer PlaceholderBearer9876>`,
+		`<b data-token=Bearer PlaceholderBearer9876>x</b>`,
+		`<input value=Bearer PlaceholderBearer9876`,
+		// v1.0's last reviews: an unquoted value ending in a scheme took the next
+		// attribute as its credential (#99's order), and with it the name.
+		`<input class=csrf-token name=password value=PlaceholderBearer9876>`,
+		`<input class=js-token name=authenticity_token value=PlaceholderBearer9876>`,
+		`<input class=basic name=password value=PlaceholderBearer9876>`,
+		`<input class=token name=password value=PlaceholderBearer9876>`,
+		`<input placeholder=Token name=api_key value=PlaceholderBearer9876>`,
+		`<meta property=bearer name=csrf-token content=PlaceholderBearer9876>`,
+		`<input name=password class=token value=Bearer PlaceholderBearer9876>`, // the skipped match's end is past "Bearer"
+	} {
+		for _, ct := range []string{"text/html", ""} {
+			body := in
+			if ct == "" {
+				body = "<!doctype html>" + in
+			}
+			if got := string(maskBody([]byte(body), ct, false)); strings.Contains(got, "PlaceholderBearer9876") {
+				t.Errorf("%q (%q): %s", in, ct, got)
+			}
+		}
+	}
+}
+
 // A crafted value nested many times over cannot make masking slow.
 func TestMaskURLsDeepNestingIsBounded(t *testing.T) {
 	v := "https://h/x" + strings.Repeat("?a=", 8192) + "end"
@@ -335,5 +414,199 @@ func TestFourthReview(t *testing.T) {
 	st := NewStore(10, 1<<20)
 	if got := st.maskError("Invalid header line: b'Set-Cookie sid=S3CRET; " + strings.Repeat("x", 1000)); strings.Contains(got, "S3CRET") || !strings.HasPrefix(got, "Invalid header line: ") {
 		t.Errorf("cut b'…': %.120q", got)
+	}
+}
+
+// TestMaskHTML: an HTML page's secrets live in its tags (an OAuth form_post's
+// hidden fields, CSRF tokens in forms and meta tags) and its scripts' objects;
+// the text masking alone missed them all.
+func TestMaskHTML(t *testing.T) {
+	for _, c := range []struct {
+		name, ctype, in string
+		gone, keep      []string
+	}{
+		{"OAuth form_post", "text/html; charset=utf-8",
+			`<form method="post" action="https://app.example/cb"><input type="hidden" name="code" value="S3CRET-1"/><input type="hidden" name="state" value="st-42"><input type=hidden name=id_token value=S3CRET-2><input name='access_token' value='S3CRET-3'></form>`,
+			[]string{"S3CRET-1", "S3CRET-2", "S3CRET-3"}, []string{`name="state" value="st-42"`, `name="code" value="[redacted]"`, `action="https://app.example/cb"`}},
+		{"CSRF tokens", "text/html",
+			`<meta name="csrf-token" content="S3CRET-4"><input type="hidden" name="authenticity_token" value="S3CRET-5"><input name="__RequestVerificationToken" type="hidden" value="S3CRET-6"><meta property="og:title" content="Shop">`,
+			[]string{"S3CRET-4", "S3CRET-5", "S3CRET-6"}, []string{`content="Shop"`}},
+		{"value before the name, id, own name", "text/html",
+			`<input value="S3CRET-7" type="hidden" name="csrf"><input id="session_key" value="S3CRET-8"><div data-auth-token="S3CRET-9" class="x"></div><input name="email" value="a@example.com">`,
+			[]string{"S3CRET-7", "S3CRET-8", "S3CRET-9"}, []string{`value="a@example.com"`, `class="x"`}},
+		{"a tag cut before its name", "text/html", `<p>hi</p><input type="hidden" value="S3CRET-10" na`,
+			[]string{"S3CRET-10"}, []string{"<p>hi</p>"}},
+		{"a value cut", "text/html", `<input type="hidden" name="code" value="S3CRET-11ab`, []string{"S3CRET-11"}, nil},
+		{"by its start, no type", "", `<!DOCTYPE html><html><input name="code" value="S3CRET-12"></html>`, []string{"S3CRET-12"}, nil},
+		{"a script's object", "text/html",
+			`<script>window.__INIT__ = {user: "u", accessToken: "S3CRET-13", refresh_token: 'S3CRET-14', pin: 1234, code: 404, esc: "a\"b"};</script>`,
+			[]string{"S3CRET-13", "S3CRET-14", "1234"}, []string{`user: "u"`, `code: 404`, `accessToken: "[redacted]"`, `refresh_token: '[redacted]'`, `esc: "a\"b"`}},
+		{"a script's string cut", "application/javascript", `var c = {idToken: "S3CRET-15`, []string{"S3CRET-15"}, nil},
+		{"new names", "application/json", `{"oauth_verifier":"S3CRET-16","hmac":"S3CRET-17","privkey":"S3CRET-18","mnemonic":"S3CRET-19","x":"y"}`,
+			[]string{"S3CRET-16", "S3CRET-17", "S3CRET-18", "S3CRET-19"}, []string{`"x":"y"`}},
+		{"text stays", "text/html", `<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`, nil,
+			[]string{`<p class="token-list">a < b and c > d, value = 3</p><img alt="x" src="/a.png">`}},
+		// Comments and raw text are regions: a quote in them never hides the markup after.
+		{"a script's quote before a field", "text/html",
+			`<script>var s="<a x='";</script><input type="hidden" name="csrf" value="S3CRET-20"><p>after</p>`,
+			[]string{"S3CRET-20"}, []string{`<script>var s="<a x='";</script>`, "<p>after</p>"}},
+		{"a comment's quote before a field", "text/html",
+			`<!-- it's <a x=' --><input name="authenticity_token" value="S3CRET-21">`, []string{"S3CRET-21"}, nil},
+		{"a style's", "text/html", `<style>/* <a x=' */</style><meta name="csrf-token" content="S3CRET-22">`, []string{"S3CRET-22"}, nil},
+		{"end tags in any case, comments' short forms", "text/html",
+			`<SCRIPT>var s="<a x='";</SCRIPT ><!--><input name="csrf" value="S3CRET-23"><!-- <b c=' --!><input name="csrf" value="S3CRET-24"><!---><b c='x'><input name="csrf" value="S3CRET-25">`,
+			[]string{"S3CRET-23", "S3CRET-24", "S3CRET-25"}, nil},
+		{"tags in a comment, and in a script's strings", "text/html",
+			`<!-- <input type="hidden" name="csrf" value="S3CRET-26"> --><script>$("form").append('<input type="hidden" name="authenticity_token" value="S3CRET-27">')</script>`,
+			[]string{"S3CRET-26", "S3CRET-27"}, nil},
+		{"a secret textarea's text", "text/html", `<textarea name="token">S3CRET-28</textarea><p>after</p><textarea name="note">kept</textarea>`,
+			[]string{"S3CRET-28"}, []string{"<p>after</p>", ">kept</textarea>"}},
+		{"a secret textarea cut", "text/html", `<textarea id="csrf_token">S3CRET-29ab`, []string{"S3CRET-29"}, nil},
+		{"a script's code stays", "text/html", `<script>if (a<b && c>d) { s = "it's"; el.value = v; }</script>`, nil,
+			[]string{`<script>if (a<b && c>d) { s = "it's"; el.value = v; }</script>`}},
+		// Scripts: comments around the key, continued strings, template literals.
+		{"a script's comments", "application/javascript",
+			"var c = {accessToken: /* c */ 'S3CRET-30', /* d */ idToken // e\n : \"S3CRET-31\", note: /* f */ \"kept\"}",
+			[]string{"S3CRET-30", "S3CRET-31"}, []string{`note: /* f */ "kept"`}},
+		{"a script's continued strings", "text/html",
+			"<script>var c = {refreshToken: \"abc\\\nS3CRET-32\", session: 'a\\\r\nS3CRET-33', user: \"u\"}</script>",
+			[]string{"S3CRET-32", "S3CRET-33"}, []string{`user: "u"`}},
+		{"a script's template literals", "application/javascript",
+			"var c = {apiKey: `S3CRET-34${x}`, password: `a\nS3CRET-35`, cut: 1, secret: `S3CRET-36",
+			[]string{"S3CRET-34", "S3CRET-35", "S3CRET-36"}, []string{"cut: 1"}},
+	} {
+		got := string(maskBody([]byte(c.in), c.ctype, false))
+		for _, g := range c.gone {
+			if strings.Contains(got, g) {
+				t.Errorf("%s: %q survived: %s", c.name, g, got)
+			}
+		}
+		for _, k := range c.keep {
+			if !strings.Contains(got, k) {
+				t.Errorf("%s: %q was lost: %s", c.name, k, got)
+			}
+		}
+	}
+}
+
+// The v0.8.0 review (Opus): a nameless cookie after the first, name=value
+// lines, key with a number or after "primary", cookies joined in one Set-Cookie.
+func TestV080OpusReview(t *testing.T) {
+	st := NewStore(10, 1<<20)
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.S3CRETsig0"
+	for in, want := range map[[2]string]string{
+		{"Cookie", "theme=dark; S3CRETnameless1; lang=ja; " + jwt}: "theme=[redacted]; [redacted]; lang=[redacted]; [redacted]",
+		// one header line joining cookies (some servers send it): each is masked, a date's comma is not a cookie's
+		{"Set-Cookie", "sid=S3CRET2; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, auth=S3CRET3; HttpOnly,theme=dark"}: "sid=[redacted]; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, auth=[redacted]; HttpOnly,theme=[redacted]",
+		{"Set-Cookie", "sid=S3CRET4; Expires=Wednesday, 21-Oct-26 07:28:00 GMT; Path=/"}:                                "sid=[redacted]; Expires=Wednesday, 21-Oct-26 07:28:00 GMT; Path=/",
+	} {
+		if got := st.maskHeaders([][2]string{in})[0][1]; got != want {
+			t.Errorf("%s: %q, want %q", in[0], got, want)
+		}
+	}
+	if got := string(maskPart([]byte("\r\nContent-Disposition: form-data; name=\"x\"\r\nCookie: a=1; S3CRETnameless5\r\n\r\nplain"), true, false)); strings.Contains(got, "S3CRET") {
+		t.Errorf("a part's Cookie: %q", got)
+	}
+
+	// name=value bodies with a newline: a form ending with one, .env lines.
+	form := "password=S3CRET6&user=bob\n"
+	for _, got := range []string{string(maskBody([]byte(form), "text/plain", true)), string(maskBody([]byte(form), "", true)), maskWSMessage(form, true)} {
+		if got != "password=[redacted]&user=bob\n" {
+			t.Errorf("form with a newline: %q", got)
+		}
+	}
+	if got := string(maskBody([]byte("x=1\npassword=[redacted]S3CRET6b&user=bob\n"), "text/plain", true)); got != "x=1\npassword=[redacted]\n" {
+		t.Errorf("a value only starting like a marker: %q", got)
+	}
+	env := "DEBUG=true\nAPI_KEY=S3CRET7\n  DB_PASSWORD = \"S3CRET8\"\nexport AUTH_TOKEN=S3CRET9\nNAME=app\n"
+	for _, got := range []string{string(maskBody([]byte(env), "text/plain", false)), maskWSMessage(env, false)} {
+		if got != "DEBUG=true\nAPI_KEY=[redacted]\n  DB_PASSWORD = [redacted]\nexport AUTH_TOKEN=[redacted]\nNAME=app\n" {
+			t.Errorf(".env lines: %q", got)
+		}
+	}
+
+	// key as one word, a number after it too; primary is no everyday word.
+	for _, n := range []string{"primaryKey", "PrimaryKey", "primary_key", "key1", "Key2", "apiKey2", "pin1", "x-key-2", "http2_key", "iso3166_code", "state2_key"} {
+		if !secretName(n) {
+			t.Errorf("%s not secret", n)
+		}
+	}
+	for _, n := range []string{"sort_key", "country_code", "foreign_key", "keyword1", "author2", "monkey3", "sort_key2"} {
+		if secretName(n) {
+			t.Errorf("%s secret", n)
+		}
+	}
+	if got := string(maskBody([]byte(`{"primaryKey":"S3CRET10","key1":"S3CRET11","sort_key":"name"}`), "application/json", false)); strings.Contains(got, "S3CRET") || !strings.Contains(got, `"sort_key":"name"`) {
+		t.Errorf("JSON: %s", got)
+	}
+
+	// Each stays linear: a header's 256 KiB and a body's 64 KiB of the shapes.
+	start := time.Now()
+	st.maskHeaders([][2]string{
+		{"Set-Cookie", strings.Repeat("a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, ", 6<<10)},
+		{"Set-Cookie", strings.Repeat(",", 256<<10)},
+		{"Cookie", strings.Repeat("x; ", 85<<10)},
+	})
+	maskBody([]byte(strings.Repeat("API_KEY=x\n", 6<<10)), "text/plain", false)
+	maskBody([]byte(strings.Repeat("a=", 32<<10)), "text/plain", false)
+	maskBody([]byte(`[`+strings.Repeat(`"key1=x\n",`, 5<<10)+`""]`), "application/json", false)
+	if d := time.Since(start); d > slow*time.Second {
+		t.Errorf("took %v", d)
+	}
+}
+
+// The review of dev (28f4fb8): what the changes since v0.8.0 took away.
+func TestV1DevReview(t *testing.T) {
+	// A JSON body labelled text/html: HTML's masking of a tag in a string
+	// (its unquoted value running over the string's end) came first and
+	// took a quote JSON's reading needs.
+	for _, in := range []string{`{"html": "<b data-token=x\"", "password": "S3CRET12"}`, `{"html":"<b data-token=x\"","pin":"S3CRET13","n":"keep"}`} {
+		if got := string(maskBody([]byte(in), "text/html", false)); strings.Contains(got, "S3CRET") || !strings.Contains(got, `{"html":`) {
+			t.Errorf("JSON as HTML: %s", got)
+		}
+	}
+
+	// Set-Cookie: a comma before a cookie's first ; is its value's.
+	st := NewStore(10, 1<<20)
+	for in, want := range map[string]string{
+		"data=v1,QUJDREVGR0hJSktMTU5PUA==; Path=/":                       "data=[redacted]; Path=/",
+		"data=v1,QUJDREVGR0hJSktMTU5PUA=; Path=/":                        "data=[redacted]; Path=/",
+		"a=S3CRET14,b=S3CRET15":                                          "a=[redacted]",
+		"sid=S3CRET16; Path=/, data=v1,QUJDREVGR0hJSktMTU5PUA==; Secure": "sid=[redacted]; Path=/, data=[redacted]; Secure",
+	} {
+		if got := st.maskHeaders([][2]string{{"Set-Cookie", in}})[0][1]; got != want {
+			t.Errorf("Set-Cookie %q: %q, want %q", in, got, want)
+		}
+	}
+
+	// auth0 is the Auth0 service's name, not auth with a number.
+	for _, n := range []string{"Auth0-Client", "auth0Client", "auth0_domain", "AUTH0_CLIENT_ID"} {
+		if secretName(n) {
+			t.Errorf("%s secret", n)
+		}
+	}
+	for _, n := range []string{"auth2", "key1", "pin2", "auth0_token", "auth0Key"} {
+		if !secretName(n) {
+			t.Errorf("%s not secret", n)
+		}
+	}
+	const client = "eyJuYW1lIjoiQXV0aDAuc3dpZnQiLCJ2ZXJzaW9uIjoiMi43LjAifQ" // {"name":"Auth0.swift","version":"2.7.0"}
+	if h := st.maskHeaders([][2]string{{"Auth0-Client", client}}); h[0][1] != client {
+		t.Errorf("Auth0-Client: %q", h[0][1])
+	}
+	if got := st.mask("https://tenant.example/authorize?auth0Client=" + client + "&state=s"); !strings.Contains(got, "auth0Client="+client) {
+		t.Errorf("auth0Client=: %s", got)
+	}
+
+	// Each stays linear: a header's 256 KiB, a body's 64 KiB.
+	start := time.Now()
+	st.maskHeaders([][2]string{
+		{"Set-Cookie", strings.Repeat("a=1,b=", 43<<10)},
+		{"Set-Cookie", "a=1; P" + strings.Repeat(",b=", 85<<10)},
+	})
+	maskBody([]byte(strings.Repeat(`{"html": "<b data-token=x\"", "password": "p"},`, 1<<10)), "text/html", false)
+	maskBody([]byte(`{`+strings.Repeat(`"auth0_x1":"a",`, 4<<10)+`"n":1}`), "application/json", false)
+	if d := time.Since(start); d > slow*time.Second {
+		t.Errorf("took %v", d)
 	}
 }

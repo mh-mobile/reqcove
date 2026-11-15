@@ -194,19 +194,22 @@ func TestWebMadeResponse(t *testing.T) {
 	if err := os.WriteFile(addon, addonPy, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	py := `import sys, importlib.util
+	// request is a coroutine: awaited, or it never runs (Python only warns).
+	py := `import asyncio, sys, importlib.util
 from mitmproxy.test import taddons, tflow
 spec = importlib.util.spec_from_file_location("reqcove_addon", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-a = m.Reqcove()
-with taddons.context(a) as tctx:
-    tctx.configure(a, reqcove_web_keep=1 << 20)
-    f = tflow.tflow(resp=True)
-    f.metadata["reqcove_local"] = True
-    a.request(f)
-    a.response(f)
-    print(len(a.kept))
+async def main():
+    a = m.Reqcove()
+    with taddons.context(a) as tctx:
+        tctx.configure(a, reqcove_web_keep=1 << 20)
+        f = tflow.tflow(resp=True)
+        f.metadata["reqcove_local"] = True
+        await a.request(f)
+        a.response(f)
+        print(len(a.kept))
+asyncio.run(main())
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

@@ -1,44 +1,57 @@
 package capture
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
 	"golang.org/x/net/publicsuffix"
 )
 
-// maxPasses bounds the --pass-hosts connections kept, as TLS failures are.
+// maxPasses bounds the --pass-hosts connections kept, as TLS failures are,
+// and the raw TCP ones apart: an app's many raw connections do not push the
+// pass hosts' out, nor the reverse.
 const maxPasses = 1000
 
 type passthrough struct {
 	conn, device, host, server, note string
 	alpn                             []string
+	alpnNeg                          string // raw: the protocol the client got
 	start, end                       float64
 	up, down                         int64
 	unknown                          bool // the bytes went with mitmdump
+	raw                              bool // carried as raw TCP, not read as HTTP: not a --pass-hosts host's
 }
 
-// PassthroughView is a --pass-hosts connection as list_passthrough returns it:
-// what is outside TLS, nothing inside.
+// PassthroughView is a connection whose contents have no flow, as
+// list_passthrough returns it:
+// a --pass-hosts host's (reason pass_hosts: what is outside TLS, nothing
+// inside), or an allowed host's that mitmproxy carried as raw TCP, not read as
+// HTTP, so what it carries has no flow (reason raw_tcp: its sizes, never its
+// bytes).
 type PassthroughView struct {
-	Time         string   `json:"time"`          // the connection's start
-	End          string   `json:"end,omitempty"` // empty while open
-	Open         bool     `json:"open"`          // still connected; bytes come when it ends
-	DurationMS   int64    `json:"duration_ms,omitempty"`
-	Host         string   `json:"host"` // the SNI the client sent
-	Device       string   `json:"device,omitempty"`
-	DeviceName   string   `json:"device_name,omitempty"`
-	Server       string   `json:"server,omitempty"` // IP:port connected to
-	ALPNOffered  []string `json:"alpn_offered,omitempty"`
-	BytesUp      int64    `json:"bytes_up"` // from the client, TLS included, the whole connection
-	BytesDown    int64    `json:"bytes_down"`
-	BytesUnknown bool     `json:"bytes_unknown,omitempty"` // mitmproxy restarted mid-connection: the bytes above are not its
-	Note         string   `json:"note,omitempty"`          // why it ended early (mitmproxy restarted)
-	Conn         string   `json:"conn"`
+	Time        string   `json:"time"`          // the connection's start
+	End         string   `json:"end,omitempty"` // empty while open
+	Open        bool     `json:"open"`          // still connected; bytes come when it ends
+	DurationMS  int64    `json:"duration_ms,omitempty"`
+	Reason      string   `json:"reason"` // pass_hosts or raw_tcp
+	Host        string   `json:"host"`   // the SNI the client sent (the address without one)
+	Device      string   `json:"device,omitempty"`
+	DeviceName  string   `json:"device_name,omitempty"`
+	Server      string   `json:"server,omitempty"` // IP:port connected to
+	ALPNOffered []string `json:"alpn_offered,omitempty"`
+	ALPN        string   `json:"alpn_negotiated,omitempty"` // raw_tcp: the protocol the client got
+	// pass_hosts: from the client, TLS included, the whole connection; raw_tcp:
+	// what mitmproxy relayed (inside TLS, for TLS).
+	BytesUp      int64  `json:"bytes_up"`
+	BytesDown    int64  `json:"bytes_down"`
+	BytesUnknown bool   `json:"bytes_unknown,omitempty"` // mitmproxy restarted mid-connection: the bytes above are not its
+	Note         string `json:"note,omitempty"`          // why it ended early (mitmproxy restarted)
+	Conn         string `json:"conn"`
 }
 
-// Passthroughs returns the newest --pass-hosts connections first. Of q, it
-// uses Device, Host, Since, Until and Limit.
+// Passthroughs returns the newest --pass-hosts and raw TCP connections first.
+// Of q, it uses Device, Host, Since, Until and Limit.
 func (s *Store) Passthroughs(q Filter) []PassthroughView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,8 +67,11 @@ func (s *Store) Passthroughs(q Filter) []PassthroughView {
 		if !q.match(&Flow{Device: p.device, Host: p.host, Start: t}, s.names[p.device]) {
 			continue
 		}
-		v := PassthroughView{Host: p.host, Device: p.device, DeviceName: s.names[p.device], Server: p.server,
+		v := PassthroughView{Reason: "pass_hosts", Host: p.host, Device: p.device, DeviceName: s.names[p.device], Server: p.server,
 			ALPNOffered: p.alpn, BytesUp: p.up, BytesDown: p.down, BytesUnknown: p.unknown, Note: p.note, Conn: p.conn, Open: p.end == 0}
+		if p.raw {
+			v.Reason, v.ALPN = "raw_tcp", p.alpnNeg
+		}
 		if p.start > 0 {
 			v.Time = unixTime(p.start).Format("2006-01-02T15:04:05.000Z07:00")
 		}
@@ -66,6 +82,45 @@ func (s *Store) Passthroughs(q Filter) []PassthroughView {
 		out = append(out, v)
 	}
 	return out
+}
+
+// RawHost is an allowed host whose connections from a device mitmproxy carried
+// as raw TCP, not read as HTTP: what they carry has no flows.
+type RawHost struct {
+	Device      string   `json:"device"`
+	DeviceName  string   `json:"device_name,omitempty"`
+	Host        string   `json:"host"`
+	Connections int      `json:"connections"`               // of those kept
+	ALPN        []string `json:"alpn_negotiated,omitempty"` // the protocols the client got, when TLS said
+}
+
+// rawHostsLocked lists the raw TCP connections kept by device and host, the
+// most first, at most 30.
+func (s *Store) rawHostsLocked() []RawHost {
+	type key struct{ device, host string }
+	by := map[key]*RawHost{}
+	for _, p := range s.passes {
+		if !p.raw {
+			continue
+		}
+		k := key{p.device, p.host}
+		if by[k] == nil {
+			by[k] = &RawHost{Device: p.device, DeviceName: s.names[p.device], Host: p.host}
+		}
+		r := by[k]
+		r.Connections++
+		if p.alpnNeg != "" && !slices.Contains(r.ALPN, p.alpnNeg) {
+			r.ALPN = append(r.ALPN, p.alpnNeg)
+		}
+	}
+	out := []RawHost{}
+	for _, r := range by {
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Connections > out[j].Connections || out[i].Connections == out[j].Connections && out[i].Device+out[i].Host < out[j].Device+out[j].Host
+	})
+	return out[:min(len(out), 30)]
 }
 
 // RefusedHost is a host a device refused Reqcove's certificate for, again and

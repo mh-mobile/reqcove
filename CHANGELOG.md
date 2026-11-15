@@ -1,5 +1,371 @@
 # Changelog
 
+## v1.0.0 — 2026-11-15
+
+### Security
+
+- A header your `--rules` set on requests (`modify_headers`, and presets of
+  that kind) now goes only to the host the request names, and one set on
+  responses only to that host's response. Up to v0.8, any app
+  on a carried device, an address allowed in LAN mode, or any user of this
+  computer through `--local-proxy` could send a plain-HTTP request naming an
+  allowed host in `Host` to its own server and get the rule's value (a token,
+  say); over HTTPS the same worked with a certificate for another allowed name
+  (`--allow-hosts '*'`, or a wide pattern). Reproduced with mitmproxy 12.3.1
+  through its SOCKS5 port; the other ways from reading code.
+  Now, unless `map_remote` or `resolve` sends it elsewhere, such a request
+  goes on as the app sent it, without the rules, its response as the server
+  sent it, and their `rewrites` say so; a request to its host's own address
+  (as this computer looks the name up), or over HTTPS to its TLS name, keeps
+  them (the TLS name not through `--upstream-proxy`, where mitmproxy checks
+  the proxy's certificate; a Host with İ, ı, ſ or K, which `~d` matches to an
+  ASCII name, never). The Host checked is the app's, read before any rule; a
+  `modify_headers` rule that changes `Host` is no longer applied to a
+  request nothing sends elsewhere (nor are the request's other header
+  rules): use `map_remote` to change where it goes. When this computer's
+  lookup of a CDN's name differs from the device's, the rules can be left out
+  of a real request: a `resolve` rule for the name avoids it (not through
+  `--upstream-proxy`, which takes no `resolve`). E2E tests with
+  real mitmproxy: a stand-in server gets no rule's value (nor an active
+  preset's), over plain HTTP and over HTTPS, nor with a rule setting `Host`
+  to its address, and the app gets no response rule's value from it;
+  requests to the right server still get them. Lookups run on threads of
+  their own, bounded (16 names at once, 3 seconds each, answers kept 30
+  seconds), so a stalled resolver holds nothing else up (tested in
+  mitmproxy's Python, not in a running mitmdump); names are compared
+  in IDNA's ASCII form (tests with mitmproxy's own made flows).
+  docs/SECURITY.md, Rules.
+- HTML pages are masked by their tags too: hidden form fields and meta tags
+  named as secrets (an OAuth `form_post`'s `code` and `id_token`, Rails'
+  `authenticity_token`, ASP.NET's `__RequestVerificationToken`, `csrf-token`)
+  and attributes named so (`data-auth-token`), and a `<textarea>`'s text;
+  comments and scripts' text read only to their end, so a quote in them
+  hides no field after them; in pages and JavaScript, object fields with
+  unquoted secret names (`{accessToken: "…"}`, up to two short comments
+  around them, strings over lines, template literals). Up to v0.8 these
+  reached the tools unmasked. `hmac`, `verifier` (`oauth_verifier`), `privkey`
+  and `mnemonic` count as secret names now. Tests, and new shapes in the fuzz
+  test; what it does not catch is in docs/SECURITY.md.
+- `run`'s log is 0600 when its output is a file: brew services'
+  `$(brew --prefix)/var/log/reqcove.log` was 0644 (launchd's), readable by
+  other users of this computer. `run` makes it 0600 as it starts, and
+  `reqcove setup` before the service first starts. Tests; not tried with brew
+  services.
+- Over `--mcp-http`, `capture_stats` and `status` no longer carry `resolve`'s
+  rules (a name and the address it is sent to) nor the upstream proxy's
+  address, as docs/SECURITY.md said (a test). A `resolve` line that fails to
+  load can still be named in `rules_error` (docs/SECURITY.md).
+- With masking off (`--no-redact`), every tool answer with flows in it
+  (`get_flow`, `list_flows`, `search_flows`, `wait_for_flows`, `summarize`,
+  `list_ws_messages`, `diff_flows`) says so in `note`, as the `--ui` page
+  shows a badge (a test).
+- LAN mode refuses this computer's other networks before letting Apple's
+  17.0.0.0/8 through: an interface numbered in 17/8 is a LAN, and its
+  neighbours were reachable (found by a code review; unit test).
+- Through a `--uvx` wrapper (a path not named `uvx`), the default mitmproxy
+  gets the lock's tornado, 6.6.1, not 6.5.10, whose vulnerabilities are in
+  mitmweb's server (`--web`): the lock's override and its date for tornado
+  are passed to uvx (tried with uv 0.13.4; the other packages come at the
+  lock's versions, and the `--web` tests pass through a wrapper). Another
+  `--mitmproxy-spec` still gets the tornado its mitmproxy asks for
+  ([SECURITY](docs/SECURITY.md#mitmproxys-own-code)).
+- Masking catches more of what an app sends: a credential behind JSON's
+  escapes (`Basic\t…`, `\/` in a token, also in a string cut at 64 KiB); the
+  rest of a secret-named line (`password: …`) even when a token sits in it;
+  folded `multipart/form-data` part headers (a field's name or a cookie on the
+  next line), and a part naming no field shows its size only; a token-shaped
+  host, SNI, method, ALPN name or `Content-Encoding` and the notes quoting
+  them (found by a code review; unit tests, and the fuzz test for the line).
+- Masking catches more cookies and names: a cookie value without a name after
+  the first (`Cookie: theme=dark; <a JWT>` kept the JWT), and each cookie of
+  a `Set-Cookie` line joining several with commas after another's attributes
+  (only the first was masked; an `Expires` date's comma is not a cookie's,
+  nor one before a cookie's first `;`, which may be its value's:
+  `v1,QUJD…==`); `name=value` lines in a text
+  body or a WebSocket message (a `.env` file's `API_KEY=…`, `export` too) and
+  a form body ending with a newline, whose secrets were kept; and a short
+  secret word with a number after it (`key1`, `pin2`; not `auth0`, a
+  service's name) and `primaryKey`, which were not secret (found by a code
+  review; unit tests, an E2E test for the joined `Set-Cookie`, and the fuzz
+  test for the `.env` line).
+
+### Removed
+
+- v0.6's names, deprecated in v0.8: the tools `list_mock_presets`,
+  `activate_mock` and `deactivate_mock` (use `list_presets`,
+  `activate_preset` and `deactivate_preset`, which take mocks and the other
+  kinds), `status`' `active_mock_presets` and `active_mock_presets_error` (use
+  `active_presets` and `active_presets_error`), and `capture_stats`'
+  `mock_presets` (use `presets`). No tool list has them, local or
+  `--mcp-http`, nor does a tool description or the server's instructions
+  (unit tests). A call to one of the tools, from a script or from an agent
+  whose `reqcove mcp` is older than `run`, gets a tool error naming the tool
+  that replaces it, not "unknown tool": `run`'s socket and `reqcove mcp`
+  answer so (unit tests), and a v0.8 `reqcove mcp` passes that answer on
+  (from reading its code). `reqcove status` still reads the old fields from a
+  v0.6 or v0.7 `run` not yet restarted (unit test); nothing writes them.
+
+### Added
+
+- A connection to an allowed host that mitmproxy carries as raw TCP, not
+  read as HTTP, is recorded as a connection: up to v0.8 nothing showed it,
+  and grpc-swift's calls on the iPhone left nothing at all (below).
+  mitmproxy does so (once decrypted, for TLS) with an ALPN name it does not
+  know when the server speaks first or the client's bytes do not look like
+  HTTP (otherwise it reads HTTP/1), with bytes that do not look like HTTP,
+  and for what a request upgrades to with a `101` other than a WebSocket,
+  over plain HTTP too, where the connection is named by the request's host
+  (each tried with mitmproxy 12.3.1, 2026-11-15; two by the E2E tests below).
+  `list_passthrough` lists it with `reason: raw_tcp` (every row now has
+  `reason`: `pass_hosts` or `raw_tcp`; a host filter naming such a host in
+  `list_flows`, `search_flows`, `summarize` or `wait_for_flows` says so in
+  `note`), with the protocol the client got
+  (`alpn_negotiated`) and the bytes relayed each way (inside TLS, for TLS),
+  never the bytes themselves; at most 1000 are kept, apart from the
+  `--pass-hosts` connections, which they cannot push out. `capture_stats`
+  counts it (`raw_tcp`, and `raw_tcp_hosts`, the busiest 30 by device and
+  host), `list_devices` per device (`raw_tcp`; a device with only such
+  connections is listed), and `status`' next steps name its hosts for its
+  device. A device with only such connections, in LAN mode too, is no longer
+  told it has no traffic, however many devices and hosts there are.
+  `passed_through` and `list_devices`' `passthroughs` still count
+  `--pass-hosts` connections only. E2E tests with real mitmproxy (an unknown
+  ALPN from a server that speaks first; plain HTTP upgraded with a `101`),
+  which fail without the change, and unit tests; not tried on an iPhone.
+  Connections mitmproxy passes through itself (Apple's hosts, hosts outside
+  `--allow-hosts`, a connection it knows by its address only) still leave
+  nothing (from reading mitmproxy 12.3.1's code), nor do a few others
+  (HTTP/2 coalescing onto a sibling host's connection, Encrypted Client
+  Hello: tried with mitmproxy 12.3.1, 2026-11-15; docs/SECURITY.md).
+
+### Fixed
+
+Found by a code review of v0.8.0, the last two while looking into a test app's grpc-swift calls on the iPhone; each test fails without its fix.
+
+- A body that is empty with nothing to stream (an HTTP/1 GET's request, a 204,
+  304 or 101's response) was recorded as not ended (`final: false`, not
+  decoded): mitmproxy never calls the stream then. It is now recorded whole
+  and empty (E2E test; seen on the iPhone in the v1.0 sitting, up to v0.8).
+- `reqcove status --json`, with no run to answer (none, or one starting or
+  stopping), printed text: it prints nothing on stdout and exits 1, the
+  reason on stderr, so a script reads only the status tool's JSON (unit test).
+- A flow that fails mid-body keeps the head that came and its size, not
+  final; before, what came in its last second was left out (size 0 for a
+  body cut within a second). Tested with real mitmproxy (HTTP/1.1): a
+  response the server cuts, an upload the client gives up on; an SSE stream
+  that ends in an error goes the same way (from reading code).
+- A gzip body of several members and a zstd body of several frames are
+  decoded whole (up to the head's bound, as before). Before, gzip stopped
+  after its first member, and zstd too, or, when the next frame came in a
+  chunk of its own, gave a decode error and hid the head. Zero padding after
+  a gzip member is skipped, as Python's gzip does; other bytes after a member
+  are now a decode error (the head is not handed out), where they were
+  ignored. Past 1024 members or frames the head stops, cut: each costs
+  mitmproxy CPU. Test with real mitmproxy.
+- Through mitmproxy, a client that is done sending (a half-close, `nc -N`)
+  gets the answer still to come; before, the connection was closed both ways
+  and the answer cut. Unit test of the exit node with a SOCKS5 server; the
+  Remote Proxy's `CONNECT` dials the same way (from reading code).
+- When mitmdump exits, the lines it left in reqcove's socket are read before
+  its open flows are closed (for at most 2 s): before, a request among them
+  stayed open for good and the addon's counters were counted twice. Test
+  with a stand-in mitmdump (`addon_dropped_events`; the other counters come
+  the same way, from reading code).
+- `run --local-proxy … 2>&1 | tee FILE`, stopped with Ctrl-C (which stops
+  `tee` too), left the system's web proxies pointed at the local proxy:
+  `run`'s next line to the closed pipe killed it (SIGPIPE) before it put them
+  back (from reading code; not tried with the real system proxy). A write to
+  a closed stdout or stderr now fails instead, and the proxies are put back
+  before anything is logged (unit tests: a `run` whose stderr is closed exits
+  as usual, where it was killed by SIGPIPE; nothing is logged before the
+  proxies are back).
+- `reqcove status`, while `run` starts (mitmproxy first, up to 2 minutes) or
+  stops, said reqcove was not running and how to start it: it says it is
+  starting, or stopping, as do `reqcove har` and `reqcove mark` (unit test).
+  To tell, they hold the state's lock for a moment, as `reqcove cleanup`
+  does: a `run` taking it then (a service starting while a script polls
+  `status`) waits that out, up to a second, instead of exiting with
+  "another reqcove is using" (unit test).
+- `reqcove status` and `reqcove har`, against a `run` stopped with Ctrl-Z,
+  waited forever: they give up after 5 seconds, as `reqcove mark` and
+  `reqcove mcp` do (unit test).
+- `--proxy-port` out of 0 to 65535 is refused: in LAN mode 65616 would have
+  listened on port 80 (from reading code; unit test of the refusal).
+- With `--rules-reload` and a preset in the file, saving it could freeze
+  `run` (v0.7.0–v0.8.0): nothing more was recorded, and the MCP tools,
+  `reqcove status` and `--ui` stopped answering (they all wait on the store)
+  until `run` was killed. Tests:
+  a unit test, and one with real mitmproxy and `run`'s own rules log (the
+  file saved twice; flows still recorded, the stats still answering).
+- When mitmproxy kept failing and reqcove gave up on it (5 restarts in a
+  row), `run` stopped with exit status 0, as for Ctrl-C, so a service looked
+  as if it had ended fine. It now exits with status 1 and mitmproxy's error
+  (test: a stand-in for mitmproxy that dies at every restart).
+- An HTTP/2 GET (HEAD, OPTIONS, DELETE) without a length, to a URL a mock or
+  `map_local` may answer, that sent a body anyway had all of it held in
+  mitmproxy's memory (up to v0.8.0; the guide said so). It now gets a 502,
+  recorded as an error, and its body is not held; one with no body is
+  answered as before, as is one whose stream ends with an empty DATA frame
+  instead of with its headers (Go's client does, for a body of unknown
+  length that turns out empty). Tested with Go's HTTP/2 client and real
+  mitmproxy (an endless body, or a single byte, gets its 502 at once; an
+  empty DATA frame, the answer). macOS's URLSession sends none of these
+  with an open stream (tried against a test server, without mitmproxy);
+  iPhone apps not tried. A client that sends the headers and then waits
+  gets its 502 at its first body byte, and with a mitmproxy other than
+  12.3.1 (another `--mitmproxy-spec`), a stream still open after its
+  headers gets the 502 at once, empty DATA frame or not (both from reading
+  code).
+- Masking an Apple plist whose `<key>` text comes in many pieces (split by
+  comments, CDATA or child elements) copied the text so far at each piece,
+  so its time and memory grew with the square of its size (up to v0.8):
+  64 KiB of `    <b/>` in one key allocated about 140 MB and took 26 ms on
+  an M1 Max, 16 KiB 9 MB. It now grows with the size (64 KiB: 1.8 MB,
+  6 ms); what is masked does not change. Masking runs on the path every
+  event from a connection takes, in order, so such a body held up what came
+  after it (from reading code). Found by the growth test (Inside), which
+  fails without the fix.
+- Plain HTTP whose `Host` ends in the root's dot (`curl
+  http://api.example.com./`) passed through undecrypted and unrecorded,
+  though the host was allowed (up to v0.8): mitmproxy's `allow_hosts`
+  patterns did not take the dot. They do now, and a flow's host is recorded
+  without it, so a host filter finds it; over HTTPS, such a request was
+  recorded with the dot, which the filter missed (tried with mitmproxy
+  12.3.1, 2026-11-15). Unit test, and an E2E test with real mitmproxy, which
+  fails without the fix (found by a review of the v1.0 changes).
+- A grpc-swift call (2, both transports; 1 offers the same, from its
+  sources) to a server that picks ALPN `grpc-exp` (Connect's demo server
+  does) failed through Reqcove, unrecorded (up to v0.8): grpc-swift offers `grpc-exp`
+  before `h2`, mitmproxy offered the server the same, then gave the app
+  `grpc-exp`, read its HTTP/2 as HTTP/1 and dropped the connection. Such a
+  server is now offered `h2` without `grpc-exp`; the call goes on and is
+  recorded. Tried with grpc-swift 2 on this Mac against Connect's demo
+  server, through a relay that dials mitmproxy as the exit node does (both
+  transports, the CA given as the trust root), and on an iPhone (iOS 27.3,
+  both transports): grpc-swift's calls on the iPhone are now recorded. There, before the fix, the server's HTTP/2 settings came first,
+  so mitmproxy, not knowing `grpc-exp`, carried the connection as raw TCP,
+  decrypted but not read as HTTP: nothing was recorded, no flow, TLS failure
+  or count. E2E test, which fails without the fix. gRPC-core, grpc-java and
+  grpc-go offer `h2` only (from their sources). A server that takes only
+  `grpc-exp`, not `h2`, would now fail such a call, being offered no
+  `grpc-exp` when the client offers `h2` too (from reading code; no such
+  server was found).
+- A connection whose first bytes were too few for mitmproxy to read the
+  name was passed through undecrypted and unrecorded, for an allowed host
+  too (up to v0.8): mitmproxy decides on the first bytes it reads, and with
+  1 or 2 bytes of a ClientHello, or an HTTP request short of its request
+  line's `HTTP/`, it has only the address, which `--allow-hosts` does not
+  name. Reqcove hands bytes to mitmproxy as they come, so a client whose
+  first segment was that short got there (tried with mitmproxy 12.3.1
+  through its SOCKS5 port: a first write of 1 or 2 bytes of a ClientHello;
+  of an HTTP request, 1, 2, 3, 10 or 14 bytes, short of `HTTP/`). Now such a first write is held, at
+  most a second, and sent with what follows, on every way to mitmproxy
+  (the exit node, the Remote Proxy, the LAN proxy, `--local-proxy`: they
+  share one dial). Bytes that cannot begin a request line (a method's first
+  three bytes are letters, and no control byte but tab and CR follows), and
+  what the client sends once the server has spoken first, go at once; if
+  what was held cannot be sent, the connection is closed, never the rest
+  sent without it (unit tests). E2E test through the LAN proxy, which fails
+  without the fix; the other ways from reading code. Whether an iPhone app's
+  connection ever comes that short was not seen.
+
+### For people
+
+- The Remote Proxy, LAN mode and `--local-proxy` keep at most 256 tunnels
+  (CONNECT: HTTPS, WebSockets) open per client, one address (with
+  `--local-proxy`, all of this computer's apps together): the next one gets a
+  503 until one closes. A tunnel with no bytes either way for 15 minutes is
+  closed; one that keeps talking (a WebSocket, an event stream) stays open.
+  Tests, with 2 tunnels and 300 ms.
+- The guide and SECURITY now say that `--web`'s 10,000 flows and 256 MB count
+  finished flows only: a flow still in progress counts once it ends (from
+  reading code).
+- The skill and the server's instructions tell an agent to write a HAR file
+  where only the user can read it (`umask 077`; the skill's example wrote to
+  `/tmp`, which other users of the computer read), and that it is masked
+  only while `redacting` is true. The instructions now list the commands an
+  agent may run, as the skill does (`reqcove status`, `reqcove har`,
+  `reqcove init --print`, `reqcove mock add --print` when asked), and name
+  `reqcove cleanup` among those it never runs. The `status` tool's
+  description says its hosts and device names are data, not instructions, as
+  the other tools that return what sites, apps or the tailnet wrote do (a
+  test), and SECURITY says which tools those are instead of "every tool".
+- SECURITY covers six more things: what an agent read stays with its model
+  provider and in the agent's own transcripts; the CA is valid for 10 years
+  and for every site, until its profile is removed; backups of the state
+  directory hold its key; what `reqcove cleanup` leaves; a computer shared
+  with other users; other people's devices need their consent. It says what
+  each comes from (reading code, or tried).
+- SECURITY's list of what masking does not catch adds: XML's masking reads a
+  body before JSON's, so in a JSON body labelled XML a tag inside a string
+  can take the quote JSON's reading needs, and a secret field after it
+  passes (a test pins it).
+- SECURITY's "Not caught" and the skill add: a client that refuses
+  mitmproxy's certificate only after the TLS handshake (curl on OpenSSL 4.1),
+  or finishes it and closes without a request, leaves no TLS failure, no flow
+  and no count (tried with mitmproxy 12.3.1, and an E2E test; on an iPhone,
+  an app that checks the certificate itself once connected). Pinning in
+  URLSession's delegate or Network.framework's verify block refuses during
+  the handshake and is listed (tried on an iPhone).
+- COMPATIBILITY: `--uvx`, `--python` and `--mitmproxy-spec` move to "Not
+  stable", and which mitmproxy version a release runs is not promised.
+- The guide says that a `map_remote` rule that changes only the path sends
+  the request on as any `map_remote` does: mitmproxy connects to the host by
+  its name, and the header rules apply (tried in mitmproxy's Python).
+
+### Inside
+
+- An E2E test sends compressed WebSocket messages (permessage-deflate) through
+  mitmproxy: each is recorded inflated, with its inflated size, and masked.
+- A test measures how masking's time and allocations grow between two
+  sizes 8 times apart (mostly 16 and 128 KiB for bodies, 64 and 512 KiB for
+  headers and URLs; protobuf's below its caps), for 152 inputs
+  built to be slow for its regexps and loops: each content type a body is
+  masked differently for (JSON, forms, text, none, HTML, JavaScript, XML,
+  GraphQL, multipart, protobuf with and without `--proto`, gRPC frames),
+  headers, URLs, WebSocket messages, error text and `Apply` as a whole; more
+  than 24 times fails (CI's shared machines vary up to about 3 times; a run
+  over 2 s fails at once). It catches the two this
+  version's reviews found (script comments, folded multipart headers: checked
+  by putting them back). Under the race detector, which distorts both
+  measures, only the inputs that caught one run (those two and the
+  plist's). The fuzz tests also fail an input whose masking takes over 2 s.
+- The release workflow refuses a tag whose commit has no successful run of
+  the test workflow (macOS and Linux, end to end with mitmproxy, the
+  container, the checks). Checked with actionlint and by running its query
+  against this repository; the workflow itself runs only on a tag, not yet.
+- `TestWebMadeResponse` called the addon's `request`, a coroutine, without
+  awaiting it, so that half never ran (Python only warned). It is awaited
+  now; the test still fails with the addon's fix taken out.
+
+### Upgrading from v0.8
+
+- Restart `reqcove run` with the new version (or `reqcove service restart`,
+  or `brew services restart reqcove`), then reconnect the agent's MCP server
+  once (`/mcp` in Claude Code): until then its `reqcove mcp`, of v0.8, still
+  lists the removed tools.
+- Run `reqcove init` (or `reqcove setup`) again to update the skill.
+- In permission lists, replace `mcp__reqcove__list_mock_presets`,
+  `mcp__reqcove__activate_mock` and `mcp__reqcove__deactivate_mock` with
+  `mcp__reqcove__list_presets`, `mcp__reqcove__activate_preset` and
+  `mcp__reqcove__deactivate_preset`. `activate_preset` also turns on
+  `map_remote`, `modify_headers` and `resolve` presets: put it under `ask`,
+  even where `activate_mock` was allowed
+  ([guide](docs/guide.md#allow-the-tools)).
+- In scripts, read `active_presets`, `active_presets_error` and `presets`
+  instead of `active_mock_presets`, `active_mock_presets_error` and
+  `mock_presets`.
+- In a `--rules` file, a `modify_headers` rule that sets `Host` to send a
+  request to another server is no longer applied on its own, nor are that
+  request's other header rules (its `rewrites` say so): write a `map_remote`
+  rule, or `resolve`, for where the request should go
+  ([guide](docs/guide.md#rules---rules)). A header rule for a plain-HTTP
+  host, or for any host through `--upstream-proxy`, applies only when this
+  computer's lookup of the Host includes the address the device dialled; its
+  `rewrites` say when it did not. A script that reads
+  `reqcove status --json` gets nothing on stdout and exit status 1 while no
+  run answers, where it got text.
+
 ## v0.8.0 — 2026-11-14
 
 ### For people
@@ -20,6 +386,7 @@
   and one with a wrong password is refused, nothing carried or recorded (real
   mitmproxy; the test fails if mitmdump accepts before the addon is loaded,
   its loading delayed by hand). SECURITY.md says what is covered and what not.
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) (and .ja): what stays stable from v1.0.0, and how it changes.
 - Tried on a Linux host, Ubuntu 24.04.5 LTS (arm64, a tart VM, 2026-11-14):
   `reqcove setup`, `service install` (a systemd user unit; its journal holds
   no login URL or token), `status`, `service restart` and `uninstall`, and LAN

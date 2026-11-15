@@ -13,7 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -85,14 +87,14 @@ func TestMockPresets(t *testing.T) {
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("a preset off answers: %q", got)
 	}
-	ps, err := h.c.Presets(ctx, "")
+	ps, err := h.c.Presets(ctx)
 	if err != nil || len(ps) != 5 || ps[0].Name != "profile-503" || ps[0].Description != "the profile API is down" || ps[0].Active || *ps[0].Status != 503 {
 		b, _ := json.Marshal(ps)
 		t.Fatalf("presets: %s %v", b, err)
 	}
 
 	// Once: the next request, then the origin again.
-	if a, err := h.c.Activate(ctx, "profile-503", "", 60, 1); err != nil || a.ExpiresAt < float64(time.Now().Unix()+50) {
+	if a, err := h.c.Activate(ctx, "profile-503", 60, 1); err != nil || a.ExpiresAt < float64(time.Now().Unix()+50) {
 		t.Fatalf("activate: %+v %v", a, err)
 	}
 	if got := get("/profile", ""); got != "503 down" {
@@ -106,8 +108,8 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// One on per match: profile-500 turns profile-503 off.
-	h.c.Activate(ctx, "profile-503", "", 60, 0)
-	a, err := h.c.Activate(ctx, "profile-500", "", 60, 2)
+	h.c.Activate(ctx, "profile-503", 60, 0)
+	a, err := h.c.Activate(ctx, "profile-500", 60, 2)
 	if err != nil || len(a.TurnedOff) != 1 || a.TurnedOff[0] != "profile-503" {
 		t.Errorf("turned off: %+v %v", a, err)
 	}
@@ -115,8 +117,8 @@ func TestMockPresets(t *testing.T) {
 		t.Errorf("profile-500: %q", got)
 	}
 	// Re-activating replaces the limits (a dropped call made again): 1, then 3.
-	h.c.Activate(ctx, "profile-500", "", 60, 1)
-	h.c.Activate(ctx, "profile-500", "", 60, 3)
+	h.c.Activate(ctx, "profile-500", 60, 1)
+	h.c.Activate(ctx, "profile-500", 60, 3)
 	for i := range 3 {
 		if got := get("/profile", ""); !strings.HasPrefix(got, "500") {
 			t.Errorf("profile-500, %d of 3: %q", i+1, got)
@@ -131,7 +133,7 @@ func TestMockPresets(t *testing.T) {
 		t.Errorf("preset off, plain mock: %q", got)
 	}
 	// Concurrent requests use the count exactly: 3 of 10 get the preset.
-	h.c.Activate(ctx, "order-503", "", 60, 3)
+	h.c.Activate(ctx, "order-503", 60, 3)
 	results := make(chan string, 10)
 	for range 10 {
 		go func() { results <- get("/order", "") }()
@@ -148,8 +150,8 @@ func TestMockPresets(t *testing.T) {
 
 	// Operations on one URL each have their own; an operation that does not
 	// match uses no count.
-	h.c.Activate(ctx, "feed-500", "", 60, 1)
-	h.c.Activate(ctx, "login-401", "", 60, 1)
+	h.c.Activate(ctx, "feed-500", 60, 1)
+	h.c.Activate(ctx, "login-401", 60, 1)
 	if got := get("/graphql", `{"operationName":"Other","query":"query Other { a }"}`); got != "200 origin /graphql" {
 		t.Errorf("other operation: %q", got)
 	}
@@ -174,14 +176,14 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// Time: off after its seconds, also with a count left.
-	h.c.Activate(ctx, "profile-503", "", 1, 5)
+	h.c.Activate(ctx, "profile-503", 1, 5)
 	time.Sleep(1200 * time.Millisecond)
 	if got := get("/profile", ""); got != "200 origin /profile" {
 		t.Errorf("expired: %q", got)
 	}
 	// Deactivate.
-	h.c.Activate(ctx, "profile-503", "", 60, 0)
-	if was, err := h.c.Deactivate(ctx, "profile-503", ""); !was || err != nil {
+	h.c.Activate(ctx, "profile-503", 60, 0)
+	if was, err := h.c.Deactivate(ctx, "profile-503"); !was || err != nil {
 		t.Errorf("deactivate: %v %v", was, err)
 	}
 	if got := get("/profile", ""); got != "200 origin /profile" {
@@ -203,7 +205,7 @@ func TestMockPresets(t *testing.T) {
 		{"profile-503", 301, 0, "at most 5 minutes"},
 		{"profile-503", 60, 21, "times must be from 1 to 20"},
 	} {
-		if _, err := h.c.Activate(ctx, c.name, "", c.seconds, c.times); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := h.c.Activate(ctx, c.name, c.seconds, c.times); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%+v: %v", c, err)
 		}
 	}
@@ -233,7 +235,7 @@ func TestMockPresets(t *testing.T) {
 	}
 
 	// A changed file turns presets off, also one that does not load.
-	h.c.Activate(ctx, "profile-503", "", 60, 0)
+	h.c.Activate(ctx, "profile-503", 60, 0)
 	write("  - match: {url: \"http://" + o + "/profile\"}\n    status: 200\n") // a plain mock with a preset's match: refused
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(fmt.Sprint(h.stats()["rules_error"]), "same match") {
@@ -306,7 +308,7 @@ func TestMockFaults(t *testing.T) {
 	if got, _, _ := get(h2, "/warm"); got != "origin /warm" { // one connection, then two streams on it
 		t.Fatalf("warm: %q", got)
 	}
-	if _, err := h.c.Activate(ctx, "slow", "", 60, 0); err != nil {
+	if _, err := h.c.Activate(ctx, "slow", 60, 0); err != nil {
 		t.Fatal(err)
 	}
 	slow := make(chan time.Duration)
@@ -333,13 +335,129 @@ func TestMockFaults(t *testing.T) {
 	if got, _, _ := get(h1, "/close"); !strings.HasPrefix(got, "error") {
 		t.Errorf("close over HTTP/1: %q", got)
 	}
-	h.c.Activate(ctx, "close-later", "", 60, 1)
+	h.c.Activate(ctx, "close-later", 60, 1)
 	if got, d, _ := get(h1, "/close-later"); !strings.HasPrefix(got, "error") || d < 300*time.Millisecond {
 		t.Errorf("close after a delay: %q in %v", got, d)
 	}
 	f := h.doneFlow("/close-later", false)
 	if f.Preset != "close-later" || !strings.Contains(f.Error, "closed by a mock (fault: close), preset close-later") {
 		t.Errorf("row: preset %q, error %q", f.Preset, f.Error)
+	}
+}
+
+// endless is a request body that never ends.
+type endless struct{}
+
+func (endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+// TestHTTP2BodyOfUnknownLength (REQCOVE_E2E=1): an HTTP/2 GET without a
+// length that a mock or map_local may answer is held only while it has no
+// body. One that ended with its headers is answered, or goes on to the
+// origin (through the upstream proxy) when no mock answers it after all; one
+// that sends a body anyway gets a 502 at once, recorded, and its body is
+// never held in memory (mitmproxy buffered all of it, with no end, until
+// v0.8.0). Both with an upstream proxy (mitmproxy connects lazily) and
+// without (it connects to the server first, as most runs do).
+func TestHTTP2BodyOfUnknownLength(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	t.Run("upstream", func(t *testing.T) { http2BodyOfUnknownLength(t, true) })
+	t.Run("direct", func(t *testing.T) { http2BodyOfUnknownLength(t, false) })
+}
+
+func http2BodyOfUnknownLength(t *testing.T, viaUpstream bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var reached atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		fmt.Fprintf(w, "origin %s", r.URL.Path)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "origin.pem")
+	os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600)
+	os.Mkdir(filepath.Join(dir, "files"), 0o700)
+	os.WriteFile(filepath.Join(dir, "files", "a.json"), []byte(`{"local":true}`), 0o600)
+	rules := filepath.Join(dir, "rules.yaml")
+	os.WriteFile(rules, []byte(fmt.Sprintf(`mock:
+  - match: {url: "%[1]s/mocked"}
+    body: mocked
+  - match: {url: "%[1]s/graphql", operation: Feed}
+    body: feed
+map_local:
+  - "|//%[2]s/local/|files"
+`, srv.URL, srv.Listener.Addr().String())), 0o600)
+	var up *upstreamProxy
+	h, err := tryHarness(t, ctx, []string{"127.0.0.1"}, func(c *Config) {
+		c.Rules = rules
+		if viaUpstream {
+			up = startUpstream(t) // its CA setting is how mitmproxy trusts the test server
+			c.Upstream, c.UpstreamCA = up.ln.Addr().String(), caFile
+		} else {
+			c.trustCA = caFile
+		}
+	})
+	if up != nil {
+		defer up.ln.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := h.client("dev").Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = true
+	h2 := &http.Client{Transport: tr, Timeout: time.Minute}
+	get := func(path string, body io.Reader) (int, string) {
+		t.Helper()
+		rctx, rcancel := context.WithTimeout(ctx, 20*time.Second)
+		defer rcancel()
+		req, _ := http.NewRequestWithContext(rctx, "GET", srv.URL+path, body)
+		if body != nil {
+			req.ContentLength = -1 // no content-length: only the stream's end would say
+		}
+		resp, err := h2.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.ProtoMajor != 2 {
+			t.Errorf("%s: HTTP/%d", path, resp.ProtoMajor)
+		}
+		return resp.StatusCode, string(b)
+	}
+	for _, c := range []struct{ path, want string }{{"/mocked", "mocked"}, {"/local/a.json", `{"local":true}`}} {
+		if st, b := get(c.path, nil); st != 200 || b != c.want {
+			t.Errorf("%s, no body: %d %q, want %q", c.path, st, b, c.want)
+		}
+		start := time.Now()
+		if st, b := get(c.path+"?body=1", endless{}); st != 502 || !strings.Contains(b, "not held in memory") || time.Since(start) > 10*time.Second {
+			t.Errorf("%s, an endless body: %d %.200q after %v, want a 502 at once", c.path, st, b, time.Since(start))
+		}
+		if v := h.doneFlow(c.path+"?body=1", false); v.State != "error" || !strings.Contains(v.Error, "not held in memory") || v.Mocked {
+			t.Errorf("%s, an endless body, recorded: %s %q mocked=%v", c.path, v.State, v.Error, v.Mocked)
+		}
+	}
+	if n := reached.Load(); n != 0 {
+		t.Errorf("the origin got %d requests", n)
+	}
+	if st, b := get("/mocked", nil); st != 200 || b != "mocked" {
+		t.Errorf("a mock after them: %d %q", st, b)
+	}
+	// Held (a mock's method and URL match), then not answered: it names no operation.
+	if st, b := get("/graphql", nil); st != 200 || b != "origin /graphql" || reached.Load() != 1 {
+		t.Errorf("held, then sent on: %d %q (the origin got %d)", st, b, reached.Load())
+	}
+	if want := "CONNECT " + srv.Listener.Addr().String(); up != nil && !slices.Contains(up.all(), want) {
+		t.Errorf("not through the upstream proxy: %q, want %q", up.all(), want)
 	}
 }
 

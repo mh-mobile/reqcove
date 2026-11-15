@@ -18,6 +18,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tailscale.com/health/healthmsg"
 )
 
@@ -112,7 +113,7 @@ func TestStatusCommand(t *testing.T) {
 }
 
 // `reqcove status` shows the presets from capture_stats' presets and the ones
-// on from active_presets (not v0.6's names, removed in v1.0).
+// on from active_presets.
 func TestStatusCommandPresets(t *testing.T) {
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
@@ -131,18 +132,19 @@ func TestStatusCommandPresets(t *testing.T) {
 	}
 }
 
-// `reqcove status` against a v0.7 run (not yet restarted) reads its names:
-// mock_presets and active_mock_presets.
+// `reqcove status` against a v0.7 run (not yet restarted) reads its names,
+// mock_presets and active_mock_presets (v1.0 reads them, never writes them).
 func TestStatusCommandPresetsV07(t *testing.T) {
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	st := capture.NewStore(10, 1<<20)
-	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
-		return mcpserver.StatusOut{Node: exitnode.Status{Backend: "Running"}, Capture: map[string]any{"mock_presets": []string{"mx", "staging"}},
-			ActiveMockPresets: []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}
-	})); err != nil {
+	v07 := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "0.7.0"}, nil)
+	mcp.AddTool(v07, &mcp.Tool{Name: "status"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		return nil, map[string]any{"node": exitnode.Status{Backend: "Running"}, "capture": map[string]any{"mock_presets": []string{"mx", "staging"}},
+			"active_mock_presets": []mcpserver.PresetOut{{Name: "staging", Kind: "map_remote", Target: "https://staging.example.com", Active: true, ExpiresAt: "12:00:00"}}}, nil
+	})
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), v07); err != nil {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
@@ -492,6 +494,25 @@ func TestRefusedHostsStep(t *testing.T) {
 	}
 }
 
+// An allowed host's connections carried as raw TCP: a step for their device
+// naming them, not on another device's page; a device with only those is not
+// told it has no traffic, even when its hosts are not among the busiest that
+// raw_tcp_hosts lists (its own count says).
+func TestRawTCPStep(t *testing.T) {
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true}
+	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true, RawTCP: 2}, {ID: "b", Name: "ipad", Carried: true, Flows: 3}, {ID: "c", Name: "watch", Carried: true, RawTCP: 5}}
+	stats := map[string]any{"state": "ready", "raw_tcp_hosts": []capture.RawHost{{Device: "a", Host: "grpc.example.com", Connections: 2, ALPN: []string{"grpc-exp"}}}}
+	got := strings.Join(nextSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices), "\n")
+	if !strings.Contains(got, "iphone's connections to grpc.example.com (connections: 2; ALPN grpc-exp) were carried as raw TCP, not read as HTTP") ||
+		!strings.Contains(got, "list_passthrough") || strings.Contains(got, "no traffic from iphone") ||
+		strings.Contains(got, "no traffic from watch") || !strings.Contains(got, "watch's connections to allowed hosts (connections: 5) were carried as raw TCP") {
+		t.Errorf("steps:\n%s", got)
+	}
+	if got := strings.Join(pageSteps(ok, stats, capture.HostRules{All: true}, capture.CA{}, devices, "b"), "\n"); strings.Contains(got, "grpc.example.com") {
+		t.Errorf("b's page:\n%s", got)
+	}
+}
+
 // --pass-hosts and @FILE: hosts one a line, comments, ~/; a line that is not
 // a host stops run, nothing in it run.
 func TestPassHostsFlag(t *testing.T) {
@@ -640,7 +661,7 @@ func TestPresetNames(t *testing.T) {
 	}
 }
 
-// run reads capture_stats' presets, not v0.6's mock_presets (removed in v1.0).
+// run reads capture_stats' presets.
 func TestStatsPresets(t *testing.T) {
 	if got := statsPresets(map[string]any{"presets": []string{"mx"}}); !slices.Equal(got, []string{"mx"}) {
 		t.Errorf("statsPresets: %v", got)

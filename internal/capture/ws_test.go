@@ -352,7 +352,10 @@ func FuzzWSMessage(f *testing.F) {
 	for _, m := range []string{`42["authenticate","x"]`, `42/chat,1["login",{"a":1},"y"]`, `{"target":"Login","arguments":["z"]}` + "\x1e", `"tok"`, "CONNECT\npasscode:x\n\n\x00"} {
 		f.Add(m, true)
 	}
-	f.Fuzz(func(t *testing.T, m string, fromClient bool) { maskWSMessage(m, fromClient) })
+	f.Fuzz(func(t *testing.T, m string, fromClient bool) {
+		defer fuzzSlow(t, len(m))()
+		maskWSMessage(m, fromClient)
+	})
 }
 
 // TestWSReReview: the re-review of the fixes (Fable).

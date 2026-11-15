@@ -272,7 +272,7 @@ func lanSteps(n exitnode.Status, devices []capture.DeviceInfo) []string {
 	busy := false
 	for _, d := range devices {
 		if strings.HasPrefix(d.ID, "lan:") && d.Carried {
-			if d.Flows+d.TLSFailures+d.Passthroughs > 0 {
+			if d.Flows+d.TLSFailures+d.Passthroughs+d.RawTCP > 0 {
 				busy = true
 			} else {
 				idle = append(idle, d.ID)

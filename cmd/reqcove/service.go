@@ -144,12 +144,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	var start [][]string
 	uid := strconv.Itoa(os.Getuid())
 	if goos == "darwin" {
-		// launchd would make the log 0644 (its umask): made 0600 here, launchd appends to it.
-		f, err := os.OpenFile(filepath.Join(state, serviceLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err == nil {
-			err = errors.Join(f.Chmod(0o600), f.Close())
-		}
-		if err != nil {
+		if err := privateLog(filepath.Join(state, serviceLog)); err != nil {
 			return err
 		}
 		body = launchAgent(argv, path, filepath.Join(state, serviceLog))
@@ -203,6 +198,19 @@ func serviceArgs(goos string, argv []string, path string) error {
 	}
 	return nil
 }
+
+// privateLog makes a service's log, or makes it 0600 if it is there: launchd
+// would make it 0644 (its umask), then append to it.
+func privateLog(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	return errors.Join(f.Chmod(0o600), f.Close())
+}
+
+// brewLog is brew services' log for reqcove (the formula's log_path).
+func brewLog(brew string) string { return filepath.Join(brew, "var", "log", "reqcove.log") }
 
 // brewService refuses when Homebrew's service for reqcove is there: two
 // services would fight over the state directory.

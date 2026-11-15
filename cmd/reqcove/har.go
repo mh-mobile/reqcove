@@ -8,10 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -40,13 +38,10 @@ func har(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	conn, err := net.Dial("unix", filepath.Join(*state, "mcp.sock"))
-	if err != nil {
+	session, err := dialRun(ctx, *state, "reqcove-har")
+	if errors.Is(err, errNotRunning) {
 		return fmt.Errorf("reqcove is not running: start `%s`, then export its flows", withState("reqcove run", *state))
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "reqcove-har", Version: version}, nil)
-	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
 	defer session.Close()

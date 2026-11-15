@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,9 +42,56 @@ type remoteProxy struct {
 	plainN atomic.Int64
 
 	failed failLog // repeated failures, logged once a minute
+
+	tunnelsMu sync.Mutex
+	tunnels   map[netip.Addr]int // CONNECT tunnels open (or dialing), by client address
 }
 
 const maxPlain = 256
+
+// A client (one address: the local proxy's are all 127.0.0.1) keeps at most
+// maxTunnels CONNECT tunnels open; a tunnel with no bytes either way for
+// tunnelIdle is closed. Vars for tests.
+var (
+	maxTunnels = 256
+	tunnelIdle = 15 * time.Minute
+)
+
+// holdTunnel counts one more tunnel for addr, unless it has maxTunnels.
+func (rp *remoteProxy) holdTunnel(addr netip.Addr) bool {
+	rp.tunnelsMu.Lock()
+	defer rp.tunnelsMu.Unlock()
+	if rp.tunnels[addr] >= maxTunnels {
+		return false
+	}
+	if rp.tunnels == nil {
+		rp.tunnels = map[netip.Addr]int{}
+	}
+	rp.tunnels[addr]++
+	return true
+}
+
+func (rp *remoteProxy) releaseTunnel(addr netip.Addr) {
+	rp.tunnelsMu.Lock()
+	defer rp.tunnelsMu.Unlock()
+	if rp.tunnels[addr]--; rp.tunnels[addr] <= 0 {
+		delete(rp.tunnels, addr)
+	}
+}
+
+// idleConn notes when bytes last came from it, for a tunnel's idle close.
+type idleConn struct {
+	net.Conn
+	last *atomic.Int64
+}
+
+func (c idleConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
 
 // logFailure logs a failed request, the first of its kind at once, then the
 // same again (client address, method, host:port, error) at most once a
@@ -197,6 +245,14 @@ func (rp *remoteProxy) toWeb(hostport string) bool {
 }
 
 func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip.AddrPort, dev Device) {
+	if !rp.holdTunnel(src.Addr()) { // before the dial: dials waiting count too
+		err := fmt.Errorf("%d tunnels open from this client already", maxTunnels)
+		rp.logFailure(src, "CONNECT", r.Host, err)
+		http.Error(w, "reqcove: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer rp.releaseTunnel(src.Addr())
+	idle := tunnelIdle
 	var out net.Conn
 	var err error
 	if rp.toWeb(r.Host) {
@@ -235,10 +291,25 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 			return
 		}
 	}
+	// Closed when no bytes came either way for tunnelIdle: a WebSocket or an
+	// event stream that talks stays open. Only the read sides are wrapped (pipe
+	// half-closes the write side it is given).
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
+	var timer *time.Timer
+	timer = time.AfterFunc(idle, func() {
+		if wait := idle - time.Since(time.Unix(0, last.Load())); wait > 0 {
+			timer.Reset(wait) // one timer per tunnel, put forward
+			return
+		}
+		c.Close()
+		out.Close()
+	})
+	defer timer.Stop() // a tunnel that ended holds no timer, nor its connections, till it would fire
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go pipe(&wg, out, c)
-	go pipe(&wg, c, out)
+	go pipe(&wg, out, idleConn{c, &last})
+	go pipe(&wg, c, idleConn{out, &last})
 	wg.Wait()
 }
 
@@ -402,6 +473,7 @@ var dialTimeout = 10 * time.Second
 // its own but the OS's (75 s on macOS; read in mitmproxy 12.3.1, and tried).
 func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret string, ready func(context.Context) error, dst netip.AddrPort) (net.Conn, error) {
 	var d proxy.Dialer = &net.Dialer{}
+	raw := &rawDialer{}
 	if v == socks {
 		if ready != nil {
 			hold, cancel := context.WithTimeout(ctx, socksHold)
@@ -412,7 +484,7 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			}
 		}
 		var err error
-		if d, err = proxy.SOCKS5("tcp", socksAddr, &proxy.Auth{User: device, Password: socksSecret}, d); err != nil {
+		if d, err = proxy.SOCKS5("tcp", socksAddr, &proxy.Auth{User: device, Password: socksSecret}, raw); err != nil {
 			return nil, err
 		}
 	}
@@ -427,6 +499,146 @@ func dialVia(ctx context.Context, v verdict, device, socksAddr, socksSecret stri
 			return nil, fmt.Errorf("%v did not answer within %v (through mitmproxy)", dst, dialTimeout)
 		}
 	}
+	if err == nil && raw.c != nil {
+		// x/net's SOCKS conn adds only BoundAddr and hides CloseWrite: a client's
+		// half-close would close both ways (pipe), cutting the answer still to come.
+		return &holdConn{Conn: raw.c}, nil
+	}
+	return c, err
+}
+
+// holdWait bounds how long holdConn keeps a first write back; maxHeld, how
+// much. holdTimer runs f after holdWait and gives its Stop (tests run f by hand).
+var (
+	holdWait  = time.Second
+	maxHeld   = 64 << 10
+	holdTimer = func(f func()) func() bool { return time.AfterFunc(holdWait, f).Stop }
+)
+
+// holdConn is a SOCKS connection to mitmproxy. mitmproxy (12.3.1) decides on
+// the first bytes it reads whether to decrypt: to read a TLS ClientHello's
+// name it needs 3 bytes of its record, to read an HTTP/1 request's Host its
+// request line up to "HTTP/". With less it has only the address, which
+// --allow-hosts does not name, and passes the connection through,
+// unrecorded, for good (tried: a first write of 1 or 2 bytes of a
+// ClientHello; of an HTTP request, 1, 2, 3, 10 or 14 bytes, short of "HTTP/"). So a
+// first write that is less of either is held and joined with the next ones,
+// until there is enough, holdWait passes, maxHeld is held or the server
+// speaks (mitmproxy has decided then: a reply to its greeting goes at once).
+type holdConn struct {
+	net.Conn
+	mu   sync.Mutex
+	held []byte
+	stop func() bool // holdTimer's, once something is held
+	sent atomic.Bool // what was held went: the rest goes as it comes
+	err  error       // what was held did not go: every later write fails (the request's start is lost)
+}
+
+func (c *holdConn) Write(p []byte) (int, error) {
+	if c.sent.Load() {
+		return c.Conn.Write(p)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.err != nil:
+		return 0, c.err
+	case c.sent.Load(): // holdWait passed meanwhile, or the server spoke
+		return c.Conn.Write(p)
+	}
+	b := append(c.held, p...)
+	if short(b) {
+		c.held = b
+		if c.stop == nil {
+			c.stop = holdTimer(func() { c.flush() })
+		}
+		return len(p), nil
+	}
+	if err := c.send(b); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// send writes b, all that was held and more, and holds nothing after. On an
+// error the connection is closed: no writer may be waiting for it (holdWait,
+// the server's first bytes), and nothing can go right on it now. With c.mu.
+func (c *holdConn) send(b []byte) error {
+	if c.stop != nil {
+		c.stop()
+	}
+	c.held = nil
+	if len(b) > 0 {
+		if _, c.err = c.Conn.Write(b); c.err != nil {
+			c.Conn.Close()
+			return c.err
+		}
+	}
+	c.sent.Store(true)
+	return nil
+}
+
+// flush sends what is held, if it was not sent already.
+func (c *holdConn) flush() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sent.Load() && c.err == nil {
+		c.send(c.held)
+	}
+	return c.err
+}
+
+// Read: once the server sent something (one that speaks first), mitmproxy
+// has decided on the connection: nothing more is held.
+func (c *holdConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 && !c.sent.Load() {
+		c.flush()
+	}
+	return n, err
+}
+
+// CloseWrite sends what is held first: pipe half-closes when the client does.
+func (c *holdConn) CloseWrite() error {
+	if err := c.flush(); err != nil {
+		return err
+	}
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Conn.Close()
+}
+
+// short says b, a connection's first bytes, is less than mitmproxy needs of a
+// TLS record or an HTTP/1 request line (holdConn). Bytes that cannot start a
+// request line (a method of letters, then no control byte but tab and CR;
+// UTF-8 in a path is held) go at once.
+func short(b []byte) bool {
+	switch {
+	case len(b) == 0:
+		return false
+	case b[0] == 0x16: // a TLS handshake record: 0x16 0x03, then the version's minor
+		return len(b) < 3 && (len(b) < 2 || b[1] == 0x03)
+	case 'A' <= b[0] && b[0] <= 'Z': // a method
+		for i, x := range b {
+			if i < 3 && !('A' <= x && x <= 'Z' || 'a' <= x && x <= 'z') || x < 0x20 && x != '\t' && x != '\r' || x == 0x7f {
+				return false
+			}
+		}
+		return len(b) < maxHeld && !bytes.Contains(b, []byte("HTTP/"))
+	}
+	return false
+}
+
+// rawDialer dials SOCKS5's own connection and keeps it.
+type rawDialer struct {
+	net.Dialer
+	c net.Conn
+}
+
+func (d *rawDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	c, err := d.Dialer.DialContext(ctx, network, addr)
+	d.c = c
 	return c, err
 }
 

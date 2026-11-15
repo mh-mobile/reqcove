@@ -45,6 +45,9 @@ func TestHostRules(t *testing.T) {
 	}
 	for hp, want := range map[string]bool{
 		"api.example.com:443":          true,
+		"api.example.com.:80":          true, // a plain HTTP Host may end in the root's dot
+		"api.example.com.":             true,
+		"api.example.com..:80":         false,
 		"api.example.com.evil.net:443": false,
 		"apixexample.com:443":          false,
 		"img.example-cdn.com:443":      true,

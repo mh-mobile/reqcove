@@ -447,7 +447,8 @@ func (f *fakeSOCKS) last() (r socksReq) {
 }
 
 // startFakeSOCKS stands in for mitmproxy: a SOCKS5 server (user/password,
-// RFC 1928 and 1929) that records each request and echoes the stream.
+// RFC 1928 and 1929) that records each request and echoes the stream, then
+// says "bye" once the client is done sending.
 func startFakeSOCKS(t *testing.T) *fakeSOCKS {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -483,7 +484,8 @@ func startFakeSOCKS(t *testing.T) *fakeSOCKS {
 				f.reqs = append(f.reqs, socksReq{user, pass, net.JoinHostPort(host, fmt.Sprint(port))})
 				f.mu.Unlock()
 				c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
-				io.Copy(c, r) // echo
+				io.Copy(c, r)          // echo
+				c.Write([]byte("bye")) // once the client is done sending (a half-close): an answer after it
 			}()
 		}
 	}()

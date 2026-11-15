@@ -205,6 +205,9 @@ func TestEndToEnd(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "a=1")
 		w.Header().Add("Set-Cookie", "b=2")
+		if r.URL.Path == "/joined-cookies" { // one line joining two cookies: recorded as sent, each masked
+			w.Header().Add("Set-Cookie", "c=1; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, d=s3cret; HttpOnly")
+		}
 		if r.URL.Path == "/many-headers" { // a site can send many: the record keeps a bounded number
 			for i := range 600 {
 				w.Header().Add(fmt.Sprintf("X-H%d", i), "v")
@@ -235,21 +238,26 @@ func TestEndToEnd(t *testing.T) {
 	}
 	t.Logf("%d requests through mitmdump in %v", n, time.Since(sendStart).Round(10*time.Millisecond))
 	// A secret query value is masked as it arrives.
-	if resp, err := hc.Get(backend.URL + "/login?user=u&token=abc123"); err == nil {
-		resp.Body.Close()
+	for _, p := range []string{"/login?user=u&token=abc123", "/joined-cookies"} {
+		if resp, err := hc.Get(backend.URL + p); err == nil {
+			resp.Body.Close()
+		}
 	}
 
-	h.waitFlows(n + 1)
+	h.waitFlows(n + 2)
 	s := h.stats()
 	t.Logf("stats: %v", s)
-	if h.stat("flows") != n+1 || h.stat("addon_dropped_bodies") != 0 || h.stat("addon_dropped_events") != 0 || h.stat("orphan_updates") != 0 || h.stat("bad_lines") != 0 {
-		t.Errorf("want %d flows and no drops, got %v", n+1, s)
+	if h.stat("flows") != n+2 || h.stat("addon_dropped_bodies") != 0 || h.stat("addon_dropped_events") != 0 || h.stat("orphan_updates") != 0 || h.stat("bad_lines") != 0 {
+		t.Errorf("want %d flows and no drops, got %v", n+2, s)
 	}
 	if s["brotli_decode"] != true {
 		t.Errorf("hello: brotli decoding off (%v)", s["brotli"])
 	}
 	if login := h.doneFlow("/login", false); strings.Contains(login.URL, "abc123") || !strings.Contains(login.URL, "user=u") {
 		t.Errorf("token not masked as it arrived: %q", login.URL)
+	}
+	if j := h.doneFlow("/joined-cookies", false); !slices.Contains(j.RespHeaders, [2]string{"Set-Cookie", "c=[redacted]; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT, d=[redacted]; HttpOnly"}) {
+		t.Errorf("joined Set-Cookie: %q", j.RespHeaders)
 	}
 	v := h.doneFlow(fmt.Sprintf("/r%d", n-1), true)
 	if v.Conn == "" {
@@ -352,6 +360,27 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if len(fails) == 0 || fails[0].Time == "" {
 		t.Errorf("TLS failure not recorded with its device: %+v (stats %v)", fails, h.stats())
+	}
+	// Not caught (SECURITY): a client that finishes the handshake and closes
+	// without a request (an app checking the certificate itself after it)
+	// leaves no TLS failure and no flow, for mitmproxy the handshake succeeded.
+	nFails, nFlows := len(h.c.Store.TLSFailures(Filter{Limit: 500})), len(listAll(h.c.Store, 100000))
+	socks, err := proxy.SOCKS5("tcp", h.c.SocksAddr, &proxy.Auth{User: "test-device", Password: h.c.SocksSecret}, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := socks.Dial("tcp", strings.TrimPrefix(tlsBackend.URL, "https://")); err != nil {
+		t.Error(err)
+	} else {
+		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true})
+		if err := tc.Handshake(); err != nil {
+			t.Errorf("handshake: %v", err)
+		}
+		tc.Close()
+		time.Sleep(time.Second)
+		if n, m := len(h.c.Store.TLSFailures(Filter{Limit: 500})), len(listAll(h.c.Store, 100000)); n != nFails || m != nFlows {
+			t.Errorf("a handshake closed without a request left %d TLS failures, %d flows (had %d, %d)", n, m, nFails, nFlows)
+		}
 	}
 
 	if r, err := hc.Get(backend.URL + "/many-headers"); err == nil {
@@ -810,11 +839,186 @@ func TestPyCommand(t *testing.T) {
 	if bin, _ := PyCommand(Config{Uvx: "uvx", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "uv" {
 		t.Errorf("uvx on PATH: %s", bin)
 	}
-	if bin, _ := PyCommand(Config{Uvx: "/usr/bin/false", MitmSpec: LockedMitmSpec}, "mitmdump"); bin != "/usr/bin/false" {
-		t.Errorf("a --uvx not named uvx: %s", bin)
+	// A --uvx not named uvx: the lock's tornado (mitm.py), no hashes.
+	bin, args = PyCommand(Config{Uvx: "/usr/bin/false", Python: "3.14", MitmSpec: LockedMitmSpec, Dir: "/s"}, "mitmdump")
+	if want := "--python 3.14 --exclude-newer " + UVExcludeNewer + " --exclude-newer-package tornado=" + lockExcludeNewer + " --overrides /s/mitm-overrides.txt --from mitmproxy==12.3.1 python /s/mitm.py mitmdump"; bin != "/usr/bin/false" || strings.Join(args, " ") != want {
+		t.Errorf("a --uvx not named uvx: %s %q", bin, args)
 	}
 	bin, args = PyCommand(Config{Uvx: "uvx", Python: "3.14", MitmSpec: "mitmproxy==12.2.3", Dir: "/s"}, "mitmdump")
-	if bin != "uvx" || !strings.Contains(strings.Join(args, " "), "--from mitmproxy==12.2.3 python /s/mitm.py mitmdump") {
+	if want := "--python 3.14 --exclude-newer " + UVExcludeNewer + " --from mitmproxy==12.2.3 python /s/mitm.py mitmdump"; bin != "uvx" || strings.Join(args, " ") != want {
 		t.Errorf("other spec: %s %q", bin, args)
+	}
+}
+
+// TestLockMeta: the locked mitmproxy through uvx (a --uvx wrapper) takes
+// mitm.py's overrides, and its date for tornado, as uv run --script does.
+func TestLockMeta(t *testing.T) {
+	for _, w := range []string{
+		"# exclude-newer = \"" + lockExcludeNewer + "\"\n",
+		"# override-dependencies = [\"" + strings.TrimSpace(lockOverrides) + "\"]",
+		"# dependencies = [\"" + LockedMitmSpec + "\"]\n",
+	} {
+		if !strings.Contains(string(mitmPy), w) {
+			t.Errorf("mitm.py has no %q", w)
+		}
+	}
+}
+
+// TestWrapperTornado (REQCOVE_E2E=1): through a --uvx wrapper, the locked
+// mitmproxy gets the lock's tornado (6.6.1), not the 6.5.10 mitmproxy 12.3.1
+// caps it at, which has known vulnerabilities (mitmweb's server).
+func TestWrapperTornado(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	dir := t.TempDir()
+	for f, b := range scriptFiles {
+		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrapper := filepath.Join(dir, "my-uvx")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec uvx \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin, args := PyCommand(Config{Uvx: wrapper, Python: "3.14", MitmSpec: LockedMitmSpec, Dir: dir}, "python")
+	out, err := exec.Command(bin, append(args, "-I", "-c", "import tornado, mitmproxy.version as m; print(tornado.version, m.VERSION)")...).Output()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "6.6.1 12.3.1" {
+		t.Errorf("tornado and mitmproxy through a wrapper: %s", got)
+	}
+}
+
+// TestCutBodies (REQCOVE_E2E=1): a flow that fails mid-body keeps the head
+// that came, and its size, not final; a request body that had ended stays
+// final when the response is cut after it.
+func TestCutBodies(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	h := startHarness(t, ctx, []string{"127.0.0.1"})
+	part := strings.Repeat("came before the cut. ", 200) // 4200 bytes, all in one write: no periodic flush
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		if r.URL.Path == "/none" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.URL.Path != "/cut" {
+			return
+		}
+		c, buf, _ := w.(http.Hijacker).Hijack()
+		fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 100000\r\n\r\n%s", part)
+		buf.Flush()
+		c.Close()
+	}))
+	defer srv.Close()
+	hc := h.client("cut-device")
+
+	if resp, err := hc.Post(srv.URL+"/cut", "text/plain", strings.NewReader("sent whole")); err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	v := h.doneFlow("/cut", true)
+	if v.State != "error" || v.RespBody.Size != int64(len(part)) || v.RespBody.Final || v.RespBodyText != part {
+		t.Errorf("cut response: state=%s body=%+v head=%d bytes", v.State, v.RespBody, len(v.RespBodyText))
+	}
+	if !v.ReqBody.Final || v.ReqBodyText != "sent whole" {
+		t.Errorf("the request body that had ended: %+v %q", v.ReqBody, v.ReqBodyText)
+	}
+
+	// An HTTP/1 GET has no body to stream: mitmproxy never calls the stream, not
+	// even with its end, and the record still says the (empty) body is whole.
+	if resp, err := hc.Get(srv.URL + "/plain"); err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	if v := h.doneFlow("/plain", true); !v.ReqBody.Final || v.ReqBody.Size != 0 {
+		t.Errorf("a GET's empty request body: %+v", v.ReqBody)
+	}
+	if resp, err := hc.Get(srv.URL + "/none"); err == nil { // and a 204's response has none either
+		resp.Body.Close()
+	}
+	if v := h.doneFlow("/none", true); !v.RespBody.Final || v.RespBody.Size != 0 {
+		t.Errorf("a 204's empty response body: %+v", v.RespBody)
+	}
+
+	// An upload the client gives up on.
+	conn, err := hc.Transport.(*http.Transport).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /upload HTTP/1.1\r\nHost: %s\r\nContent-Type: text/plain\r\nContent-Length: 100000\r\n\r\n%s", srv.Listener.Addr(), part)
+	time.Sleep(200 * time.Millisecond) // mitmproxy reads it before the close
+	conn.Close()
+	v = h.doneFlow("/upload", true)
+	if v.State != "error" || v.ReqBody.Size != int64(len(part)) || v.ReqBody.Final || v.ReqBodyText != part {
+		t.Errorf("cut upload: state=%s body=%+v head=%d bytes", v.State, v.ReqBody, len(v.ReqBodyText))
+	}
+}
+
+// TestConcatenatedBodies (REQCOVE_E2E=1): a gzip body of several members and
+// a zstd body of several frames are decoded whole, zero padding after a gzip
+// member skipped (as gzip.decompress does); past maxMembers the head stops,
+// cut.
+func TestConcatenatedBodies(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	h := startHarness(t, ctx, []string{"127.0.0.1"})
+	gz := func(s string) []byte {
+		var b bytes.Buffer
+		w := gzip.NewWriter(&b)
+		w.Write([]byte(s))
+		w.Close()
+		return b.Bytes()
+	}
+	zs := func(s string) []byte { return pyCompress(t, "zstd", "data = b'"+s+"'") }
+	cat := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	empty := bytes.Repeat(gz(""), 2000)
+	cases := []struct {
+		name, enc string
+		parts     [][]byte // written one by one, a moment apart: mitmproxy gets them as chunks of their own
+		want      string
+		cut       bool
+	}{
+		{"gzip", "gzip", [][]byte{cat(gz("first member, "), gz("second member"))}, "first member, second member", false},
+		{"gzip-split", "gzip", [][]byte{gz("first member, "), gz("second member")}, "first member, second member", false},
+		{"gzip-padded", "gzip", [][]byte{cat(gz("first member, "), []byte{0, 0}, gz("second member"), []byte{0, 0, 0})}, "first member, second member", false},
+		{"zstd", "zstd", [][]byte{cat(zs("first frame, "), zs("second frame"))}, "first frame, second frame", false},
+		{"zstd-split", "zstd", [][]byte{zs("first frame, "), zs("second frame")}, "first frame, second frame", false},
+		{"gzip-many", "gzip", [][]byte{cat(empty, gz("past the bound"))}, "", true},
+	}
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	hc := h.client("cat-device")
+	for _, c := range cases {
+		mux.HandleFunc("/cat/"+c.name, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Encoding", c.enc)
+			for _, p := range c.parts {
+				w.Write(p)
+				w.(http.Flusher).Flush()
+				time.Sleep(100 * time.Millisecond)
+			}
+		})
+		resp, err := hc.Get(srv.URL + "/cat/" + c.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		v := h.doneFlow("/cat/"+c.name, true)
+		b := v.RespBody
+		if !b.Decoded || b.Note != "" || v.RespBodyText != c.want || b.Truncated != c.cut || b.Size != int64(len(cat(c.parts...))) {
+			t.Errorf("%s: head %q, body %+v", c.name, v.RespBodyText, b)
+		}
 	}
 }
