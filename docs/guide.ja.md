@@ -194,7 +194,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 - リンクは起動のたびに同じなので、再起動後もブックマークから開けるはずです。リンクを変えるには、状態ディレクトリの `ui-token` を削除して起動し直します。
 - Tailscale はオンにしておく必要があります。Exit Node や [Remote Proxy](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) は使っていなくてもかまいません。このページ自身の通信は記録されません。
 
-確認状況：iPhone で確認しました（カメラから開く、新しいフローを追う、検索、Clear と Show all、`run` の再起動後に Safari で開き直す）。
+確認状況：iPhone で確認しました（カメラから開く、新しいフローを追う、検索、Clear と Show all、`run` の再起動後に Safari で開き直す）。Linux（Ubuntu 24.04、arm64）で動かした `run` でも、新しいフローを追うことを確認しました（2026-11-15）。
 
 ### HAR ファイルに書き出す（`reqcove har`）
 
@@ -225,7 +225,7 @@ mitmdump の代わりに mitmweb が起動します。このコンピュータ�
 - リンクは起動のたびに同じです（トークンは状態ディレクトリの `web-token`）。再起動後はリンクをもう一度開いてください。トークンなしのブックマークでは、トークンの入力を求められます。
 - Capture タブの「Run SOCKS Proxy」は、オンのままにしてください。オフにすると、デバイスの HTTP(S) が止まります。そこにあるほかのモードは、Reqcove では使いません。変更した設定は、reqcove を再起動すると元に戻ります。
 
-確認状況：Exit Node を使っている iPhone から確認しました。コードから（未確認）：mitmweb で設定を変えても、Reqcove の記録の範囲とマスクは変わりません。
+確認状況：Exit Node を使っている iPhone から、macOS と Linux（Ubuntu 24.04、arm64）で動かした `run` で確認しました（2026-11-15）。コードから（未確認）：mitmweb で設定を変えても、Reqcove の記録の範囲とマスクは変わりません。
 
 ## iPhone アプリ以外のクライアントを記録する
 
