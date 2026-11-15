@@ -10,14 +10,16 @@
   is no longer recorded from the next event on, a WebSocket open to it
   included (that flow ends with the error "recording stopped: its host left
   the scope", and does not come back if the host is added again), while its
-  open connections stay decrypted until they close. A change that takes out
-  a host a `mock` or `resolve` rule names is refused, naming the rules
+  open connections stay decrypted (unrecorded) until they close. A change
+  that takes out a host a `mock` rule names is refused, naming the rules
   (checked against the rules loaded, not the file on disk), and nothing
-  changes. A restarted mitmproxy keeps the change. Masking is never touched.
-  `status` shows the hosts mitmproxy has acknowledged (`scope_pending` while
-  it has not). E2E tests with real mitmproxy (add, then kill mitmdump; remove
-  with a WebSocket open; a stop and a start; a mock naming the host; status);
-  unit tests for the per-event check and the order of a change.
+  changes; a `resolve` rule's host is checked the same way (from reading the
+  code; not tested). A restarted mitmproxy keeps the change. Masking is
+  never touched. `status` shows the hosts mitmproxy has acknowledged
+  (`scope_pending` while it has not). E2E tests with real mitmproxy (add,
+  then kill mitmdump; remove with a WebSocket and a keep-alive connection
+  open; a stop and a start; a mock naming the host; status); unit tests for
+  the per-event check and the order of a change.
 
 ### Changed
 

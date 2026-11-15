@@ -233,6 +233,9 @@ func TestSetScopeOrder(t *testing.T) {
 			return map[string]any{"error": "mock[0]: a.example.com is not in the new scope"}
 		case op["check"] == true:
 			return map[string]any{"ok": true}
+		case mode.Load() == "refuse-apply": // the rules changed since the check: this apply refused, the next taken
+			mode.Store("ok")
+			return map[string]any{"error": "mock[0]: a.example.com is not in the new scope"}
 		case mode.Load() == "silent":
 			return nil
 		case mode.Load() == "other":
@@ -275,6 +278,19 @@ func TestSetScopeOrder(t *testing.T) {
 	}
 	if !storeHas("b.example.com") || c.ScopePending() != "" || !slices.Equal(c.Scope().Hosts, ab.Hosts) {
 		t.Errorf("acknowledged: store b %v, pending %q, scope %v", storeHas("b.example.com"), c.ScopePending(), c.Scope().Hosts)
+	}
+
+	// Checked, then refused at the apply: back to ab, at a newer generation,
+	// in the Store, mitmdump and a new mitmdump's args (else a restart would
+	// load rules against a scope they refuse, and fail for good).
+	mode.Store("refuse-apply")
+	if err := c.SetScope(ctx, rulesOf(t, "b.example.com")); err == nil || !strings.Contains(err.Error(), "mock[0]") {
+		t.Fatalf("refused at the apply: %v", err)
+	}
+	args := strings.Join(c.mitmArgs(), " ")
+	if !storeHas("a.example.com") || c.ScopePending() != "" || !slices.Equal(c.Scope().Hosts, ab.Hosts) || !strings.Contains(args, `a\.example\.com`) ||
+		!strings.Contains(args, fmt.Sprintf("reqcove_scope_gen=%d", c.wantGen)) || c.Store.topGen() != c.wantGen || ops()[len(ops())-1]["gen"] != float64(c.wantGen) {
+		t.Errorf("after the refusal: store a %v, pending %q, scope %v, gen %d, store's %d, args %s", storeHas("a.example.com"), c.ScopePending(), c.Scope().Hosts, c.wantGen, c.Store.topGen(), args)
 	}
 
 	mode.Store("silent") // narrowing, unacknowledged: the Store first all the same

@@ -90,14 +90,23 @@ func (e *liveEnv) dial(ctx context.Context) (net.Conn, error) {
 	return socks.(proxy.ContextDialer).DialContext(ctx, "tcp", e.addr)
 }
 
-// get makes one request to name on a new connection; it says whether
-// mitmproxy decrypted it (its CA signed what the client saw).
-func (e *liveEnv) get(name, path string) (decrypted bool) {
-	e.t.Helper()
-	c := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{
-		DialContext:     func(ctx context.Context, _, _ string) (net.Conn, error) { return e.dial(ctx) },
+// client is an HTTP/1.1 client to name, keeping its connection; dials counts
+// its connections.
+func (e *liveEnv) client(name string, dials *atomic.Int32) *http.Client {
+	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dials.Add(1)
+			return e.dial(ctx)
+		},
 		TLSClientConfig: &tls.Config{RootCAs: e.roots, ServerName: name},
+		TLSNextProto:    map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}}
+}
+
+// do makes one request with c; it says whether mitmproxy decrypted it (its
+// CA signed what the client saw), and the status.
+func (e *liveEnv) do(c *http.Client, name, path string) (decrypted bool, status int) {
+	e.t.Helper()
 	req, _ := http.NewRequest("GET", "https://"+name+":"+e.port+path, nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
 	r, err := c.Do(req)
@@ -106,7 +115,14 @@ func (e *liveEnv) get(name, path string) (decrypted bool) {
 	}
 	io.Copy(io.Discard, r.Body)
 	r.Body.Close()
-	return strings.Contains(r.TLS.PeerCertificates[0].Issuer.String(), "mitmproxy")
+	return strings.Contains(r.TLS.PeerCertificates[0].Issuer.String(), "mitmproxy"), r.StatusCode
+}
+
+// get makes one request to name on a new connection.
+func (e *liveEnv) get(name, path string) (decrypted bool) {
+	e.t.Helper()
+	decrypted, _ = e.do(e.client(name, new(atomic.Int32)), name, path)
+	return decrypted
 }
 
 // recorded waits for a flow whose URL holds sub (want), or a second for none.
@@ -149,17 +165,23 @@ func (e *liveEnv) send(ws *websocket.Conn, n int) {
 	}
 }
 
-// wsFlow is the socket tagged tag as the Store keeps it, once the addon's
-// lines have had time to arrive.
-func (e *liveEnv) wsFlow(tag string) FlowView {
+// wsFlow is the socket tagged tag as the Store keeps it once done holds (the
+// addon's lines arrive a moment after the server has the messages), or after
+// wait (for what should not come, the time it is given to come).
+func (e *liveEnv) wsFlow(tag string, done func(FlowView) bool, wait time.Duration) FlowView {
 	e.t.Helper()
-	time.Sleep(500 * time.Millisecond)
-	v, ok := e.h.findFlow("ws?"+tag, false)
-	if !ok {
-		e.t.Fatalf("no socket %s", tag)
+	for deadline := time.Now().Add(wait); ; time.Sleep(50 * time.Millisecond) {
+		v, ok := e.h.findFlow("ws?"+tag, false)
+		if ok && done(v) || time.Now().After(deadline) {
+			return v
+		}
 	}
-	return v
 }
+
+// wsCut: the socket's flow was ended by the gate; nothing more can come.
+func wsCut(v FlowView) bool { return v.State == "error" }
+
+func messages(n int) func(FlowView) bool { return func(v FlowView) bool { return v.WSMessages >= n } }
 
 func (e *liveEnv) scope(ctx context.Context, hosts ...string) {
 	e.t.Helper()
@@ -224,36 +246,59 @@ func TestLiveScopeAddRestartE2E(t *testing.T) {
 
 // TestLiveScopeRemoveE2E: a removed host's open WebSocket records nothing
 // more and is closed with the error; it does not resume when the host is back.
-// Across a stop (nothing recorded) and a start, an open socket's later
-// messages are not recorded either; a new one is.
+// Its open keep-alive connection stays decrypted, unrecorded; a new one passes
+// through undecrypted. Across a stop (nothing recorded) and a start, an open
+// socket's later messages are not recorded either; a new one's are.
 func TestLiveScopeRemoveE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	e := newLiveEnv(t, ctx, []string{"a.example.com"}, nil)
 	one := e.ws(ctx, "a.example.com", "one")
 	e.send(one, 3)
+	if v := e.wsFlow("one", messages(3), 10*time.Second); v.WSMessages != 3 {
+		t.Fatalf("before: %d messages", v.WSMessages)
+	}
+	var dials atomic.Int32
+	ka := e.client("a.example.com", &dials)
+	if dec, _ := e.do(ka, "a.example.com", "/ka-before"); !dec {
+		t.Fatal("a not decrypted before the removal")
+	}
+	e.recorded("/ka-before", true)
 	e.scope(ctx, "b.example.com")
 	e.send(one, 3)
-	if v := e.wsFlow("one"); v.WSMessages != 3 || v.State != "error" || v.Error != ScopeCut {
+	if v := e.wsFlow("one", wsCut, 10*time.Second); v.WSMessages != 3 || v.State != "error" || v.Error != ScopeCut {
 		t.Errorf("removed: %d messages, %s %q", v.WSMessages, v.State, v.Error)
+	}
+	if dec, _ := e.do(ka, "a.example.com", "/ka-after"); !dec || dials.Load() != 1 {
+		t.Errorf("the open connection after the removal: decrypted %v, connections %d", dec, dials.Load())
+	}
+	if _, rec := e.recorded("/ka-after", false); rec {
+		t.Error("recorded on the open connection after the removal")
+	}
+	if e.get("a.example.com", "/new-after") {
+		t.Error("a new connection to a decrypted after the removal")
+	}
+	if _, rec := e.recorded("/new-after", false); rec {
+		t.Error("recorded on a new connection after the removal")
 	}
 	e.scope(ctx, "a.example.com", "b.example.com")
 	e.send(one, 3)
-	if v := e.wsFlow("one"); v.WSMessages != 3 {
+	if v := e.wsFlow("one", messages(4), 2*time.Second); v.WSMessages != 3 {
 		t.Errorf("a back: the socket resumed, %d messages", v.WSMessages)
 	}
 	two := e.ws(ctx, "a.example.com", "two")
 	e.send(two, 3)
+	e.wsFlow("two", messages(3), 10*time.Second)
 	e.scope(ctx) // stop
 	e.send(two, 3)
 	e.scope(ctx, "a.example.com", "b.example.com") // start
 	e.send(two, 3)
-	if v := e.wsFlow("two"); v.WSMessages != 3 || v.Error != ScopeCut {
+	if v := e.wsFlow("two", wsCut, 10*time.Second); v.WSMessages != 3 || v.Error != ScopeCut {
 		t.Errorf("stop, start: %d messages (3 before the stop), %s %q", v.WSMessages, v.State, v.Error)
 	}
 	three := e.ws(ctx, "a.example.com", "three")
 	e.send(three, 3)
-	if v := e.wsFlow("three"); v.WSMessages != 3 || v.State != "open" {
+	if v := e.wsFlow("three", messages(3), 10*time.Second); v.WSMessages != 3 || v.State != "open" {
 		t.Errorf("a new socket after the start: %d messages, %s", v.WSMessages, v.State)
 	}
 }
@@ -270,14 +315,17 @@ func TestLiveScopeRulesE2E(t *testing.T) {
 	})
 	mocked := func(path string) {
 		t.Helper()
-		e.get("a.example.com", path)
-		if v, _ := e.recorded(path, true); !v.Mocked || v.Status != 418 {
-			t.Errorf("%s: mocked %v, status %d", path, v.Mocked, v.Status)
+		if _, status := e.do(e.client("a.example.com", new(atomic.Int32)), "a.example.com", path); status != 418 {
+			t.Errorf("%s: status %d, want the mock's", path, status)
+		}
+		if v, _ := e.recorded(path, true); !v.Mocked {
+			t.Errorf("%s: recorded as not mocked", path)
 		}
 	}
-	mocked("/mocked")
+	mocked("/mocked?n=1")
 	ws := e.ws(ctx, "a.example.com", "open")
 	e.send(ws, 2)
+	e.wsFlow("open", messages(2), 10*time.Second)
 	os.WriteFile(e.rules, []byte("mock: []\n"), 0o600)
 	err := e.h.c.SetScope(ctx, rulesOf(t, "b.example.com"))
 	if err == nil || !strings.Contains(err.Error(), "mock[0]: a.example.com is not in the new scope") {
@@ -287,11 +335,8 @@ func TestLiveScopeRulesE2E(t *testing.T) {
 		t.Errorf("refused: status shows %v, pending %q", got, e.h.c.ScopePending())
 	}
 	e.send(ws, 2)
-	if v := e.wsFlow("open"); v.WSMessages != 4 || v.State != "open" {
+	if v := e.wsFlow("open", messages(4), 10*time.Second); v.WSMessages != 4 || v.State != "open" {
 		t.Errorf("refused: the socket has %d messages, %s %q", v.WSMessages, v.State, v.Error)
 	}
-	mocked("/mocked") // on a new connection: still decrypted, the mock still loaded
-	if dec := e.get("a.example.com", "/plain"); !dec {
-		t.Error("refused: a no longer decrypted")
-	}
+	mocked("/mocked?n=2") // on a new connection: still decrypted, the mock still loaded
 }

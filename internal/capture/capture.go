@@ -171,9 +171,8 @@ type Capture struct {
 	storeGen int64
 	instance string
 	ackMu    sync.Mutex // acked alone, for status: never held across a call to mitmdump
-	acked    HostRules  // what mitmdump acknowledged last, and its generation
-	ackedGen int64
-	pending  string // ScopePending
+	acked    HostRules  // what mitmdump acknowledged last
+	pending  string     // ScopePending
 }
 
 // proc is one mitmdump process.
@@ -598,7 +597,7 @@ func (c *Capture) applyLocked(ctx context.Context) error {
 func (c *Capture) appliedLocked() {
 	c.toStoreLocked()
 	c.ackMu.Lock()
-	c.acked, c.ackedGen, c.pending = c.want, c.wantGen, ""
+	c.acked, c.pending = c.want, ""
 	c.ackMu.Unlock()
 }
 
