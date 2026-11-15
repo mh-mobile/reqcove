@@ -446,17 +446,26 @@ func TestServiceUninstall(t *testing.T) {
 			t.Fatal(err)
 		}
 		file, _ := serviceFile(goos)
-		*got = nil
-		if err := serviceRestart(goos); err != nil {
-			t.Fatal(err)
+		// Loaded: restarted. Not loaded (launchctl bootout, stopped until the
+		// next login): on macOS, kickstart cannot find it; loaded again.
+		for _, loaded := range []bool{true, false} {
+			got = fakeCtl(t, loaded, nil)
+			if err := serviceRestart(goos); err != nil {
+				t.Fatal(err)
+			}
+			domain := "gui/" + strconv.Itoa(os.Getuid())
+			want := [][]string{{"launchctl", "print", domain + "/" + serviceLabel}, {"launchctl", "kickstart", "-k", domain + "/" + serviceLabel}}
+			if !loaded {
+				want[1] = []string{"launchctl", "bootstrap", domain, file}
+			}
+			if goos == "linux" {
+				want = [][]string{{"systemctl", "--user", "restart", "reqcove.service"}}
+			}
+			if !slices.EqualFunc(*got, want, slices.Equal) {
+				t.Errorf("%s restart, loaded %v: %q", goos, loaded, *got)
+			}
 		}
-		restart := []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/" + serviceLabel}
-		if goos == "linux" {
-			restart = []string{"systemctl", "--user", "restart", "reqcove.service"}
-		}
-		if len(*got) != 1 || !slices.Equal((*got)[0], restart) {
-			t.Errorf("%s restart: %q", goos, *got)
-		}
+		got = fakeCtl(t, false, nil)
 		*got = nil
 		if err := serviceUninstall(goos); err != nil {
 			t.Fatal(err)
@@ -611,5 +620,23 @@ func TestPrivateLogs(t *testing.T) {
 	formula, err := os.ReadFile("../../packaging/homebrew/reqcove.rb")
 	if err != nil || !strings.Contains(string(formula), `log_path var/"log/reqcove.log"`) || brewLog("/p") != "/p/var/log/reqcove.log" {
 		t.Errorf("brewLog is not the formula's log_path (%v)", err)
+	}
+}
+
+// Not running, its service installed (stopped until the next login, or it
+// ended): status says how to start the service, for its --state only.
+func TestOfflineStatusNamesService(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-s")
+	if err := serviceInstall(runtime.GOOS, config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	want := "is installed: start it with reqcove service restart"
+	if out := captureStdout(t, func() error { return offlineStatus(state, "/nonexistent/uvx") }); !strings.Contains(out, want) {
+		t.Errorf("its state: no %q in\n%s", want, out)
+	}
+	if out := captureStdout(t, func() error { return offlineStatus(filepath.Join(t.TempDir(), "other"), "/nonexistent/uvx") }); strings.Contains(out, want) {
+		t.Errorf("another state:\n%s", out)
 	}
 }

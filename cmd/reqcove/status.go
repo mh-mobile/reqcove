@@ -532,8 +532,14 @@ func offlineStatus(state, uvx string) error {
 		fmt.Println("  node:  has logged in before (state kept); while it is down, a phone using its exit node has no internet: turn the exit node off there, or start it")
 	}
 	printCA(os.Stdout, state, false)
-	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "") {
+	svcs := installedServices(runtime.GOOS)
+	for _, w := range serviceWarnings(runtime.GOOS, svcs, "") {
 		fmt.Println("warning: " + w)
+	}
+	for _, s := range svcs {
+		if serviceState(runtime.GOOS, s.file) == state {
+			fmt.Printf("its service (%s) is installed: start it with %s\n", s.file, restartCmd(s.name))
+		}
 	}
 	if cfg, _ := bareConfig(); cfg != "" && isDefaultState(state) {
 		fmt.Printf("start it with: reqcove run (it reads %s)\n", cfg)

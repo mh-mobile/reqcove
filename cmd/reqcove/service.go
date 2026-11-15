@@ -452,7 +452,14 @@ func serviceRestart(goos string) error {
 		return fmt.Errorf("not installed (no %s): reqcove service install", file)
 	}
 	if goos == "darwin" {
-		return serviceCtl("launchctl", "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+serviceLabel)
+		// Stopped until the next login (launchctl bootout): launchd no longer
+		// has the job, so kickstart cannot find it; loading it starts it
+		// (RunAtLoad).
+		domain := "gui/" + strconv.Itoa(os.Getuid())
+		if serviceCtl("launchctl", "print", domain+"/"+serviceLabel) != nil {
+			return serviceCtl("launchctl", "bootstrap", domain, file)
+		}
+		return serviceCtl("launchctl", "kickstart", "-k", domain+"/"+serviceLabel)
 	}
 	return serviceCtl("systemctl", "--user", "restart", serviceUnit)
 }
@@ -518,6 +525,18 @@ func serviceWarnings(goos string, svcs []installedService, self string) []string
 		}
 	}
 	return out
+}
+
+// serviceState is the state directory a service file's run uses: its
+// --state, else the default.
+func serviceState(goos, file string) string {
+	argv := serviceArgv(goos, file)
+	for i := 1; i+1 < len(argv); i++ {
+		if argv[i] == "--state" {
+			return argv[i+1]
+		}
+	}
+	return defaultState()
 }
 
 // oursStale: reqcove service install's service runs another binary than
