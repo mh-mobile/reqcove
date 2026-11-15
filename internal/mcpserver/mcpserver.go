@@ -203,6 +203,22 @@ type StatusOut struct {
 	// Service names the service that started run (brew services' or reqcove
 	// service install's launchd label, or its systemd unit), when one did.
 	Service string `json:"service,omitempty"`
+	// Version is this run's, as `reqcove version` prints it (serverInfo's).
+	Version string `json:"version,omitempty"`
+	// Manager is what started run: "terminal", "reqcove service" (reqcove
+	// service install's LaunchAgent or systemd unit, Service names it) or
+	// "brew services"; none when it cannot be told.
+	Manager string `json:"manager,omitempty"`
+	// RestartCommand restarts run under its service (none from a terminal:
+	// Ctrl-C there, then run it again). A restart empties the records.
+	RestartCommand string `json:"restart_command,omitempty"`
+	// ConfigFile is the --config file run read (none: flags only);
+	// ConfigUnused another one a run with no arguments found, not read.
+	// HostsFiles are the files --allow-hosts=@FILE and --pass-hosts=@FILE
+	// read. On this computer only (not over --mcp-http).
+	ConfigFile   string   `json:"config_file,omitempty"`
+	ConfigUnused string   `json:"config_unused,omitempty"`
+	HostsFiles   []string `json:"hosts_files,omitempty"`
 }
 
 // SetActivePresets fills active_presets from what mitmproxy says is on.

@@ -20,7 +20,7 @@ repeat it.
 4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [connections not read as HTTP](#connections-not-read-as-http-raw-tcp) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
 5. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
 6. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
-7. [Run it as a service](#run-it-as-a-service): [`brew services`](#keep-it-running-brew-services) · [`reqcove service install`](#keep-it-running-without-homebrew-reqcove-service-install)
+7. [Run it in the background](#run-it-in-the-background): [start, update, stop](#start-update-stop) · [the config file](#the-config-file---config) · [`brew services`](#with-homebrew-brew-services) · [`reqcove service install`](#without-homebrew-reqcove-service-install)
 8. [Containers](#containers)
 9. [Troubleshooting](#troubleshooting)
 10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security) · [Compatibility](COMPATIBILITY.md)
@@ -65,11 +65,16 @@ with an empty answer. It starts nothing and removes nothing.
   `reqcove` on `PATH` is not this binary (none, or another one), the commands
   it prints name this binary by its full path instead, as those of
   `service install` do.
-- **How to start**: `brew services start reqcove` for a brew install, else
-  `reqcove service install`; or `reqcove run --config FILE` in a terminal.
-  `--lan` is not kept in a file: in a terminal,
-  `reqcove run --lan --allow-hosts HOSTS`. It prints no login URL:
-  `reqcove links` does.
+- **How to start** (since v1.1, its last lines): in a terminal first,
+  `reqcove run`, which reads the file with no arguments (or
+  `reqcove run --config FILE` when another file comes first,
+  [the config file](#the-config-file---config)); then, to start it at login in
+  the background, `reqcove service install`, or `brew services start reqcove`
+  for a brew install. `--lan` is not kept in a file: in a terminal,
+  `reqcove run --lan --allow-hosts HOSTS`. Then how to change things while it
+  runs: `reqcove capture add HOST` and `reqcove capture save` for the hosts,
+  else edit the file and restart. It prints no login URL: `reqcove links`
+  does.
 - **Ctrl-C** stops it at the question it is on. What was written stays.
 
 `run` prints what is left to do, and `reqcove status` repeats it:
@@ -148,9 +153,15 @@ nothing from `reqcove links`.
 - **Update** (a newer version: `brew upgrade reqcove`, or a new build
   from source): restart `run` with it, reconnect the agent once for the new
   tools (they say so while the versions differ), and run `reqcove init` again
-  for the skill.
+  for the skill. A running `run` keeps the old version until it is restarted:
+  `reqcove status` says when its version is not its own, and gives the one
+  command that restarts it under what started it (a terminal, `reqcove
+  service install`'s service, `brew services`;
+  [the table](#start-update-stop)). `reqcove har > flows.har` first: a restart
+  empties the records.
 
-Tried: a restart under a Claude Code session.
+Tried: a restart under a Claude Code session. What `reqcove status` says
+after an update: unit tests only (a v1.0.0 `run` faked).
 
 ### Change what is recorded while it runs
 
@@ -2116,78 +2127,131 @@ the SHA-256 matched what iOS showed.
 
 </details>
 
-## Run it as a service
+## Run it in the background
 
-Two ways to have `run` start at login: Homebrew's `brew services` for a brew
-install, and `reqcove service install` for the release's binary or one built
-from source. `--lan` is refused in both ([LAN mode](#without-tailscale-lan-mode---lan)).
+`reqcove run` in a terminal is the simplest: Ctrl-C stops it, and its
+terminal shows the login URL, the QR codes and what is left to do. To have
+`run` start at login instead, a service starts it: Homebrew's `brew services`,
+or `reqcove service install` (any install, Homebrew's included since v1.1).
+Use one of them, not both. `--lan` is refused in both
+([LAN mode](#without-tailscale-lan-mode---lan)).
 
-### Keep it running (`brew services`)
+Both read the same flags as a terminal's `run`: one config file
+([below](#the-config-file---config)), which `reqcove setup` writes. First:
+while `run` is down, and while the Mac sleeps, an iPhone on its exit node has
+no internet; turn the exit node off then.
 
-To have `run` start at login, put its flags, one a line, in a file and let
-`brew services` start it. First: while the Mac sleeps, an iPhone on its exit
-node has no internet; turn the exit node off before it sleeps.
+### Start, update, stop
 
-```sh
-mkdir -p "$(brew --prefix)/etc/reqcove"
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
-chmod 600 "$(brew --prefix)/etc/reqcove/config"
-brew services start reqcove
-reqcove links        # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
-reqcove status       # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
-```
+| | In a terminal | `reqcove service install` | `brew services` |
+|---|---|---|---|
+| Start | `reqcove run` (Ctrl-C stops it) | `reqcove service install`: now and at each login | `brew services start reqcove`: now and at each login |
+| After it ended | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| After an update | Ctrl-C, then `reqcove run` | `reqcove service restart`; after moving to another binary (a new path, or Homebrew's), `reqcove service install` | `brew upgrade reqcove`, then `brew services restart reqcove` |
+| After editing the config or hosts file | Ctrl-C, then `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| Stop until the next login | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user stop reqcove` | `brew services kill reqcove` (from Homebrew's help, not tried) |
+| Stop and remove | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
+| The log | the terminal | macOS: `service.log` in the state directory; Linux: `journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |
 
-- **The file**: `--config FILE` takes `run`'s flags, one a line.
+- **Every restart empties the records**: they are in memory. Keep them first
+  with `reqcove har > flows.har`.
+- **To change the hosts recorded, no restart**: `reqcove capture add HOST`
+  (`remove`, `set`), then `reqcove capture save` to keep them for the next
+  start ([change what is recorded](#change-what-is-recorded-while-it-runs)).
+  Any other change: edit the file, then restart as above.
+- **After an update**, `reqcove status` (the new one) says so: the running
+  version against its own, and the one command that restarts it under what
+  started it. `run` keeps running the old binary until then, even after
+  `brew upgrade` (a running process keeps its files).
+- **`reqcove status`** also says what started `run` (a terminal, `reqcove
+  service install`'s service, `brew services`), the config and hosts files it
+  read, and warns when two services for reqcove are installed at once, or
+  when `reqcove service install`'s service runs a binary that is gone or is
+  not this one (`reqcove service install` again points it at this one).
+- **A `run` in your terminal** on the same state as a service finds it in
+  use: stop the service first.
+- **Sleep**: `run` keeps the Mac from idle sleep while it runs
+  (`caffeinate -i`, also on battery: it drains it), not from closing the lid
+  or choosing Sleep.
+
+Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
+`run` and a newer CLI, each service, two services at once, a binary gone or
+another one), with service files written in a temporary home. Not tried by
+hand: the journeys of this table with v1.1 (`brew upgrade` with a service
+running, `reqcove service install` over an installed one).
+
+### The config file (`--config`)
+
+`run --config FILE` takes `run`'s flags from a file, one a line.
+
+- **Its place**: `~/.config/reqcove/config`. For a brew install (this binary
+  under `Cellar/reqcove/`), `reqcove setup` writes Homebrew's
+  `$(brew --prefix)/etc/reqcove/config` instead, which `brew services` reads.
+  The hosts go in `hosts` beside it, read with `--allow-hosts=@FILE`.
+- **`reqcove run` with no arguments at all** (since v1.1) reads
+  `~/.config/reqcove/config`, else Homebrew's (when this `reqcove` is
+  Homebrew's), and says which in its log. With both there, it reads the first
+  and `reqcove status` names both. With any argument, it reads a file only
+  when `--config` names it, as before; with neither file, it asks for
+  `--device` as before.
+- **`reqcove service install`** takes the same file (or `--config FILE`).
+- Its lines:
   - `#` starts a comment. Quote as a shell would: `--device "Taro's iPhone"`.
     `~/` is your home. Give paths in full or from `~/`, as a service starts
     in `/`.
   - The command line's flags come after the file's: a flag given once is the
     command line's, a repeatable one adds up.
   - Refused in the file: `--no-redact`, `--web`, `--rules-reload`, `--lan`,
-    `--config` and `--allow-hosts '*'` (also from an `@FILE`). They stay on the command line.
-  - The file must be yours and readable by you only (`chmod 600`): it may
-    hold `--mask-values` patterns.
-  - One `--config` only. Nothing is read unless named.
-- **When it ends**: a missing or refused file ends the service once
-  (`brew services` shows an error); it is not started again in a loop. Nor is
-  it after any other end: run `brew services restart reqcove` (also after
-  `brew upgrade reqcove`).
+    `--config` and `--allow-hosts '*'` (also from an `@FILE`). They stay on
+    the command line.
+- The file must be yours and readable by you only (`chmod 600`): it may hold
+  `--mask-values` patterns. One `--config` only.
+- **When it is refused** (missing, or a flag refused), a service ends once
+  (`brew services` shows an error); it is not started again in a loop, nor
+  after any other end.
+
+Tried: unit tests (the parsing and the refusals; a bare `run` reading either
+file, both, neither, and with an argument none).
+
+### With Homebrew (`brew services`)
+
+```sh
+reqcove setup                # writes $(brew --prefix)/etc/reqcove/config
+brew services start reqcove
+reqcove links                # the login URL, the first time (after a minute: the first start fetches mitmproxy; tail -f "$(brew --prefix)/var/log/reqcove.log")
+reqcove status               # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove with an older Homebrew)
+```
+
 - **The logs**: `$(brew --prefix)/var/log/reqcove.log`, and `mitmproxy.log` in
   the state directory, which grows too. Neither is rotated (by launchd or by
   reqcove): truncate them now and then. Neither carries a login URL or a
   token: `reqcove links` prints them, in your terminal.
-- **A `run` in your terminal** on the same state finds it in use: run
-  `brew services stop reqcove` first.
-- **Sleep**: `run` keeps the Mac from idle sleep while it runs
-  (`caffeinate -i`, as from a terminal, also on battery: it drains it), not
-  from closing the lid or choosing Sleep.
+- **The formula's service runs Homebrew's stable path**
+  (`$(brew --prefix)/opt/reqcove/bin/reqcove`): after `brew upgrade`,
+  `brew services restart reqcove` starts the new version.
+- **Linux**: Homebrew's `brew services` makes a systemd unit from the same
+  formula (from Homebrew's documentation, not tried). `reqcove status` names
+  it from the process' cgroup (from reading systemd's documentation, not
+  tried).
 
-Linux: Homebrew's `brew services` makes a systemd unit from the same formula
-(from Homebrew's documentation, not tried; `status` names no service there).
-Without Homebrew, see the next section.
+Tried: `brew services start` and `stop` on macOS 27 with the formula, an
+iPhone recorded through it (no token or login URL in the log; `links` and
+`login-url` gone after stop). Not tried with `brew services`: a start at
+login or after a reboot, sleep, and whether macOS asks for Local Network
+access for a `run` not started from a terminal (all three tried with
+`reqcove service install`, below); whether launchd's default background
+priority slows it.
 
-Tried: unit tests (the config file's parsing and refusals); `brew services
-start` and `stop` on macOS 27 with the formula, an iPhone recorded through it
-(no token or login URL in the log; `links` and `login-url` gone after stop).
-Not tried with `brew services`: a start at login or after a reboot, sleep,
-and whether macOS asks for Local Network access for a `run` not started from
-a terminal (all three tried with `reqcove service install`, below); whether
-launchd's default background priority slows it.
+### Without Homebrew (`reqcove service install`)
 
-### Keep it running without Homebrew (`reqcove service install`)
-
-With the release's binary or one built from source, `reqcove service install`
-does the same. (With Homebrew, use `brew services` above.) It writes a
-LaunchAgent on macOS (`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`),
-a systemd user unit on Linux (`~/.config/systemd/user/reqcove.service`). The
-service runs this binary (its full path) with `run --config FILE`. It starts
-now and at each login, and is not started again when it ends (as
-`brew services`).
+It writes a LaunchAgent on macOS
+(`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`), a systemd user
+unit on Linux (`~/.config/systemd/user/reqcove.service`). The service runs
+this binary (its full path) with `run --config FILE`. It starts now and at
+each login, and is not started again when it ends (as `brew services`).
 
 ```sh
-mkdir -p ~/.config/reqcove
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
-chmod 600 ~/.config/reqcove/config
+reqcove setup                 # writes ~/.config/reqcove/config
 reqcove service install       # --config FILE for another file, --state DIR for another state
 reqcove links                 # the login URL, the first time (after a minute)
 reqcove status                # "service: io.github.mh-mobile.reqcove" (Linux: reqcove.service)
@@ -2195,8 +2259,8 @@ reqcove service restart       # after it ended, or after a change to the file
 reqcove service uninstall     # stops it and removes the file
 ```
 
-- **The file** is `~/.config/reqcove/config` unless `--config` names another.
-  It is read as for `brew services` (above).
+- **The file** is the one a bare `run` reads (above) unless `--config` names
+  another.
   - Install refuses a missing file (saying how to write one), one that is not
     yours or that others can read, and `--no-redact`, `--web`,
     `--rules-reload`, `--lan` or `--config` in it.
@@ -2204,21 +2268,22 @@ reqcove service uninstall     # stops it and removes the file
     ends once).
   - A `--state` in the file is the state directory (in full or from `~/`).
     The state directory must be empty, new or reqcove's (as for `run`).
-- **When it ends**: once `run` ends (an error, a refused file, `kill`), it
-  stays down until the next login. `reqcove service restart` starts it again
-  (`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or
-  `systemctl --user restart reqcove`; not tried on macOS).
+- **Homebrew's binary** (since v1.1): the service runs Homebrew's stable path,
+  `$(brew --prefix)/opt/reqcove/bin/reqcove`, not its Cellar path, which
+  `brew upgrade` removes. After an upgrade, `reqcove service restart`.
+- **Installed already** (since v1.1): install again re-points it at this
+  binary and restarts it, and says so (the records start empty). It keeps the
+  installed service's `--config` and `--state` unless you give them. Use it
+  after moving to another binary, or to change them.
 - **Refused while Homebrew's service is there** (its file or loaded:
   `sh.brew.reqcove`, `homebrew.mxcl.reqcove`; on Linux
   `sh.brew.reqcove.service`, `homebrew.reqcove.service`, the Linux names from
   reading Homebrew's code, not tried): two services would fight over the
-  state directory.
-- **Refused for Homebrew's own binary**, whose path (in its Cellar)
-  `brew upgrade` removes. Run `reqcove setup`, which writes the file
-  Homebrew's service reads, then `brew services start reqcove`.
-- **Installed already**: `reqcove service restart` starts it again. To change
-  its flags on the command line, or after moving the binary, run
-  `reqcove service uninstall`, then install again.
+  state directory. `brew services stop reqcove` first.
+- **When it ends**: once `run` ends (an error, a refused file, `kill`), it
+  stays down until the next login. `reqcove service restart` starts it again
+  (`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove`, or
+  `systemctl --user restart reqcove`; not tried on macOS).
 - **The log**:
   - macOS: `service.log` in the state directory. It is not rotated: truncate
     it now and then, as `mitmproxy.log`. `service install` makes it 0600
@@ -2230,9 +2295,6 @@ reqcove service uninstall     # stops it and removes the file
 - **`PATH`** is uvx's directory where you installed it, then `~/.local/bin`,
   `/opt/homebrew/bin`, `/usr/local/bin` and the system's. Elsewhere, give
   `--uvx /full/path/uvx` in the file.
-- **To stop it until the next login**:
-  `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or
-  `systemctl --user stop reqcove`. `reqcove status` says which.
 - **Local Network access** (macOS): when this was tried, macOS asked for it,
   before and after a sleep. Its list shows each build at another path as its
   own entry.
@@ -2244,14 +2306,17 @@ reqcove service uninstall     # stops it and removes the file
   tried).
 
 Tried: unit tests, which never run launchctl or systemctl (the files written,
-the refusals, the commands, the log's mode). By hand, 2026-11-14, with no
-login URL or token in the log: on macOS, install to uninstall with an iPhone
-recorded through it, a sleep, and a start at login after a reboot (no alert
-at login); on Linux (a VM), with the node not logged in to a tailnet, install
-to uninstall, `service restart` after a `kill` and after
-`systemctl --user stop reqcove`, and the logout with and without linger. Not
-tried: `service restart` on macOS; on Linux, a node logged in to a tailnet, a
-device recorded through it, a reboot.
+the refusals, the commands, the log's mode; Homebrew's opt path written; an
+install over an installed one: `launchctl bootout` then `bootstrap`, or
+`systemctl --user restart`, its `--config` and `--state` kept). By hand,
+2026-11-14 (v1.0), with no login URL or token in the log: on macOS, install to
+uninstall with an iPhone recorded through it, a sleep, and a start at login
+after a reboot (no alert at login); on Linux (a VM), with the node not logged
+in to a tailnet, install to uninstall, `service restart` after a `kill` and
+after `systemctl --user stop reqcove`, and the logout with and without
+linger. Not tried: v1.1's install over an installed one and with Homebrew's
+binary, with launchd or systemd; `service restart` on macOS; on Linux, a node
+logged in to a tailnet, a device recorded through it, a reboot.
 
 <a id="security-config"></a>
 
@@ -2261,7 +2326,8 @@ In short: [SECURITY](SECURITY.md#a-flags-file---config).
 
 `run --config FILE` (for `brew services` and `reqcove service install`) takes
 `run`'s flags from a file: what can write that file decides the next start's
-flags.
+flags. Since v1.1 a `reqcove run` with no arguments reads one too
+([the config file](#the-config-file---config)), with the same checks.
 
 - The file must be yours and readable by you only (refused otherwise): it
   may hold `--mask-values` patterns.
@@ -2339,8 +2405,8 @@ Start with `reqcove status`: it says what reqcove is doing, and the next steps
 | In mitmweb: the devices' HTTP(S) stopped, or a bookmark asks for the token | [In mitmweb](#in-mitmweb---web) |
 | Over `--mcp-http`: a device is refused, calls get `429`, or Grok Bot's settings show the connector with an error | [Agents on other devices](#agents-on-other-devices---mcp-http) |
 | LAN mode: the iPhone's first connection is refused, something blocks it, or a development server on another port is refused | [LAN mode](#without-tailscale-lan-mode---lan) |
-| An iPhone on the exit node has no internet while the Mac sleeps | [Keep it running (`brew services`)](#keep-it-running-brew-services) |
-| A service ended and did not start again, or a `run` in your terminal finds the state in use | [Run it as a service](#run-it-as-a-service) |
+| An iPhone on the exit node has no internet while the Mac sleeps | [Run it in the background](#run-it-in-the-background) |
+| A service ended and did not start again, or a `run` in your terminal finds the state in use | [Start, update, stop](#start-update-stop) |
 | The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
 | reqcove restarts mitmproxy again and again, or `run` stops on mitmproxy | [Limits](#limits) (a huge WebSocket message; when mitmproxy exits or does not start), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches; rules that no longer load) |
 | IPv6, QUIC, phone calls | [Limits](#limits) |
@@ -2376,7 +2442,7 @@ said there.
 | `--state DIR` | `~/.reqcove` by default: the node key, the CA and its private key. A new or empty directory, or one reqcove used before; write `--state ~/x` with a space (`--state=~/x` is refused). One without a CA gets a copy of `~/.reqcove`'s (listed in `~/.reqcove/ca-copies`, so that `cleanup` of `~/.reqcove` names it), and a new one named `reqcove-NAME` names the node so: [several exit nodes](several-exit-nodes.md) |
 | `--hostname NAME` | the node's name, `reqcove` by default; kept in the state directory |
 | `--verbose` | log tsnet's backend and every flow decision |
-| `--config FILE` | [run's flags from a file](#keep-it-running-brew-services), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--config`, `--allow-hosts '*'`); the file `chmod 600` |
+| `--config FILE` | [run's flags from a file](#the-config-file---config), one a line, before the command line's (not `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--config`, `--allow-hosts '*'`); the file `chmod 600` |
 | `--uvx PATH` | the uvx to run; the `uv` beside it runs the default mitmproxy from Reqcove's lock (hashes checked). A path not named `uvx` is run as uvx: no lock, no hashes |
 | `--python VERSION` | the Python to run mitmproxy with, 3.14 by default |
 | `--mitmproxy-spec SPEC` | another mitmproxy than the locked `mitmproxy==12.3.1`, fetched through uvx (no lock, no hashes) |
@@ -2395,7 +2461,7 @@ The other commands (all but `init`, `version`, `setup`, `service restart` and
 | `reqcove har` | [the flows as a HAR file](#as-a-har-file-reqcove-har): `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit N` |
 | `reqcove init` | [the agent skill](#teach-the-agent-the-skill-reqcove-init): `--client NAME`, `--print`, `--uninstall` |
 | `reqcove setup` | [the first run](#first-start): no flags; only in a terminal |
-| `reqcove service install` | `--config FILE`, `--state DIR`; then `reqcove service restart`, `reqcove service uninstall`: [run as a service without Homebrew](#keep-it-running-without-homebrew-reqcove-service-install) |
+| `reqcove service install` | `--config FILE`, `--state DIR`; then `reqcove service restart`, `reqcove service uninstall`: [without Homebrew](#without-homebrew-reqcove-service-install) |
 | `reqcove cleanup` | how to undo everything; `--delete-state`; `--hostname NAME` |
 | `reqcove version` | the version |
 

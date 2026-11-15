@@ -121,6 +121,18 @@ exits 1, saying why on stderr. Its fields:
   `29m10s`) say when it ends, absent when off. `records_outside_scope`: the
   records kept whose host `base_allow_hosts` does not record (allow-all's,
   kept after it ends, or those of hosts removed since); absent when none.
+- Since v1.1, about the run itself: `version` (as `reqcove version` prints
+  it, as `serverInfo`'s), `manager` (what started it: `terminal`,
+  `reqcove service` for `reqcove service install`'s LaunchAgent or unit,
+  `brew services`; more values may come; absent when it cannot be told),
+  `restart_command` (the command that restarts it under its service, such as
+  `brew services restart reqcove`; absent from a terminal), and, on this
+  computer only (not over `--mcp-http`), `config_file` (the `--config` file
+  it read, in full; absent for flags only), `config_unused` (the other config
+  file a `run` with no arguments found there and did not read) and
+  `hosts_files` (the files `--allow-hosts=@FILE` and `--pass-hosts=@FILE`
+  read). Absent from a run older than v1.1: `reqcove status` takes the
+  version from `serverInfo` then.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -129,7 +141,8 @@ exits 1, saying why on stderr. Its fields:
   `allowed` (each with `addr` and `allowed_at`), `refused`, `refused_more`.
 
 Checked by a unit test: when no run answers, nothing on stdout, exit status 1
-and the reason on stderr.
+and the reason on stderr. By unit tests too: v1.1's fields, and a new
+`reqcove status` reading a v1.0.0 `run`'s answer.
 
 #### `capture_stats`
 
@@ -217,6 +230,12 @@ stable ([below](#not-stable)).
   `--config` by default) and `reqcove setup` without Homebrew; with Homebrew,
   `reqcove setup` writes `$(brew --prefix)/etc/reqcove/config`, which
   `brew services` reads.
+- Since v1.1, a `reqcove run` with no arguments at all (refused before)
+  reads `~/.config/reqcove/config`, else Homebrew's (when that `reqcove` is
+  Homebrew's), as `--config FILE` does; with neither, it asks for `--device`
+  as before. A `run` with any argument reads a file only when `--config`
+  names it, as in v1.0. `reqcove service install` without `--config` takes
+  the same file (installed already: the installed service's `--config`).
 - Since v1.1, `reqcove setup` writes the hosts to their own file beside it,
   `hosts` (`~/.config/reqcove/hosts`, or `$(brew --prefix)/etc/reqcove/hosts`),
   one host a line, `#` starting a comment, and the config line

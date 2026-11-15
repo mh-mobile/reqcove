@@ -342,7 +342,7 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 		return liveStatus(node.get(), cap)
 	}
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
-		out := remoteStatus()
+		out := withFiles(remoteStatus(), o)
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()

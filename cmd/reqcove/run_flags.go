@@ -34,6 +34,9 @@ type runOpts struct {
 	lanIface                            string
 	localProxy                          bool
 	origin                              hostsOrigin
+	// config is the --config file read (in full), "" for none; configUnused
+	// the other file a bare run finds there too, not read.
+	config, configUnused string
 }
 
 // hostsOrigin is where run's --allow-hosts came from, for capture save: the
@@ -142,11 +145,27 @@ func parseRunFlags(args []string) (*runOpts, error) {
 	lanIface := fs.String("lan-interface", "", "with --lan, the interface to listen on (default: the default route's, such as en0)")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
 	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	bare := len(args) == 0
+	var config, configUnused string
 	if takeFlags == nil { // the docs test reads no file
+		if bare { // no arguments at all: the file setup writes, if any
+			if path, other := bareConfig(); path != "" {
+				args = []string{"--config", path}
+				note := "run with no arguments: reading " + path
+				if other != "" {
+					note += "; " + other + " is there too, not read (--config FILE to read that one)"
+				}
+				log.Print(note)
+				configUnused = other
+			}
+		}
 		if path, ok, err := configFile(args); err != nil {
 			return nil, err
 		} else if ok {
 			if err := parseConfig(fs, path, &allowSpecs); err != nil {
+				return nil, err
+			}
+			if config, err = filepath.Abs(path); err != nil {
 				return nil, err
 			}
 		}
@@ -166,6 +185,9 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
 		if names := iosDevices(); len(names) > 0 {
 			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
+		}
+		if bare && config == "" {
+			msg += ". Or keep it in " + defaultConfig() + " (reqcove setup writes it): reqcove run with no arguments reads it"
 		}
 		return nil, errors.New(msg)
 	}
@@ -281,6 +303,7 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		proxyPort: *proxyPort, mcpHTTP: *mcpHTTP, ui: *uiFlag, verbose: *verbose, lanMode: *lanMode,
 		upstreamProxy: *upstreamProxy, upstreamCA: *upstreamCA, upstream: upstream,
 		lanIface: *lanIface, localProxy: *localProxy, origin: origin,
+		config: config, configUnused: configUnused,
 	}, nil
 }
 

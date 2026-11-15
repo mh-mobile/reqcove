@@ -501,7 +501,9 @@ bound the switch, not its effects: the app may keep what it got there.
 
 `run --config FILE` (for `brew services` and `reqcove service install`) takes
 `run`'s flags from a file: what can write that file decides the next start's
-flags. The file must be yours and readable by you only. Five flags are
+flags. Since v1.1, a `reqcove run` with no arguments at all reads
+`~/.config/reqcove/config` too (else Homebrew's `etc/reqcove/config`), with
+the same checks. The file must be yours and readable by you only. Five flags are
 refused in it and stay on the command line: `--no-redact`, `--web`,
 `--allow-hosts '*'`, `--rules-reload` and `--lan`.
 Since v1.1, `reqcove setup` puts the hosts in a file beside it (`hosts`,

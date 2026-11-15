@@ -4,6 +4,30 @@
 
 ### Added
 
+- **`reqcove status` says what runs, and how to restart it after an
+  update.** The running `run`'s version against this `reqcove`'s (from
+  `serverInfo`, so a v1.0.0 `run` too), and when they differ the one command
+  that restarts it under what started it (`brew services restart reqcove`,
+  `reqcove service restart`, `reqcove service install` when its service runs
+  another binary, or Ctrl-C in its terminal), with "a restart empties the
+  records: `reqcove har > flows.har` first" and "while it is down, a phone
+  using its exit node has no internet". It also says what started `run`
+  (none: a terminal), the config and hosts files it read, and warns when two
+  services for reqcove are installed at once (`reqcove service install`'s and
+  Homebrew's) or when `reqcove service install`'s service runs a binary that
+  is gone or is not this one; read from the service files only, never from
+  launchctl or systemctl. The `status` tool and `--json` get `version`,
+  `manager`, `restart_command`, and on this computer only `config_file`,
+  `config_unused` and `hosts_files`; the warnings come in `next_steps`. On
+  Linux, Homebrew's unit is told from the process' cgroup (not tried). Unit
+  tests (each case, against a faked v1.0.0 `run` and with service files in a
+  temporary home); not tried by hand.
+- **`reqcove run` with no arguments at all** (refused before) reads
+  `~/.config/reqcove/config`, else Homebrew's `etc/reqcove/config` when this
+  `reqcove` is Homebrew's, and says which in its log; with both there, the
+  first, and `reqcove status` names both. Any argument: as before, a file
+  only when `--config` names it. Unit tests.
+
 - **`reqcove capture allow-all --for D`** (at most `24h`) **and `capture
   allow-all --end`** (`--state DIR`): record every host for a while, as
   `--allow-hosts '*'` does, without a restart, to see what the other apps
@@ -124,6 +148,23 @@
   the per-event check and the order of a change.
 
 ### Changed
+
+- **`reqcove service install` takes Homebrew's binary**, running Homebrew's
+  stable path `$(brew --prefix)/opt/reqcove/bin/reqcove` (it refused it
+  before, as its Cellar path goes at each `brew upgrade`). Still refused while
+  Homebrew's own service is there. **Installed already, it installs again**
+  (it refused before): the service is re-pointed at this binary and
+  restarted (`launchctl bootout` then `bootstrap`, or `systemctl --user
+  restart`), keeping the installed service's `--config` and `--state` unless
+  given, and says so. Without `--config` and none installed, it takes the
+  file a bare `run` reads. Unit tests only, never with launchd or systemd.
+- **`reqcove setup`'s last lines**: the terminal first (`reqcove run`, or
+  `reqcove run --config FILE` when a bare `run` would read another file),
+  then the start at login (`reqcove service install`, or `brew services start
+  reqcove`), then how to change things while it runs (`reqcove capture add
+  HOST`, `capture save`; else edit the file and restart). The guide's service
+  sections become "Run it in the background": a table of how to start,
+  update and stop per way of running, and one config file. Unit tests.
 
 - **A restarted mitmproxy gets the rules that loaded last**, from a private
   copy in the state directory (`rules-loaded`, 0600, removed when `run`

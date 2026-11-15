@@ -58,7 +58,10 @@ Usage:
                      (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
-  reqcove status     what reqcove is doing, and the next steps
+  reqcove run        with no arguments: run's flags from ~/.config/reqcove/config (or
+                     Homebrew's etc/reqcove/config), the file reqcove setup writes
+  reqcove status     what reqcove is doing, its version and what started it, and the
+                     next steps
   reqcove run --lan --allow-hosts HOSTS [flags]
                      LAN mode, without Tailscale: an HTTP proxy on this computer's
                      LAN address for the clients you allow
@@ -88,8 +91,9 @@ Usage:
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked unless --no-redact (-h for filters)
   reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall
-                     start run now and at login without Homebrew (launchd or
-                     systemd), with run's flags in FILE (~/.config/reqcove/config)
+                     start run now and at login (launchd or systemd), with run's
+                     flags in FILE (the one a bare run reads); again: re-points it
+                     at this binary and restarts it
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
   reqcove init       add the agent skill (how to use reqcove's tools) to the agents in ~
   reqcove version
