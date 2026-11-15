@@ -209,6 +209,12 @@ func parseDocumented(words []string) error {
 	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
 		_, args = wordsAndFlags(args)
 	}
+	if words[0] == "capture" && len(args) > 0 { // capture add HOST…: its subcommand first, then hosts among the flags
+		if !slices.Contains([]string{"add", "remove", "set"}, args[0]) {
+			return fmt.Errorf("capture takes add, remove or set, not %q", args)
+		}
+		_, args = wordsAndFlags(args[1:], "allow-hosts", "pass-hosts")
+	}
 	for i := 1; i < len(args); i++ { // NAME, N: a placeholder, valid for its flag
 		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(args[i]) && isInt(fs, args[i-1]) {
 			args[i] = "1"

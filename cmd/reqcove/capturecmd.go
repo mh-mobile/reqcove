@@ -1,0 +1,401 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/mh-mobile/reqcove/internal/capture"
+)
+
+// `reqcove capture` changes the hosts the running reqcove records, without a
+// restart: over ctl.sock in the state directory (0600, in the 0700
+// directory), one JSON line asked and one answered. Not mcp.sock, the agents'
+// path: no tool changes what is recorded. Only in a terminal, as mark and
+// lan: a guard against an agent running it by mistake, not a boundary (any
+// process of this user can reach the socket). run decides: it checks the
+// request again, and refuses in LAN mode.
+
+const ctlSock = "ctl.sock"
+
+// ctlWait bounds a change, both ways: run answers within it (the addon's
+// two round trips take milliseconds), and the CLI waits no longer (a run
+// stopped with Ctrl-Z takes the connection and never answers).
+var ctlWait = 15 * time.Second
+
+// ctlRequest is one change asked of run.
+type ctlRequest struct {
+	Cmd        string   `json:"cmd"`                   // add, remove or set
+	Hosts      []string `json:"hosts,omitempty"`       // add, remove
+	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
+	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
+	PassHosts  []string `json:"pass_hosts,omitempty"`  // set
+}
+
+// ctlAnswer is run's answer, for the user: what happened.
+type ctlAnswer struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS]  [--state DIR]"
+
+func captureCmd(ctx context.Context, args []string) error {
+	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts")
+	fs := flag.NewFlagSet("capture", flag.ExitOnError)
+	state := fs.String("state", defaultState(), "state directory")
+	pass := fs.Bool("pass", false, "with add and remove: the hosts carried undecrypted (run's --pass-hosts), not the hosts recorded")
+	var allow, passHosts []string
+	fs.Func("allow-hosts", `with set: every host recorded, as run's --allow-hosts (not "*")`, func(v string) error { allow = append(allow, v); return nil })
+	fs.Func("pass-hosts", "with set: the allowed hosts carried undecrypted, as run's --pass-hosts", func(v string) error { passHosts = append(passHosts, v); return nil })
+	if err := parseFlags(fs, flags); err != nil {
+		return err
+	}
+	req := ctlRequest{Pass: *pass, AllowHosts: allow, PassHosts: passHosts}
+	if len(words) > 0 {
+		req.Cmd, req.Hosts = words[0], words[1:]
+	}
+	if _, err := req.normalized(); err != nil { // before reaching run: run checks it again
+		return err
+	}
+	return captureIn(ctx, os.Stdin, os.Stdout, *state, req)
+}
+
+// normalized is r with its hosts lowercased, or why it is refused: not one
+// of the commands, a bad host, or "*" (every app's traffic is not a change
+// made in passing).
+func (r ctlRequest) normalized() (ctlRequest, error) {
+	switch r.Cmd {
+	case "add", "remove":
+		if len(r.Hosts) == 0 {
+			return r, fmt.Errorf("capture %s: name the hosts (usage: %s)", r.Cmd, captureUse)
+		}
+		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
+			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
+		}
+	case "set":
+		if len(r.Hosts) > 0 || r.Pass {
+			return r, fmt.Errorf("capture set takes --allow-hosts and --pass-hosts only (usage: %s)", captureUse)
+		}
+		if len(r.AllowHosts) == 0 {
+			return r, errors.New("capture set needs --allow-hosts: every host to record (capture remove takes hosts out)")
+		}
+	default:
+		return r, errors.New("usage: " + captureUse)
+	}
+	var err error
+	for _, l := range []*[]string{&r.Hosts, &r.AllowHosts, &r.PassHosts} {
+		if *l, err = hostSpecs(*l); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+// hostSpecs are specs as --allow-hosts takes them (commas too), lowercased; never "*".
+func hostSpecs(specs []string) ([]string, error) {
+	r, err := capture.ParseAllowHosts(specs)
+	if err != nil {
+		return nil, errors.New(strings.TrimPrefix(err.Error(), "--allow-hosts: "))
+	}
+	if r.All {
+		return nil, errors.New(`"*" is refused: it records every app's and site's traffic; name your app's hosts`)
+	}
+	return r.Hosts, nil
+}
+
+// String is the command as the trace shows it.
+func (r ctlRequest) String() string {
+	s := "capture " + r.Cmd
+	if r.Pass {
+		s += " --pass"
+	}
+	if r.Cmd == "set" {
+		s += " --allow-hosts " + strings.Join(r.AllowHosts, ",")
+		if len(r.PassHosts) > 0 {
+			s += " --pass-hosts " + strings.Join(r.PassHosts, ",")
+		}
+		return s
+	}
+	return s + " " + strings.Join(r.Hosts, " ")
+}
+
+func captureIn(ctx context.Context, in, out *os.File, state string, req ctlRequest) error {
+	if !isTerminal(in) || !isTerminal(out) {
+		return errors.New("reqcove capture runs only in a terminal: it changes what is recorded, which is the user's choice (an agent never runs it). Run it in your own terminal")
+	}
+	return sendCapture(ctx, out, state, req)
+}
+
+// sendCapture asks the running reqcove for the change and prints its answer.
+func sendCapture(ctx context.Context, w io.Writer, state string, req ctlRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, ctlWait)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
+	if err != nil {
+		return noCtl(ctx, state)
+	}
+	defer conn.Close()
+	dl, _ := ctx.Deadline()
+	conn.SetDeadline(dl)
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return err
+	}
+	var a ctlAnswer
+	if err := json.NewDecoder(io.LimitReader(conn, 64<<10)).Decode(&a); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): whether it took the change, `%s` says", state, ctlWait, withState("reqcove status", state))
+		}
+		return fmt.Errorf("the running reqcove did not answer: %w", err)
+	}
+	if !a.OK {
+		return errors.New(a.Message)
+	}
+	fmt.Fprintln(w, a.Message)
+	return nil
+}
+
+// noCtl says why no run answers on ctl.sock: none runs, one is starting, or
+// it is older than v1.1 (it serves mcp.sock only; a v1.1 run serves ctl.sock
+// first).
+func noCtl(ctx context.Context, state string) error {
+	cs, err := dialRun(ctx, state, "reqcove-capture")
+	switch {
+	case errors.Is(err, errNotRunning):
+		return fmt.Errorf("reqcove is not running (%s): nothing to change", state)
+	case err != nil:
+		return fmt.Errorf("%w: nothing changed", err)
+	}
+	defer cs.Close()
+	v := "older"
+	if ir := cs.InitializeResult(); ir != nil && ir.ServerInfo != nil && ir.ServerInfo.Version != "" {
+		v = ir.ServerInfo.Version
+	}
+	return fmt.Errorf("this run is %s: restart it with v1.1 or later to change what it records while it runs (a restart empties the records: `%s > flows.har` keeps them first); nothing changed", v, withState("reqcove har", state))
+}
+
+// serveCtl serves ctl.sock until ctx ends. lan: LAN mode, whose hosts are
+// set at the start (its proxy takes their names then).
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool) error {
+	path := filepath.Join(state, ctlSock)
+	os.Remove(path) // stale: run holds the state's lock
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return fmt.Errorf("control socket: %w (a shorter --state path helps if it is too long)", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil { // the directory is 0700 already
+		ln.Close()
+		return err
+	}
+	go func() { <-ctx.Done(); ln.Close() }() // Close removes the file
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.SetDeadline(time.Now().Add(ctlWait))
+				var req ctlRequest
+				if err := json.NewDecoder(io.LimitReader(conn, 64<<10)).Decode(&req); err != nil {
+					return
+				}
+				ctx, cancel := context.WithTimeout(ctx, ctlWait-time.Second) // the answer before the CLI gives up
+				defer cancel()
+				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, lan, req))
+			}()
+		}
+	}()
+	return nil
+}
+
+// errUnchanged: the request changes nothing.
+var errUnchanged = errors.New("unchanged")
+
+// answerCtl makes the change and says what happened. A change taken
+// (applied, or pending) leaves a trace: run's log line, a cli marker, and
+// status's scope_changed_at.
+func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlRequest) ctlAnswer {
+	if lan {
+		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded cannot change while run runs (not in this version): restart run with them in --allow-hosts; nothing changed"}
+	}
+	req, err := req.normalized()
+	if err != nil {
+		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+	}
+	why := req.String()
+	var cur, next capture.HostRules
+	var notes []string
+	err = cap.ChangeScope(ctx, why, func(c capture.HostRules) (capture.HostRules, error) {
+		var err error
+		cur = c
+		if next, notes, err = newScope(c, req); err != nil {
+			return c, err
+		}
+		if changes(cur, next) == "" {
+			return c, errUnchanged
+		}
+		return next, nil
+	})
+	pending := errors.Is(err, capture.ErrPending)
+	switch {
+	case errors.Is(err, errUnchanged):
+		return ctlAnswer{OK: true, Message: strings.Join(append([]string{"nothing changed"}, notes...), "; ")}
+	case err != nil && !pending:
+		msg := err.Error()
+		if !strings.Contains(msg, "nothing changed") {
+			msg = "refused: " + msg + "; nothing changed"
+		}
+		return ctlAnswer{Message: msg}
+	}
+	msg := "applied: " + changes(cur, next)
+	if pending {
+		msg = "pending: " + changes(cur, next) + " (mitmproxy has not acknowledged it yet: restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile)"
+	}
+	msg += fmt.Sprintf("; %v records kept; not saved: a restart of run goes back to the hosts it was started with", cap.Store.Stats()["flows"])
+	if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
+		msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close"
+	}
+	if len(minus(next.Hosts, cur.Hosts))+len(minus(cur.PassHosts, next.PassHosts)) > 0 {
+		msg += "; new connections only: reopen the app to see it now"
+	}
+	msg = strings.Join(append([]string{msg}, notes...), "; ")
+	log.Printf("%s (reqcove capture, from a terminal): %s", why, msg)
+	if _, _, err := cap.Store.AddMarker(cut(why, capture.MaxMarkerText), "cli"); err != nil {
+		log.Printf("WARN: the marker of %s: %v", why, err)
+	}
+	return ctlAnswer{OK: true, Message: msg}
+}
+
+// cut is s in at most n characters, … ending one cut short.
+func cut(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n-1]) + "…"
+}
+
+// newScope is cur with req's change, or why it is refused; notes say what
+// was left as it was. Removing a host that a wildcard (or "*") takes in is
+// refused, naming it: the host would still be recorded.
+func newScope(cur capture.HostRules, req ctlRequest) (capture.HostRules, []string, error) {
+	allow, pass := slices.Clone(cur.Hosts), slices.Clone(cur.PassHosts)
+	list, kind := &allow, "recorded"
+	if req.Pass {
+		list, kind = &pass, "passed undecrypted"
+	}
+	var notes []string
+	switch req.Cmd {
+	case "set":
+		allow, pass = req.AllowHosts, req.PassHosts
+	case "add":
+		for _, h := range req.Hosts {
+			if p := coveredBy(*list, h); p != "" {
+				notes = append(notes, fmt.Sprintf("%s is %s already%s", h, kind, through(h, p)))
+				continue
+			}
+			*list = append(*list, h)
+		}
+	case "remove":
+		for _, h := range req.Hosts {
+			i := slices.Index(*list, h)
+			if i < 0 {
+				if p := coveredBy(*list, h); p != "" {
+					return cur, nil, fmt.Errorf("%s is %s through %s: remove %s instead, or name the hosts with capture set", h, kind, p, p)
+				}
+				notes = append(notes, fmt.Sprintf("%s was not %s", h, kind))
+				continue
+			}
+			*list = slices.Delete(*list, i, i+1)
+			if p := coveredBy(*list, h); p != "" {
+				return cur, nil, fmt.Errorf("%s stays %s through %s: remove %s too, or name the hosts with capture set", h, kind, p, p)
+			}
+			if !req.Pass { // no longer recorded: no longer passed either
+				pass = slices.DeleteFunc(pass, func(p string) bool { return p == h })
+			}
+		}
+	}
+	next, err := capture.ParseAllowHosts(allow)
+	if err != nil {
+		return cur, nil, err
+	}
+	if len(pass) > 0 {
+		if !next.All && len(next.Patterns) == 0 {
+			return cur, nil, errors.New("hosts passed undecrypted need hosts recorded (as run's --pass-hosts needs --allow-hosts)")
+		}
+		if next, err = next.WithPass(pass); err != nil {
+			return cur, nil, err
+		}
+	}
+	for _, h := range minus(next.PassHosts, cur.PassHosts) { // as run warns of --pass-hosts
+		this, _ := capture.ParseAllowHosts([]string{h})
+		if !next.Allowed(strings.TrimPrefix(h, "*.")) && !slices.ContainsFunc(next.Hosts, func(a string) bool { return this.Allowed(strings.TrimPrefix(a, "*.")) }) {
+			notes = append(notes, h+" is not among the hosts recorded: it passes undecrypted anyway, and nothing about it is kept")
+		}
+	}
+	return next, notes, nil
+}
+
+// coveredBy is the spec of list that takes in h: h itself, or a wildcard or
+// "*" over it; "" for none.
+func coveredBy(list []string, h string) string {
+	if slices.Contains(list, h) {
+		return h
+	}
+	for _, p := range list {
+		if r, _ := capture.ParseAllowHosts([]string{p}); (p == "*" || strings.HasPrefix(p, "*.")) && r.Allowed(strings.TrimPrefix(h, "*.")) {
+			return p
+		}
+	}
+	return ""
+}
+
+func through(h, p string) string {
+	if h == p {
+		return ""
+	}
+	return " (through " + p + ")"
+}
+
+// changes says what next changes of cur; "" for nothing.
+func changes(cur, next capture.HostRules) string {
+	var out []string
+	for _, c := range []struct {
+		hosts []string
+		what  string
+	}{
+		{minus(next.Hosts, cur.Hosts), "added"},
+		{minus(cur.Hosts, next.Hosts), "removed"},
+		{minus(next.PassHosts, cur.PassHosts), "passed undecrypted"},
+		{minus(cur.PassHosts, next.PassHosts), "no longer passed undecrypted"},
+	} {
+		if len(c.hosts) > 0 {
+			out = append(out, strings.Join(c.hosts, ", ")+" "+c.what)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// minus is a's specs that b has not.
+func minus(a, b []string) []string {
+	var out []string
+	for _, s := range a {
+		if !slices.Contains(b, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}

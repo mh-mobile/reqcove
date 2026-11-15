@@ -103,6 +103,12 @@ exits 1, saying why on stderr. Its fields:
   `header`, `host`, `address`, `method`, `url`, `operation`, `status`,
   `delay_ms`, `fault`, `active`, `remaining`, `expires_at` (as `list_presets`'
   presets).
+- Since v1.1, while the hosts are changed live (`reqcove capture`):
+  `scope_pending` (a change mitmproxy has not acknowledged yet, text for
+  people; absent when none), `scope_changed_at` (RFC 3339) and `scope_change`
+  (the command, such as `capture add api.example.com`), absent before the
+  first change. `allow_hosts` and `pass_hosts` are the hosts mitmproxy has
+  acknowledged.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -166,6 +172,8 @@ The commands and their flags, from each command's flag set:
 | `reqcove links` | `--state` |
 | `reqcove lan allow ADDR`, `lan deny ADDR`, `lan list` | `--state` |
 | `reqcove mark [TEXT]` (`-- TEXT` for one starting with `-`) | `--state` |
+| `reqcove capture add HOST…`, `capture remove HOST…` (since v1.1) | `--pass`, `--state` |
+| `reqcove capture set` (since v1.1) | `--allow-hosts`, `--pass-hosts`, `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |

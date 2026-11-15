@@ -4,9 +4,35 @@
 
 ### Added
 
+- **`reqcove capture add HOST…`, `capture remove HOST…` and `capture set
+  --allow-hosts HOSTS [--pass-hosts HOSTS]`** (`--pass` for the hosts carried
+  undecrypted; `--state DIR`): change the hosts the running `run` records
+  from your terminal, without a restart, so the records stay. They talk to
+  `run` over a new socket in the state directory, `ctl.sock` (0600), not the
+  agents' `mcp.sock`. Each answer says what happened (applied, or pending
+  while mitmproxy has not acknowledged it), how many records are kept, that
+  the change is not saved (a restart goes back to `run`'s own hosts), and
+  that an added host is decrypted on new connections only (reopen the app).
+  Refused: `"*"`, removing a host a wildcard takes in (naming the wildcard),
+  a change that takes out a host a `mock` rule names (naming the rules), any
+  change in LAN mode, and outside a terminal (a guard against mistakes, not a
+  boundary: SECURITY); a `run` older than v1.1 is named, with "restart it".
+  Each change leaves a line in `run`'s log, a marker with source `cli`, and
+  in `status` `scope_change` and `scope_changed_at` ("last changed at …" in
+  `reqcove status`, which now also prints the hosts recorded). With nothing
+  recorded, `next_steps` gives `reqcove capture add api.example.com` in
+  place of "restart with --allow-hosts" (not in LAN mode); a host filter of
+  `list_flows`, `search_flows`, `summarize` or `wait_for_flows` that matches
+  nothing, for a host outside the hosts recorded, gets a note saying so with
+  the command, for the user. The skill and the server's instructions tell
+  agents never to run `reqcove capture`. Unit tests (the arguments and
+  refusals, `ctl.sock`'s mode, an older run, no answer, the note, the step)
+  and an E2E test with real mitmproxy (add: a new connection is recorded;
+  remove: one is not; the log line, markers and status); not tried on an
+  iPhone. The pending answer and the `mock` refusal as `capture` words them:
+  from reading the code (the mechanics behind them are tested, above).
 - **The hosts recorded can change while `run` runs**, without restarting
-  mitmproxy: the groundwork only; no command uses it yet (`reqcove capture`
-  comes next). A host added is decrypted on new connections; a host removed
+  mitmproxy (the groundwork for `reqcove capture`, above). A host added is decrypted on new connections; a host removed
   is no longer recorded from the next event on, a WebSocket open to it
   included (that flow ends with the error "recording stopped: its host left
   the scope", and does not come back if the host is added again), while its

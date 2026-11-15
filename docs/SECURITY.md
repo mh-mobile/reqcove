@@ -114,7 +114,7 @@ Homebrew's log are outside it
 | `lan-allowed` | The addresses LAN mode allows |
 | `mitmproxy.log` | mitmproxy's error lines only |
 | `ca-copies` (in `~/.reqcove`) | Which other state directories hold a copy of the CA |
-| Also | mitmproxy's lock file and launcher, the SOCKS5 password, three sockets, and with `--local-proxy` the system proxy settings to put back |
+| Also | mitmproxy's lock file and launcher, the SOCKS5 password, four sockets, and with `--local-proxy` the system proxy settings to put back |
 
 The state directory is checked itself, not the directories above it. Keep it
 (and `--state`) under directories only you can write: someone who can rename
@@ -243,7 +243,7 @@ Routes, pings and UDP: [details](guide.md#security-reach).
 
 Reqcove trusts your OS user, not the others on the computer. File modes keep
 them out: the state directory is 0700, the files in it 0600, and so are the
-three sockets there. Another user cannot read the records, call the tools or
+four sockets there. Another user cannot read the records, call the tools or
 take the keys (from reading the code, where each is made; not tried with a
 second user). Another user can still:
 
@@ -272,6 +272,18 @@ mitmproxy, and no connection is read before the password check is loaded.
 Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
+
+`reqcove capture` (add, remove, set) changes which hosts `run` records, over
+`ctl.sock` in the state directory (0600, a test), not over the MCP tools'
+socket: no tool changes what is recorded. It runs only when its input and
+output are a terminal, and the skill and the server's instructions tell agents
+never to run it. The terminal check is a guard against mistakes, not a
+boundary: any process of your user (an agent that can run commands among
+them) can give it a terminal, or write to `ctl.sock` itself, and so record
+more hosts. `run` checks each request itself: `"*"` is refused, and so is a
+change in LAN mode (tests). Each change leaves a line in `run`'s log, a
+marker with source `cli` and `scope_change` in `status` (an E2E test), so
+one you did not make shows.
 
 ## Masking
 

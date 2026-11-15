@@ -131,6 +131,15 @@ func run(ctx context.Context, args []string) error {
 	if o.lanMode {
 		node.set(exitnode.Status{Mode: "lan"}) // before the first status: not a tailnet node starting
 	}
+	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
+	// and no ctl.sock for one older than v1.1.
+	if err := serveCtl(ctx, o.state, cap, o.lanMode); err != nil {
+		return err
+	}
+	if !o.lanMode {
+		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
+		defer func() { mcpserver.CaptureAddCmd = "" }()
+	}
 	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
 	if err != nil {
 		return err

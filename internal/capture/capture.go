@@ -173,6 +173,8 @@ type Capture struct {
 	ackMu    sync.Mutex // acked alone, for status: never held across a call to mitmdump
 	acked    HostRules  // what mitmdump acknowledged last
 	pending  string     // ScopePending
+	changeAt time.Time  // LastChange
+	change   string
 }
 
 // proc is one mitmdump process.
@@ -525,11 +527,28 @@ func (c *Capture) ScopePending() string {
 // is no longer recorded, even if mitmdump is not told), then to mitmdump; one
 // that only adds applies to mitmdump first, and to the Store once it
 // acknowledged. An error after the check leaves the change pending
-// (ScopePending): a mitmdump started later gets it, and one that says hello
-// again is told it again.
+// (ScopePending; the error wraps ErrPending): a mitmdump started later gets
+// it, and one that says hello again is told it again. Any other error: nothing
+// changed.
 func (c *Capture) SetScope(ctx context.Context, r HostRules) error {
+	return c.ChangeScope(ctx, "", func(HostRules) (HostRules, error) { return r, nil })
+}
+
+// ErrPending: a change was taken, but mitmdump has not acknowledged it yet.
+var ErrPending = errors.New("the change is pending")
+
+// ChangeScope is SetScope of what f makes of the scope asked for last (a
+// pending one included), under the lock every change takes, so two never undo
+// each other. An error of f is returned as it is, and nothing changes. why,
+// when not "", is kept with the time once the change is taken (applied or
+// pending): LastChange.
+func (c *Capture) ChangeScope(ctx context.Context, why string, f func(HostRules) (HostRules, error)) error {
 	c.scopeMu.Lock()
 	defer c.scopeMu.Unlock()
+	r, err := f(c.want)
+	if err != nil {
+		return err
+	}
 	gen := c.wantGen + 1
 	var ack scopeAck
 	if err := c.control(ctx, scopeOp(r, gen, true), &ack); err != nil {
@@ -546,7 +565,7 @@ func (c *Capture) SetScope(ctx context.Context, r HostRules) error {
 	} else {
 		c.setPending(PendingAsked)
 	}
-	err := c.applyLocked(ctx)
+	err = c.applyLocked(ctx)
 	var refused *refusal
 	if errors.As(err, &refused) { // the rules changed since the check (--rules-reload): back to the scope before
 		c.want, c.wantGen = old, gen+1
@@ -554,8 +573,22 @@ func (c *Capture) SetScope(ctx context.Context, r HostRules) error {
 		if err := c.applyLocked(ctx); err != nil {
 			c.cfg.Logf("the scope before (generation %d) is not applied yet: %v", c.wantGen, err)
 		}
+		return err
+	}
+	if why != "" {
+		c.ackMu.Lock()
+		c.changeAt, c.change = time.Now(), why
+		c.ackMu.Unlock()
 	}
 	return err
+}
+
+// LastChange is when ChangeScope last took a change with a why, and the why;
+// the zero time before any.
+func (c *Capture) LastChange() (time.Time, string) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.changeAt, c.change
 }
 
 // refusal is the addon's answer refusing a scope.
@@ -583,11 +616,11 @@ func (c *Capture) applyLocked(ctx context.Context) error {
 	err := c.control(ctx, scopeOp(c.want, c.wantGen, false), &ack)
 	switch {
 	case errors.Is(err, ErrNoControl), errors.Is(err, ErrUncertain):
-		return fmt.Errorf("mitmproxy did not answer (restarting?): the change is pending")
+		return fmt.Errorf("mitmproxy did not answer (restarting?): %w", ErrPending)
 	case err != nil:
 		return &refusal{err}
 	case !ack.OK || ack.Instance != c.instance || ack.Gen != c.wantGen:
-		return fmt.Errorf("mitmproxy answered for another generation or process: the change is pending")
+		return fmt.Errorf("mitmproxy answered for another generation or process: %w", ErrPending)
 	}
 	c.appliedLocked()
 	return nil

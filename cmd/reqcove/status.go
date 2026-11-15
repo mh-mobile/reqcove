@@ -64,6 +64,9 @@ func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules,
 func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
 	out := statusOut(n, cap.Store.Stats(), cap.Scope(), cap.CA, cap.Store.Devices())
 	out.ScopePending = cap.ScopePending()
+	if at, why := cap.LastChange(); !at.IsZero() {
+		out.ScopeChangedAt, out.ScopeChange = at.Format(time.RFC3339), why
+	}
 	return out
 }
 
@@ -149,7 +152,11 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), after a restart of mitmproxy too")
 	}
 	if !allow.All && len(allow.Patterns) == 0 {
-		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
+		if mcpserver.CaptureAddCmd != "" {
+			steps = append(steps, "nothing is recorded: add your app's hosts, in your terminal: "+mcpserver.CaptureAddCmd+" api.example.com")
+		} else { // LAN mode: its hosts are set at the start
+			steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
+		}
 	}
 	if slices.ContainsFunc(devices, func(d capture.DeviceInfo) bool { return d.ID == exitnode.Local.ID }) {
 		if s := localStep(); s != "" {
@@ -280,6 +287,11 @@ func status(ctx context.Context, args []string) error {
 		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
 		OldActiveErr string                `json:"active_mock_presets_error"`
 		Service      string                `json:"service"`
+		AllowHosts   []string              `json:"allow_hosts"`
+		PassHosts    []string              `json:"pass_hosts"`
+		Pending      string                `json:"scope_pending"`
+		ChangedAt    string                `json:"scope_changed_at"`
+		Change       string                `json:"scope_change"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -307,6 +319,20 @@ func status(ctx context.Context, args []string) error {
 		names = append(names, name)
 	}
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
+	hosts := orDash(strings.Join(out.AllowHosts, ", "))
+	if len(out.PassHosts) > 0 {
+		hosts += "; passed undecrypted: " + strings.Join(out.PassHosts, ", ")
+	}
+	if out.ChangedAt != "" {
+		if t, err := time.Parse(time.RFC3339, out.ChangedAt); err == nil {
+			out.ChangedAt = t.Local().Format("2006-01-02 15:04:05")
+		}
+		hosts += fmt.Sprintf("; last changed at %s (%s), not saved", out.ChangedAt, out.Change)
+	}
+	if out.Pending != "" {
+		hosts += "; a change pending: " + out.Pending
+	}
+	fmt.Printf("  recorded:    %s\n", hosts)
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
 	presets, ok := c["presets"]
