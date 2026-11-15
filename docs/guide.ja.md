@@ -12,7 +12,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
 5. [リクエストの行き先を変える](#リクエストの行き先を変える)：[ルール](#ルールを書く--rules) · [モック](#ここで応答するmock) · [プリセット](#エージェントが有効にできるプリセット) · [ルールが当たった理由](#ルールが当たった理由当たらなかった理由list_rulesexplain_rules) · [上流プロキシ](#上流プロキシに回す--upstream-proxy)
 6. [Tailscale を使わずに同じネットワークでつなぐ（LAN モード）](#tailscale-を使わずに同じネットワークでつなぐ--lan)
-7. [サービスとして動かす](#サービスとして動かす)：[`brew services`](#常駐させるbrew-services) · [`reqcove service install`](#homebrew-なしで常駐させるreqcove-service-install)
+7. [バックグラウンドで動かす](#バックグラウンドで動かす)：[起動・アップデート・停止](#起動アップデート停止) · [設定ファイル](#設定ファイル--config) · [`brew services`](#homebrew-でbrew-services) · [`reqcove service install`](#homebrew-なしでreqcove-service-install)
 8. [コンテナで動かす](#コンテナで動かす)
 9. [うまくいかないとき](#うまくいかないとき)
 10. リファレンス：[オプション](#オプション) · [MCP ツール](#mcp-ツール) · [制限事項](#制限事項) · [セキュリティ](#セキュリティ) · [互換性](COMPATIBILITY.ja.md)
@@ -35,7 +35,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
   - ファイルがすでにあれば表示し、`y` と答えない限りそのまま残します。`y` なら全体を置き換え、元のファイルは `config.old`（0600）として残します。`--rules` などほかのフラグはそこから書き戻せます。ホストのファイルがすでにあれば `hosts.old` として残し、新しいファイルにはそのコメントを引き継ぎます。
   - 普通のファイルでないものは触りません。
 - エージェント：`y` と答えれば、`reqcove init` と同じように Skill を入れます（ホームディレクトリにエージェントが見つからないときは、そう表示します）。`claude mcp add reqcove -- reqcove mcp` を表示し、エージェントのコマンドは実行しません。`PATH` の `reqcove` がないか、このバイナリとは別のものであるときは、表示するコマンドでこのバイナリをフルパスで書きます（`service install` の表示も同じです）。
-- 起動のしかた：Homebrew で入れた場合は `brew services start reqcove`、それ以外は `reqcove service install`、またはターミナルで `reqcove run --config FILE` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
+- 起動のしかた（v1.1 から、最後の行）：まずターミナルでの `reqcove run` です。引数なしでそのファイルを読みます（別のファイルが先に見つかるときは `reqcove run --config FILE`。[設定ファイル](#設定ファイル--config)）。続いて、ログイン時にバックグラウンドで起動させるなら `reqcove service install`、Homebrew で入れた場合は `brew services start reqcove` です。`--lan` はファイルに書けないので、ターミナルで `reqcove run --lan --allow-hosts HOSTS` を実行します。最後に、動かしたまま変える方法を示します。ホストなら `reqcove capture add HOST` と `reqcove capture save`、それ以外はファイルを編集して再起動します。ログイン用の URL は表示しません（`reqcove links` が表示します）。
 - Ctrl-C を押すと、その質問のところで止まります。それまでに書いたものは残ります。
 
 残っている手順は `run` が表示し、`reqcove status` でも確認できます。
@@ -76,9 +76,9 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 - 停止：Ctrl-C で止めます。記録はメモリにあるので、一緒に消えます。そのあと iPhone の DNS が止まったままになったら（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）、Exit Node を一度オフにして、オンに戻してください。
 - 再起動：`run` が止まっている間も `reqcove mcp` は動き続け、ツールは「動いていない」と答えます。`run` が戻れば、エージェントを再接続（Claude Code の `/mcp`）しなくても使えます。記録は空から始まり、最初の答えが `note` でそう伝えます。
-- アップデート（`brew upgrade reqcove` や、ソースからのビルドで新しいバージョンを入れたとき）：新しい reqcove で `run` を起動し直し、エージェントを一度再接続します。新しいツールを使うためで、バージョンが違う間はツールがそう伝えます。Skill も新しくするため、`reqcove init` をもう一度実行します。
+- アップデート（`brew upgrade reqcove` や、ソースからのビルドで新しいバージョンを入れたとき）：新しい reqcove で `run` を起動し直し、エージェントを一度再接続します。新しいツールを使うためで、バージョンが違う間はツールがそう伝えます。Skill も新しくするため、`reqcove init` をもう一度実行します。動いている `run` は、再起動するまで古いバージョンのままです。`reqcove status` は、`run` のバージョンが自分と違うときにそう伝え、`run` を起動したもの（ターミナル、`reqcove service install` のサービス、`brew services`）に合わせて、再起動するコマンドを 1 つ示します（[表](#起動アップデート停止)）。再起動すると記録は空になるので、先に `reqcove har > flows.har` を実行してください。
 
-確認状況：Claude Code のセッション中に `run` を再起動して確認しました。
+確認状況：Claude Code のセッション中に `run` を再起動して確認しました。アップデートのあとに `reqcove status` が表示するものは、単体テストだけで確かめました（v1.0.0 の `run` を模したもの）。
 
 ### 動かしたまま、記録するものを変える
 
@@ -1066,46 +1066,70 @@ Exit Node とのほかの違いは次のとおりです。
 
 </details>
 
-## サービスとして動かす
+## バックグラウンドで動かす
 
-ログインしたら `run` を起動させる方法は 2 つです。Homebrew で入れた場合は Homebrew の `brew services`、リリースのバイナリやソースからビルドしたものなら `reqcove service install` です。`--lan` はどちらでも断ります（[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)）。
+いちばん簡単なのは、ターミナルで `reqcove run` を実行することです。Ctrl-C で止まり、ログイン用の URL、QR コード、残っている手順はそのターミナルに表示されます。ログインしたら `run` を起動させたいときは、サービスに起動させます。Homebrew の `brew services` か、`reqcove service install` です（v1.1 から、Homebrew で入れたものも含め、どの入れ方でも使えます）。使うのはどちらか 1 つにしてください。`--lan` はどちらでも断ります（[LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan)）。
 
-### 常駐させる（`brew services`）
+どちらも、ターミナルの `run` と同じフラグを、1 つの設定ファイルから読みます（[下](#設定ファイル--config)）。このファイルは `reqcove setup` が書きます。先に注意：`run` が止まっている間と Mac がスリープしている間、Exit Node を使っている iPhone はインターネットにつながりません。そのときは Exit Node をオフにしてください。
 
-ログインしたら `run` を起動させるには、フラグを 1 行に 1 つずつファイルに書き、`brew services` で起動します。先に注意：Mac がスリープしている間、Exit Node を使っている iPhone はインターネットにつながりません。スリープする前に Exit Node をオフにしてください。
+### 起動・アップデート・停止
 
-```sh
-mkdir -p "$(brew --prefix)/etc/reqcove"
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > "$(brew --prefix)/etc/reqcove/config"
-chmod 600 "$(brew --prefix)/etc/reqcove/config"
-brew services start reqcove
-reqcove links        # 初回はログイン用の URL（1 分ほど待つ：初回は mitmproxy を取得する。tail -f "$(brew --prefix)/var/log/reqcove.log"）
-reqcove status       # 「service: sh.brew.reqcove」と出る（古い Homebrew では homebrew.mxcl.reqcove）
-```
+| | ターミナル | `reqcove service install` | `brew services` |
+|---|---|---|---|
+| 起動 | `reqcove run`（Ctrl-C で止まる） | `reqcove service install`：すぐに起動し、ログインのたびにも起動 | `brew services start reqcove`：すぐに起動し、ログインのたびにも起動 |
+| 終わったあと | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| アップデートのあと | Ctrl-C のあと `reqcove run` | `reqcove service restart`。別のバイナリ（別のパスや Homebrew のもの）に移ったときは `reqcove service install` | `brew upgrade reqcove` のあと `brew services restart reqcove` |
+| 設定ファイルやホストのファイルを編集したあと | Ctrl-C のあと `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| 次のログインまで止める | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove` | `brew services kill reqcove`（Homebrew のヘルプによるもので、試していません） |
+| 止めて取り除く | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
+| ログ | ターミナル | macOS：状態ディレクトリの `service.log`。Linux：`journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |
 
-- ファイル：`--config FILE` は `run` のフラグを 1 行に 1 つずつ読みます。
+- 再起動のたびに記録は空になります。記録はメモリにあるためです。先に `reqcove har > flows.har` で残してください。
+- 記録するホストは、再起動せずに変えられます。`reqcove capture add HOST`（`remove`、`set`）で変え、次の起動のために残すなら `reqcove capture save` を実行します（[記録するものを変える](#動かしたまま記録するものを変える)）。ほかを変えるときは、ファイルを編集してから、上の表のとおりに再起動します。
+- アップデートのあとは、新しい `reqcove status` がそう伝えます。動いている `run` のバージョンと自分のバージョンを比べ、`run` を起動したものに合わせて、再起動するコマンドを 1 つ示します。それまでは、`brew upgrade` のあとでも、`run` は古いバイナリのまま動き続けます（動いているプロセスは自分のファイルを持ち続けます）。
+- `reqcove status` はほかに、`run` を起動したもの（ターミナル、`reqcove service install` のサービス、`brew services`）と、`run` が読んだ設定ファイルとホストのファイルを表示します。reqcove のサービスが同時に 2 つ入っているときや、`reqcove service install` のサービスが、消えたバイナリやこのバイナリでないものを起動するときは、警告します（`reqcove service install` をもう一度実行すると、このバイナリを指すようにします）。
+- サービスと同じ状態ディレクトリで、ターミナルから `run` を起動すると「使用中」と断られます。先にサービスを止めてください。
+- スリープ：`run` は動いている間、Mac のアイドルスリープを止めます（`caffeinate -i`。バッテリーでも止めるので電池を使います）。ふたを閉じたときや、スリープを選んだときは止められません。
+
+確認状況：`reqcove status` がそれぞれの場合に表示するもの（v1.0.0 の `run` と新しい CLI、それぞれのサービス、同時に 2 つのサービス、消えたバイナリや別のバイナリ）を、一時的なホームディレクトリにサービスのファイルを書いて、単体テストで確かめました。手作業では試していません：v1.1 での、この表の流れ（サービスが動いている間の `brew upgrade`、インストール済みのところへの `reqcove service install`）。
+
+### 設定ファイル（`--config`）
+
+`run --config FILE` は、`run` のフラグを 1 行に 1 つずつファイルから読みます。
+
+- 置き場所：`~/.config/reqcove/config` です。Homebrew で入れた場合（このバイナリが `Cellar/reqcove/` の下にあるとき）は、`reqcove setup` は代わりに Homebrew の `$(brew --prefix)/etc/reqcove/config` に書きます。`brew services` が読むのはこちらです。ホストは隣の `hosts` に書き、`--allow-hosts=@FILE` で読みます。
+- 引数をまったく付けない `reqcove run`（v1.1 から）は、`~/.config/reqcove/config` を読みます。なければ Homebrew のもの（この `reqcove` が Homebrew のものであるとき）を読み、どちらを読んだかをログに書きます。両方あるときは先のものを読み、`reqcove status` が両方を表示します。引数を 1 つでも付けたときは、これまでどおり `--config` で指定したときだけファイルを読みます。どちらのファイルもなければ、これまでどおり `--device` を求めます。
+- `reqcove service install` も同じファイルを使います（または `--config FILE`）。
+- 行の書き方：
   - `#` から後ろはコメントです。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリです。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます。
   - コマンドラインのフラグはファイルのあとに読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。
   - ファイルで断るもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'`（`@FILE` で指定したものも）。これらはコマンドラインでだけ使えます。
-  - ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。
-  - `--config` は 1 つだけです。指定しなければ、何も読みません。
-- 終わったとき：ファイルがないときや断ったときは、サービスは 1 回で終わります（`brew services` がエラーを表示します）。繰り返し起動し直すことはありません。ほかの理由で終わったときも同じなので、`brew services restart reqcove` で起動し直してください（`brew upgrade reqcove` のあとも）。
-- ログ：`$(brew --prefix)/var/log/reqcove.log` です。状態ディレクトリの `mitmproxy.log` も伸び続けます。launchd も reqcove もローテーションしないので、ときどき空にしてください。どちらにもログイン用の URL やトークンは入りません。それらは `reqcove links` が自分のターミナルに表示します。
-- ターミナルからの `run`：同じ状態ディレクトリで、ターミナルから `run` を起動すると「使用中」と断られます。先に `brew services stop reqcove` を実行してください。
-- スリープ：`run` は動いている間、Mac のアイドルスリープを止めます（`caffeinate -i`。ターミナルから起動したときと同じで、バッテリーでも止めるので電池を使います）。ふたを閉じたときや、スリープを選んだときは止められません。
+- ファイルは自分の持ち物で、自分だけが読めるもの（`chmod 600`）に限ります。`--mask-values` のパターンを書くことがあるためです。`--config` は 1 つだけです。
+- 断られたとき（ファイルがない、断るフラグがある）は、サービスは 1 回で終わります（`brew services` がエラーを表示します）。繰り返し起動し直すことはありません。ほかの理由で終わったときも同じです。
 
-Linux では、Homebrew の `brew services` が同じ formula から systemd のユニットを作ります（Homebrew のドキュメントによるもので、試していません。`status` はサービスを表示しません）。Homebrew を使わないなら、次の節を見てください。
+確認状況：単体テスト（読み方と断る場合。引数なしの `run` が、どちらかのファイル、両方、どちらもないとき、引数を付けたときに読むもの）。
 
-確認状況：設定ファイルの読み方と断るフラグは、単体テストで確認しました。macOS 27 では formula から `brew services start` と `stop` を試し、iPhone のリクエストが記録されました（ログにトークンやログイン用の URL は入らず、止めたあと `links` と `login-url` は消えました）。`brew services` で試していないもの：ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS がローカルネットワークの許可を求めるか（この 3 つは、下の `reqcove service install` で試しました）。launchd のデフォルトの優先度で遅くならないかも試していません。
-
-### Homebrew なしで常駐させる（`reqcove service install`）
-
-リリースのバイナリや、ソースからビルドしたものなら、`reqcove service install` で同じことができます（Homebrew で入れたなら、上の `brew services` を使ってください）。macOS では LaunchAgent（`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`）、Linux では systemd のユーザーユニット（`~/.config/systemd/user/reqcove.service`）を作ります。サービスはこのバイナリ（フルパス）を `run --config FILE` で起動します。すぐに起動し、ログインするたびにも起動します。終わっても起動し直しません（`brew services` と同じ）。
+### Homebrew で（`brew services`）
 
 ```sh
-mkdir -p ~/.config/reqcove
-printf -- '--device iphone\n--allow-hosts api.example.com\n' > ~/.config/reqcove/config
-chmod 600 ~/.config/reqcove/config
+reqcove setup                # $(brew --prefix)/etc/reqcove/config を書く
+brew services start reqcove
+reqcove links                # 初回はログイン用の URL（1 分ほど待つ：初回は mitmproxy を取得する。tail -f "$(brew --prefix)/var/log/reqcove.log"）
+reqcove status               # 「service: sh.brew.reqcove」と出る（古い Homebrew では homebrew.mxcl.reqcove）
+```
+
+- ログ：`$(brew --prefix)/var/log/reqcove.log` です。状態ディレクトリの `mitmproxy.log` も伸び続けます。launchd も reqcove もローテーションしないので、ときどき空にしてください。どちらにもログイン用の URL やトークンは入りません。それらは `reqcove links` が自分のターミナルに表示します。
+- formula のサービスは、Homebrew の変わらないパス（`$(brew --prefix)/opt/reqcove/bin/reqcove`）を起動します。`brew upgrade` のあとに `brew services restart reqcove` を実行すると、新しいバージョンが起動します。
+- Linux：Homebrew の `brew services` が同じ formula から systemd のユニットを作ります（Homebrew のドキュメントによるもので、試していません）。`reqcove status` は、プロセスの cgroup からそのユニットを見分けます（systemd のドキュメントによるもので、試していません）。
+
+確認状況：macOS 27 で formula から `brew services start` と `stop` を試し、iPhone のリクエストが記録されました（ログにトークンやログイン用の URL は入らず、止めたあと `links` と `login-url` は消えました）。`brew services` で試していないもの：ログイン時や Mac の再起動後の起動、スリープ、ターミナルから起動していない `run` に macOS がローカルネットワークの許可を求めるか（この 3 つは、下の `reqcove service install` で試しました）。launchd のデフォルトの優先度で遅くならないかも試していません。
+
+### Homebrew なしで（`reqcove service install`）
+
+macOS では LaunchAgent（`~/Library/LaunchAgents/io.github.mh-mobile.reqcove.plist`）、Linux では systemd のユーザーユニット（`~/.config/systemd/user/reqcove.service`）を作ります。サービスはこのバイナリ（フルパス）を `run --config FILE` で起動します。すぐに起動し、ログインするたびにも起動します。終わっても起動し直しません（`brew services` と同じ）。
+
+```sh
+reqcove setup                 # ~/.config/reqcove/config を書く
 reqcove service install       # 別のファイルなら --config FILE、別の状態ディレクトリなら --state DIR
 reqcove links                 # 初回はログイン用の URL（1 分ほど待つ）
 reqcove status                # 「service: io.github.mh-mobile.reqcove」と出る（Linux では reqcove.service）
@@ -1113,24 +1137,23 @@ reqcove service restart       # 終わったあとや、ファイルを変えた
 reqcove service uninstall     # 止めて、ファイルを消す
 ```
 
-- ファイルは `--config` で指定しなければ `~/.config/reqcove/config` です。読み方は `brew services`（上）と同じです。
+- ファイルは、`--config` で指定しなければ、引数なしの `run` が読むもの（上）です。
   - インストールのときに、ファイルがない（書き方を表示します）、自分の持ち物でない、ほかの人が読める、`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config` が書いてある、のどれかなら断ります。
   - `--allow-hosts '*'` は `run` が起動したときに断ります（サービスは 1 回で終わります）。
   - ファイルに `--state` があれば、それが状態ディレクトリです（フルパスか `~/` から）。状態ディレクトリは空か、新しいか、reqcove のものに限ります（`run` と同じ）。
+- Homebrew のバイナリ（v1.1 から）：サービスは、`brew upgrade` で消える Cellar のパスではなく、Homebrew の変わらないパス `$(brew --prefix)/opt/reqcove/bin/reqcove` を起動します。アップデートのあとは `reqcove service restart` を実行します。
+- インストール済みのとき（v1.1 から）：もう一度インストールすると、このバイナリを指すように書き直して再起動し、そう表示します（記録は空から始まります）。`--config` と `--state` は、指定しなければ、入っているサービスのものを引き継ぎます。別のバイナリに移ったときや、それらを変えるときに使います。
+- Homebrew のサービスがあるときは断ります（ファイルがあるか、読み込まれている：`sh.brew.reqcove`、`homebrew.mxcl.reqcove`。Linux では `sh.brew.reqcove.service`、`homebrew.reqcove.service`。Linux の名前は Homebrew のコードから判断したもので、試していません）。2 つのサービスが同じ状態ディレクトリを取り合うためです。先に `brew services stop reqcove` を実行してください。
 - 終わったとき：`run` が終わると（エラー、断られたファイル、`kill`）、次のログインまで止まったままです。`reqcove service restart` で起動し直せます（`launchctl kickstart -k gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user restart reqcove` を実行します。macOS では試していません）。
-- Homebrew のサービスがあるときは断ります（ファイルがあるか、読み込まれている：`sh.brew.reqcove`、`homebrew.mxcl.reqcove`。Linux では `sh.brew.reqcove.service`、`homebrew.reqcove.service`。Linux の名前は Homebrew のコードから判断したもので、試していません）。2 つのサービスが同じ状態ディレクトリを取り合うためです。
-- Homebrew で入れた `reqcove` も断ります。そのパス（Cellar の中）は `brew upgrade` で消えるためです。`reqcove setup` で Homebrew のサービスが読むファイルを書き、`brew services start reqcove` で起動してください。
-- インストール済みのとき：起動し直すには `reqcove service restart` を実行します。コマンドラインのフラグを変えるときやバイナリを動かしたあとは、`reqcove service uninstall` のあとでもう一度インストールしてください。
 - ログ：
   - macOS：状態ディレクトリの `service.log` です。ローテーションしないので、`mitmproxy.log` と同じく、ときどき空にしてください。launchd が作ると 0644 になるので、`service install` が先に 0600 で作ります（launchd では試していません）。
   - Linux：`journalctl --user -u reqcove` です。
   - ログイン用の URL やトークンは入りません。`service install` も表示しません。それらは `reqcove links` が自分のターミナルに表示します。
 - `PATH` は、インストールしたときの uvx のディレクトリ、`~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、システムのものの順です。ほかの場所にあるなら、ファイルに `--uvx /full/path/uvx` と書いてください。
-- 次のログインまで止めるには、`launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove` を実行します。`reqcove status` がどちらかを表示します。
 - ローカルネットワークの許可（macOS）：試したとき、macOS はスリープの前とあとに許可を求めました。その一覧には、別の場所に置いたビルドがそれぞれ別の項目として並びます。
 - Linux：ユーザーユニットはログインしている間だけ動きます。`loginctl enable-linger $USER` がないと、最後のセッションが終わったときに systemd が止め（ssh では、最後にログアウトしてから 15 秒以内）、次のログインでまた起動します。linger があると、ログアウトのあとも動き続けます。ログインする前の起動時にも動きます（systemd のドキュメントによるもので、再起動は試していません）。
 
-確認状況：単体テストで、書き出すファイル、断る場合、実行するコマンド、ログのパーミッションを確かめました（launchctl と systemctl は実行しません）。手作業では 2026-11-14 に試し、どちらの OS でもログにログイン用の URL やトークンは入りませんでした。macOS で試したのは、インストールからアンインストールまで（iPhone を記録）、スリープ、再起動後のログイン時の起動（ログイン時のアラートはなし）です。Linux（VM）では、ノードを tailnet にログインさせずに、インストールからアンインストールまで、`kill` のあとと `systemctl --user stop reqcove` のあとの `service restart`、linger のあるときとないときのログアウトを試しました。試していないもの：macOS での `service restart`、Linux での tailnet にログインしたノード、それを通したデバイスの記録、再起動。
+確認状況：単体テストで、書き出すファイル、断る場合、実行するコマンド、ログのパーミッション、Homebrew の opt のパスを書くこと、インストール済みのところへのインストール（`launchctl bootout` のあと `bootstrap`、または `systemctl --user restart`。`--config` と `--state` を引き継ぐこと）を確かめました（launchctl と systemctl は実行しません）。手作業では 2026-11-14 に v1.0 で試し、どちらの OS でもログにログイン用の URL やトークンは入りませんでした。macOS で試したのは、インストールからアンインストールまで（iPhone を記録）、スリープ、再起動後のログイン時の起動（ログイン時のアラートはなし）です。Linux（VM）では、ノードを tailnet にログインさせずに、インストールからアンインストールまで、`kill` のあとと `systemctl --user stop reqcove` のあとの `service restart`、linger のあるときとないときのログアウトを試しました。試していないもの：v1.1 の、インストール済みのところへのインストールと Homebrew のバイナリでのインストールを launchd や systemd で行うこと、macOS での `service restart`、Linux での tailnet にログインしたノード、それを通したデバイスの記録、再起動。
 
 <a id="security-config"></a>
 
@@ -1138,7 +1161,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 要点は [SECURITY](SECURITY.ja.md#フラグのファイル--config) にあります。
 
-`run --config FILE`（`brew services` と `reqcove service install` のためのもの）は、`run` のフラグをファイルから読みます。つまり、そのファイルに書き込めるものが、次の起動のフラグを決めます。
+`run --config FILE`（`brew services` と `reqcove service install` のためのもの）は、`run` のフラグをファイルから読みます。つまり、そのファイルに書き込めるものが、次の起動のフラグを決めます。v1.1 から、引数なしの `reqcove run` も、同じ確認をしてファイルを読みます（[設定ファイル](#設定ファイル--config)）。
 
 - ファイルはあなたのもので、あなただけが読めるものでなければなりません（そうでなければ断ります）。`--mask-values` のパターンが入ることがあるからです。
 - エラーが示すのは行で、値は示しません。
@@ -1196,8 +1219,8 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | mitmweb で、デバイスの HTTP(S) が止まった、ブックマークでトークンの入力を求められる | [mitmweb で見る](#mitmweb-で見る--web) |
 | `--mcp-http` で、デバイスが拒否される、`429` が返る、Grok Bot の設定画面でコネクタが「エラー」と表示される | [ほかのデバイスのエージェントから使う](#ほかのデバイスのエージェントから使う--mcp-http) |
 | LAN モードで、iPhone の最初の接続が拒否される、何かに妨げられてつながらない、別のポートの開発サーバーが拒否される | [LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan) |
-| Mac がスリープしている間、Exit Node を使っている iPhone がインターネットにつながらない | [常駐させる（`brew services`）](#常駐させるbrew-services) |
-| サービスが終わったまま起動し直されない、ターミナルから起動した `run` が「使用中」と断られる | [サービスとして動かす](#サービスとして動かす) |
+| Mac がスリープしている間、Exit Node を使っている iPhone がインターネットにつながらない | [バックグラウンドで動かす](#バックグラウンドで動かす) |
+| サービスが終わったまま起動し直されない、ターミナルから起動した `run` が「使用中」と断られる | [起動・アップデート・停止](#起動アップデート停止) |
 | ログに `did not answer within 10s (through mitmproxy)` や `the client left before … answered (through mitmproxy)` と出る | [制限事項](#制限事項) |
 | reqcove が mitmproxy を何度も再起動する、mitmproxy のせいで `run` が止まる | [制限事項](#制限事項)（巨大な WebSocket のメッセージ、mitmproxy が終了したとき・起動しないとき）、[ルール](#ルールを書く--rules)（`map_local` のルールに合うホストへのとても大きなボディ、読み込めなくなったルール） |
 | IPv6、QUIC、通話 | [制限事項](#制限事項) |
@@ -1232,7 +1255,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `--state DIR` | 状態ディレクトリ。デフォルトは `~/.reqcove`。ノードキー、CA とその秘密鍵を保存。新しいか空のディレクトリ、または reqcove が以前使ったものに限る。`--state ~/x` とスペースを空けて指定（`--state=~/x` は拒否）。CA のないディレクトリには `~/.reqcove` の CA をコピーし（写した先は `~/.reqcove/ca-copies` に記録し、`~/.reqcove` の `cleanup` が表示する）、`reqcove-NAME` という名前の新しいディレクトリでは、ノード名もそれになる：[複数の Exit Node](several-exit-nodes.ja.md) |
 | `--hostname NAME` | ノードの名前。デフォルトは `reqcove`。状態ディレクトリに保存 |
 | `--verbose` | tsnet のバックエンドと、フローごとの判断をログに出力 |
-| `--config FILE` | [`run` のフラグをファイルから読む](#常駐させるbrew-services)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
+| `--config FILE` | [`run` のフラグをファイルから読む](#設定ファイル--config)。1 行に 1 つ。コマンドラインのフラグより先に読む（`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、`--allow-hosts '*'` は不可）。ファイルは `chmod 600` |
 | `--uvx PATH` | 使用する uvx。同じ場所の `uv` が、デフォルトの mitmproxy を Reqcove のロックファイルから起動する（ハッシュを確認）。ファイル名が `uvx` でないパスは uvx として実行する（ロックもハッシュの確認もなし） |
 | `--python VERSION` | mitmproxy を動かす Python。デフォルトは 3.14 |
 | `--mitmproxy-spec SPEC` | ロックした `mitmproxy==12.3.1` 以外の mitmproxy。uvx で取得する（ロックもハッシュの確認もなし） |
@@ -1250,7 +1273,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `reqcove har` | [フローを HAR ファイルに出力](#har-ファイルに書き出すreqcove-har)。`--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit N` |
 | `reqcove init` | [エージェント用の Skill](#使い方を教える-skill-を入れるreqcove-init)。`--client NAME`、`--print`、`--uninstall` |
 | `reqcove setup` | [初回の手順](#初回の起動ログインと承認)。フラグなし。ターミナルでのみ |
-| `reqcove service install` | `--config FILE`、`--state DIR`。そのあとは `reqcove service restart`、`reqcove service uninstall`。[Homebrew なしで常駐させる](#homebrew-なしで常駐させるreqcove-service-install) |
+| `reqcove service install` | `--config FILE`、`--state DIR`。そのあとは `reqcove service restart`、`reqcove service uninstall`。[Homebrew なしで](#homebrew-なしでreqcove-service-install) |
 | `reqcove cleanup` | 元に戻す手順の表示。`--delete-state`、`--hostname NAME` |
 | `reqcove version` | バージョンの表示 |
 

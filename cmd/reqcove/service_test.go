@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,10 +129,24 @@ func TestServiceInstallDarwin(t *testing.T) {
 	if !slices.EqualFunc(*got, wantCmds, slices.Equal) {
 		t.Errorf("commands %q", *got)
 	}
-	// Installed: once only.
-	if err := serviceInstall("darwin", config, state, true); err == nil || !strings.Contains(err.Error(), "installed already") {
-		t.Errorf("again: %v", err)
+	// Installed again: re-pointed at this binary, out of launchd and in again
+	// (launchd reads the file only as it loads it), and said so.
+	os.WriteFile(file, []byte(launchAgent([]string{"/old/reqcove", "run"}, path, log)), 0o644)
+	*got = nil
+	out := captureStdout(t, func() error { return serviceInstall("darwin", config, state, true) })
+	wantCmds = [][]string{wantCmds[0], wantCmds[1], {"launchctl", "bootout", "gui/" + uid + "/" + serviceLabel}, wantCmds[2]}
+	if !slices.EqualFunc(*got, wantCmds, slices.Equal) || !strings.Contains(out, "installed again "+file+": it ran /old/reqcove; now it runs "+shellWord(exe)+" run") || !strings.Contains(out, "restarted now (its records started empty)") {
+		t.Errorf("again: %q\n%s", *got, out)
 	}
+	if s := plistStrings(t, file); !slices.Equal(s, want) {
+		t.Errorf("again: plist strings %q", s)
+	}
+	// Bootstrap failing then: the old one is out already, the new file stays.
+	fakeCtl(t, false, errors.New("no session"))
+	if err := serviceInstall("darwin", config, state, true); err == nil || !strings.Contains(err.Error(), "is written, not started") || !exists(file) {
+		t.Errorf("again, start fails: %v", err)
+	}
+	fakeCtl(t, false, nil)
 	// Installed again over a log made 0644 (an earlier install's, by launchd): 0600, kept.
 	os.Remove(file)
 	os.WriteFile(log, []byte("earlier\n"), 0o644)
@@ -275,14 +290,16 @@ func TestServiceInstallRefuses(t *testing.T) {
 	}
 }
 
-// Homebrew's binary: brew upgrade deletes its Cellar path, so install points
-// to brew services (and setup, which writes brew's config), writing nothing
-// and asking neither launchctl nor systemctl (the init guard panics).
+// Homebrew's binary: brew upgrade deletes its Cellar path, so the service
+// runs Homebrew's opt path, which follows the upgrades. Without one, install
+// points to brew services (and setup, which writes brew's config), writing
+// nothing and asking neither launchctl nor systemctl (the init guard panics).
 func TestServiceInstallBrewBinary(t *testing.T) {
 	prefix := t.TempDir()
 	old := selfExe
 	selfExe = func() (string, error) { return prefix + "/Cellar/reqcove/0.7.0/bin/reqcove", nil }
 	t.Cleanup(func() { selfExe = old })
+	opt := filepath.Join(prefix, "opt/reqcove/bin/reqcove")
 	for _, goos := range []string{"darwin", "linux"} {
 		home, config := serviceHome(t, "cfg")
 		state := filepath.Join(home, "st")
@@ -294,6 +311,72 @@ func TestServiceInstallBrewBinary(t *testing.T) {
 		if exists(ours) || exists(state) {
 			t.Errorf("%s: wrote the service file or the state directory", goos)
 		}
+		os.MkdirAll(filepath.Dir(opt), 0o755)
+		os.WriteFile(opt, []byte("#!/bin/sh\n"), 0o755)
+		fakeCtl(t, false, nil)
+		out := captureStdout(t, func() error { return serviceInstall(goos, config, state, true) })
+		if argv := serviceArgv(goos, ours); len(argv) == 0 || argv[0] != opt {
+			t.Errorf("%s: runs %q", goos, argv)
+		}
+		if !strings.Contains(out, "this reqcove is Homebrew's: the service runs "+opt+", which brew upgrade points at the new version") {
+			t.Errorf("%s:\n%s", goos, out)
+		}
+		os.Remove(opt)
+	}
+}
+
+// Installing again with no flags keeps the installed service's --config and
+// --state (a new state would be a new node and CA); with none installed,
+// --config is the file a bare run reads.
+func TestServiceInstallKeepsArgs(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	file, _ := serviceFile(runtime.GOOS)
+	state := filepath.Join(home, "st")
+	os.MkdirAll(filepath.Dir(file), 0o755)
+	argv := []string{"/gone/reqcove", "run", "--config", config, "--state", state}
+	os.WriteFile(file, []byte(launchAgent(argv, "/bin", "/x.log")), 0o644)
+	if runtime.GOOS == "linux" {
+		os.WriteFile(file, []byte(systemdUnit(argv, "/bin")), 0o644)
+	}
+	fakeCtl(t, false, nil)
+	captureStdout(t, func() error { return service(context.Background(), []string{"install"}) })
+	exe, _ := selfExe()
+	if got := serviceArgv(runtime.GOOS, file); !slices.Equal(got, []string{exe, "run", "--config", config, "--state", state}) {
+		t.Errorf("again: %q", got)
+	}
+	// Given: those.
+	other := filepath.Join(home, "other")
+	if c, s, given := installArgs(runtime.GOOS, other, true, other, true); c != other || s != other || !given {
+		t.Errorf("given: %s %s %v", c, s, given)
+	}
+	// None installed: the file a bare run reads, the default state.
+	os.Remove(file)
+	os.MkdirAll(filepath.Dir(defaultConfig()), 0o700)
+	os.WriteFile(defaultConfig(), []byte("--device x\n"), 0o600)
+	if c, s, given := installArgs(runtime.GOOS, "unused", false, defaultState(), false); c != defaultConfig() || s != defaultState() || given {
+		t.Errorf("none: %s %s %v", c, s, given)
+	}
+}
+
+// What install writes reads back as the command it runs, quoting and all.
+func TestServiceArgv(t *testing.T) {
+	dir := t.TempDir()
+	argv := []string{`/a b/re"q\cove`, "run", "--config", `/c/50% $x & <y>`}
+	for goos, body := range map[string]string{"darwin": launchAgent(argv, "/bin", "/l"), "linux": systemdUnit(argv, "/bin")} {
+		file := filepath.Join(dir, goos)
+		os.WriteFile(file, []byte(body), 0o644)
+		if got := serviceArgv(goos, file); !slices.Equal(got, argv) {
+			t.Errorf("%s: %q", goos, got)
+		}
+	}
+	// Homebrew's unit: plain words.
+	file := filepath.Join(dir, "brew")
+	os.WriteFile(file, []byte("[Service]\nExecStart=/home/linuxbrew/.linuxbrew/opt/reqcove/bin/reqcove run --config /e/config\n"), 0o644)
+	if got := serviceArgv("linux", file); !slices.Equal(got, []string{"/home/linuxbrew/.linuxbrew/opt/reqcove/bin/reqcove", "run", "--config", "/e/config"}) {
+		t.Errorf("brew's unit: %q", got)
+	}
+	if got := serviceArgv("darwin", filepath.Join(dir, "none")); got != nil {
+		t.Errorf("none: %q", got)
 	}
 }
 

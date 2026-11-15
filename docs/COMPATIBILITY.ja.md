@@ -63,10 +63,11 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 - v1.1 から、動かしたままホストを変えたとき（`reqcove capture`）のフィールド：`scope_pending`（mitmproxy がまだ受け取りを返していない変更。人が読むための文で、ないときはフィールドもありません）、`scope_changed_at`（RFC 3339）、`scope_change`（`capture add api.example.com` のようなコマンド）。後の 2 つは、最初の変更まではありません。`allow_hosts` と `pass_hosts` は、mitmproxy が受け取りを返したホストです。
 - v1.1 から、`recording`：`on` か `stopped`（`reqcove capture stop` から `capture start` まで。値は今後増えることがあります）。止めている間、`allow_hosts` は `[]` で、`pass_hosts` はありません（何も記録しません）。`base_allow_hosts` と `base_pass_hosts` は、記録しているときに記録するホストです（ないときはフィールドもありません）。止めている間は、`start` で記録するホストです。v1.1 より前の `run` にはありません。
 - v1.1 から、`recording` は `allow-all` にもなります（`reqcove capture allow-all --for D` から、終わるまで）。その間 `allow_hosts` は `["*"]`、`pass_hosts` は復号せずに通したままのホスト、`base_allow_hosts` は終わったあとに記録するホストです。`allow_all_until`（RFC 3339）と `allow_all_left`（`29m10s` のような Go の duration）が終わる時刻を伝えます。オフのときはありません。`records_outside_scope` は、残っている記録のうち、ホストが `base_allow_hosts` の外にあるものの数です（allow-all の間の記録で、終わったあとも残るもの、またはあとで外したホストのもの）。ないときはフィールドもありません。
+- v1.1 から、`run` 自身について：`version`（`reqcove version` が表示するもの。`serverInfo` のものと同じ）、`manager`（起動したもの：`terminal`、`reqcove service install` の LaunchAgent かユニットなら `reqcove service`、`brew services`。値は増えることがあります。見分けられないときはありません）、`restart_command`（サービスの下で再起動するコマンド。`brew services restart reqcove` など。ターミナルから起動したときはありません）。さらにこのコンピュータでだけ（`--mcp-http` ではなし）、`config_file`（読んだ `--config` のファイル、フルパス。フラグだけのときはありません）、`config_unused`（引数なしの `run` が見つけて読まなかった、もう 1 つの設定ファイル）、`hosts_files`（`--allow-hosts=@FILE` と `--pass-hosts=@FILE` が読んだファイル）。v1.1 より古い `run` にはありません。そのとき `reqcove status` はバージョンを `serverInfo` から取ります。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
-確認状況：答える `run` がないときに標準出力に何も出さず、理由を標準エラーに出して終了コード 1 で終わることは、単体テストで確かめました。
+確認状況：答える `run` がないときに標準出力に何も出さず、理由を標準エラーに出して終了コード 1 で終わることは、単体テストで確かめました。v1.1 のフィールドと、v1.0.0 の `run` の答えを新しい `reqcove status` が読むことも、単体テストで確かめました。
 
 #### `capture_stats`
 
@@ -119,6 +120,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - 書けないもの：`--no-redact`、`--web`、`--rules-reload`、`--lan`、`--config`、そしてどう書いても（`@FILE` でも）`--allow-hosts '*'`。
 - ファイルは通常のファイルで、自分が所有し、グループとほかの人に権限がない（`chmod 600`）ものでなければなりません。
 - 置き場所：`reqcove service install`（その `--config` の既定値）と Homebrew なしの `reqcove setup` は `~/.config/reqcove/config`。Homebrew では `reqcove setup` が `$(brew --prefix)/etc/reqcove/config` に書き、`brew services` がそれを読みます。
+- v1.1 から、引数をまったく付けない `reqcove run`（以前は断っていました）は、`--config FILE` と同じように `~/.config/reqcove/config` を読みます。なければ Homebrew のもの（その `reqcove` が Homebrew のものであるとき）を読みます。どちらもなければ、これまでどおり `--device` を求めます。引数を 1 つでも付けた `run` は、v1.0 と同じく、`--config` で指定したときだけファイルを読みます。`--config` を付けない `reqcove service install` も同じファイルを使います（インストール済みなら、入っているサービスの `--config`）。
 - v1.1 から、`reqcove setup` はホストを、その隣の別のファイル `hosts`（`~/.config/reqcove/hosts` か `$(brew --prefix)/etc/reqcove/hosts`）に書きます。1 行に 1 つのホストで、`#` から後はコメントです。config には、そのファイルを読む `--allow-hosts=@FILE` の行を書きます。`reqcove capture save` が書き換えるのもこのファイルです。それより前に書いた config（`--allow-hosts` の行にホストがあるもの）は、これまでどおり読みます。
 
 ### 状態ディレクトリ

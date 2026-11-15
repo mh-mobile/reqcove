@@ -248,16 +248,35 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	fmt.Fprintf(out, "   Give the agent the tools (Claude Code; other agents: the command %[1]s mcp in their MCP settings):\n     claude mcp add reqcove -- %[1]s mcp\n", rc)
 
 	fmt.Fprintln(out, "\n4. Start it")
-	switch {
-	case !have:
+	restart := "Ctrl-C and run it again"
+	if !have {
 		fmt.Fprintf(out, "   in a terminal: %[1]s run --device NAME --allow-hosts HOSTS (or run %[1]s setup again for the file)\n", rc)
-	case brew:
-		fmt.Fprintf(out, "   now and at each login: brew services start reqcove\n   or in a terminal: %s run --config %s\n", rc, shown)
-	default:
-		fmt.Fprintf(out, "   now and at each login: %[1]s service install\n   or in a terminal: %[1]s run --config %[2]s\n", rc, shown)
+	} else {
+		cmd := rc + " run --config " + shown
+		if first, _ := bareConfig(); first == config { // what a run with no arguments reads
+			cmd = rc + " run"
+		}
+		fmt.Fprintf(out, "   in a terminal: %s (it reads %s; Ctrl-C stops it)\n", cmd, shown)
+		if brew {
+			fmt.Fprintln(out, "   or to start it at login, in the background: brew services start reqcove")
+			restart += ", or brew services restart reqcove"
+		} else {
+			fmt.Fprintf(out, "   or to start it at login, in the background: %s service install\n", rc)
+			restart += ", or " + rc + " service restart"
+		}
 	}
-	fmt.Fprintf(out, "   Then `%[1]s links` prints the login URL (the first time, in your terminal), and `%[1]s status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there (`%[1]s links` shows its QR code).\n", rc)
 	fmt.Fprintf(out, "   LAN mode (no Tailscale): --lan is not kept in a config file; in a terminal: %s run --lan --allow-hosts HOSTS\n", rc)
+	fmt.Fprintf(out, "   Then `%[1]s links` prints the login URL (the first time, in your terminal), and `%[1]s status` what is left:\n   approving the exit node, choosing it on the iPhone, trusting the CA there (`%[1]s links` shows its QR code).\n", rc)
+	if have {
+		save, files := "", shown
+		if _, err := os.Stat(setupHosts(config)); err == nil {
+			hf := shellWord(setupHosts(config))
+			save = fmt.Sprintf("; %s capture save keeps them for the next start, in %s", rc, hf)
+			files = hf + " or " + shown
+		}
+		fmt.Fprintf(out, "   While it runs, change the hosts recorded without a restart (the records stay):\n   %s capture add HOST (or remove, set)%s.\n", rc, save)
+		fmt.Fprintf(out, "   Other changes: edit %s, then restart it (%s): a restart empties the records.\n", files, restart)
+	}
 	return nil
 }
 

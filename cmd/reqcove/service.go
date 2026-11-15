@@ -64,11 +64,15 @@ func service(_ context.Context, args []string) error {
 	if err := parseFlags(fls, args); err != nil {
 		return err
 	}
-	given := false
-	fls.Visit(func(f *flag.Flag) { given = given || f.Name == "state" })
+	given, configGiven := false, false
+	fls.Visit(func(f *flag.Flag) {
+		given = given || f.Name == "state"
+		configGiven = configGiven || f.Name == "config"
+	})
 	switch {
 	case sub == "install":
-		return serviceInstall(runtime.GOOS, *config, *state, given)
+		c, s, g := installArgs(runtime.GOOS, *config, configGiven, *state, given)
+		return serviceInstall(runtime.GOOS, c, s, g)
 	case sub == "uninstall" && fls.NFlag() == 0:
 		return serviceUninstall(runtime.GOOS)
 	case sub == "restart" && fls.NFlag() == 0:
@@ -91,18 +95,53 @@ func serviceFile(goos string) (string, error) {
 	return "", fmt.Errorf("reqcove service: macOS (launchd) and Linux (systemd) only, not %s", goos)
 }
 
+// installArgs are install's --config and --state: those given, else those of
+// the service installed already (installing again re-points it at this
+// binary and changes nothing else), else the file a bare run reads.
+func installArgs(goos, config string, configGiven bool, state string, stateGiven bool) (string, string, bool) {
+	var old []string
+	if file, err := serviceFile(goos); err == nil {
+		old = serviceArgv(goos, file)
+	}
+	for i := 1; i+1 < len(old); i++ {
+		switch {
+		case old[i] == "--config" && !configGiven:
+			config, configGiven = old[i+1], true
+		case old[i] == "--state" && !stateGiven:
+			state, stateGiven = old[i+1], true
+		}
+	}
+	if !configGiven {
+		if c, _ := bareConfig(); c != "" {
+			config = c
+		}
+	}
+	return config, state, stateGiven
+}
+
 func serviceInstall(goos, config, state string, stateGiven bool) error {
 	file, err := serviceFile(goos)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(file); err == nil {
-		return fmt.Errorf("installed already (%s): %[2]s service restart starts it again; to change it, %[2]s service uninstall, then install again", file, selfCmd())
+	_, err = os.Stat(file)
+	again := err == nil // installed already: re-pointed and restarted below
+	was := ""
+	if old := serviceArgv(goos, file); len(old) > 0 {
+		was = old[0]
+	}
+	exe, err := selfExe()
+	if err != nil {
+		return err
 	}
 	// Homebrew's binary is under a Cellar directory that brew upgrade deletes:
-	// the service would run a file that is gone.
-	if brew := brewPrefix(); brew != "" {
-		return fmt.Errorf("this reqcove is Homebrew's (%s), whose path changes at each brew upgrade: use brew services instead: reqcove setup (it writes %s), then brew services start reqcove", brew, shellWord(setupConfig(brew)))
+	// the service runs its opt path instead, which follows the upgrades.
+	brew := brewPrefix()
+	if brew != "" {
+		exe = brewOpt(brew)
+		if _, err := os.Stat(exe); err != nil {
+			return fmt.Errorf("this reqcove is Homebrew's, but %s is not there (%v): brew reinstall reqcove, or use brew services: reqcove setup (it writes %s), then brew services start reqcove", exe, err, shellWord(setupConfig(brew)))
+		}
 	}
 	if err := brewService(goos); err != nil {
 		return err
@@ -121,10 +160,6 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		state = fileState
 	}
 	if state, err = filepath.Abs(state); err != nil {
-		return err
-	}
-	exe, err := selfExe()
-	if err != nil {
 		return err
 	}
 	argv := []string{exe, "run", "--config", config}
@@ -152,6 +187,9 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	} else {
 		body = systemdUnit(argv, path)
 		start = [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "--now", serviceUnit}}
+		if again {
+			start = append(start, []string{"systemctl", "--user", "restart", serviceUnit})
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
@@ -159,8 +197,16 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 		return err
 	}
+	if again && goos == "darwin" {
+		// launchd reads the file only as it loads it: out, then in again. Not
+		// loaded (stopped until the next login): nothing to stop.
+		serviceCtl("launchctl", "bootout", "gui/"+uid+"/"+serviceLabel)
+	}
 	for _, c := range start {
 		if err := serviceCtl(c...); err != nil {
+			if again { // the old one is stopped already: the new file stays
+				return fmt.Errorf("%w: %s is written, not started: %s service install again, or log out and in", err, file, selfCmd())
+			}
 			os.Remove(file) // so that install can be tried again
 			return err
 		}
@@ -169,7 +215,14 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	for _, a := range argv {
 		cmd = append(cmd, shellWord(a))
 	}
-	fmt.Printf("installed %s: it runs %s now and at each login\n", file, strings.Join(cmd, " "))
+	if again {
+		fmt.Printf("installed again %s: it ran %s; now it runs %s, restarted now (its records started empty) and at each login\n", file, orDash(shellWord(was)), strings.Join(cmd, " "))
+	} else {
+		fmt.Printf("installed %s: it runs %s now and at each login\n", file, strings.Join(cmd, " "))
+	}
+	if brew != "" {
+		fmt.Printf("this reqcove is Homebrew's: the service runs %s, which brew upgrade points at the new version; after an upgrade, %s service restart\n", shellWord(exe), selfCmd())
+	}
 	if goos == "darwin" {
 		fmt.Printf("the log: %s\n", filepath.Join(state, serviceLog))
 	} else {
@@ -398,4 +451,166 @@ func serviceRestart(goos string) error {
 		return serviceCtl("launchctl", "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+serviceLabel)
 	}
 	return serviceCtl("systemctl", "--user", "restart", serviceUnit)
+}
+
+// brewOpt is Homebrew's stable path to its reqcove, which brew upgrade
+// points at the new version.
+func brewOpt(brew string) string { return filepath.Join(brew, "opt", "reqcove", "bin", "reqcove") }
+
+// installedService is a service file for reqcove found in this home: ours
+// (reqcove service install's) or Homebrew's.
+type installedService struct {
+	name, file string
+	ours       bool
+}
+
+// installedServices lists the service files for reqcove, ours first. Files
+// only: status never asks launchctl or systemctl.
+func installedServices(goos string) []installedService {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir, names := filepath.Join(home, ".config", "systemd", "user"), append([]string{serviceUnit}, brewUnits...)
+	if goos == "darwin" {
+		dir, names = filepath.Join(home, "Library", "LaunchAgents"), append([]string{serviceLabel}, brewLabels...)
+	}
+	var out []installedService
+	for i, n := range names {
+		file := filepath.Join(dir, n)
+		if goos == "darwin" {
+			file += ".plist"
+		}
+		if _, err := os.Stat(file); err == nil {
+			out = append(out, installedService{name: n, file: file, ours: i == 0})
+		}
+	}
+	return out
+}
+
+// serviceWarnings says what is wrong with the services installed: two at
+// once, ours running a binary that is gone or, when self is given (this
+// binary, its symlinks resolved), another one.
+func serviceWarnings(goos string, svcs []installedService, self string) []string {
+	var out []string
+	if len(svcs) > 1 {
+		var files []string
+		for _, s := range svcs {
+			files = append(files, s.file)
+		}
+		out = append(out, fmt.Sprintf("two services for reqcove are installed (%s): at login both start, and the second finds the state in use. Keep one: reqcove service uninstall removes reqcove's own, brew services stop reqcove Homebrew's", strings.Join(files, ", ")))
+	}
+	for _, s := range svcs {
+		argv := serviceArgv(goos, s.file)
+		if !s.ours || len(argv) == 0 {
+			continue
+		}
+		bin, err := filepath.EvalSymlinks(argv[0])
+		switch {
+		case err != nil:
+			out = append(out, fmt.Sprintf("%s runs %s, which is gone (brew upgrade removes an old version's files): it does not start at the next login; reqcove service install points it at this reqcove (its --config and --state kept)", s.file, argv[0]))
+		case self != "" && bin != self:
+			out = append(out, fmt.Sprintf("%s runs %s, not this reqcove (%s): reqcove service install points it at this one (its --config and --state kept)", s.file, argv[0], self))
+		}
+	}
+	return out
+}
+
+// oursStale: reqcove service install's service runs another binary than
+// self, or one that is gone.
+func oursStale(goos, self string) bool {
+	file, err := serviceFile(goos)
+	if err != nil {
+		return false
+	}
+	argv := serviceArgv(goos, file)
+	if len(argv) == 0 {
+		return false
+	}
+	bin, err := filepath.EvalSymlinks(argv[0])
+	return err != nil || bin != self
+}
+
+// serviceArgv is the command a LaunchAgent (ProgramArguments) or a systemd
+// unit (ExecStart) runs; nil when the file does not read as one.
+func serviceArgv(goos, file string) []string {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil
+	}
+	if goos != "darwin" {
+		for line := range strings.SplitSeq(string(b), "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart="); ok {
+				return unitArgv(rest)
+			}
+		}
+		return nil
+	}
+	d := xml.NewDecoder(strings.NewReader(string(b)))
+	d.Strict = false // the DOCTYPE
+	var argv []string
+	var text string
+	key, inArgs := "", false
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return nil
+		}
+		switch tok := tok.(type) {
+		case xml.StartElement:
+			text = ""
+			inArgs = inArgs || tok.Name.Local == "array" && key == "ProgramArguments"
+		case xml.CharData:
+			text += string(tok)
+		case xml.EndElement:
+			switch {
+			case tok.Name.Local == "key":
+				key = text
+			case inArgs && tok.Name.Local == "string":
+				argv = append(argv, text)
+			case inArgs && tok.Name.Local == "array":
+				return argv
+			}
+		}
+	}
+}
+
+// unitArgv splits an ExecStart line as systemd does for the units service
+// install writes (unitWord) and Homebrew's (plain words).
+func unitArgv(line string) []string {
+	var argv []string
+	for line = strings.TrimSpace(line); line != ""; line = strings.TrimSpace(line) {
+		var w strings.Builder
+		if line[0] == '"' {
+			i := 1
+			for ; i < len(line) && line[i] != '"'; i++ {
+				if line[i] == '\\' && i+1 < len(line) {
+					i++
+				}
+				w.WriteByte(line[i])
+			}
+			line = line[min(i+1, len(line)):]
+		} else {
+			i := strings.IndexAny(line, " \t")
+			if i < 0 {
+				i = len(line)
+			}
+			w.WriteString(line[:i])
+			line = line[i:]
+		}
+		argv = append(argv, strings.NewReplacer("%%", "%", "$$", "$").Replace(w.String()))
+	}
+	return argv
+}
+
+// restartCmd is the command that restarts a run its service started
+// (status' service), "" for none.
+func restartCmd(service string) string {
+	switch {
+	case slices.Contains(brewLabels, service) || slices.Contains(brewUnits, service):
+		return "brew services restart reqcove"
+	case service == serviceLabel || service == serviceUnit:
+		return "reqcove service restart"
+	}
+	return ""
 }

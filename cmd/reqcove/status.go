@@ -39,23 +39,58 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 // puts this node in their own tailnet. The steps point at run's terminal instead.
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
-	service := ""
-	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
-	// homebrew.mxcl.NAME before, or reqcove service install's; not a terminal
-	// another brew service started. Under systemd, the unit says (service.go).
-	if v := os.Getenv("XPC_SERVICE_NAME"); slices.Contains(brewLabels, v) || v == serviceLabel {
-		service = v
-	} else if os.Getenv("REQCOVE_SERVICE") == serviceUnit {
-		service = serviceUnit
-	}
+	service, manager := runService()
 	hosts := allow.Hosts
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
+	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service,
+		Version: mcpserver.Version, Manager: manager, RestartCommand: restartCmd(service)}
 	if n.LAN != nil {
 		out.LAN = n.LAN
 	}
+	return out
+}
+
+// procCgroup is where Linux says which systemd unit runs this process (a var
+// for tests).
+var procCgroup = "/proc/self/cgroup"
+
+// runService is the service that started run, and what started it (status'
+// service and manager).
+func runService() (service, manager string) {
+	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
+	// homebrew.mxcl.NAME before, or reqcove service install's; not a terminal
+	// another brew service started. Under systemd, our unit says (service.go);
+	// Homebrew's is read from the cgroup (from reading systemd's docs, not tried).
+	if v := os.Getenv("XPC_SERVICE_NAME"); slices.Contains(brewLabels, v) || v == serviceLabel {
+		service = v
+	} else if os.Getenv("REQCOVE_SERVICE") == serviceUnit {
+		service = serviceUnit
+	} else if b, err := os.ReadFile(procCgroup); err == nil {
+		for _, u := range brewUnits {
+			if strings.Contains(string(b), "/"+u+"\n") {
+				service = u
+			}
+		}
+	}
+	switch {
+	case service == serviceLabel || service == serviceUnit:
+		manager = "reqcove service"
+	case service != "":
+		manager = "brew services"
+	case terminal(os.Stdin):
+		manager = "terminal"
+	}
+	return service, manager
+}
+
+// withFiles adds what only this computer's agents get: the files run read,
+// and what is wrong with the services installed.
+func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
+	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
+	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passFiles...)
+	out.NextSteps = append(out.NextSteps, serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "")...)
 	return out
 }
 
@@ -317,6 +352,11 @@ func status(ctx context.Context, args []string) error {
 		Pending      string                `json:"scope_pending"`
 		ChangedAt    string                `json:"scope_changed_at"`
 		Change       string                `json:"scope_change"`
+		Version      string                `json:"version"`
+		Manager      string                `json:"manager"`
+		ConfigFile   string                `json:"config_file"`
+		ConfigUnused string                `json:"config_unused"`
+		HostsFiles   []string              `json:"hosts_files"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -326,8 +366,48 @@ func status(ctx context.Context, args []string) error {
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
+	// The version from serverInfo too: a run older than v1.1 has no field.
+	runV := out.Version
+	if ir := session.InitializeResult(); runV == "" && ir != nil && ir.ServerInfo != nil {
+		runV = ir.ServerInfo.Version
+	}
+	self, _ := selfExe()
+	if runV == version {
+		fmt.Printf("  version:     %s\n", runV)
+	} else {
+		// From service alone, which runs older than v1.1 give too.
+		cmd := restartCmd(out.Service)
+		if (out.Service == serviceLabel || out.Service == serviceUnit) && oursStale(runtime.GOOS, self) {
+			cmd = selfCmd() + " service install" // restart alone would start the old binary again
+		}
+		how := "to run this one, stop it (Ctrl-C in its terminal) and start it again with this reqcove"
+		if cmd != "" {
+			how = "to restart it: " + cmd
+		}
+		fmt.Printf("  version:     %s, this reqcove is %s: %s. A restart empties the records (`%s > flows.har` keeps them first), and while it is down, a phone using its exit node has no internet\n", orDash(runV), version, how, withState("reqcove har", *state))
+	}
 	if out.Service != "" {
 		fmt.Printf("  service:     %s (%s)\n", out.Service, serviceHint(out.Service, *state))
+	} else if out.Manager == "terminal" {
+		fmt.Println("  service:     none: started in a terminal")
+	}
+	if out.ConfigFile != "" || out.Version != "" { // a run older than v1.1 does not say
+		files := "none (flags only)"
+		if out.ConfigFile != "" {
+			files = out.ConfigFile
+		}
+		if len(out.HostsFiles) > 0 {
+			files += "; hosts: " + strings.Join(out.HostsFiles, ", ")
+		}
+		if out.ConfigUnused != "" {
+			files += "; also there, not read: " + out.ConfigUnused
+		}
+		fmt.Printf("  config:      %s\n", files)
+	}
+	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), self) {
+		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
+			out.NextSteps = append(out.NextSteps, w)
+		}
 	}
 	if out.Mode == "lan" {
 		printLANStatus(os.Stdout, out.LAN)
@@ -439,10 +519,17 @@ func offlineStatus(state, uvx string) error {
 	case !loggedIn(b):
 		fmt.Printf("  node:  not logged in yet; `%s` will ask you to log in\n", withState("reqcove run", state))
 	default:
-		fmt.Println("  node:  has logged in before (state kept)")
+		fmt.Println("  node:  has logged in before (state kept); while it is down, a phone using its exit node has no internet: turn the exit node off there, or start it")
 	}
 	printCA(os.Stdout, state, false)
-	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
+	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "") {
+		fmt.Println("warning: " + w)
+	}
+	if cfg, _ := bareConfig(); cfg != "" && isDefaultState(state) {
+		fmt.Printf("start it with: reqcove run (it reads %s)\n", cfg)
+	} else {
+		fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
+	}
 	return nil
 }
 

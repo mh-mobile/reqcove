@@ -64,7 +64,13 @@ go build -o reqcove ./cmd/reqcove
 
    setup は uv があるかを確かめ、tailnet での iPhone の名前（`tailscale status` に表示される名前）と記録するホストを聞いて、設定ファイルに書きます。ファイルは `~/.config/reqcove/config` で、Homebrew で入れた場合は Homebrew の `etc/reqcove/config` です（ホストは隣の `hosts` に書きます）。`y` と答えるとエージェントの Skill も入れます。Claude Code にツールを渡すコマンドは、答えに関係なく表示します。setup 自身は何も起動しません（[聞くことと書くもの](docs/guide.ja.md#初回の起動ログインと承認)）。
 
-   続いて、setup が示す方法で起動します。`brew services start reqcove`（Homebrew で入れた場合）、`reqcove service install`、ターミナルでの `reqcove run --config FILE` のどれかです。
+   続いて、ターミナルで起動します（Ctrl-C で止まります）。
+
+   ```sh
+   reqcove run
+   ```
+
+   引数なしの `run` は、そのファイルを読みます（v1.1 から）。代わりにログイン時にバックグラウンドで起動させるには、`reqcove service install` を実行します。Homebrew で入れた場合は `brew services start reqcove` です（[バックグラウンド](docs/guide.ja.md#バックグラウンドで動かす)）。動かしている間は、`reqcove capture add HOST` で、再起動せずにホストを 1 つ足して記録できます（[詳しく](docs/guide.ja.md#動かしたまま記録するものを変える)）。
 
    初回はログインが必要です。ログイン用の URL は `reqcove links` で表示できます。Exit Node の承認など、残っている手順は `reqcove status` で確認できます。
 2. **iPhone で Exit Node を選びます。** Tailscale アプリで、Exit Node に `reqcove` を選びます。
@@ -119,7 +125,7 @@ reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
 - [自分でフローを見る](docs/guide.ja.md#自分でフローを見る)：iPhone で、HAR ファイルで、mitmweb で
 - [iPhone アプリ以外のクライアントを記録する](docs/guide.ja.md#iphone-アプリ以外のクライアントを記録する)：証明書ピンニングをするアプリ、Android、iOS シミュレーター、Web アプリのバックエンド
 - [リクエストの行き先を変える](docs/guide.ja.md#リクエストの行き先を変える)：開発サーバーへ送る、別のプロキシに回す
-- [サービスとして動かす](docs/guide.ja.md#サービスとして動かす)、[うまくいかないとき](docs/guide.ja.md#うまくいかないとき)
+- [バックグラウンドで動かす](docs/guide.ja.md#バックグラウンドで動かす)、[うまくいかないとき](docs/guide.ja.md#うまくいかないとき)
 - [1 台で複数の Exit Node](docs/several-exit-nodes.ja.md)、[コンテナ](docs/container.ja.md)、[別の Mac をデバイスに](docs/another-mac.ja.md)
 - [互換性](docs/COMPATIBILITY.ja.md)：v1.0.0 から変わらないものと、変わるときの知らせ方
 

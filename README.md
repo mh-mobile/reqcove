@@ -82,9 +82,18 @@ the agent.
    line that gives Claude Code the tools. It starts nothing itself
    ([what it asks and writes](docs/guide.md#first-start)).
 
-   Then start it as setup says: `brew services start reqcove` (a brew
-   install), `reqcove service install`, or `reqcove run --config FILE` in a
-   terminal.
+   Then start it in a terminal (Ctrl-C stops it):
+
+   ```sh
+   reqcove run
+   ```
+
+   With no arguments, `run` reads that file (since v1.1). To have it start
+   at login in the background instead: `reqcove service install`, or
+   `brew services start reqcove` for a brew install
+   ([background](docs/guide.md#run-it-in-the-background)). While it runs,
+   `reqcove capture add HOST` records one more host without a restart
+   ([more](docs/guide.md#change-what-is-recorded-while-it-runs)).
 
    The first time, log in: `reqcove links` prints the login URL.
    `reqcove status` says what is left, such as approving the exit node.
@@ -167,7 +176,7 @@ The main ones. All of them are in [the guide](docs/guide.md#options).
 - [Look at the flows yourself](docs/guide.md#look-at-the-flows-yourself): on the iPhone, as a HAR file, in mitmweb
 - [Record clients other than iPhone apps](docs/guide.md#record-clients-other-than-iphone-apps): apps that pin certificates, Android, the iOS Simulator, a web app's backend
 - [Change where requests go](docs/guide.md#change-where-requests-go): to a development server, or on through another proxy
-- [Run it as a service](docs/guide.md#run-it-as-a-service), [troubleshooting](docs/guide.md#troubleshooting)
+- [Run it in the background](docs/guide.md#run-it-in-the-background), [troubleshooting](docs/guide.md#troubleshooting)
 - [Several exit nodes on one computer](docs/several-exit-nodes.md), [in a container](docs/container.md), [another Mac as a device](docs/another-mac.md)
 - [Compatibility](docs/COMPATIBILITY.md): what stays stable from v1.0.0, and how it changes
 

@@ -49,7 +49,7 @@ func TestSetupNotOnPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		self := shellWord(exe)
-		for _, want := range []string{"the command " + self + " mcp", "claude mcp add reqcove -- " + self + " mcp", self + " service install", self + " run --config", "`" + self + " links`", "`" + self + " status`", self + " run --lan"} {
+		for _, want := range []string{"the command " + self + " mcp", "claude mcp add reqcove -- " + self + " mcp", self + " service install", self + " run (it reads", "`" + self + " links`", "`" + self + " status`", self + " run --lan"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("PATH %s: no %q in:\n%s", path, want, out)
 			}
@@ -138,9 +138,11 @@ func TestSetupWrites(t *testing.T) {
 	for _, want := range []string{
 		"not found: install it (brew install uv",
 		"claude mcp add reqcove -- reqcove mcp",
-		"reqcove service install",
-		"reqcove run --config " + shellWord(config),
+		"in a terminal: reqcove run (it reads " + shellWord(config),
+		"or to start it at login, in the background: reqcove service install",
 		"`reqcove links` prints the login URL",
+		"reqcove capture add HOST (or remove, set); reqcove capture save keeps them for the next start, in " + shellWord(setupHosts(config)),
+		"edit " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ", then restart it (Ctrl-C and run it again, or reqcove service restart): a restart empties the records",
 		"--lan is not kept in a config file",
 	} {
 		if !strings.Contains(out, want) {
@@ -230,6 +232,48 @@ func TestSetupBrew(t *testing.T) {
 	out, err = runSetup(t, "\nn\n", config, true)
 	if err != nil || exists(config) || !strings.Contains(out, "reqcove run --device NAME --allow-hosts HOSTS") || strings.Contains(out, "Hosts: ") {
 		t.Errorf("skipped: %v, %v\n%s", err, exists(config), out)
+	}
+}
+
+// setup's last lines with Homebrew: the terminal first, bare when a bare run
+// reads that file, else with --config (a ~/.config/reqcove/config left there
+// comes first); then the start at login; then changes while it runs.
+func TestSetupStartLines(t *testing.T) {
+	setupHome(t)
+	prefix := t.TempDir()
+	old := selfExe
+	selfExe = func() (string, error) { return prefix + "/Cellar/reqcove/1.1.0/bin/reqcove", nil }
+	t.Cleanup(func() { selfExe = old })
+	config := setupConfig(prefix)
+	rc := selfCmd()
+	out, err := runSetup(t, "phone\na.example.com\nn\n", config, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(out, "4. Start it")
+	want := []string{
+		"in a terminal: " + rc + " run (it reads " + shellWord(config) + "; Ctrl-C stops it)",
+		"or to start it at login, in the background: brew services start reqcove",
+		"Then `" + rc + " links`",
+		rc + " capture add HOST (or remove, set); " + rc + " capture save keeps them for the next start, in " + shellWord(setupHosts(config)),
+		"edit " + shellWord(setupHosts(config)) + " or " + shellWord(config) + ", then restart it (Ctrl-C and run it again, or brew services restart reqcove): a restart empties the records.\n",
+	}
+	at := start
+	for _, w := range want { // in this order, the last at the end
+		i := strings.Index(out[at:], w)
+		if start < 0 || i < 0 {
+			t.Fatalf("no %q after the earlier lines in:\n%s", w, out)
+		}
+		at += i
+	}
+	if !strings.HasSuffix(out, want[len(want)-1]) || strings.Contains(out, "reload") {
+		t.Errorf("the last line, or reload:\n%s", out)
+	}
+	os.MkdirAll(filepath.Dir(defaultConfig()), 0o700)
+	os.WriteFile(defaultConfig(), []byte("--device x\n"), 0o600)
+	out, err = runSetup(t, "n\nn\n", config, true)
+	if err != nil || !strings.Contains(out, "in a terminal: "+rc+" run --config "+shellWord(config)+" (it reads") {
+		t.Errorf("another file first: %v\n%s", err, out)
 	}
 }
 
