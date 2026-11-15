@@ -204,9 +204,11 @@ remove it:
   OpenSSL 4.1, TLS 1.2 and 1.3, and mitmproxy 12.3.1, 2026-11-15). So does a
   client that finishes the handshake and closes without a request (an E2E
   test). Python's and Go's clients refuse during the handshake, and are
-  listed (tried with TLS 1.2 and 1.3; Go's, an E2E test). An app that checks
-  the certificate itself after the handshake (pinning) may leave nothing in
-  the same way (not tried on an iPhone).
+  listed (tried with TLS 1.2 and 1.3; Go's, an E2E test). On an iPhone (iOS 27.3,
+  2026-11-15), an app that pins by refusing in URLSession's delegate or in
+  Network.framework's verify block refuses during the handshake, and is
+  listed; one that lets the handshake finish, checks the certificate itself
+  and closes leaves nothing, as above.
 - The secrets Reqcove recognises are masked as they arrive, so no tool can
   return them. A header, query
   parameter or body field is secret by its name: a name containing token,

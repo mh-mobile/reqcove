@@ -148,7 +148,7 @@ Before saying something was not sent, check:
   not "is". `next_steps` then names those hosts, with the `--pass-hosts` that
   lets the app work: the user restarts `reqcove run` with it, not you.
   No failure is not proof the CA is trusted: a client that refuses the
-  certificate only after the handshake (curl; perhaps an app that pins) leaves no failure
+  certificate only after the handshake (curl; an app that pins after connecting) leaves no failure
   and no flow.
 - A host in `pass_hosts` never has flows. `list_passthrough` has its
   connections: host, server, times, bytes (`since` includes connections still

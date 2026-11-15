@@ -303,8 +303,10 @@ Found by a code review of v0.8.0, the last two while looking into a test app's g
 - SECURITY's "Not caught" and the skill add: a client that refuses
   mitmproxy's certificate only after the TLS handshake (curl on OpenSSL 4.1),
   or finishes it and closes without a request, leaves no TLS failure, no flow
-  and no count (tried with mitmproxy 12.3.1, and an E2E test; not on an
-  iPhone).
+  and no count (tried with mitmproxy 12.3.1, and an E2E test; on an iPhone,
+  an app that checks the certificate itself once connected). Pinning in
+  URLSession's delegate or Network.framework's verify block refuses during
+  the handshake and is listed (tried on an iPhone).
 - COMPATIBILITY: `--uvx`, `--python` and `--mitmproxy-spec` move to "Not
   stable", and which mitmproxy version a release runs is not promised.
 - The guide says that a `map_remote` rule that changes only the path sends
