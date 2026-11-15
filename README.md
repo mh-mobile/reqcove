@@ -29,9 +29,7 @@ Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
 > **Status: v1.0.** The MCP tools, the CLI and the rules file stay compatible
-> until a v2 ([COMPATIBILITY](docs/COMPATIBILITY.md)). Tried by its author so
-> far, on macOS (Apple silicon) and Ubuntu 24.04 (arm64) with an iPhone; where
-> something has not been tried, the docs say so.
+> until a v2 ([COMPATIBILITY](docs/COMPATIBILITY.md)).
 
 ## What you need
 
