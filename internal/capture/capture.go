@@ -119,7 +119,7 @@ type Config struct {
 	RulesReload  bool                          // --rules-reload: the addon also takes the file again whenever it changes
 	Upstream     string                        // host:port of an HTTP proxy decrypted requests go on to (--upstream-proxy); empty: none
 	UpstreamCA   string                        // PEM file of the upstream's CA, the only CA trusted then (--upstream-ca); empty: the public CAs
-	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time; 0 means 1s
+	RestartDelay time.Duration                 // first wait before restarting mitmdump, doubled each time up to maxRestartDelay; 0 means 1s
 	Logf         func(format string, a ...any) // restarts are reported here; nil is quiet
 	webMaxFlows  int                           // tests: fewer flows kept in mitmweb than its default
 	trustCA      string                        // tests: the one CA mitmproxy trusts upstream, as with --upstream-ca, without an upstream proxy
@@ -128,11 +128,12 @@ type Config struct {
 // WebKeep is the largest body (on the wire) given to mitmweb whole (--web).
 const WebKeep = 2 << 20
 
-// mitmdump is restarted when it exits, up to maxRestarts times in a row; a
+// mitmdump is restarted when it exits, after RestartDelay doubled for each
+// failure in a row, at most maxRestartDelay, with no limit on the attempts; a
 // run that stayed up for stableAfter resets the count.
 const (
-	maxRestarts = 5
-	stableAfter = time.Minute
+	maxRestartDelay = 5 * time.Minute
+	stableAfter     = time.Minute
 	// drainWait bounds how long an exited mitmdump's lines, still in its
 	// socket, are waited for before its open flows are closed.
 	drainWait = 2 * time.Second
@@ -154,10 +155,11 @@ type Capture struct {
 	done   chan struct{}
 	upMu   sync.Mutex
 	up     chan struct{} // closed while a mitmdump that said hello runs; replaced when it exits
-	// restarted: spawn runs again after mitmdump exited (supervise), not at start.
-	restarted bool
-	err       error
-	readers   atomic.Int64 // ingest connections still being read
+	// wasUp: a mitmdump of this run said hello, so its options work: a later
+	// one that cannot start or exits before its hello is retried, not given up on.
+	wasUp   bool
+	err     error
+	readers atomic.Int64 // ingest connections still being read
 }
 
 // proc is one mitmdump process.
@@ -179,8 +181,29 @@ func (p *proc) stop() {
 	}
 }
 
+// rulesCopy is the private copy (0600, in Dir) of the --rules file as it last
+// loaded: written at Start, replaced by the addon when --rules-reload takes the
+// file again, and what a restarted mitmdump loads, never the file on disk,
+// which may be broken by then. rulesCopy+".new" is the addon's while it checks.
+const rulesCopy = "rules-loaded"
+
+// permanent marks a failure that trying again cannot mend: Start returns it,
+// supervise ends with it.
+type permanent struct{ error }
+
+func (p permanent) Unwrap() error { return p.error }
+
+func isPermanent(err error) bool { return errors.As(err, new(permanent)) }
+
+// restartWait is the wait before the n-th attempt in a row (n >= 1).
+func restartWait(base time.Duration, n int) time.Duration {
+	return min(base<<min(n-1, 20), maxRestartDelay) // the shift bounded: an unbounded one overflows to a negative wait
+}
+
 // Start launches mitmdump, returns once its addon has said hello, and keeps
-// restarting it when it exits.
+// restarting it when it exits. At the start, an addon that does not say hello
+// within ReadyTimeout is tried again (a slow machine, or uv still downloading);
+// other failures are returned (see spawn).
 func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	if cfg.RestartDelay == 0 {
 		cfg.RestartDelay = time.Second
@@ -210,6 +233,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		for f := range scriptFiles {
 			os.Remove(filepath.Join(cfg.Dir, f))
 		}
+		removeRulesCopy(cfg.Dir)
 		return nil, err
 	}
 	addon := filepath.Join(cfg.Dir, "addon.py")
@@ -233,6 +257,16 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	secretFile := filepath.Join(cfg.Dir, "socks-secret")
 	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
 		return fail(err)
+	}
+	removeRulesCopy(cfg.Dir) // a killed run's
+	if cfg.Rules != "" {
+		b, err := os.ReadFile(cfg.Rules)
+		if err != nil {
+			return fail(fmt.Errorf("--rules: %w", err))
+		}
+		if err := os.WriteFile(filepath.Join(cfg.Dir, rulesCopy), b, 0o600); err != nil {
+			return fail(err)
+		}
 	}
 	if cfg.CAName != "" {
 		if err := ensureCA(ctx, cfg); err != nil {
@@ -288,7 +322,7 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 		"--set", "reqcove_secret_file="+secretFile,
 		"--set", "reqcove_allow_hosts="+string(allowJSON))
 	if cfg.Rules != "" {
-		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules)
+		c.args = append(c.args, "--set", "reqcove_rules="+cfg.Rules, "--set", "reqcove_rules_copy="+filepath.Join(cfg.Dir, rulesCopy))
 		if cfg.RulesReload {
 			c.args = append(c.args, "--set", "reqcove_rules_reload=true")
 		}
@@ -320,16 +354,42 @@ func Start(ctx context.Context, cfg Config) (*Capture, error) {
 	}
 
 	p, err := c.spawn(ctx)
-	if err != nil {
-		return fail(err)
+	fails := 0
+	for ; err != nil; p, err = c.spawn(ctx) {
+		if fails++; isPermanent(err) || ctx.Err() != nil || !c.retryWait(ctx, err, fails) {
+			return fail(err)
+		}
 	}
 	c.CA, _ = ReadCA(cfg.Confdir) // mitmproxy has made it by now if it was missing
 	ctx, c.cancel = context.WithCancel(ctx)
-	go c.supervise(ctx, p)
+	go c.supervise(ctx, p, fails)
 	return c, nil
 }
 
-// spawn starts one mitmdump and waits for its addon's hello.
+func removeRulesCopy(dir string) {
+	os.Remove(filepath.Join(dir, rulesCopy))
+	os.Remove(filepath.Join(dir, rulesCopy+".new"))
+}
+
+// retryWait notes err, the n-th failure in a row, and waits before the next
+// attempt; false if ctx ended first.
+func (c *Capture) retryWait(ctx context.Context, err error, n int) bool {
+	delay := restartWait(c.cfg.RestartDelay, n)
+	c.Store.retrying(err.Error(), n, time.Now().Add(delay))
+	c.cfg.Logf("%v; starting it again in %v (retry %d)", err, delay, n)
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(delay):
+		return true
+	}
+}
+
+// spawn starts one mitmdump and waits for its addon's hello. Its failures are
+// permanent (retrying cannot mend them) when the rules do not load, and, until
+// a mitmdump of this run has said hello, when it cannot be launched or exits
+// before its hello (bad options, spec or Python). The others are transient:
+// no hello within ReadyTimeout, and once one has come up, any other.
 func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	before := c.Store.helloCount()
 	p := &proc{cmd: exec.Command(c.bin, c.args...), done: make(chan struct{})}
@@ -338,6 +398,9 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 	p.cmd.ExtraFiles = []*os.File{c.socks}                                       // fd 3: the addon serves SOCKS5 on it
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := p.cmd.Start(); err != nil {
+		if !c.wasUp {
+			err = permanent{err}
+		}
 		return nil, err
 	}
 	// If reqcove dies without Stop (SIGKILL, a crash), mitmdump outlives it
@@ -354,44 +417,55 @@ func (c *Capture) spawn(ctx context.Context) (*proc, error) {
 			p.stop()
 			return nil, ctx.Err()
 		case <-p.done:
-			return nil, fmt.Errorf("mitmdump exited before its addon said hello: %v", p.err)
+			err := fmt.Errorf("mitmdump exited before its addon said hello: %v", p.err)
+			if !c.wasUp {
+				err = permanent{err}
+			}
+			return nil, err
 		case <-deadline:
 			p.stop()
-			return nil, errors.New("mitmdump's addon never said hello")
+			return nil, fmt.Errorf("mitmdump's addon did not say hello within %v", c.cfg.ReadyTimeout)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	if e, _ := c.Store.Stats()["rules_error"].(string); e != "" {
-		if !rulesKeepGoing(c.restarted, c.cfg.RulesReload) {
-			p.stop()
-			return nil, fmt.Errorf("--rules: %s", e)
+	// Never without its rules: a mock or map_remote lost would send test
+	// requests to the real servers. A restarted one loads rulesCopy, the
+	// rules that loaded last; those failing now (a file they name is gone)
+	// end the run too.
+	if e := c.Store.helloRulesError(); e != "" {
+		p.stop()
+		if c.wasUp {
+			return nil, permanent{fmt.Errorf("--rules: the rules that loaded last no longer load (%s)", e)}
 		}
-		c.cfg.Logf("WARN: mitmdump restarted while the --rules file does not load (%s): no rules apply until it is fixed", e)
+		return nil, permanent{fmt.Errorf("--rules: %s", e)}
 	}
 	p.ready = time.Now()
+	c.wasUp = true
 	c.Store.setState("ready", "")
 	c.setUp(true)
 	return p, nil
 }
 
-// rulesKeepGoing: a rules file that does not load stops a start, but not a
-// restart under --rules-reload, where the user was told it can be fixed
-// while running: stopping then would cut every device off. The restarted
-// mitmdump has no rules until the file loads again.
-func rulesKeepGoing(restarted, reload bool) bool { return restarted && reload }
-
-// supervise restarts mitmdump until ctx ends or it fails maxRestarts times in a row.
+// supervise restarts mitmdump until ctx ends or a failure is permanent;
+// fails: the failures in a row before p came up.
 // While it is down the exit node cannot reach mitmdump, so the iPhone's
 // connections fail; they never go out undecrypted and unrecorded instead.
-func (c *Capture) supervise(ctx context.Context, p *proc) {
+func (c *Capture) supervise(ctx context.Context, p *proc, fails int) {
 	defer close(c.done)
-	fails := 0
 	for {
+		var stable <-chan time.Time
+		if fails > 0 {
+			stable = time.After(time.Until(p.ready.Add(stableAfter)))
+		}
 		select {
 		case <-ctx.Done():
 			c.setUp(false)
 			p.stop()
 			return
+		case <-stable:
+			fails = 0
+			c.Store.retrying("", 0, time.Time{})
+			continue
 		case <-p.done:
 		}
 		// First: from now connections wait in the listener's queue for the next one.
@@ -409,21 +483,16 @@ func (c *Capture) supervise(ctx context.Context, p *proc) {
 			fails = 0
 		}
 		for p = nil; p == nil; {
-			if fails++; fails > maxRestarts {
-				c.err = fmt.Errorf("%w; gave up after %d restarts in a row", err, maxRestarts)
-				c.Store.setState("failed", c.err.Error())
-				return
-			}
-			delay := c.cfg.RestartDelay << (fails - 1)
 			c.Store.setState("restarting", err.Error())
-			c.cfg.Logf("%v; restarting it in %v (%d/%d)", err, delay, fails, maxRestarts)
-			select {
-			case <-ctx.Done():
+			if fails++; !c.retryWait(ctx, err, fails) {
 				return
-			case <-time.After(delay):
 			}
-			c.restarted = true
 			if p, err = c.spawn(ctx); err != nil && ctx.Err() != nil {
+				return
+			}
+			if isPermanent(err) {
+				c.err = err
+				c.Store.setState("failed", err.Error())
 				return
 			}
 		}
@@ -482,7 +551,7 @@ func (c *Capture) setUp(up bool) {
 	}
 }
 
-// Done is closed when mitmdump is stopped or has failed too often; Err then says why (nil after Stop).
+// Done is closed when mitmdump is stopped or failed for good (a permanent failure); Err then says why (nil after Stop).
 func (c *Capture) Done() <-chan struct{} { return c.done }
 func (c *Capture) Err() error            { return c.err }
 
@@ -499,6 +568,7 @@ func (c *Capture) Stop() {
 	for f := range scriptFiles {
 		os.Remove(filepath.Join(c.cfg.Dir, f))
 	}
+	removeRulesCopy(c.cfg.Dir) // the rules (tokens in modify_headers, say) end with the run
 	if c.WebURL != "" {
 		os.Remove(filepath.Join(c.cfg.Confdir, "config.yaml"))
 	}

@@ -105,12 +105,15 @@ func TestCANamed(t *testing.T) {
 	}
 }
 
-// TestRulesKeepGoing: a rules file that does not load stops a start, and a
-// restart without --rules-reload; under --rules-reload a restart goes on.
-func TestRulesKeepGoing(t *testing.T) {
-	for _, c := range []struct{ restarted, reload, want bool }{{false, false, false}, {false, true, false}, {true, false, false}, {true, true, true}} {
-		if got := rulesKeepGoing(c.restarted, c.reload); got != c.want {
-			t.Errorf("restarted=%v reload=%v: %v", c.restarted, c.reload, got)
+// TestRestartWait: the wait doubles from the first, stops growing at
+// maxRestartDelay, and stays there however many attempts fail (no overflow).
+func TestRestartWait(t *testing.T) {
+	for _, c := range []struct {
+		n    int
+		want time.Duration
+	}{{1, time.Second}, {2, 2 * time.Second}, {5, 16 * time.Second}, {9, 256 * time.Second}, {10, maxRestartDelay}, {40, maxRestartDelay}, {1 << 30, maxRestartDelay}} {
+		if got := restartWait(time.Second, c.n); got != c.want {
+			t.Errorf("attempt %d: %v, want %v", c.n, got, c.want)
 		}
 	}
 }

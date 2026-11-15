@@ -115,7 +115,10 @@ Its documented fields: `flows`, `flows_with_truncated_bodies`, `evicted`,
 `checkpoint`, `oldest_flow`, `newest_flow`, `max_flows`, `max_bytes`, `state`,
 `started`, `redacting`, `out_of_scope`, `passed_through`, `raw_tcp`,
 `raw_tcp_hosts`, `refused_hosts`,
-`pass_hosts`, `mitmproxy`, `python` (their versions), `presets`, `rules_loaded`
+`pass_hosts`, `mitmproxy`, `python` (their versions), `presets`, `retries` (since
+v1.1: attempts in a row to start mitmproxy again), `last_failure` (since v1.1:
+why it last failed, text for people; "" when it has not), `next_attempt` (since
+v1.1: while it waits to try again), `rules_loaded`
 (once a rules file was taken), and, while masking is on, `mask_names` and
 `mask_values` (the matches per name and per pattern number). The others are
 [not stable](#not-stable).

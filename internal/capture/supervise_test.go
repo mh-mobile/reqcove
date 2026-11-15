@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,16 +22,19 @@ import (
 
 // fakeMitmdump stands in for `uvx ... mitmdump`: it says hello (and leaves
 // one flow open), then lives until killed. From run number dieFrom on, it
-// exits at once instead. FAKE_LATE: run 1 leaves a line that is read only
+// exits at once instead. Each run writes runs/N: its pid and when it began.
+// FAKE_RULES_ERROR: runs after the first say their rules do not load. FAKE_LATE: run 1 leaves a line that is read only
 // after it died (a child outside its group writes it), as one still in the
 // socket is.
 const fakeMitmdump = `#!/usr/bin/env python3
 import json, os, socket, sys, time
 d = os.environ["FAKE_DIR"]
 n = len(os.listdir(os.path.join(d, "runs"))) + 1
-open(os.path.join(d, "runs", str(n)), "w").write(str(os.getpid()))
+open(os.path.join(d, "runs", str(n)), "w").write("%d %f" % (os.getpid(), time.time()))
 if n >= int(os.environ["FAKE_DIE_FROM"]):
     sys.exit(3)
+if n < int(os.environ.get("FAKE_HELLO_FROM", "1")):
+    time.sleep(600)
 path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("reqcove_socket="))
 s = socket.socket(socket.AF_UNIX); s.connect(path)
 hello = {"ev": "hello", "mitmproxy": "fake", "dropped_bodies": 2}
@@ -54,7 +58,7 @@ if late and os.fork() == 0:
 time.sleep(600)
 `
 
-func startFake(t *testing.T, dieFrom int) (*Capture, func(run int)) {
+func startFake(t *testing.T, dieFrom int, tweak ...func(*Config)) (*Capture, func(run int)) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "rcvs-")
 	if err != nil {
@@ -67,15 +71,19 @@ func startFake(t *testing.T, dieFrom int) (*Capture, func(run int)) {
 	t.Setenv("FAKE_DIR", dir)
 	t.Setenv("FAKE_DIE_FROM", strconv.Itoa(dieFrom))
 	rules, _ := ParseAllowHosts([]string{"*"})
-	c, err := Start(context.Background(), Config{Dir: filepath.Join(dir, "s"), Uvx: fake, AllowHosts: rules,
+	cfg := Config{Dir: filepath.Join(dir, "s"), Uvx: fake, AllowHosts: rules,
 		MaxFlows: 100, MaxBytes: 1 << 20, Log: os.Stderr, ReadyTimeout: 10 * time.Second,
-		RestartDelay: 10 * time.Millisecond, Logf: t.Logf})
+		RestartDelay: 10 * time.Millisecond, Logf: t.Logf}
+	for _, f := range tweak {
+		f(&cfg)
+	}
+	c, err := Start(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	kill := func(run int) {
 		b, err := os.ReadFile(filepath.Join(dir, "runs", strconv.Itoa(run)))
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		pid, _ := strconv.Atoi(strings.Fields(string(b) + " ")[0])
 		if err != nil || pid == 0 {
 			t.Fatalf("run %d: no pid (%v)", run, err)
 		}
@@ -120,7 +128,7 @@ func TestRestartsMitmdump(t *testing.T) {
 	if c.Err() != nil {
 		t.Errorf("Err after Stop = %v", c.Err())
 	}
-	for _, f := range []string{"socks-secret", "addon.py", "mitmdump.pid", "ingest.sock"} {
+	for _, f := range []string{"socks-secret", "addon.py", "mitmdump.pid", "ingest.sock", rulesCopy} {
 		if _, err := os.Stat(filepath.Join(c.cfg.Dir, f)); err == nil {
 			t.Errorf("%s left in the state directory after Stop", f)
 		}
@@ -155,25 +163,85 @@ func TestLateLinesOfDeadMitmdump(t *testing.T) {
 	}
 }
 
-func TestGivesUpOnMitmdump(t *testing.T) {
+// TestRetriesMitmdump: a mitmdump that keeps exiting is started again past
+// the 5 attempts v1.0 gave up after, each wait longer than the one before,
+// and the capture does not end; capture_stats says why, how many attempts
+// and when the next is.
+func TestRetriesMitmdump(t *testing.T) {
 	c, kill := startFake(t, 2) // the first run works, every restart dies
+	defer c.Stop()
+	runs := filepath.Join(os.Getenv("FAKE_DIR"), "runs")
 	kill(1)
+	const want = 9 // 8 attempts after the first run
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if ents, _ := os.ReadDir(runs); len(ents) >= want {
+			break
+		}
+		select {
+		case <-c.Done():
+			t.Fatalf("gave up: %v", c.Err())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("only %v", c.Store.Stats())
+		}
+	}
+	var began []float64
+	for n := 2; n <= want; n++ {
+		b, _ := os.ReadFile(filepath.Join(runs, strconv.Itoa(n)))
+		f := strings.Fields(string(b))
+		at, err := strconv.ParseFloat(f[len(f)-1], 64)
+		if err != nil {
+			t.Fatalf("run %d: %q", n, b)
+		}
+		began = append(began, at)
+	}
+	// From run k to k+1 (k >= 2), the wait before the k-th retry, 10 ms
+	// doubled k-1 times (up to 1280 ms): a start's own time only adds to it.
+	for i := 0; i < len(began)-1; i++ {
+		if gap, wait := began[i+1]-began[i], (10 * time.Millisecond << (i + 1)).Seconds(); gap < wait {
+			t.Errorf("run %d to %d: %.3fs, want at least %.3fs", i+2, i+3, gap, wait)
+		}
+	}
+	s := c.Store.Stats()
+	if s["state"] != "restarting" || s["retries"].(int64) < want-2 || s["next_attempt"] == nil || !strings.Contains(s["last_failure"].(string), "exited") {
+		t.Errorf("stats while retrying: state %v, retries %v, next_attempt %v, last_failure %v", s["state"], s["retries"], s["next_attempt"], s["last_failure"])
+	}
 	select {
 	case <-c.Done():
-	case <-time.After(10 * time.Second):
-		t.Fatal("never gave up")
+		t.Fatalf("gave up: %v", c.Err())
+	default:
 	}
-	if s := c.Store.Stats(); s["state"] != "failed" || c.Err() == nil || !strings.Contains(c.Err().Error(), "gave up") {
-		t.Fatalf("state %v, err %v", s["state"], c.Err())
+}
+
+// TestFirstStart: at the start, a mitmdump whose addon does not say hello in
+// time is tried again (transient); one that exits before its hello ends
+// Start at once (permanent: bad options, spec or Python).
+func TestFirstStart(t *testing.T) {
+	t.Setenv("FAKE_HELLO_FROM", "2") // the first run never says hello
+	c, _ := startFake(t, 1000, func(c *Config) { c.ReadyTimeout = 500 * time.Millisecond })
+	defer c.Stop()
+	if s := c.Store.Stats(); s["state"] != "ready" || s["retries"] != int64(1) || !strings.Contains(fmt.Sprint(s["last_failure"]), "did not say hello") {
+		t.Errorf("after a first start that timed out: state %v, retries %v, last_failure %v", s["state"], s["retries"], s["last_failure"])
 	}
-	c.Stop() // still fine after giving up
+	runs := filepath.Join(os.Getenv("FAKE_DIR"), "runs")
+	t.Setenv("FAKE_DIE_FROM", "3") // the next run exits at once
+	cfg := c.cfg
+	cfg.Dir = filepath.Join(os.Getenv("FAKE_DIR"), "s2")
+	if _, err := Start(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "exited before") {
+		t.Fatalf("Start: %v, want it ended by a mitmdump that exited before its hello", err)
+	}
+	if ents, _ := os.ReadDir(runs); len(ents) != 3 {
+		t.Errorf("%d runs, want no retry of a first start that exited", len(ents))
+	}
 }
 
 // TestWaitReady: WaitReady returns while a mitmdump that said hello runs,
-// holds (until its context ends) once it exited, and fails at once after
-// supervise gave up.
+// holds (until its context ends) once it exited, and fails at once after a
+// failure that ends the capture (its rules no longer load).
 func TestWaitReady(t *testing.T) {
-	c, kill := startFake(t, 2) // the first run works, every restart dies
+	t.Setenv("FAKE_RULES_ERROR", "map_remote[0]: ValueError")
+	c, kill := startFake(t, 1000)
 	defer c.Stop()
 	wait := func(d time.Duration) error {
 		ctx, cancel := context.WithTimeout(context.Background(), d)
@@ -199,24 +267,65 @@ func TestWaitReady(t *testing.T) {
 	<-c.Done()
 	start := time.Now()
 	if err := wait(5 * time.Second); err == nil || time.Since(start) > time.Second {
-		t.Errorf("after giving up: %v in %v, want an error at once", err, time.Since(start))
+		t.Errorf("after the capture ended: %v in %v, want an error at once", err, time.Since(start))
 	}
 }
 
-// A rules file broken while running must not bring mitmdump back without its rules.
-func TestRestartRefusesBrokenRules(t *testing.T) {
+// A restarted mitmdump whose rules (the copy of those that loaded last) do
+// not load ends the capture, with --rules-reload too: never back without
+// its rules. v1.0 went on without them under --rules-reload.
+func TestRestartRefusesRulesThatNoLongerLoad(t *testing.T) {
 	t.Setenv("FAKE_RULES_ERROR", "map_remote[0]: ValueError")
-	c, kill := startFake(t, 1000)
+	for _, reload := range []bool{false, true} {
+		rules := filepath.Join(t.TempDir(), "rules.yaml")
+		os.WriteFile(rules, []byte("mock: []\n"), 0o600)
+		c, kill := startFake(t, 1000, func(c *Config) { c.Rules, c.RulesReload = rules, reload })
+		kill(1)
+		select {
+		case <-c.Done():
+		case <-time.After(10 * time.Second):
+			t.Fatalf("reload %v: came back without its rules: %v", reload, c.Store.Stats())
+		}
+		if c.Store.Stats()["state"] != "failed" || c.Err() == nil || !strings.Contains(c.Err().Error(), "no longer load") {
+			t.Fatalf("reload %v: state %v, err %v", reload, c.Store.Stats()["state"], c.Err())
+		}
+		c.Stop()
+	}
+}
+
+// TestRulesCopy: the copy of the rules file a restarted mitmdump loads is the
+// file's bytes, 0600 (one a killed run left, 0644, is replaced), named to
+// each mitmdump, and gone after Stop.
+func TestRulesCopy(t *testing.T) {
+	rules := filepath.Join(t.TempDir(), "rules.yaml")
+	os.WriteFile(rules, []byte("mock: []\n"), 0o644)
+	var dir string
+	c, kill := startFake(t, 1000, func(c *Config) {
+		c.Rules, dir = rules, c.Dir
+		os.MkdirAll(dir, 0o700)
+		os.WriteFile(filepath.Join(dir, rulesCopy), []byte("left by a killed run"), 0o644)
+	})
+	copy := filepath.Join(dir, rulesCopy)
+	check := func() {
+		t.Helper()
+		b, err := os.ReadFile(copy)
+		fi, _ := os.Stat(copy)
+		if err != nil || string(b) != "mock: []\n" || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("copy: %q %v, mode %v", b, err, fi.Mode().Perm())
+		}
+	}
+	check()
+	if !slices.Contains(c.args, "reqcove_rules_copy="+copy) || !slices.Contains(c.args, "reqcove_rules="+rules) {
+		t.Errorf("mitmdump's args: %q", c.args)
+	}
+	os.WriteFile(rules, []byte("broken: ["), 0o644)
 	kill(1)
-	select {
-	case <-c.Done():
-	case <-time.After(10 * time.Second):
-		t.Fatalf("came back with broken rules: %v", c.Store.Stats())
-	}
-	if c.Store.Stats()["state"] != "failed" || c.Err() == nil || !strings.Contains(c.Err().Error(), "--rules") {
-		t.Fatalf("state %v, err %v", c.Store.Stats()["state"], c.Err())
-	}
+	waitState(t, c, "ready", 1)
+	check()
 	c.Stop()
+	if _, err := os.Stat(copy); err == nil {
+		t.Error("the rules copy left after Stop")
+	}
 }
 
 // A mitmdump left behind by a reqcove that died without Stop is stopped by
@@ -299,11 +408,12 @@ func TestReapOrphans(t *testing.T) {
 	}
 }
 
-// TestPortHeldWhileDown: while mitmdump is down (restarting, then given
-// up), no other process can bind its SOCKS port: reqcove holds it. Stop
-// frees it.
+// TestPortHeldWhileDown: while mitmdump is down (restarting, then failed
+// for good), no other process can bind its SOCKS port: reqcove holds it.
+// Stop frees it.
 func TestPortHeldWhileDown(t *testing.T) {
-	c, kill := startFake(t, 2) // the first run works, every restart dies
+	t.Setenv("FAKE_RULES_ERROR", "map_remote[0]: ValueError") // the restart fails for good
+	c, kill := startFake(t, 1000)
 	kill(1)
 	for done := false; !done; {
 		select {

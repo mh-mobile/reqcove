@@ -668,12 +668,19 @@ carry, while it is on: not only what the app gets.
 
 ## Rules (`--rules`)
 
-Rules are yours, read from a file when mitmproxy starts; no tool changes them.
+Rules are yours, read from a file when `run` starts; no tool changes them.
 With `run --rules-reload` the file is also read again whenever it
 changes, so whatever can write it (any process as your user, an agent with file
 access included) can then change where the devices' requests go while `run`
-runs; without it, the file is read only when mitmproxy starts (with `run`, or
-when reqcove restarts it after it exits).
+runs; without it, the file is read only when `run` starts.
+A mitmproxy that reqcove restarts after it exits gets the rules that loaded
+last, from a copy in the state directory (`rules-loaded`, 0600 in the 0700
+directory; it holds whatever the file holds, tokens in `modify_headers`
+included). `run` removes it when it stops; a run that is killed leaves it
+until the next start, which replaces it (unit test) or, without `--rules`,
+removes it (from reading code). If those
+rules no longer load, `run` stops rather than go on without them: a mock or
+`map_remote` lost would send test requests to the real servers.
 `modify_headers` takes header names that are HTTP tokens and values without
 a line break or NUL (they would start a header of their own on the wire); a
 value file read again for a later flow and given one since is dropped from
@@ -1066,7 +1073,7 @@ launcher accepting at once and the addon's loading delayed 1.5 seconds (by
 hand), both were accepted and the test fails; without that delay, mitmproxy
 (12.3.1) happened to load the addon before reading the first connection, and
 refused them too.
-Tests: while mitmdump is down, and after reqcove gave up on it, binding the
+Tests: while mitmdump is down, and after a failure that ended it, binding the
 port fails, and Stop frees it (unit test, run here on macOS; CI runs it on
 Linux too); with real mitmproxy (from the lock and through uvx, macOS), the
 same while it restarts, and a request sent then is carried and recorded by

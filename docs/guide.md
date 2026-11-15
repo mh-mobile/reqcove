@@ -856,20 +856,28 @@ connection, reached GitHub.
 
 #### When the file is read (`--rules-reload`)
 
-The file is read when mitmproxy starts: with `run`, and when reqcove restarts
-it.
+The file is read when `run` starts. When reqcove restarts mitmproxy, it gives
+it the rules that loaded last (a private copy, `rules-loaded` in the state
+directory), not the file as it is on disk then: a file broken meanwhile never
+leaves mitmproxy without its rules. Files the rules name (`map_local`, `@file`
+values, mock bodies) are still read from disk, relative to the rules file; if
+the rules that loaded last no longer load (such a file is gone), `run` stops
+with the reason rather than go on without them.
 
 With `--rules-reload`, it is read again once a change has settled. The new
 rules are for requests that start after that; one under way keeps the rules it
 started with.
 
 - A file that does not load leaves the earlier rules in place, and `run` and
-  `reqcove status` say why. But if mitmproxy restarts meanwhile, `run` stops
-  on it, as at start.
+  `reqcove status` say why, after a restart of mitmproxy too (the restarted
+  one looks at the file again and says why it does not load).
 - Whatever can write the file (an agent included) can then change where the
   devices' requests go, without you restarting anything.
 
 From reading code: a change is read within about two seconds.
+E2E test (real mitmproxy, macOS): with the file broken on disk and mitmdump
+killed, the next one applies the rules that loaded last (a reload's, with
+`--rules-reload`), a value file named relative to the rules file included.
 
 #### Add a mock from your terminal (`reqcove mock add`)
 
@@ -1419,7 +1427,7 @@ Start with `reqcove status`: it says what reqcove is doing, and the next steps
 | An iPhone on the exit node has no internet while the Mac sleeps | [Keep it running (`brew services`)](#keep-it-running-brew-services) |
 | A service ended and did not start again, or a `run` in your terminal finds the state in use | [Run it as a service](#run-it-as-a-service) |
 | The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
-| reqcove restarts mitmproxy, or `run` stops after restarts in a row | [Limits](#limits) (a huge WebSocket message), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches) |
+| reqcove restarts mitmproxy again and again, or `run` stops on mitmproxy | [Limits](#limits) (a huge WebSocket message; when mitmproxy exits or does not start), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches; rules that no longer load) |
 | IPv6, QUIC, phone calls | [Limits](#limits) |
 
 This section only points to the others: what was tried, and what was not, is
@@ -1527,10 +1535,22 @@ The main ones are in the [README](../README.md#limits). The rest:
   it, 2026-11-15), so
   one huge message can use a lot of
   memory: Reqcove's 4 KiB bound is on what it keeps, not on mitmproxy. If
-  mitmproxy runs out, reqcove restarts it; when it is down again within a
-  minute after 5 restarts in a row, `run` stops with an error (exit status 1,
-  not the 0 of Ctrl-C, so a service shows it failed; tested with a stand-in
-  for mitmproxy that kept exiting).
+  mitmproxy runs out, reqcove restarts it.
+- **When mitmproxy exits or does not start**, reqcove starts it again, without
+  end: after 1 second, then each wait doubled up to 5 minutes, back to 1 second
+  once it stayed up a minute. Meanwhile devices' connections wait or fail;
+  `reqcove status` (and `capture_stats`) says why (`last_failure`), how many
+  attempts in a row (`retries`) and when the next is (`next_attempt`). At the
+  start, one that does not say hello within 2 minutes (a slow machine, uv
+  still downloading) is tried again too; until the first one is up, `run`
+  answers no status, so those attempts are in its log only. `run` stops with an error (exit
+  status 1, not the 0 of Ctrl-C, so a service shows it failed) only on what
+  trying again cannot mend: rules that do not load, and, before mitmproxy has
+  come up once in this run, one that cannot be launched or exits before its
+  hello (bad options, `--mitmproxy-spec` or `--python`; not tried: uv that
+  cannot download without network, which exits too). Unit tests with a stand-in for mitmproxy: one that
+  kept exiting was tried 8 times with growing waits and `run` went on; one
+  silent at the start was tried again; one that exited at the start ended it.
 - A connection reqcove gives to mitmproxy waits for mitmproxy to connect to
   the server, as a direct one waits for the server: 10 seconds at most. The
   log then says `<address>:<port> did not answer within 10s (through

@@ -192,6 +192,7 @@ type Store struct {
 	addonOOS      int64              // the same, seen by the addon
 	earlier       [3]int64           // addon counters of mitmdump processes that exited: dropped bodies, events, out of scope
 	hellos        int64
+	helloRulesErr string        // the last hello's rules_error: a later rules event's does not count for spawn
 	seq           int64         // last Flow.seq (or Flow.answered) handed out
 	evictedMark   int64         // the highest seq or answered of the flows evicted: a wait from below it may have missed one
 	wake          chan struct{} // closed when a flow is answered, for Wait; nil until a waiter asks
@@ -200,6 +201,9 @@ type Store struct {
 	state         string // starting, ready, restarting, failed
 	stateDetail   string
 	restarts      int64
+	lastFailure   string              // why mitmdump last failed (exited, did not start), kept once it is back
+	retries       int64               // attempts in a row since mitmdump last stayed up a minute
+	nextAttempt   time.Time           // while waiting to start it again
 	rulesLoaded   time.Time           // when the --rules file was last taken (at start, or a reload)
 	markers       map[string][]Marker // by source, oldest first, at most maxMarkers each
 	markerID      int64
@@ -211,7 +215,30 @@ func (s *Store) setState(state, detail string) {
 	if state == "restarting" && s.state != "restarting" {
 		s.restarts++
 	}
+	if state != "restarting" {
+		s.nextAttempt = time.Time{}
+	}
+	if state == "failed" {
+		s.lastFailure = detail
+	}
 	s.state, s.stateDetail = state, detail
+}
+
+// retrying notes the n-th failure in a row (why) and when the next attempt
+// is; n 0: mitmdump stayed up, the count starts again (why kept).
+func (s *Store) retrying(why string, n int, next time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if why != "" {
+		s.lastFailure = why
+	}
+	s.retries, s.nextAttempt = int64(n), next
+}
+
+func (s *Store) helloRulesError() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.helloRulesErr
 }
 
 // badLine counts a line from the addon that could not be taken.
@@ -364,6 +391,7 @@ func (s *Store) Apply(line []byte) {
 	case "hello":
 		s.hello = e
 		s.hellos++
+		s.helloRulesErr = e.RulesError
 		if e.Rules != nil { // at start, and when a restarted mitmproxy takes the file again
 			s.rulesLoaded = time.Now()
 		}

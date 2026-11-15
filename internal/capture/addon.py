@@ -924,6 +924,14 @@ WEB_MAX_BYTES = 256 << 20
 RULES_POLL = 1.0  # seconds between looks at the --rules file, with --rules-reload
 
 
+def _read(path):
+    """The file's bytes, None when it cannot be read."""
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
+
 def _stamp(path):
     """What changes when the file is saved, in place or by a rename; None when it is gone."""
     try:
@@ -957,12 +965,15 @@ def _rule_items(data, kind):
     return out
 
 
-def load_rules(path):
+def load_rules(path, base=None):
     """The --rules file as mitmproxy's own rule addons, which reqcove calls
-    from its hooks (so rules never touch skipped flows or mitm.it).
+    from its hooks (so rules never touch skipped flows or mitm.it). Files the
+    rules name are relative to base, the file's own directory by default (a
+    copy's is the file's).
 
     Errors name the rule by kind and index, never its text (filters, regexes
     and values can carry tokens); only resolve's names and addresses are said."""
+    base = Path(base) if base else Path(path).parent
     data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
         raise ValueError("the file must map mock, map_remote, map_local, modify_headers and resolve to lists")
@@ -992,7 +1003,7 @@ def load_rules(path):
         plain, presets = [], []  # match keys, so a plain rule and a preset never share one
         for i, (spec, preset, description) in enumerate(_rule_items(data, kind)):
             try:
-                rule = _parse_rule(kind, spec, Path(path).parent)
+                rule = _parse_rule(kind, spec, base)
                 flt, subject = _spec_parts(spec)
                 key = (kind, flt, subject.lower() if kind == "modify_headers" else subject)
                 # Derived parts only: never the filter, the regex, a value or a path.
@@ -1035,7 +1046,7 @@ def load_rules(path):
         raise ValueError("mock must be a list of mappings")
     for i, spec in enumerate(specs):
         try:
-            mock.add(spec, Path(path).parent)
+            mock.add(spec, base)
             method, url, op, status, _, _, preset, _, delay, fault = mock.replacements[-1]
             book.rules.append(("mock", i, preset, {"method": method, "url": url, "operation": op, "status": None if fault else status, "delay_ms": delay, "fault": fault}, None))
         except RuleError as e:
@@ -1278,6 +1289,7 @@ class Reqcove:
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
         loader.add_option("reqcove_rules", str, "", "The --rules file.")
         loader.add_option("reqcove_rules_reload", bool, False, "Re-read the --rules file when it changes.")
+        loader.add_option("reqcove_rules_copy", str, "", "reqcove's private copy of the --rules file as it last loaded: loaded instead of it, and replaced on a reload.")
         loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
@@ -1302,19 +1314,25 @@ class Reqcove:
         if "reqcove_upstream" in updated:
             host, _, port = ctx.options.reqcove_upstream.rpartition(":")
             self.upstream = (host.strip("[]"), int(port)) if host else None  # [::1]:8080
-        if "reqcove_rules" in updated:
+        if {"reqcove_rules", "reqcove_rules_copy"} & set(updated):
             self.rules, self.rules_error = None, ""
-            if ctx.options.reqcove_rules:
-                self.rules_stamp = _stamp(ctx.options.reqcove_rules)
-                # On an error reqcove reads it from the hello and refuses to start;
-                # none of the rules applies meanwhile.
-                self.rules, self.rules_error = self._load_checked(ctx.options.reqcove_rules)
+            path, copy = ctx.options.reqcove_rules, ctx.options.reqcove_rules_copy
+            if path:
+                self.rules_stamp = _stamp(path)
+                if copy and _read(copy) != _read(path):
+                    # A restart with the file changed since it last loaded (broken,
+                    # maybe): --rules-reload's watch takes it, or says why not.
+                    self.rules_stamp = False
+                # The copy reqcove made of the rules that loaded last, never the
+                # file on disk. On an error reqcove reads it from the hello and
+                # ends the run; none of the rules applies meanwhile.
+                self.rules, self.rules_error = self._load_checked(copy or path, Path(path).parent)
 
-    def _load_checked(self, path):
+    def _load_checked(self, path, base=None):
         """The rules in path, checked as at start, or None and why not (never a
         rule's text: modify_headers rules often carry tokens)."""
         try:
-            rules = load_rules(path)
+            rules = load_rules(path, base)
             if self.upstream and rules["resolve"].names():
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
@@ -1365,13 +1383,38 @@ class Reqcove:
                 self.rules_stamp = stamp
                 if self.rules:
                     self.rules["mock"].book.active.clear()  # a changed file turns presets off, loaded or not
-                rules, why = self._load_checked(path) if stamp else (None, "the file is gone")
+                rules, why = self._take(path) if stamp else (None, "the file is gone")
                 if rules is not None:
                     self.rules = rules
                 self.rules_error = why
             except Exception as e:  # the watch must not die quietly
                 self.rules_error = type(e).__name__
             self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
+
+    def _take(self, path):
+        """_load_checked for a reload: the bytes read once, into reqcove's copy's
+        .new beside it (0600), which replaces the copy once they load, so a
+        restarted mitmproxy gets these rules."""
+        copy = ctx.options.reqcove_rules_copy
+        if not copy:
+            return self._load_checked(path)
+        new = copy + ".new"
+        try:
+            b = Path(path).read_bytes()
+            fd = os.open(new, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(b)
+            rules, why = self._load_checked(new, Path(path).parent)
+            if rules is not None:
+                os.replace(new, copy)  # before they apply: what applies is what a restart gets
+            return rules, why
+        except OSError as e:
+            return None, type(e).__name__
+        finally:
+            try:
+                os.unlink(new)
+            except OSError:
+                pass
 
     def _rules_info(self):
         rules = self.rules  # once: the writer thread asks too, for the hello on a reconnect

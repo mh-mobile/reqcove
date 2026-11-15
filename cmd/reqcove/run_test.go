@@ -122,23 +122,23 @@ func TestRulesReloadPresetsE2E(t *testing.T) {
 }
 
 // fakeMitmdump stands in for uv's mitmdump: its first run says hello and
-// lives until killed; every later run exits at once, so the restarts fail.
+// lives until killed; every later run says its rules do not load, a failure
+// that ends the capture.
 const fakeMitmdump = `#!/usr/bin/env python3
 import json, os, socket, sys, time
 d = os.environ["FAKE_DIR"]
 n = len(os.listdir(os.path.join(d, "runs"))) + 1
 open(os.path.join(d, "runs", str(n)), "w").write(str(os.getpid()))
-if n > 1:
-    sys.exit(3)
 path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("reqcove_socket="))
 s = socket.socket(socket.AF_UNIX); s.connect(path)
-s.sendall((json.dumps({"v": 2, "ev": "hello", "mitmproxy": "fake"}) + "\n").encode())
+s.sendall((json.dumps({"v": 2, "ev": "hello", "mitmproxy": "fake", "rules_error": "map_remote[0]: ValueError" if n > 1 else ""}) + "\n").encode())
 time.sleep(600)
 `
 
-// When mitmproxy keeps failing and reqcove gives up on it, run returns an
-// error (exits non-zero), not nil as for Ctrl-C: a service sees it failed.
-func TestRunFailsWhenMitmproxyGivesUp(t *testing.T) {
+// When mitmproxy fails for good (here the restarted one's rules no longer
+// load), run returns an error (exits non-zero), not nil as for Ctrl-C: a
+// service sees it failed.
+func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "rcvf-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
 		t.Fatal(err)
@@ -193,10 +193,10 @@ func TestRunFailsWhenMitmproxyGivesUp(t *testing.T) {
 	syscall.Kill(pid, syscall.SIGKILL)
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "gave up after") {
+		if err == nil || !strings.Contains(err.Error(), "no longer load") {
 			t.Errorf("run: %v, want mitmproxy's failure", err)
 		}
 	case <-ctx.Done():
-		t.Fatal("run did not stop after mitmproxy gave up")
+		t.Fatal("run did not stop after mitmproxy failed for good")
 	}
 }

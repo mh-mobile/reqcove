@@ -227,6 +227,7 @@ func (s *Store) Stats() map[string]any {
 		"oldest_flow": oldest, "newest_flow": newest, "max_flows": s.maxFlows, "max_bytes": s.maxBytes,
 		"flows_with_truncated_bodies": truncated,
 		"state":                       s.state, "state_detail": s.stateDetail, "restarts": s.restarts,
+		"last_failure": s.lastFailure, "retries": s.retries,
 		"started":              s.started.Format("2006-01-02T15:04:05.000Z07:00"),
 		"addon_dropped_bodies": s.earlier[0] + s.addonDropped[0], "addon_dropped_events": s.earlier[1] + s.addonDropped[1],
 		"bad_lines": s.badLines, "masking_failed": s.maskFailed, "unknown_version": s.unknownVer, "orphan_updates": s.orphanUpdates,
@@ -238,6 +239,9 @@ func (s *Store) Stats() map[string]any {
 		"mitmproxy": s.hello.Mitmproxy, "python": s.hello.Python, "brotli": s.hello.Brotli,
 		"brotli_decode": s.hello.BrotliDecode, "zstd_decode": s.hello.ZstdDecode,
 		"rules": s.hello.Rules, "rules_error": s.hello.RulesError, "resolve": s.hello.Resolve, "upstream": s.hello.Upstream, "presets": orNone(s.hello.Presets),
+	}
+	if !s.nextAttempt.IsZero() {
+		out["next_attempt"] = s.nextAttempt.Format("2006-01-02T15:04:05.000Z07:00")
 	}
 	if !s.rulesLoaded.IsZero() {
 		out["rules_loaded"] = s.rulesLoaded.Format("2006-01-02T15:04:05.000Z07:00") // an agent that saved the file sees whether it was taken
