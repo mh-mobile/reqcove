@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop or start
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start or save
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -49,7 +50,7 @@ type ctlAnswer struct {
 	Message string `json:"message"`
 }
 
-const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start  [--state DIR]"
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save  [--state DIR]"
 
 func captureCmd(ctx context.Context, args []string) error {
 	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts")
@@ -84,7 +85,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start":
+	case "stop", "start", "save":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -122,7 +123,7 @@ func hostSpecs(specs []string) ([]string, error) {
 // String is the command as the trace shows it.
 func (r ctlRequest) String() string {
 	s := "capture " + r.Cmd
-	if r.Cmd == "stop" || r.Cmd == "start" {
+	if r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save" {
 		return s
 	}
 	if r.Pass {
@@ -194,8 +195,9 @@ func noCtl(ctx context.Context, state string) error {
 }
 
 // serveCtl serves ctl.sock until ctx ends. lan: LAN mode, whose hosts are
-// set at the start (its proxy takes their names then).
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool) error {
+// set at the start (its proxy takes their names then); origin: where run's
+// hosts came from (capture save).
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool, origin hostsOrigin) error {
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
 	ln, err := net.Listen("unix", path)
@@ -222,7 +224,7 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, lan bool)
 				}
 				ctx, cancel := context.WithTimeout(ctx, ctlWait-time.Second) // the answer before the CLI gives up
 				defer cancel()
-				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, lan, req))
+				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, lan, origin, req))
 			}()
 		}
 	}()
@@ -235,7 +237,10 @@ var errUnchanged = errors.New("unchanged")
 // answerCtl makes the change and says what happened. A change taken
 // (applied, or pending) leaves a trace: run's log line, a cli marker, and
 // status's scope_changed_at.
-func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlRequest) ctlAnswer {
+func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, origin hostsOrigin, req ctlRequest) ctlAnswer {
+	if lan && req.Cmd == "save" {
+		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"}
+	}
 	if lan {
 		return ctlAnswer{Message: "refused: in LAN mode what is recorded cannot change while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
 	}
@@ -244,8 +249,11 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlReque
 		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 	}
 	why := req.String()
-	if req.Cmd == "stop" || req.Cmd == "start" {
+	switch req.Cmd {
+	case "stop", "start":
 		return stopStart(ctx, cap, req.Cmd == "stop", why)
+	case "save":
+		return save(cap, origin, why)
 	}
 	var cur, next capture.HostRules
 	var notes []string
@@ -276,7 +284,7 @@ func answerCtl(ctx context.Context, cap *capture.Capture, lan bool, req ctlReque
 	if pending {
 		msg = "pending: " + changes(cur, next) + " (mitmproxy has not acknowledged it yet: restarting? it applies once mitmproxy is back; status shows scope_pending meanwhile)"
 	}
-	msg += fmt.Sprintf("; %v records kept; not saved: a restart of run goes back to the hosts it was started with", cap.Store.Stats()["flows"])
+	msg += fmt.Sprintf("; %v records kept; not saved: a restart of run goes back to the hosts it was started with (reqcove capture save writes them to its hosts file)", cap.Store.Stats()["flows"])
 	switch {
 	case stopped: // nothing is recorded either way until the start
 		msg += "; recording is stopped: these are the hosts `reqcove capture start` records, nothing is recorded until then"
@@ -332,6 +340,72 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		msg += kept + "; the rules apply again (presets stay off until turned on); new connections only: reopen the app to see it now (a connection or WebSocket open before the stop is not recorded again)"
 	}
 	return traced(cap, why, msg)
+}
+
+// save is capture save: the base scope (the hosts a start records) into the
+// one hosts file run's --allow-hosts read, without the hosts given as they
+// are (a restart takes those again whatever the file says): never "*", never
+// none (run refuses a hosts file without hosts). Hosts passed undecrypted are
+// not saved.
+func save(cap *capture.Capture, o hostsOrigin, why string) ctlAnswer {
+	msg, err := saveHosts(cap.Base(), o)
+	if err != nil {
+		return ctlAnswer{Message: err.Error()}
+	}
+	cap.NoteChange(why)
+	return traced(cap, why, msg)
+}
+
+// saveHosts writes base into o's hosts file, and says what it did; an error
+// says why nothing was written.
+func saveHosts(base capture.HostRules, o hostsOrigin) (string, error) {
+	switch {
+	case len(o.files) == 0:
+		return "", errors.New("nothing to save to: this run's hosts do not come from a hosts file; put `--allow-hosts=@FILE` in the config (FILE: one host a line), as reqcove setup writes it; nothing written")
+	case len(o.files) > 1:
+		return "", errors.New("nothing to save to: this run's hosts come from several files (" + strings.Join(o.files, ", ") + "): keep one `--allow-hosts=@FILE`; nothing written")
+	case slices.Contains(o.passFiles, o.files[0]):
+		return "", errors.New("refused: " + o.files[0] + " is run's --pass-hosts file too: saving would change the hosts passed undecrypted; nothing written")
+	}
+	file, pinned := o.files[0], o.pinned()
+	if base.All {
+		return "", errors.New(`refused: this run records every host ("*"), which a hosts file never holds; nothing written`)
+	}
+	var hosts []string
+	for _, h := range base.Hosts {
+		if _, ok := pinned[h]; !ok && !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	if len(hosts) == 0 {
+		return "", errors.New("refused: no hosts to write, and run refuses a hosts file without hosts at its next start (whatever --rules, --pass-hosts or --upstream-proxy need): add one first (reqcove capture add HOST), or take the --allow-hosts=@" + file + " line out of the config; nothing written")
+	}
+	if err := writeHosts(file, hosts, ""); err != nil {
+		return "", errors.New("refused: " + err.Error() + "; nothing written")
+	}
+	msg := "saved to " + file + ": " + strings.Join(hosts, ", ")
+	for _, from := range []string{"the command line", "the --config file"} {
+		var on, back []string
+		for _, h := range slices.Sorted(maps.Keys(pinned)) {
+			switch {
+			case pinned[h] != from:
+			case slices.Contains(base.Hosts, h):
+				on = append(on, h)
+			default:
+				back = append(back, h)
+			}
+		}
+		if len(on) > 0 {
+			msg += fmt.Sprintf("; not written, as given on %s (a start with it records them again): %s", from, strings.Join(on, ", "))
+		}
+		if len(back) > 0 {
+			msg += fmt.Sprintf("; removed now, but given on %s, so a start with it records them again: %s", from, strings.Join(back, ", "))
+		}
+	}
+	if len(base.PassHosts) > 0 {
+		msg += "; the hosts passed undecrypted are not saved: a start passes run's --pass-hosts"
+	}
+	return msg, nil
 }
 
 // scopeText says what base records.

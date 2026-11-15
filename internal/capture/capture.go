@@ -648,8 +648,24 @@ func (c *Capture) changeLocked(ctx context.Context, why string, r HostRules, sto
 	return err
 }
 
-// LastChange is when ChangeScope last took a change with a why, and the why;
-// the zero time before any.
+// Base is the base scope asked for last, a pending one included (Scope is
+// the one acknowledged): what a start records, and what capture save writes.
+func (c *Capture) Base() HostRules {
+	c.scopeMu.Lock()
+	defer c.scopeMu.Unlock()
+	return c.want
+}
+
+// NoteChange keeps why as the last change (LastChange), for one that changes
+// no scope: capture save.
+func (c *Capture) NoteChange(why string) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	c.changeAt, c.change = time.Now(), why
+}
+
+// LastChange is when ChangeScope last took a change with a why (or
+// NoteChange), and the why; the zero time before any.
 func (c *Capture) LastChange() (time.Time, string) {
 	c.ackMu.Lock()
 	defer c.ackMu.Unlock()

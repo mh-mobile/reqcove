@@ -37,20 +37,27 @@ when its input or output is not a terminal, as from an agent. Skip any step
 with an empty answer. It starts nothing and removes nothing.
 
 - **uv**: it says where `uvx` is, or how to install it. It installs nothing.
-- **The device and the hosts**: it writes `--device` and `--allow-hosts`,
-  quoted, to the file the service reads.
+- **The device and the hosts**: it writes `--device`, quoted, to the file
+  the service reads, and the hosts to their own file beside it, which that
+  file reads with `--allow-hosts=@FILE` (since v1.1; `reqcove capture save`
+  writes it).
   - The file is `~/.config/reqcove/config` (`reqcove service install`'s). For
     a brew install (this binary under `Cellar/reqcove/`), it is Homebrew's
     `$(brew --prefix)/etc/reqcove/config` (`brew services`').
-  - It is 0600, and its directory 0700 when new. Before it takes the file's
-    place, it is checked as `run` reads it.
+  - The hosts file is `hosts` beside it: `~/.config/reqcove/hosts`, or
+    `$(brew --prefix)/etc/reqcove/hosts`. One host a line; `#` starts a
+    comment. No hosts answered: no hosts file, and the `--allow-hosts` line
+    stays a comment.
+  - Both are 0600, and their directory 0700 when new. Before they take the
+    files' place, they are checked as `run` reads them.
   - `*` and a name starting with `-` are asked again. A pasted URL keeps its
     host only.
   - No hosts yet: once `run` runs, `reqcove status` (or an agent's
     `summarize`) lists the hosts the iPhone reached.
   - An existing file is shown, and kept unless you answer `y`. Then it is
     replaced whole, and the old one is kept as `config.old` (0600): its other
-    flags, such as `--rules`, are there to copy back.
+    flags, such as `--rules`, are there to copy back. An existing hosts file
+    is kept as `hosts.old`; the new one keeps its comments.
   - A path that is not a plain file is left alone.
 - **The agent**: if you answer `y`, it adds the skill as `reqcove init` does
   (with no agent found in your home, it says so). It prints
@@ -89,7 +96,8 @@ About the login URL and the links:
 Tried, for `reqcove setup`: unit tests (answers fed in); by hand on macOS and
 on Linux (a VM, over ssh), 2026-11-14; Ctrl-C at the first question (it ended
 at once, nothing written). Tried too: `reqcove links` from Claude Code's `!`.
-Not tried: `brew services` with the file setup wrote.
+Not tried: `brew services` with the file setup wrote. The hosts file: unit
+tests only (the file, its `@` line, an old one kept).
 
 <a id="security-login-url"></a>
 
@@ -166,8 +174,8 @@ mitmproxy is back), how many records are kept, and the limits below.
   an app keeps its connection open for a while, so reopen it to see the host
   now. A removed host is no longer recorded from the next event on, but its
   open connections stay decrypted (unrecorded) until they close.
-- **Not saved.** A restart of `run` goes back to the hosts it was started with
-  (its flags or `--config`); saving comes in a later version.
+- **Not saved** until `reqcove capture save` (below): a restart of `run`
+  goes back to the hosts it was started with (its flags or `--config`).
 - **Refused:** `"*"`, removing a host a wildcard takes in (the answer names
   the wildcard: remove that, or use `set`), a change that takes out a host a
   `mock` rule names (the answer names the rules), and any change in LAN mode
@@ -185,6 +193,39 @@ connection is recorded; remove, then one is not; the marker and status); not
 on an iPhone. The pending answer and a `mock` rule's refusal, as `reqcove
 capture` gives them, are from reading the code (the change underneath, its
 pending state and the refusal, has tests of its own).
+
+#### Keep the hosts for the next start (`reqcove capture save`)
+
+```sh
+reqcove capture save     # write the hosts recorded now to the hosts file
+```
+
+It writes the hosts recorded (those `capture start` records, while stopped)
+into the hosts file `run` read them from: the `--allow-hosts=@FILE` that
+`reqcove setup` puts in the config. The next start from that config records
+them. The file is replaced whole (0600). Its comments stay, and so do its
+lines whose hosts are all kept; new hosts go at the end.
+
+- **Hosts given as they are** (on `run`'s command line, or as
+  `--allow-hosts HOST` in the config) are not written: a start with them
+  records them again whatever the file says. The answer names them, and says
+  which of them you removed now that come back that way.
+- **Nothing to save to** when `run`'s hosts do not come from a hosts file, or
+  come from several: the answer says to put one `--allow-hosts=@FILE` in the
+  config. Nothing is written.
+- **Refused**, nothing written: `"*"` (never in the file); no hosts to write
+  (`run` refuses a hosts file without hosts, so the next start would fail);
+  a file that is not a plain file (a link, say) or not yours; the file
+  `--pass-hosts` reads too. In LAN mode, as the others.
+- **Hosts passed undecrypted** (`--pass`) are not saved: the answer says so,
+  and a start passes those of `run`'s `--pass-hosts`.
+- **A trace**, as a change: `run`'s log, a `cli` marker, and `reqcove status`
+  "last changed at … (capture save)".
+
+Tried by tests only (unit: what is written and kept, each refusal; E2E with
+real mitmproxy: `run` started from a config with a hosts file and a host on
+the command line, add, remove that host, save, then a new `run` from the
+config records the host added); not on an iPhone, not with `brew services`.
 
 #### Stop recording for a while
 

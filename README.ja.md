@@ -62,7 +62,7 @@ go build -o reqcove ./cmd/reqcove
    reqcove setup
    ```
 
-   setup は uv があるかを確かめ、tailnet での iPhone の名前（`tailscale status` に表示される名前）と記録するホストを聞いて、設定ファイルに書きます。ファイルは `~/.config/reqcove/config` で、Homebrew で入れた場合は Homebrew の `etc/reqcove/config` です。`y` と答えるとエージェントの Skill も入れます。Claude Code にツールを渡すコマンドは、答えに関係なく表示します。setup 自身は何も起動しません（[聞くことと書くもの](docs/guide.ja.md#初回の起動ログインと承認)）。
+   setup は uv があるかを確かめ、tailnet での iPhone の名前（`tailscale status` に表示される名前）と記録するホストを聞いて、設定ファイルに書きます。ファイルは `~/.config/reqcove/config` で、Homebrew で入れた場合は Homebrew の `etc/reqcove/config` です（ホストは隣の `hosts` に書きます）。`y` と答えるとエージェントの Skill も入れます。Claude Code にツールを渡すコマンドは、答えに関係なく表示します。setup 自身は何も起動しません（[聞くことと書くもの](docs/guide.ja.md#初回の起動ログインと承認)）。
 
    続いて、setup が示す方法で起動します。`brew services start reqcove`（Homebrew で入れた場合）、`reqcove service install`、ターミナルでの `reqcove run --config FILE` のどれかです。
 
