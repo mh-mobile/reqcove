@@ -60,6 +60,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 `reqcove status --json` は `status` ツールの JSON を出力します。答える `run` がないとき（動いていないとき、起動中か終了中のとき）は、標準出力に何も出さず、理由を標準エラーに出して、終了コード 1 で終わります。フィールドは次のとおりです。
 
 - `mode`、`next_steps`、`allow_hosts`、`pass_hosts`、`service`、`capture`（`capture_stats` のフィールド。下記）、`active_presets`、`active_presets_error`。`active_presets` の各要素は `name`、`kind`、`description`、`target`、`header`、`host`、`address`、`method`、`url`、`operation`、`status`、`delay_ms`、`fault`、`active`、`remaining`、`expires_at` を持ちます（`list_presets` のプリセットと同じ）。
+- v1.1 から、動かしたままホストを変えたとき（`reqcove capture`）のフィールド：`scope_pending`（mitmproxy がまだ受け取りを返していない変更。人が読むための文で、ないときはフィールドもありません）、`scope_changed_at`（RFC 3339）、`scope_change`（`capture add api.example.com` のようなコマンド）。後の 2 つは、最初の変更まではありません。`allow_hosts` と `pass_hosts` は、mitmproxy が受け取りを返したホストです。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
 
@@ -94,6 +95,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove links` | `--state` |
 | `reqcove lan allow ADDR`、`lan deny ADDR`、`lan list` | `--state` |
 | `reqcove mark [TEXT]`（`-` で始まる文は `-- TEXT`） | `--state` |
+| `reqcove capture add HOST…`、`capture remove HOST…`（v1.1 から） | `--pass`、`--state` |
+| `reqcove capture set`（v1.1 から） | `--allow-hosts`、`--pass-hosts`、`--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
 | `reqcove setup` | なし |
 | `reqcove service install` | `--config`、`--state` |

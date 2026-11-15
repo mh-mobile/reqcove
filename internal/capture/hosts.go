@@ -90,14 +90,14 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 			case h == "*":
 				r.All = true
 			case strings.HasPrefix(h, "*."):
-				if !validHost(h[2:]) {
+				if !ValidHost(h[2:]) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
 				}
 				r.Patterns = append(r.Patterns, `^(.+\.)?`+regexp.QuoteMeta(h[2:])+`$`)
 			case strings.HasPrefix(h, "."):
 				return r, fmt.Errorf("--allow-hosts: bad host %q (for the domain and its subdomains, write *%s)", h, h)
 			default:
-				if !validHost(h) {
+				if !ValidHost(h) {
 					return r, fmt.Errorf("--allow-hosts: bad host %q", h)
 				}
 				r.Patterns = append(r.Patterns, `^`+regexp.QuoteMeta(h)+`$`)
@@ -110,7 +110,9 @@ func ParseAllowHosts(specs []string) (HostRules, error) {
 	return r, nil
 }
 
-func validHost(h string) bool {
+// ValidHost: h is an IPv4 address, or a name of lowercase letters, digits, -
+// and . (no wildcard): nothing a shell reads as anything but a word.
+func ValidHost(h string) bool {
 	if a, err := netip.ParseAddr(h); err == nil {
 		return a.Is4()
 	}

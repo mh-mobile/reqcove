@@ -1,0 +1,364 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/mh-mobile/reqcove/internal/exitnode"
+	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/proxy"
+)
+
+// The arguments of reqcove capture: the hosts anywhere among the flags, and
+// what is refused before run is asked ("*" above all).
+func TestCaptureArgs(t *testing.T) {
+	words, flags := wordsAndFlags([]string{"add", "--state", "/s", "API.b.com", "--allow-hosts", "x.com", "--pass"}, "allow-hosts", "pass-hosts")
+	if strings.Join(words, " ") != "add API.b.com" || strings.Join(flags, " ") != "--state /s --allow-hosts x.com --pass" {
+		t.Errorf("words %q, flags %q", words, flags)
+	}
+	req, err := ctlRequest{Cmd: "add", Hosts: []string{"API.b.com.", "c.com,*.d.com"}}.normalized()
+	if err != nil || !slices.Equal(req.Hosts, []string{"api.b.com", "c.com", "*.d.com"}) || req.String() != "capture add api.b.com c.com *.d.com" {
+		t.Errorf("%v %q %q", err, req.Hosts, req.String())
+	}
+	if req, _ := (ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, PassHosts: []string{"a.com"}}).normalized(); req.String() != "capture set --allow-hosts a.com --pass-hosts a.com" {
+		t.Errorf("set: %q", req.String())
+	}
+	for _, c := range []struct {
+		req  ctlRequest
+		want string
+	}{
+		{ctlRequest{Cmd: "add", Hosts: []string{"*"}}, `"*" is refused`},
+		{ctlRequest{Cmd: "add", Hosts: []string{"a.com,*"}}, `"*" is refused`},
+		{ctlRequest{Cmd: "set", AllowHosts: []string{"*"}}, `"*" is refused`},
+		{ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, PassHosts: []string{"*"}}, `"*" is refused`},
+		{ctlRequest{Cmd: "add", Hosts: []string{"a b.com"}}, "bad host"},
+		{ctlRequest{Cmd: "add", Hosts: []string{"$(id).com"}}, "bad host"},
+		{ctlRequest{Cmd: "remove"}, "name the hosts"},
+		{ctlRequest{Cmd: "add", Hosts: []string{"a.com"}, AllowHosts: []string{"b.com"}}, "go with capture set"},
+		{ctlRequest{Cmd: "set"}, "needs --allow-hosts"},
+		{ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}, Hosts: []string{"b.com"}}, "only"},
+		{ctlRequest{Cmd: "allow-all"}, "usage"},
+		{ctlRequest{}, "usage"},
+	} {
+		if _, err := c.req.normalized(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: %v, want %q", c.req, err, c.want)
+		}
+	}
+	// run checks again (any process of the user can reach ctl.sock), before the capture is touched.
+	if a := answerCtl(context.Background(), nil, false, ctlRequest{Cmd: "add", Hosts: []string{"*"}}); a.OK || !strings.Contains(a.Message, `"*" is refused`) || !strings.Contains(a.Message, "nothing changed") {
+		t.Errorf("run, *: %+v", a)
+	}
+}
+
+func scopeOf(t *testing.T, allow, pass []string) capture.HostRules {
+	t.Helper()
+	r, err := capture.ParseAllowHosts(allow)
+	if err == nil && len(pass) > 0 {
+		r, err = r.WithPass(pass)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// newScope: what each command makes of the scope; a remove that a wildcard
+// would undo is refused, naming the wildcard.
+func TestNewScope(t *testing.T) {
+	cur := scopeOf(t, []string{"a.com", "*.b.com", "c.com"}, []string{"c.com"})
+	for _, c := range []struct {
+		req               ctlRequest
+		allow, pass       []string
+		change, note, err string
+	}{
+		{req: ctlRequest{Cmd: "add", Hosts: []string{"d.com"}}, allow: []string{"a.com", "*.b.com", "c.com", "d.com"}, pass: []string{"c.com"}, change: "d.com added"},
+		{req: ctlRequest{Cmd: "add", Hosts: []string{"api.b.com", "a.com"}}, change: "", note: "api.b.com is recorded already (through *.b.com)"},
+		{req: ctlRequest{Cmd: "remove", Hosts: []string{"a.com"}}, allow: []string{"*.b.com", "c.com"}, pass: []string{"c.com"}, change: "a.com removed"},
+		{req: ctlRequest{Cmd: "remove", Hosts: []string{"c.com"}}, allow: []string{"a.com", "*.b.com"}, change: "c.com removed, c.com no longer passed undecrypted"},
+		{req: ctlRequest{Cmd: "remove", Hosts: []string{"api.b.com"}}, err: "api.b.com is recorded through *.b.com: remove *.b.com instead"},
+		{req: ctlRequest{Cmd: "remove", Hosts: []string{"e.com"}}, change: "", note: "e.com was not recorded"},
+		{req: ctlRequest{Cmd: "add", Pass: true, Hosts: []string{"x.b.com"}}, allow: []string{"a.com", "*.b.com", "c.com"}, pass: []string{"c.com", "x.b.com"}, change: "x.b.com passed undecrypted"},
+		{req: ctlRequest{Cmd: "add", Pass: true, Hosts: []string{"z.com"}}, change: "z.com passed undecrypted", note: "z.com is not among the hosts recorded"},
+		{req: ctlRequest{Cmd: "remove", Pass: true, Hosts: []string{"c.com"}}, allow: []string{"a.com", "*.b.com", "c.com"}, change: "c.com no longer passed undecrypted"},
+		{req: ctlRequest{Cmd: "set", AllowHosts: []string{"a.com"}}, allow: []string{"a.com"}, change: "*.b.com, c.com removed, c.com no longer passed undecrypted"},
+	} {
+		next, notes, err := newScope(cur, c.req)
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%s: %v, want %q", c.req, err, c.err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", c.req, err)
+			continue
+		}
+		if got := changes(cur, next); got != c.change {
+			t.Errorf("%s: changes %q, want %q", c.req, got, c.change)
+		}
+		if c.allow != nil && (!slices.Equal(next.Hosts, c.allow) || !slices.Equal(next.PassHosts, c.pass)) {
+			t.Errorf("%s: %q %q", c.req, next.Hosts, next.PassHosts)
+		}
+		if c.note != "" && !slices.ContainsFunc(notes, func(n string) bool { return strings.Contains(n, c.note) }) {
+			t.Errorf("%s: notes %q, want %q", c.req, notes, c.note)
+		}
+	}
+	// A host both named and under a wildcard stays recorded once removed: refused.
+	if _, _, err := newScope(scopeOf(t, []string{"api.b.com", "*.b.com"}, nil), ctlRequest{Cmd: "remove", Hosts: []string{"api.b.com"}}); err == nil || !strings.Contains(err.Error(), "stays recorded through *.b.com") {
+		t.Errorf("named and under a wildcard: %v", err)
+	}
+	// Under "*" (run --allow-hosts '*'): named through it.
+	if _, _, err := newScope(scopeOf(t, []string{"*"}, nil), ctlRequest{Cmd: "remove", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "through *:") {
+		t.Errorf("under *: %v", err)
+	}
+	// Passed hosts need hosts recorded.
+	if _, _, err := newScope(scopeOf(t, []string{"c.com"}, []string{"*.c.com"}), ctlRequest{Cmd: "remove", Hosts: []string{"c.com"}}); err == nil || !strings.Contains(err.Error(), "need hosts recorded") {
+		t.Errorf("pass hosts left alone: %v", err)
+	}
+}
+
+// Off a terminal, nothing is asked of run; in LAN mode run refuses; a run
+// without ctl.sock but with mcp.sock is an older one.
+func TestCaptureRefusals(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvc-") // short socket paths
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	asked := make(chan struct{}, 1)
+	ln, err := net.Listen("unix", filepath.Join(dir, ctlSock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			asked <- struct{}{}
+			c.Close()
+		}
+	}()
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	if err := captureIn(ctx, r, w, dir, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "only in a terminal") {
+		t.Errorf("off a terminal: %v", err)
+	}
+	select {
+	case <-asked:
+		t.Error("off a terminal: run was asked")
+	case <-time.After(100 * time.Millisecond):
+	}
+	ln.Close()
+
+	// LAN mode: refused by run, over the socket (as the CLI asks it).
+	lanDir, _ := os.MkdirTemp("/tmp", "rcvc-")
+	defer os.RemoveAll(lanDir)
+	if err := serveCtl(ctx, lanDir, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(lanDir, ctlSock))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("ctl.sock: %v, mode %v", err, fi.Mode().Perm())
+	}
+	if err := sendCapture(ctx, io.Discard, lanDir, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "LAN mode") || !strings.Contains(err.Error(), "nothing changed") {
+		t.Errorf("LAN mode: %v", err)
+	}
+
+	// A v1.0 run: mcp.sock, no ctl.sock.
+	old, _ := os.MkdirTemp("/tmp", "rcvc-")
+	defer os.RemoveAll(old)
+	if err := mcpserver.Serve(ctx, filepath.Join(old, "mcp.sock"), mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: "v1.0.0"}, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sendCapture(ctx, io.Discard, old, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "this run is v1.0.0: restart it with v1.1") {
+		t.Errorf("older run: %v", err)
+	}
+	none, _ := os.MkdirTemp("/tmp", "rcvc-")
+	defer os.RemoveAll(none)
+	if err := sendCapture(ctx, io.Discard, none, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}}); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("none running: %v", err)
+	}
+}
+
+// A run that takes the connection and never answers (Ctrl-Z): the CLI gives up.
+func TestCaptureNoAnswer(t *testing.T) {
+	dir, _ := os.MkdirTemp("/tmp", "rcvc-")
+	defer os.RemoveAll(dir)
+	ln, err := net.Listen("unix", filepath.Join(dir, ctlSock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	old := ctlWait
+	ctlWait = 300 * time.Millisecond
+	defer func() { ctlWait = old }()
+	done := make(chan error, 1)
+	go func() {
+		done <- sendCapture(context.Background(), io.Discard, dir, ctlRequest{Cmd: "add", Hosts: []string{"a.com"}})
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "did not answer") {
+			t.Errorf("%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waits for a run that does not answer")
+	}
+}
+
+// next_steps: with nothing recorded, the command that adds hosts while run
+// runs (with its --state); in LAN mode (none), the restart.
+func TestCaptureStep(t *testing.T) {
+	defer func() { mcpserver.CaptureAddCmd = "" }()
+	stats := map[string]any{"state": "ready"}
+	mcpserver.CaptureAddCmd = withState("reqcove capture add", "/tmp/my state")
+	steps := nextSteps(exitnode.Status{Backend: "Running"}, stats, capture.HostRules{}, capture.CA{}, nil)
+	if !slices.Contains(steps, "nothing is recorded: add your app's hosts, in your terminal: reqcove capture add --state '/tmp/my state' api.example.com") {
+		t.Errorf("%q", steps)
+	}
+	mcpserver.CaptureAddCmd = ""
+	steps = nextSteps(exitnode.Status{Mode: "lan"}, stats, capture.HostRules{}, capture.CA{}, nil)
+	if !slices.ContainsFunc(steps, func(s string) bool { return strings.Contains(s, "restart with --allow-hosts") }) {
+		t.Errorf("LAN mode: %q", steps)
+	}
+}
+
+// TestCaptureE2E (REQCOVE_E2E=1, real mitmproxy): reqcove capture over
+// ctl.sock against a real capture. Started with nothing recorded, the step
+// names capture add; after add, a new connection is recorded; after remove,
+// one is not; each change leaves its log line, a cli marker and status's trace.
+func TestCaptureE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvc-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	state := filepath.Join(dir, "s")
+	c, err := capture.Start(ctx, capture.Config{Dir: state, Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	logged := logTo(t)
+	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
+	defer func() { mcpserver.CaptureAddCmd = "" }()
+	if err := serveCtl(ctx, state, c, false); err != nil {
+		t.Fatal(err)
+	}
+	node := exitnode.Status{Backend: "Running"}
+	nothing := "nothing is recorded: add your app's hosts, in your terminal: " + withState("reqcove capture add", state) + " api.example.com"
+	if steps := liveStatus(node, c).NextSteps; !slices.Contains(steps, nothing) {
+		t.Errorf("at the start: %q", steps)
+	}
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer origin.Close()
+	socks, _ := proxy.SOCKS5("tcp", c.SocksAddr, &proxy.Auth{User: "dev", Password: c.SocksSecret}, proxy.Direct)
+	hc := &http.Client{Transport: &http.Transport{DialContext: socks.(proxy.ContextDialer).DialContext, DisableKeepAlives: true}, Timeout: 30 * time.Second}
+	get := func(path string) {
+		t.Helper()
+		r, err := hc.Get(origin.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}
+	stat := func(k string) string { return fmt.Sprint(c.Store.Stats()[k]) }
+	waitStat := func(k, want string) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); stat(k) != want; time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: %s, want %s", k, stat(k), want)
+			}
+		}
+	}
+	change := func(req ctlRequest) string {
+		t.Helper()
+		var out strings.Builder
+		if err := sendCapture(ctx, &out, state, req); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	// paths are the flows' paths, oldest first: a request that was to be
+	// recorded, sent before one that is, would be there first.
+	paths := func() []string {
+		var out []string
+		flows, _ := c.Store.List(capture.Filter{Limit: 10})
+		for _, f := range flows {
+			out = append([]string{strings.TrimPrefix(f.URL, origin.URL)}, out...)
+		}
+		return out
+	}
+	get("/before")
+	if out := change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.1"}}); !strings.HasPrefix(out, "applied: 127.0.0.1 added; 0 records kept; not saved") || !strings.Contains(out, "new connections only: reopen the app") {
+		t.Errorf("add: %q", out)
+	}
+	get("/added")
+	waitStat("flows", "1")
+	if got := paths(); !slices.Equal(got, []string{"/added"}) {
+		t.Errorf("after add: %q", got)
+	}
+	s := liveStatus(node, c)
+	if slices.Contains(s.NextSteps, nothing) || !slices.Equal(s.AllowHosts, []string{"127.0.0.1"}) || s.ScopeChange != "capture add 127.0.0.1" || s.ScopeChangedAt == "" || s.ScopePending != "" {
+		t.Errorf("after add: steps %q, allow %q, change %q at %q, pending %q", s.NextSteps, s.AllowHosts, s.ScopeChange, s.ScopeChangedAt, s.ScopePending)
+	}
+	waitLog(t, logged, "capture add 127.0.0.1 (reqcove capture, from a terminal): applied: 127.0.0.1 added", 1)
+
+	if out := change(ctlRequest{Cmd: "remove", Hosts: []string{"127.0.0.1"}}); !strings.HasPrefix(out, "applied: 127.0.0.1 removed; 1 records kept") || !strings.Contains(out, "open connections stay decrypted") {
+		t.Errorf("remove: %q", out)
+	}
+	get("/removed")
+	if s := liveStatus(node, c); s.ScopeChange != "capture remove 127.0.0.1" || !slices.Contains(s.NextSteps, nothing) {
+		t.Errorf("after remove: change %q, steps %q", s.ScopeChange, s.NextSteps)
+	}
+	if out := change(ctlRequest{Cmd: "remove", Hosts: []string{"127.0.0.1"}}); out != "nothing changed; 127.0.0.1 was not recorded\n" {
+		t.Errorf("remove again: %q", out)
+	}
+	change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.1"}})
+	get("/again")
+	waitStat("flows", "2")
+	if got := paths(); !slices.Equal(got, []string{"/added", "/again"}) {
+		t.Errorf("after remove, then add again: %q", got)
+	}
+	var marks []string
+	for _, m := range c.Store.Markers(0) {
+		marks = append(marks, m.Source+": "+m.Text)
+	}
+	if !slices.Equal(marks, []string{"cli: capture add 127.0.0.1", "cli: capture remove 127.0.0.1", "cli: capture add 127.0.0.1"}) { // none for the change that changed nothing
+		t.Errorf("markers: %q", marks)
+	}
+}

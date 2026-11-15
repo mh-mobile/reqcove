@@ -348,10 +348,10 @@ func lan(_ context.Context, args []string) error {
 	return lanIn(os.Stdin, os.Stdout, *state, words[0], words[1], use)
 }
 
-// wordsAndFlags splits args into words and flags (--state takes the next
-// argument), for the commands whose words may come anywhere among their flags.
-// After --, all are words (reqcove mark -- -5% coupon).
-func wordsAndFlags(args []string) (words, flags []string) {
+// wordsAndFlags splits args into words and flags (--state, and the valued
+// flags named, take the next argument), for the commands whose words may come
+// anywhere among their flags. After --, all are words (reqcove mark -- -5% coupon).
+func wordsAndFlags(args []string, valued ...string) (words, flags []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -362,7 +362,7 @@ func wordsAndFlags(args []string) (words, flags []string) {
 			continue
 		}
 		flags = append(flags, a)
-		if name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "="); name == "state" && !hasValue && i+1 < len(args) {
+		if name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "="); (name == "state" || slices.Contains(valued, name)) && !hasValue && i+1 < len(args) {
 			i++
 			flags = append(flags, args[i])
 		}

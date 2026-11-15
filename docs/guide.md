@@ -144,6 +144,48 @@ nothing from `reqcove links`.
 
 Tried: a restart under a Claude Code session.
 
+### Change what is recorded while it runs
+
+Since v1.1, the hosts recorded change without a restart, so the records stay.
+In your terminal:
+
+```sh
+reqcove capture add api.example.com          # record it too
+reqcove capture remove api.example.com       # stop recording it
+reqcove capture add --pass pinned.example.com     # carry it undecrypted (as --pass-hosts)
+reqcove capture remove --pass pinned.example.com  # decrypt it again
+reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # all of them at once
+```
+
+Hosts are written as `--allow-hosts` takes them; `--state DIR` for a node
+other than the default one. Each answer says what happened: applied, or
+pending (mitmproxy has not acknowledged it yet, restarting say: it applies once
+mitmproxy is back), how many records are kept, and the limits below.
+
+- **New connections only.** An added host is decrypted on new connections:
+  an app keeps its connection open for a while, so reopen it to see the host
+  now. A removed host is no longer recorded from the next event on, but its
+  open connections stay decrypted (unrecorded) until they close.
+- **Not saved.** A restart of `run` goes back to the hosts it was started with
+  (its flags or `--config`); saving comes in a later version.
+- **Refused:** `"*"`, removing a host a wildcard takes in (the answer names
+  the wildcard: remove that, or use `set`), a change that takes out a host a
+  `mock` rule names (the answer names the rules), and any change in LAN mode
+  (not in this version: restart `run` there). A `run` older than v1.1 says so.
+- **Only in a terminal**, as `reqcove mark`: agents never run it. A tool's
+  note, or a step in `next_steps`, gives `reqcove capture add HOST` for you to
+  run. That is a guard against mistakes, not a boundary
+  ([SECURITY](SECURITY.md#other-processes-on-this-computer)).
+- **A trace:** each change is a line in `run`'s log, a marker with source
+  `cli` (`list_markers`), and in `reqcove status` "last changed at … (capture
+  add api.example.com)" (`scope_change`, `scope_changed_at` in `--json`).
+
+Tried by tests only (unit, and E2E with real mitmproxy: add, then a new
+connection is recorded; remove, then one is not; the marker and status); not
+on an iPhone. The pending answer and a `mock` rule's refusal, as `reqcove
+capture` gives them, are from reading the code (the change underneath, its
+pending state and the refusal, has tests of its own).
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
@@ -2421,8 +2463,9 @@ a listed one; a datagram sent from this computer).
 ### A computer shared with other users
 
 What keeps other users out, and what is not covered:
-[SECURITY](SECURITY.md#a-computer-shared-with-other-users). The three
-sockets it names are the MCP tools' and mitmproxy's two. What another user
+[SECURITY](SECURITY.md#a-computer-shared-with-other-users). The four
+sockets it names are the MCP tools', `reqcove capture`'s (`ctl.sock`; 0600,
+a test) and mitmproxy's two. What another user
 can still see or reach, in full:
 
 - **`ps`.** `run`'s and mitmproxy's command lines, with the device names,

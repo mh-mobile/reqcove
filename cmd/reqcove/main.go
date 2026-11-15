@@ -66,6 +66,9 @@ Usage:
                      the client addresses LAN mode carries, in your terminal only
   reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
                      terminal only (never for an agent)
+  reqcove capture add HOST… | capture remove HOST… | capture set --allow-hosts HOSTS
+                     change the hosts the running reqcove records, in your terminal only
+                     (--pass: the hosts carried undecrypted; not saved: a restart goes back)
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
@@ -137,6 +140,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"mark":    mark,
 	"service": service,
 	"mock":    mockCmd,
+	"capture": captureCmd,
 }
 
 // noFlags are the commands that take nothing.
