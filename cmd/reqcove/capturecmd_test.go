@@ -194,7 +194,7 @@ func TestCaptureRefusals(t *testing.T) {
 	// LAN mode: refused by run, over the socket (as the CLI asks it).
 	lanDir, _ := os.MkdirTemp("/tmp", "rcvc-")
 	defer os.RemoveAll(lanDir)
-	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}); err != nil {
+	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}, nil); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(lanDir, ctlSock))
@@ -315,7 +315,7 @@ func TestCaptureE2E(t *testing.T) {
 	logged := logTo(t)
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	defer func() { mcpserver.CaptureAddCmd = "" }()
-	if _, err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}
@@ -436,7 +436,7 @@ func TestCaptureStopE2E(t *testing.T) {
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	mcpserver.CaptureStartCmd = withState("reqcove capture start", state)
 	defer func() { mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start" }()
-	if _, err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}
@@ -559,7 +559,7 @@ func TestCaptureAllowAllE2E(t *testing.T) {
 	captureEndCmd = withState("reqcove capture allow-all --end", state)
 	allowAllNotes = []string{"--mcp-http: agents on your other devices (Grok Bot in xAI's cloud) read these records too"}
 	defer func() { captureEndCmd, allowAllNotes = "reqcove capture allow-all --end", nil }()
-	if _, err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	node := exitnode.Status{Backend: "Running"}

@@ -89,6 +89,9 @@ Usage:
                      the hosts agents asked to record (request_capture_add): approve
                      (it shows them and asks y/N) adds them as capture add does; in
                      your terminal only
+  reqcove console    open a page of run's state and the agents' requests (Approve,
+                     Deny) in this computer's browser, on 127.0.0.1 only; in your
+                     terminal only
   reqcove reload     read the config, its hosts files and the --rules file again, and
                      put their hosts and rules in force together (all or nothing), in
                      your terminal only; other settings take a restart
@@ -166,6 +169,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"mock":    mockCmd,
 	"capture": captureCmd,
 	"reload":  reloadCmd,
+	"console": consoleCmd,
 }
 
 // noFlags are the commands that take nothing.

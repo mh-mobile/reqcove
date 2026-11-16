@@ -196,7 +196,7 @@ func (q *captureRequests) pendingLocked(id string) (*capReq, ctlAnswer) {
 }
 
 // deny is the deny op: the same hosts are refused for 10 minutes.
-func (q *captureRequests) deny(id string) ctlAnswer {
+func (q *captureRequests) deny(id, via string) ctlAnswer {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	r, no := q.pendingLocked(id)
@@ -205,7 +205,7 @@ func (q *captureRequests) deny(id string) ctlAnswer {
 	}
 	mono, _ := q.now()
 	r.state, r.ended = "denied", mono
-	log.Printf("capture request %s (%s): denied in the terminal", id, strings.Join(r.hosts, " "))
+	log.Printf("capture request %s (%s): denied in the %s", id, strings.Join(r.hosts, " "), via)
 	return ctlAnswer{OK: true, Message: "denied: " + strings.Join(r.hosts, ", ") + " not recorded; the agent's request for them again is refused for 10 minutes", Requests: []mcpserver.CaptureRequest{q.view(r)}}
 }
 
@@ -302,8 +302,11 @@ func approve(q *captureRequests, req ctlRequest, apply func(why string, hosts []
 	return q.finish(r, apply(requestWhy(r.hosts, req.Via), r.hosts))
 }
 
-// errOlderRun: a v1.1 run, which has no requests.
-var errOlderRun = errors.New("this run is v1.1, which has no agents' requests: restart it with v1.2 or later (a restart empties the records); nothing changed")
+// errOlderRun: a v1.1 run, which has no requests; errOlderUI: nor reqcove console's page.
+var (
+	errOlderRun = errors.New("this run is v1.1, which has no agents' requests: restart it with v1.2 or later (a restart empties the records); nothing changed")
+	errOlderUI  = errors.New("this run is v1.1, which has no page: restart it with v1.2 or later (a restart empties the records); nothing opened")
+)
 
 // v11Usage starts a v1.1 run's answer to an op it does not know.
 const v11Usage = "refused: usage: reqcove capture add"

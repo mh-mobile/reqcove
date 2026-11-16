@@ -515,6 +515,55 @@ not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
 marker and `scope_change`; approved while stopped). A real client's dialog
 (Claude Code, Codex) was not tried.
 
+#### See the state and approve in a page (`reqcove console`)
+
+```sh
+reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
+```
+
+Since v1.2, `reqcove console` asks the running `run` for a page of its state and
+of the agents' requests, and opens it with `open` (macOS) or `xdg-open`
+(Linux); when that fails, open the printed link yourself. The page shows
+what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
+binary, the service, the config and hosts files, keep awake, the node and its
+devices, what is recorded (on, stopped, or allow-all and until when, with the
+hosts) and a change pending, and the next steps; and the requests waiting,
+each with its hosts, until when, and **Approve** and **Deny**. Approve adds
+the hosts the page showed, as `reqcove capture approve` does (`run` refuses
+other hosts), traced "capture add HOST (asked by an agent, approved in the
+page)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
+the hosts, stop and start, save, allow-all and discovery stay commands.
+
+- **This computer only:** `run` listens on 127.0.0.1, on a port the system
+  picks, from the first `reqcove console` until `run` ends; never on the tailnet
+  node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
+  requests are refused there, as ever).
+- **The link works once, for 60 seconds:** it carries a one-use code after
+  `#`, which the page trades for a session kept in that tab alone (the
+  browser forgets it when the tab closes; `run` keeps it until the limits
+  below) and then takes out of the address bar. `reqcove console` again
+  gives a new link. A link opened a second time closes every page of
+  `reqcove console` and says so: someone else may have had it. At most 4 pages
+  at once (a 5th closes the one used least recently); one unused for 12
+  hours closes; a restart of `run` closes them all.
+- **Never shown:** the flows' contents, any token, link or login URL, and any
+  text from an agent or an MCP client (the hosts it asked for are checked as
+  host names first).
+- In a terminal only, as the `capture` commands; a `run` older than v1.2 says
+  to restart it with v1.2.
+
+Tried by tests only: unit (the listener on 127.0.0.1 only; a wrong Host, a
+cross-site or missing Origin, a body other than JSON, a GET or PUT where a
+change is a POST, no session, a wrong one, a cookie alone, the code once,
+60 seconds by either clock, a code used twice closing every session, 4
+sessions, 12 hours idle by either clock; an approval for other hosts refused,
+approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
+`no-referrer` on every answer; no code or token in the answers or `run`'s
+log; LAN mode; the terminal check, the link printed and handed to a stand-in for `open`, a v1.1
+`run`), and E2E with real mitmproxy (approved in the console through its
+listener, the `mcp` marker "approved in the console"). The page was not tried
+in a real browser.
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
