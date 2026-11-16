@@ -408,8 +408,8 @@ request holds, traced "approved in the page"; a denial as `capture deny`.
   cookie, and takes the code out of the address bar. A code traded a second
   time ends every session and the page says so. At most 4 sessions, in
   `run`'s memory only, each ending after 12 hours unused and all at `run`'s
-  end. The code and tokens are kept as hashes, never logged and never in an
-  answer but the trade's own (tests).
+  end. The code and tokens are never logged and never in an answer but the
+  trade's own (tests); `run` keeps them as hashes (from the code).
 - **What it guards against:** a page open in the browser (another site, or
   one pointing its own name at 127.0.0.1): every request must name exactly
   `127.0.0.1:PORT` as its Host, a change is a POST with the page's own Origin
@@ -419,9 +419,9 @@ request holds, traced "approved in the page"; a denial as `capture deny`.
   page sets `default-src 'self'` and `frame-ancestors 'none'`, `no-store`
   and `no-referrer`, loads nothing from elsewhere and puts every value in as
   text. Another user of this computer reaches the port (127.0.0.1 is every
-  user's) but without a session gets the page's own files alone; a tailnet
-  device or the LAN does not reach 127.0.0.1. Tests check each of these; the
-  page was not tried in a real browser.
+  user's) but without a session gets the page's own files alone (tests
+  without a session; another user was not tried); a tailnet device or the
+  LAN does not reach 127.0.0.1. The page was not tried in a real browser.
 - **What it does not guard against:** an agent that can run commands as your
   user: it can run `reqcove ui` itself through a pseudo terminal and trade the
   code before you, or write to `ctl.sock` directly, as above (if you then open

@@ -539,8 +539,9 @@ the hosts, stop and start, save, allow-all and discovery stay commands.
   node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
   requests are refused there, as ever).
 - **The link works once, for 60 seconds:** it carries a one-use code after
-  `#`, which the page trades for a session kept in that tab alone (closing
-  the tab ends it) and then takes out of the address bar. `reqcove ui` again
+  `#`, which the page trades for a session kept in that tab alone (the
+  browser forgets it when the tab closes; `run` keeps it until the limits
+  below) and then takes out of the address bar. `reqcove ui` again
   gives a new link. A link opened a second time closes every page of
   `reqcove ui` and says so: someone else may have had it. At most 4 pages
   at once (a 5th closes the one used least recently); one unused for 12
