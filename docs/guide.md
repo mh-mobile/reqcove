@@ -426,7 +426,8 @@ console)"; Deny is `reqcove capture deny`.
 - **`reqcove console --end`** (since v1.3) closes every page and ends every
   link not opened yet; the pages say so. `reqcove console` again opens a new
   one. A `run` older than v1.3 says to restart it with v1.3.
-- **Never shown:** the flows' contents, any token, link or login URL, the
+- **Never shown:** the flows' contents on the page (the HAR file, below,
+  gives the records, masked, when you ask), any token, link or login URL, the
   `--mask-values` patterns, what an `@FILE` holds, and any
   text from an agent or an MCP client (the hosts it asked for are checked as
   host names first). Discovery's names are shown when they are host names
@@ -510,7 +511,7 @@ code).
 
 ### Change the settings, then restart
 
-Since v1.3 its **Settings** panel writes `run`'s settings to the `--config`
+Since v1.3 the page's **Settings** panel writes `run`'s settings to the `--config`
 file, for the next start, and restarts `run`:
 - `--device` (a list of your own devices on the tailnet, untagged, as
   `run`'s node sees them: the page writes the device's StableID and shows its
