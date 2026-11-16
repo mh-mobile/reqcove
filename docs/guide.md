@@ -163,7 +163,9 @@ nothing from `reqcove links`.
   empties the records.
 
 Tried: a restart under a Claude Code session. What `reqcove status` says
-after an update: unit tests only (a v1.0.0 `run` faked).
+after an update: unit tests (a v1.0.0 `run` faked), and by hand (2026-11-16)
+after `brew upgrade` from v1.1.0 to a v1.2 build under `brew services`: it
+named the version difference, then `brew services restart reqcove`.
 
 ### Change what is recorded while it runs
 
@@ -485,8 +487,9 @@ and the agent's answer gives you the command to run, such as
   Accept alone, where Claude Code's cursor starts, approves nothing). Decline,
   close it, accept without the box, an error or no answer within 2 minutes
   leaves it pending, for the terminal or `reqcove console`. Tried in Claude
-  Code's terminal (2026-11-16): the dialog shows, Esc leaves it pending, the
-  console approves it; the box, by unit tests only. It is not
+  Code's terminal CLI (2026-11-16): the dialog shows, with the box; Esc
+  leaves the request pending, and so does Accept with the box unticked;
+  ticked, Accept approves it ("approved in the dialog"). It is not
   shown again when the agent asks again for the same hosts. A client that
   declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
   protocol the client shows the dialog between two calls: its answer counts
@@ -515,7 +518,7 @@ and the agent's answer gives you the command to run, such as
 - As the other `capture` commands: in a terminal only, and a `run` older than
   v1.2 says to restart it with v1.2.
 
-Tried by tests only: unit (the hosts taken and refused, the limits, expiry
+Tried: unit tests (the hosts taken and refused, the limits, expiry
 by either clock, the denial kept, a restart, an approval for other hosts, the
 y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check, a denied
 host asked with another, `unmasked` in every view under `--no-redact`; the
@@ -527,8 +530,10 @@ client asking 2026-07-28 in `initialize` (answered 2025-11-25, and given the
 dialog between two calls, as the SDK treats it); neither tool over `--mcp-http`), and E2E with real
 mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
 not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
-marker and `scope_change`; approved while stopped). A real client's dialog
-(Claude Code, Codex) was not tried.
+marker and `scope_change`; approved while stopped); by hand in Claude Code's
+terminal CLI (2026-11-16): its dialog as above, a request left pending
+approved in `reqcove console`, and one that expired by itself. Not tried:
+Codex's dialog.
 
 #### See the state and approve in a page (`reqcove console`)
 
@@ -567,7 +572,7 @@ the hosts, stop and start, save, allow-all and discovery stay commands.
 - In a terminal only, as the `capture` commands; a `run` older than v1.2 says
   to restart it with v1.2.
 
-Tried by tests only: unit (the listener on 127.0.0.1 only; a wrong Host, a
+Tried: unit tests (the listener on 127.0.0.1 only; a wrong Host, a
 cross-site or missing Origin, a body other than JSON, a GET or PUT where a
 change is a POST, no session, a wrong one, a cookie alone, the code once,
 60 seconds by either clock, a code used twice closing every session, 4
@@ -576,8 +581,11 @@ approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
 `no-referrer` on every answer; no code or token in the answers or `run`'s
 log; LAN mode; the terminal check, the link printed and handed to a stand-in for `open`, a v1.1
 `run`), and E2E with real mitmproxy (approved in the console through its
-listener, the `mcp` marker "approved in the console"). The page was not tried
-in a real browser.
+listener, the `mcp` marker "approved in the console"); by hand in a
+Chromium-based browser on macOS (2026-11-16): the page showed the state and
+the agents' requests, and Approve applied the hosts (traced "approved in the
+console"). Not tried: the page in another browser, another user of this
+computer.
 
 ### Use one CA on two computers
 
@@ -2424,6 +2432,10 @@ no internet; turn the exit node off then.
   read, and warns when two services for reqcove are installed at once, or
   when `reqcove service install`'s service runs a binary that is gone or is
   not this one (`reqcove service install` again points it at this one).
+  Since v1.3 it also names the other `reqcove` files on your shell's PATH
+  (none of them run; `type reqcove` says which one your shell runs); this
+  computer's agents and `reqcove status --json` get the same from `run`'s
+  own PATH (a service's may differ). Unit tests.
 - **A `run` in your terminal** on the same state as a service finds it in
   use: stop the service first.
 - **Sleep**: `run` keeps the Mac from idle sleep while it runs
@@ -2450,13 +2462,15 @@ no internet; turn the exit node off then.
   each, status); two `caffeinate` assertions seen side by side in `pmset -g
   assertions`; `run --keep-awake=ac` on AC power holding `PreventSystemSleep`
   (not `always`'s `PreventUserIdleSystemSleep`) and `reqcove status` saying
-  so. Not tried: a real sleep with `ac` or `never`.
+  so. Not tried: a real sleep on battery with `ac`, nor with `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or
-another one), with service files written in a temporary home. Not tried by
-hand: the journeys of this table with v1.1 (`brew upgrade` with a service
-running, `reqcove service install` over an installed one).
+another one), with service files written in a temporary home. By hand
+(2026-11-16): `brew upgrade` from v1.1.0 to a v1.2 build with `brew services`
+running, `reqcove status` naming the version difference, then `brew services
+restart reqcove`. Not tried by hand: `reqcove service install` over an
+installed one.
 
 ### The config file (`--config`)
 

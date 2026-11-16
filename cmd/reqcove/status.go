@@ -101,6 +101,49 @@ func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
 		out.KeepAwake = o.keepAwake
 	}
 	out.NextSteps = append(out.NextSteps, serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "")...)
+	if s := otherOnPathStep(out.Executable, os.Getenv("PATH")); s != "" { // run's PATH: a service's may not be your shell's
+		out.NextSteps = append(out.NextSteps, s)
+	}
+	return out
+}
+
+const otherOnPathPrefix = "other reqcove on PATH: "
+
+// otherOnPathStep names the reqcove executables on path other than self (its
+// symlinks resolved), or "" when there are none.
+func otherOnPathStep(self, path string) string {
+	others := otherOnPath(self, path)
+	if len(others) == 0 {
+		return ""
+	}
+	return otherOnPathPrefix + strings.Join(others, ", ") + " (your shell runs the first one; `type reqcove`)"
+}
+
+// otherOnPath are the executable files named reqcove in path's absolute
+// directories, as path names them, but self and duplicates (by their
+// symlinks resolved). None of them is run.
+func otherOnPath(self, path string) []string {
+	if r, err := filepath.EvalSymlinks(self); err == nil {
+		self = r
+	}
+	seen := map[string]bool{self: true}
+	var out []string
+	for _, dir := range filepath.SplitList(path) {
+		if !filepath.IsAbs(dir) {
+			continue // "" and relative entries: they depend on the directory you are in
+		}
+		p := filepath.Join(dir, "reqcove")
+		fi, err := os.Stat(p)
+		if err != nil || !fi.Mode().IsRegular() || fi.Mode()&0o111 == 0 {
+			continue
+		}
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, p)
+	}
 	return out
 }
 
@@ -444,6 +487,11 @@ func status(ctx context.Context, args []string) error {
 		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
 			out.NextSteps = append(out.NextSteps, w)
 		}
+	}
+	// Your shell's PATH and this binary, not run's (a service's PATH is its own).
+	out.NextSteps = slices.DeleteFunc(out.NextSteps, func(s string) bool { return strings.HasPrefix(s, otherOnPathPrefix) })
+	if s := otherOnPathStep(self, os.Getenv("PATH")); s != "" {
+		out.NextSteps = append(out.NextSteps, s)
 	}
 	if out.Mode == "lan" {
 		printLANStatus(os.Stdout, out.LAN)
