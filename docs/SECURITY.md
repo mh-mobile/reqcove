@@ -404,9 +404,59 @@ through `reqcove mcp`).
   (an E2E test). Requests live in memory only, and a restart of `run` drops
   them.
 
+Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
+with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does
+and exec the binary it was started from, in the same process
+([guide](guide.md#restart-in-place-reqcove-restart)). Before it stops, it
+checks the config and the command line itself, then asks the binary it would
+exec to check them (a hidden check mode of `run`'s, with the same
+arguments: it reads them as a start would, and starts nothing, takes no
+lock, creates no state directory and writes no file; tests). Refused by
+either, nothing stops (a test); a binary without the mode (built before it)
+leaves the check to `run`, which says so. What crosses the exec:
+- **The state's lock and this computer's page's port**, as open files: no other `run`
+  takes the state, and no other process the port, in between (an E2E test
+  tries the lock throughout; that no one else bound the port was not tried
+  with another user). The new process makes them close-on-exec again before
+  it starts anything, so mitmdump and caffeinate never get them (tests: a
+  child of the new process holds neither).
+- **In its environment:** their numbers, the page's sessions as hashes with
+  how long each was unused (never a token or a code: the hashes let no one
+  in, and nothing logs them; tests), and the path of the start config's copy.
+  The new process unsets them before it starts anything (tests: a child's
+  environment holds none), but its own initial environment stays readable to
+  your user and root for its life (`ps -E`, `/proc/PID/environ`); hence
+  nothing secret goes there. Without the port, no session is taken.
+- **The start config's copy:** the bytes `run` read from `--config` at its
+  start, held in memory, written at the restart to a new file in the state
+  directory (0600, created anew, never through a symlink, a random name),
+  so that a failed start can put that config back. It can hold what the
+  config holds (`--mask-values` patterns): the same exposure as the config.
+  The new process reads it only from the path in its environment, and only a
+  plain file of your user's, mode 0600, named as a copy, directly in a
+  reqcove state directory; anything else is neither read nor removed, and no
+  start is retried (tests). It is removed once the new start is up, or when
+  the retry fails and `run` stays down; a copy a crash left is removed by the
+  next start in that state directory, after the same checks, never the one
+  handed over before the retry is decided (tests).
+- **Not carried:** the records, markers and the agents' requests (in memory),
+  the console's links not opened yet, the tailnet page and its sessions
+  (they end with the run; from reading the code). The retry is made once (marked in the
+  environment): a start that fails again stays down.
+
+### The `reqcove console` pages
+
 <a id="reqcove-console-page"></a>
-Since v1.2 **`reqcove console`** opens a page of `run`'s state and of these
-requests, with Approve and Deny, in this computer's browser
+`run` serves two pages, both opened from your terminal and both served by
+`run` itself, their sessions in its memory alone: since v1.2
+**`reqcove console`**'s, on 127.0.0.1 for this computer, and since v1.3
+**`reqcove console --tailnet`**'s, for your own devices on the tailnet. This
+section says what each lets in, then, in one place, what neither guards
+against and what never reaches a page. Each point says whether a test
+checks it or it comes from reading the code.
+
+Since v1.2 **`reqcove console`** opens a page of `run`'s state and of the
+agents' requests (above), with Approve and Deny, in this computer's browser
 ([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). An approval goes as
 `reqcove capture approve` does, for the hosts the request holds, traced
 "approved in the console"; a denial as `capture deny`. Since v1.3 the page
@@ -445,7 +495,7 @@ It shows `--mask-values` as "set" and a count, never a pattern, and an
 `@FILE` by its path, never what it holds (a test: no pattern in any answer
 or log line). A restart from the page lists first every setting that
 differs from the ones `run` started with and asks; it is the op of
-`reqcove restart`, with its checks (below).
+`reqcove restart`, with its checks ([above](#other-processes-on-this-computer)).
 
 Since v1.3 the page also turns the `--rules` file's presets on (for 1 to 5
 minutes; a mock for a count too) and off, as `activate_preset` and
@@ -511,44 +561,6 @@ files given are logged "(from the console on this computer)".
   macOS (2026-11-16): the page showed the state and the requests, and Approve
   applied the hosts ("approved in the console"); another browser was not
   tried.
-- **What it does not guard against:** an agent that can run commands as your
-  user: it can run `reqcove console` itself through a pseudo terminal and trade the
-  code before you, or write to `ctl.sock` directly, as above (if you then open
-  the link, it was used: every session ends and the page says so). The file
-  that holds the link is 0600 in the 0700 state directory: root and your
-  user can read it, for up to 60 seconds (a `run` killed meanwhile leaves it
-  until its next start, its code expired long before). v1.2's `reqcove
-  console`, against any `run`, still gives the link in the opener's
-  arguments, which `ps` shows other users for a moment; v1.3's, against a
-  v1.2 `run` (no file), opens nothing and prints the link alone (a test). A
-  code traded by someone else first shows as above. In the moment before your tab's trade fails and ends every session,
-  that other session can approve a pending request: `reqcove capture
-  requests` then shows it approved in the console (read from the code; that a
-  second trade ends every session is tested). Since v1.3 a session can
-  change the hosts too, as `reqcove capture` can: such a session (yours, or
-  one traded first by someone else) can turn on allow-all for up to 24 hours,
-  recording every app's traffic for agents to read, or stop recording; the
-  log and the markers show it "(from the console on this computer)". Since
-  v1.3 such a session can also write the settings above for the next start
-  and restart `run`: send the decrypted requests on to a proxy it names
-  (`--upstream-proxy`, unmasked there), serve the records to your devices on
-  the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
-  name out of `--mask-names`, and restart, which empties the records; the
-  log names each flag written "(from the console on this computer)", and
-  `config.prev` holds the file before. Since v1.3 such a session can also
-  turn on one of your `--rules` file's presets for up to 5 minutes (a
-  `map_remote` preset sends the device's matching requests, with their
-  cookies and tokens, to the destination your file names), and download the
-  records as a HAR file, masked. What it shows is not secret beyond
-  `reqcove status` and the config, but for the list of your own devices on
-  the tailnet (their machine names), to pick from, and, since v1.3, the
-  presets' names, kinds and `map_remote` destinations (as `list_presets`
-  gives an agent), the rules' kinds and preset names, the CA's name and
-  fingerprint, and the records themselves as a HAR file, masked, when
-  asked: never the flows' contents on the page itself, a token, a
-  link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, an
-  `--upstream-proxy` value `run` would refuse (a password written in by
-  hand: a test), or text from an agent or an MCP client.
 
 <a id="tailnet-console-page"></a>
 Since v1.3 **`reqcove console --tailnet`** opens a second page, for your
@@ -596,64 +608,84 @@ hides (tests: every other route of this computer's page refused, Save too).
   session header (`X-Reqcove-Session`) is masked in any record, with
   `--no-redact` too, as a second guard (unit tests; an E2E test with real
   mitmproxy under allow-all; not tried in an iPhone's Safari).
-- **Never shown there:** this computer's paths (the binary, the config and
-  hosts files, the state directory in a command's `--state`: taken out of
-  every answer; a test with a `--state` not the default), discovery's names
-  (their count alone; tests, unit and E2E), and what this computer's page
-  never shows.
-- **What it does not guard against:** the code, not the own-device check, is
-  the boundary. The check tells your user's devices from others', not one of
-  your devices from another: a device shared on your account (a family iPad
-  signed in as you), this computer's other OS users (when this computer is
-  on the tailnet as you, they reach the node from it), and a cloud or CI
-  machine signed in to the tailnet as you (an agent's) are your own devices
-  to it. Whoever trades the code first has the session, as on this
-  computer's page. An agent with a shell can run `reqcove console --tailnet`
-  itself, as `reqcove console`; one that drives the browser or the phone's
-  screen acts as you there, and nothing tells it apart. An agent with the
-  MCP tools alone gets no code nor any way to make one: no tool opens a page
-  (the skill and the server's instructions tell agents never to run
-  `reqcove console`). Not tried on an iPhone or a real tailnet with devices
-  of your own.
 
-Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
-with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does
-and exec the binary it was started from, in the same process
-([guide](guide.md#restart-in-place-reqcove-restart)). Before it stops, it
-checks the config and the command line itself, then asks the binary it would
-exec to check them (a hidden check mode of `run`'s, with the same
-arguments: it reads them as a start would, and starts nothing, takes no
-lock, creates no state directory and writes no file; tests). Refused by
-either, nothing stops (a test); a binary without the mode (built before it)
-leaves the check to `run`, which says so. What crosses the exec:
-- **The state's lock and the page's port**, as open files: no other `run`
-  takes the state, and no other process the port, in between (an E2E test
-  tries the lock throughout; that no one else bound the port was not tried
-  with another user). The new process makes them close-on-exec again before
-  it starts anything, so mitmdump and caffeinate never get them (tests: a
-  child of the new process holds neither).
-- **In its environment:** their numbers, the page's sessions as hashes with
-  how long each was unused (never a token or a code: the hashes let no one
-  in, and nothing logs them; tests), and the path of the start config's copy.
-  The new process unsets them before it starts anything (tests: a child's
-  environment holds none), but its own initial environment stays readable to
-  your user and root for its life (`ps -E`, `/proc/PID/environ`); hence
-  nothing secret goes there. Without the port, no session is taken.
-- **The start config's copy:** the bytes `run` read from `--config` at its
-  start, held in memory, written at the restart to a new file in the state
-  directory (0600, created anew, never through a symlink, a random name),
-  so that a failed start can put that config back. It can hold what the
-  config holds (`--mask-values` patterns): the same exposure as the config.
-  The new process reads it only from the path in its environment, and only a
-  plain file of your user's, mode 0600, named as a copy, directly in a
-  reqcove state directory; anything else is neither read nor removed, and no
-  start is retried (tests). It is removed once the new start is up, or when
-  the retry fails and `run` stays down; a copy a crash left is removed by the
-  next start in that state directory, after the same checks, never the one
-  handed over before the retry is decided (tests).
-- **Not carried:** the records, markers and the agents' requests (in memory),
-  the console's links not opened yet. The retry is made once (marked in the
-  environment): a start that fails again stays down.
+<a id="console-limits"></a>
+
+#### What the pages do not guard against
+
+- **The code is the boundary, on both pages.** Whoever trades a link's
+  one-use code first has the session. A code traded a second time ends
+  every session of that page and the page says so (tests), but in the
+  moment before your tab's trade fails, the other session can act, an
+  approval of a pending request included (`reqcove capture requests` then
+  shows it approved in the console; read from the code). On the tailnet
+  page the own-device check comes on top of the code, not in its place.
+- **A device shared on your account is not told apart.** The own-device
+  check tells your user's devices from others', not one of your devices
+  from another: a device signed in as you that someone else uses (a family
+  iPad), this computer's other OS users (when this computer is on the
+  tailnet as you, they reach the node from it), and a cloud or CI machine
+  signed in to the tailnet as you (an agent's host) are your own devices to
+  it. Each still needs the code (from reading the code; not tried with a
+  second user or a real tailnet with devices of your own).
+- **An agent with a shell, or one that drives the browser or the phone's
+  screen, is not kept out.** `reqcove console`, `--tailnet`, `--end`,
+  `capture` and `restart` run only in a terminal, and the skill and the
+  server's instructions tell agents never to run them; that is a guard
+  against mistakes, not a boundary. A process of your user can give them a
+  pseudo terminal and trade the code before you, or write to `ctl.sock`
+  directly (above). An agent that drives the browser or the phone's screen
+  acts as you on a page you opened, and nothing tells it apart. An agent
+  with the MCP tools alone gets no code nor any way to make one: no tool
+  opens a page or reads the code file (the tool list has none; from reading
+  the code).
+- **What a session can do**, yours or one someone else traded first:
+  everything the page offers. On either page: change the hosts as
+  `reqcove capture` does, allow-all for up to 24 hours (every app's traffic
+  recorded for agents to read) or stop recording; approve an agent's
+  request; turn on one of your `--rules` file's presets for up to 5 minutes
+  (a `map_remote` preset sends the device's matching requests, with their
+  cookies and tokens, to the destination your file names). On this
+  computer's page also: write the settings above for the next start and
+  restart `run`, so send the decrypted requests on to a proxy it names
+  (`--upstream-proxy`, unmasked there), serve the records to your devices on
+  the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
+  name out of `--mask-names`, and restart, which empties the records; and
+  download the records as a HAR file, masked. Each change is traced: `run`'s
+  log "(from the console on this computer)" or "(from the console on NAME,
+  over the tailnet)", a `cli` marker and `scope_change` for the hosts, and
+  `config.prev` for the file before a settings write (E2E and unit tests).
+- **The link on this computer:** the file that holds it is 0600 in the 0700
+  state directory, so root and your user can read it for up to 60 seconds (a
+  `run` killed meanwhile leaves it until its next start, its code expired
+  long before). v1.2's `reqcove console`, against any `run`, still gives the
+  link in the opener's arguments, which `ps` shows other users for a moment;
+  v1.3's, against a v1.2 `run` (no file), opens nothing and prints the link
+  alone (a test). The tailnet page's link is shown in your terminal alone (a
+  test).
+
+<a id="console-never-shown"></a>
+
+#### What never reaches a page
+
+- **On either page:** a token, a link with a token, a login URL, the
+  `--mask-values` patterns ("set" and a count), what an `@FILE` holds (its
+  path at most), an `--upstream-proxy` value `run` would refuse (a password
+  written in by hand), and text from an agent or an MCP client (the hosts it
+  asked for are checked as host names first); tests: no code or token in an
+  answer or `run`'s log, no pattern in any answer or log line, no rule's
+  value, description or error text. The flows' contents are never on the
+  page itself; this computer's page hands out the records as a HAR file,
+  masked, when you ask, and refuses it while `run` masks nothing (tests).
+- **Not on the tailnet page:** this computer's paths (the binary, the config
+  and hosts files, the state directory in a command's `--state`: taken out
+  of every answer; a test with a `--state` not the default), and
+  discovery's names (their count alone; tests, unit and E2E).
+- **What a page shows beyond `reqcove status` and the config:** the list of
+  your own devices on the tailnet (their machine names), to pick from on
+  this computer's page; the presets' names, kinds and `map_remote`
+  destinations (a scheme and host, as `list_presets` gives an agent); the
+  rules' kinds and preset names; the CA's name and fingerprint.
 
 ## Masking
 
