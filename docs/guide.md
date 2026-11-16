@@ -539,11 +539,20 @@ Codex's dialog.
 
 ```sh
 reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
+reqcove console --end    # ends every page open and every link not opened yet
 ```
 
 Since v1.2, `reqcove console` asks the running `run` for a page of its state and
-of the agents' requests, and opens it with `open` (macOS) or `xdg-open`
-(Linux); when that fails, open the printed link yourself. The page shows
+of the agents' requests, and prints its link. Since v1.3 it opens a file
+`run` wrote in the state directory with `open` (macOS) or `xdg-open`
+(Linux), never the link itself, which other users of this computer would see
+in `ps`: the file sends the browser on to the link, and `run` removes it
+after 60 seconds. When that fails, when the file opens in an app other than
+the browser (`open` picks the app for `.html` files, which may not be your
+web browser), or when the browser cannot read the state directory (a
+sandboxed one may not read `~/.reqcove`), open the printed link yourself;
+against a v1.2 `run`, which writes no file, it opens nothing and prints the
+link alone. The page shows
 what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
 binary, the service, the config and hosts files, keep awake, the node and its
 devices, what is recorded (on, stopped, or allow-all and until when, with the
@@ -566,6 +575,9 @@ the hosts, stop and start, save, allow-all and discovery stay commands.
   `reqcove console` and says so: someone else may have had it. At most 4 pages
   at once (a 5th closes the one used least recently); one unused for 12
   hours closes; a restart of `run` closes them all.
+- **`reqcove console --end`** (since v1.3) closes every page and ends every
+  link not opened yet; the pages say so. `reqcove console` again opens a new
+  one. A `run` older than v1.3 says to restart it with v1.3.
 - **Never shown:** the flows' contents, any token, link or login URL, and any
   text from an agent or an MCP client (the hosts it asked for are checked as
   host names first).
@@ -579,12 +591,17 @@ change is a POST, no session, a wrong one, a cookie alone, the code once,
 sessions, 12 hours idle by either clock; an approval for other hosts refused,
 approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
 `no-referrer` on every answer; no code or token in the answers or `run`'s
-log; LAN mode; the terminal check, the link printed and handed to a stand-in for `open`, a v1.1
-`run`), and E2E with real mitmproxy (approved in the console through its
+log; LAN mode; the terminal check, the link printed and the code file
+handed to a stand-in for `open`, the code never in its arguments, a v1.1
+`run`; the code file 0600, never through a symlink nor over a file, removed
+after its time, at `--end` and when `run` starts and ends; `--end` ending
+sessions and codes, in LAN mode too, and a v1.2 `run`'s answers), and E2E with real mitmproxy (approved in the console through its
 listener, the `mcp` marker "approved in the console"); by hand in a
 Chromium-based browser on macOS (2026-11-16): the page showed the state and
 the agents' requests, and Approve applied the hosts (traced "approved in the
-console"). Not tried: the page in another browser, another user of this
+console"). The file's link, its `#c=` kept, reached a page on 127.0.0.1 in
+headless Chromium and Firefox on macOS (2026-11-16). Not tried: the file in
+Safari, Linux's `xdg-open`, the page in another browser, another user of this
 computer.
 
 ### Use one CA on two computers

@@ -13,6 +13,23 @@
   shell's PATH and this binary; `status --json` and `status` (on this
   computer only, never over `--mcp-http`) give `run`'s, from `run`'s own PATH
   (a service's may differ). Unit tests.
+- **`reqcove console --end`** (in a terminal only, as `console`) ends every
+  session of the page and every link not opened yet; the pages say so, the
+  links say they were ended. A new ctl op, `console-end`, in LAN mode too; a
+  `run` older than v1.3 says to restart it with v1.3. Unit tests.
+
+### Changed
+
+- **`reqcove console` no longer gives the link with its code to `open` or
+  `xdg-open`**, whose arguments `ps` shows other users of this computer.
+  `run` writes a file in the state directory (0600, created anew, never
+  through a symlink, a random name) that sends the browser to the link;
+  `reqcove console` opens that file and still prints the link, to open by
+  hand when the browser cannot read the state directory. `run` removes the
+  file after 60 seconds, at `--end`, and when it ends and starts; the code's
+  60 seconds stay `run`'s, as before. Against a v1.2 `run` (no file) it opens
+  nothing and prints the link alone. Unit tests; the link's `#c=` kept
+  through the file in headless Chromium and Firefox (not tried: Safari).
 
 ## v1.2.0 — 2026-11-16
 

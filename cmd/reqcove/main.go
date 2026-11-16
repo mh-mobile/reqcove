@@ -90,8 +90,8 @@ Usage:
                      (it shows them and asks y/N) adds them as capture add does; in
                      your terminal only
   reqcove console    open a page of run's state and the agents' requests (Approve,
-                     Deny) in this computer's browser, on 127.0.0.1 only; in your
-                     terminal only
+                     Deny) in this computer's browser, on 127.0.0.1 only; --end ends
+                     every page and link; in your terminal only
   reqcove reload     read the config, its hosts files and the --rules file again, and
                      put their hosts and rules in force together (all or nothing), in
                      your terminal only; other settings take a restart

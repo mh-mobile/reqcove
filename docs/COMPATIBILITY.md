@@ -230,7 +230,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
-| `reqcove console` (since v1.2) | `--state` |
+| `reqcove console` (since v1.2) | `--end` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
@@ -248,7 +248,14 @@ stable ([below](#not-stable)).
 `run` older than v1.2 answers it with its usage, and `reqcove console` then says
 to restart `run` with v1.2 or later (a unit test with a v1.1 answer). The
 page's link (`http://127.0.0.1:PORT/#c=CODE`) and what it shows are not
-stable, nor its requests to `run` ([below](#not-stable)).
+stable, nor its requests to `run` ([below](#not-stable)). Since v1.3 `run`'s
+answer to `console` also names a file in the state directory that opens the
+page (`file`; a v1.2 `reqcove console` ignores it and opens the link, in its
+arguments, as before; a v1.3 one against a v1.2 `run` opens nothing and
+prints the link), and `reqcove console --end` asks with another new op,
+`console-end`: a v1.2 `run` answers it with its usage (in LAN mode, with its
+LAN refusal), and `reqcove console --end` then says to restart `run` with
+v1.3 or later (unit tests with both answers).
 
 ### The `--config` file
 

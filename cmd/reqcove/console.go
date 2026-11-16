@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"log"
 	"maps"
 	"mime"
@@ -17,9 +18,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -33,9 +37,12 @@ import (
 // --ui's page, from the first `reqcove console` until run ends. The link carries a
 // one-use code (60 s) in its fragment, which the page trades for a session
 // token it keeps in sessionStorage and sends as a header: no cookie, so a page
-// of another site open in the browser sends nothing that counts. Only in a
+// of another site open in the browser sends nothing that counts. The browser
+// gets the link from a file run writes in the state directory (since v1.3),
+// never from the opener's arguments, which `ps` shows other users. Only in a
 // terminal, as the capture commands: a speed bump for an agent, not a
-// boundary (any process of this user reaches ctl.sock).
+// boundary (any process of this user reaches ctl.sock). `reqcove console
+// --end` ends every session and unused code.
 
 const (
 	pageCodeTTL   = 60 * time.Second
@@ -49,30 +56,36 @@ const (
 //go:embed ui
 var pageFiles embed.FS
 
-// openBrowser opens url in the browser (tests stand in for it). The url is
-// in its arguments, so `ps` shows the code while it runs (SECURITY says so).
-var openBrowser = func(ctx context.Context, url string) error {
+// openBrowser opens file, the code file run wrote, in the browser (tests
+// stand in for it). Never the link: `ps` shows other users the arguments.
+var openBrowser = func(ctx context.Context, file string) error {
 	name := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		name = "open"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // xdg-open can wait for the browser
 	defer cancel()
-	return exec.CommandContext(ctx, name, url).Run()
+	return exec.CommandContext(ctx, name, file).Run()
 }
 
 func consoleCmd(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("console", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
+	end := fs.Bool("end", false, "end every session of the page and every link not opened yet")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *end {
+		return endIn(ctx, os.Stdin, os.Stdout, *state)
 	}
 	return uiIn(ctx, os.Stdin, os.Stdout, *state)
 }
 
+var errNotTerminal = errors.New("reqcove console runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
+
 func uiIn(ctx context.Context, in, out *os.File, state string) error {
 	if !terminal(in) || !terminal(out) {
-		return errors.New("reqcove console runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
+		return errNotTerminal
 	}
 	a, err := askRun(ctx, state, ctlRequest{Cmd: "console"})
 	if err != nil {
@@ -83,10 +96,64 @@ func uiIn(ctx context.Context, in, out *os.File, state string) error {
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/#c=%s", a.Port, a.Code)
 	fmt.Fprintf(out, "%s\n  %s\n", a.Message, url)
-	if err := openBrowser(ctx, url); err != nil {
+	if !codeFileName.MatchString(a.File) { // none: a v1.2 run, or run could not write it
+		fmt.Fprintln(out, "not opened in a browser (that would show the link to this computer's other users): open the link above yourself")
+		return nil
+	}
+	file, err := filepath.Abs(filepath.Join(state, a.File))
+	if err == nil {
+		err = openBrowser(ctx, file)
+	}
+	if err != nil {
 		fmt.Fprintf(out, "not opened in a browser (%v): open the link above yourself\n", err)
 	}
 	return nil
+}
+
+// endIn is `reqcove console --end`.
+func endIn(ctx context.Context, in, out *os.File, state string) error {
+	if !terminal(in) || !terminal(out) {
+		return errNotTerminal
+	}
+	return sendCapture(ctx, out, state, ctlRequest{Cmd: "console-end"})
+}
+
+// The code file: a page that sends the browser to the link, in the state
+// directory (0700), 0600, removed after codeFileTTL, at --end and when run
+// starts and ends.
+var (
+	codeFileName = regexp.MustCompile(`^console-[0-9a-f]{32}\.html$`)
+	codeFileTTL  = pageCodeTTL // tests shorten it
+)
+
+// writeCodeFile creates path, never one there already nor through a
+// symlink, holding a page that sends the browser to url.
+func writeCodeFile(path, url string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	u := html.EscapeString(url)
+	_, err = fmt.Fprintf(f, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=%s"><title>Reqcove</title><p><a href="%s">Open reqcove console</a> (this file is removed within 60 s)</p>`+"\n", u, u)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+	}
+	return err
+}
+
+// sweepCodeFiles removes the code files in dir; how many.
+func sweepCodeFiles(dir string) int {
+	n := 0
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if codeFileName.MatchString(e.Name()) && os.Remove(filepath.Join(dir, e.Name())) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // page is reqcove console's server. Codes and sessions are kept by their hash:
@@ -105,7 +172,7 @@ type page struct {
 
 type pageCode struct {
 	made, expires time.Time
-	used          bool
+	used, ended   bool // ended: by reqcove console --end, unused
 }
 
 // openPage is the console op (st.mu held): the page, opened once, and a new code.
@@ -123,8 +190,40 @@ func openPage(cap *capture.Capture, st *ctlState) ctlAnswer {
 	n := 0
 	fmt.Sscan(port, &n)
 	log.Print("reqcove console: a one-use code given to the terminal (60 s)") // never the code
-	return ctlAnswer{OK: true, Port: n, Code: code,
+	a := ctlAnswer{OK: true, Port: n, Code: code,
 		Message: "the page of this run, on this computer only (until run ends): open the link within 60 s; it works once (run reqcove console again for another)"}
+	name := "console-" + secret(16) + ".html"
+	path := filepath.Join(st.dir, name)
+	if err := writeCodeFile(path, fmt.Sprintf("http://127.0.0.1:%d/#c=%s", n, code)); err != nil {
+		log.Printf("reqcove console: the file that opens the page not written (%v): the terminal prints the link alone", err) // the path only
+		return a
+	}
+	time.AfterFunc(codeFileTTL, func() { os.Remove(path) })
+	a.File = name
+	return a
+}
+
+// endPage is the console-end op (st.mu held): every session and unused code
+// ended, the code files removed.
+func endPage(st *ctlState) ctlAnswer {
+	sweepCodeFiles(st.dir)
+	if st.page == nil {
+		return ctlAnswer{OK: true, Message: "no page of reqcove console was opened in this run: nothing to end"}
+	}
+	p := st.page
+	p.mu.Lock()
+	sessions, codes := len(p.sessions), 0
+	clear(p.sessions)
+	mono, wall := p.now()
+	for _, c := range p.codes {
+		if !c.used && !c.ended && !due(c.expires, mono, wall) {
+			codes++
+		}
+		c.ended = !c.used
+	}
+	p.mu.Unlock()
+	log.Printf("reqcove console --end: %d sessions and %d unused links ended", sessions, codes)
+	return ctlAnswer{OK: true, Message: fmt.Sprintf("ended: %d sessions of the page and %d links not opened yet; open pages say so (reqcove console opens a new one)", sessions, codes)}
 }
 
 // servePage listens on 127.0.0.1 alone until ctx ends.
@@ -231,6 +330,9 @@ func (p *page) trade(w http.ResponseWriter, r *http.Request) {
 	case c == nil:
 		answer(w, http.StatusForbidden, map[string]any{"error": "this link's code is not one this run gave (run restarted?): run reqcove console again in your terminal"})
 		return
+	case c.ended:
+		answer(w, http.StatusForbidden, map[string]any{"error": "this link was ended (reqcove console --end): run reqcove console again in your terminal"})
+		return
 	case c.used:
 		clear(p.sessions)
 		log.Print("reqcove console: a code was used twice: every session of the page ended (someone else opened the link?)")
@@ -254,7 +356,7 @@ func (p *page) trade(w http.ResponseWriter, r *http.Request) {
 func (p *page) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !p.live(r.Header.Get(sessionHeader)) {
-			answer(w, http.StatusUnauthorized, map[string]any{"error": "no session (ended, or run restarted): run reqcove console again in your terminal"})
+			answer(w, http.StatusUnauthorized, map[string]any{"error": "no session: ended (by reqcove console --end, a link opened twice or 12 h idle), or run restarted: run reqcove console again in your terminal"})
 			return
 		}
 		next(w, r)

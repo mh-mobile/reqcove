@@ -398,16 +398,19 @@ func TestPageLAN(t *testing.T) {
 	}
 }
 
-// reqcove console: in a terminal only; prints the link and opens it; a v1.1 run
-// says to restart it with v1.2.
+// reqcove console: in a terminal only; prints the link and opens the code
+// file, never the link (the code would show in ps); with no file (a v1.2
+// run), the link alone; a v1.1 run says to restart it with v1.2.
 func TestConsoleCmd(t *testing.T) {
 	ctx := context.Background()
+	code := strings.Repeat("ab", 16)
+	file := "console-" + strings.Repeat("cd", 16) + ".html"
 	dir, got := fakeCtlSock(t, func(req ctlRequest) ctlAnswer {
-		return ctlAnswer{OK: true, Message: "the page", Port: 4242, Code: strings.Repeat("ab", 16)}
+		return ctlAnswer{OK: true, Message: "the page", Port: 4242, Code: code, File: file}
 	})
 	var opened []string
 	was := openBrowser
-	openBrowser = func(_ context.Context, url string) error { opened = append(opened, url); return nil }
+	openBrowser = func(_ context.Context, f string) error { opened = append(opened, f); return nil }
 	defer func() { openBrowser, terminal = was, isTerminal }()
 	r, w, _ := os.Pipe()
 	defer r.Close()
@@ -421,9 +424,9 @@ func TestConsoleCmd(t *testing.T) {
 	if err := uiIn(ctx, r, out, dir); err != nil {
 		t.Fatal(err)
 	}
-	link := "http://127.0.0.1:4242/#c=" + strings.Repeat("ab", 16)
+	link := "http://127.0.0.1:4242/#c=" + code
 	b, _ := os.ReadFile(out.Name())
-	if !strings.Contains(string(b), "the page\n  "+link+"\n") || len(opened) != 1 || opened[0] != link || (*got)[0].Cmd != "console" {
+	if !strings.Contains(string(b), "the page\n  "+link+"\n") || len(opened) != 1 || opened[0] != filepath.Join(dir, file) || (*got)[0].Cmd != "console" {
 		t.Errorf("%q %q %+v", b, opened, *got)
 	}
 	openBrowser = func(context.Context, string) error { return errors.New("no browser") }
@@ -436,15 +439,220 @@ func TestConsoleCmd(t *testing.T) {
 		t.Errorf("%q", b)
 	}
 
+	openBrowser = func(_ context.Context, f string) error { opened = append(opened, f); return nil }
+	for _, f := range []string{"", "../console-" + strings.Repeat("cd", 16) + ".html", "/tmp/x.html", "console-x.html"} { // a v1.2 run, or not a code file's name
+		noFile, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer {
+			return ctlAnswer{OK: true, Message: "the page", Port: 4242, Code: code, File: f}
+		})
+		opened = nil
+		out.Truncate(0)
+		out.Seek(0, 0)
+		if err := uiIn(ctx, r, out, noFile); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(out.Name()); len(opened) != 0 || !strings.Contains(string(b), link) || !strings.Contains(string(b), "open the link above yourself") {
+			t.Errorf("file %q: %q %q", f, opened, b)
+		}
+	}
+
 	old, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer { return ctlAnswer{Message: v11Answer} })
 	if err := uiIn(ctx, r, out, old); !errors.Is(err, errOlderUI) || !strings.Contains(err.Error(), "restart it with v1.2") {
 		t.Errorf("v1.1: %v", err)
 	}
-	if err := captureCmd(ctx, []string{"console", "--state", dir}); err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("capture console: %v", err)
+	for _, op := range []string{"console", "console-end"} {
+		if err := captureCmd(ctx, []string{op, "--state", dir}); err == nil || !strings.Contains(err.Error(), "usage") {
+			t.Errorf("capture %s: %v", op, err)
+		}
+		if _, err := (ctlRequest{Cmd: op, Hosts: []string{"a.com"}}).normalized(); err == nil {
+			t.Errorf("%s with hosts", op)
+		}
 	}
-	if _, err := (ctlRequest{Cmd: "console", Hosts: []string{"a.com"}}).normalized(); err == nil {
-		t.Error("ui with hosts")
+}
+
+// The code file run writes: 0600, created, never one there already nor
+// through a symlink; it sends the browser to the link, and goes after
+// codeFileTTL. The code reaches the opener's arguments nowhere.
+func TestCodeFile(t *testing.T) {
+	logged := logTo(t)
+	codeFileTTL = 300 * time.Millisecond
+	defer func() { codeFileTTL = pageCodeTTL }()
+	state, _ := pageRun(t, &runOpts{})
+	a, err := askRun(context.Background(), state, ctlRequest{Cmd: "console"})
+	if err != nil || !codeFileName.MatchString(a.File) || strings.Contains(a.File, a.Code) {
+		t.Fatalf("%v %+v", err, a)
+	}
+	path := filepath.Join(state, a.File)
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("%v %v", err, fi)
+	}
+	b, _ := os.ReadFile(path)
+	link := "http://127.0.0.1:" + strconv.Itoa(a.Port) + "/#c=" + a.Code
+	if !strings.Contains(string(b), `<meta http-equiv="refresh" content="0;url=`+link+`">`) || !strings.Contains(string(b), `<a href="`+link+`">`) {
+		t.Errorf("%s", b)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the code file is still there")
+		}
+	}
+
+	// The opener: the file's path, never the link.
+	var args []string
+	was := openBrowser
+	openBrowser = func(_ context.Context, f string) error { args = append(args, f); return nil }
+	defer func() { openBrowser, terminal = was, isTerminal }()
+	terminal = func(*os.File) bool { return true }
+	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
+	defer out.Close()
+	if err := uiIn(context.Background(), out, out, state); err != nil || len(args) != 1 {
+		t.Fatalf("%v %q", err, args)
+	}
+	if b, _ := os.ReadFile(out.Name()); strings.Contains(args[0], "#c=") || strings.Contains(args[0], "http") || !strings.Contains(string(b), "#c=") {
+		t.Errorf("opened %q; printed %q", args[0], b)
+	}
+	for _, c := range regexp.MustCompile(`#c=([0-9a-f]+)`).FindAllStringSubmatch(string(b), -1) {
+		if strings.Contains(args[0], c[1]) || strings.Contains(logged.String(), c[1]) {
+			t.Errorf("the code in %q or the log", args[0])
+		}
+	}
+
+	// Never through a symlink, nor over a file there already.
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside")
+	os.WriteFile(outside, []byte("keep"), 0o600)
+	for _, target := range []string{outside, filepath.Join(dir, "missing")} {
+		p := filepath.Join(dir, "console-"+strings.Repeat("e", 32)+".html")
+		os.Remove(p)
+		os.Symlink(target, p)
+		if err := writeCodeFile(p, link); err == nil {
+			t.Errorf("through a symlink to %s", target)
+		}
+		if b, _ := os.ReadFile(outside); string(b) != "keep" {
+			t.Errorf("wrote %s: %q", outside, b)
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("created the symlink's target")
+		}
+		if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the symlink: %v %v", err, fi)
+		}
+	}
+	if err := writeCodeFile(outside, link); err == nil {
+		t.Error("over a file")
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "keep" {
+		t.Errorf("over a file: %q", b)
+	}
+
+	// The sweep: the code files alone.
+	os.WriteFile(filepath.Join(dir, "console-"+strings.Repeat("1", 32)+".html"), nil, 0o600)
+	if n := sweepCodeFiles(dir); n != 2 { // and the symlink
+		t.Errorf("swept %d", n)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*")); len(m) != 1 || m[0] != outside {
+		t.Errorf("left %v", m)
+	}
+
+	// Not written (the directory gone): the answer has the link, no file.
+	_, st := pageRun(t, &runOpts{})
+	st.dir = filepath.Join(dir, "gone")
+	if a := answerCtl(context.Background(), nil, st, ctlRequest{Cmd: "console"}); !a.OK || a.Code == "" || a.File != "" {
+		t.Errorf("%+v", a)
+	}
+	if !strings.Contains(logged.String(), "the file that opens the page not written") {
+		t.Errorf("log: %s", logged.String())
+	}
+}
+
+// reqcove console --end: every session and unused code ended, in LAN mode
+// too; the page says so; the code files gone; a later code works.
+func TestConsoleEnd(t *testing.T) {
+	for _, lan := range []bool{false, true} {
+		logged := logTo(t)
+		state, _ := pageRun(t, &runOpts{lanMode: lan})
+		end := func() ctlAnswer {
+			t.Helper()
+			a, err := askRun(context.Background(), state, ctlRequest{Cmd: "console-end"})
+			if err != nil || !a.OK {
+				t.Fatalf("lan %v: %v %+v", lan, err, a)
+			}
+			return a
+		}
+		if a := end(); !strings.Contains(a.Message, "nothing to end") {
+			t.Errorf("no page: %+v", a)
+		}
+		base, code := openUI(t, state)
+		s1 := trade(t, base, code)
+		_, unused := openUI(t, state)
+		_, unused2 := openUI(t, state)
+		if a := end(); !strings.Contains(a.Message, "ended: 1 sessions of the page and 2 links") {
+			t.Errorf("lan %v: %+v", lan, a)
+		}
+		if m, _ := filepath.Glob(filepath.Join(state, "console-*")); len(m) > 0 {
+			t.Errorf("code files after --end: %v", m)
+		}
+		if r, b := call(t, base, "GET", "/api/state", "", map[string]string{sessionHeader: s1}); r.StatusCode != 401 || !strings.Contains(b, "reqcove console --end") {
+			t.Errorf("a session after --end: %d %s", r.StatusCode, b)
+		}
+		for _, c := range []string{unused, unused2} {
+			if r, b := call(t, base, "POST", "/api/session", `{"code":"`+c+`"}`, nil); r.StatusCode != 403 || !strings.Contains(b, "ended (reqcove console --end)") {
+				t.Errorf("a code after --end: %d %s", r.StatusCode, b)
+			}
+		}
+		_, fresh := openUI(t, state)
+		s2 := trade(t, base, fresh)
+		if n, _ := pageStateOf(t, base, s2); n != 200 {
+			t.Errorf("a new session after --end: %d", n)
+		}
+		if r, b := call(t, base, "POST", "/api/session", `{"code":"`+code+`"}`, nil); r.StatusCode != 403 || !strings.Contains(b, "opened already") {
+			t.Errorf("a used code after --end: %d %s", r.StatusCode, b)
+		}
+		if !strings.Contains(logged.String(), "reqcove console --end: 1 sessions and 2 unused links ended") {
+			t.Errorf("log: %s", logged.String())
+		}
+		for _, c := range []string{code, unused, unused2, s1} {
+			if strings.Contains(logged.String(), c) {
+				t.Error("logged a code or token")
+			}
+		}
+	}
+}
+
+// reqcove console --end: in a terminal only; a v1.2 run (its usage, or in LAN
+// mode its refusal) says to restart it with v1.3.
+func TestConsoleEndCmd(t *testing.T) {
+	ctx := context.Background()
+	dir, got := fakeCtlSock(t, func(req ctlRequest) ctlAnswer { return ctlAnswer{OK: true, Message: "ended: 0 sessions"} })
+	defer func() { terminal = isTerminal }()
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	if err := endIn(ctx, r, w, dir); !errors.Is(err, errNotTerminal) || len(*got) != 0 {
+		t.Errorf("off a terminal: %v %+v", err, *got)
+	}
+	terminal = func(*os.File) bool { return true }
+	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
+	defer out.Close()
+	if err := endIn(ctx, r, out, dir); err != nil || len(*got) != 1 || (*got)[0].Cmd != "console-end" {
+		t.Errorf("%v %+v", err, *got)
+	}
+	if b, _ := os.ReadFile(out.Name()); string(b) != "ended: 0 sessions\n" {
+		t.Errorf("%q", b)
+	}
+	// What a v1.2 run answers an op it does not know (as this one answers one).
+	for _, lan := range []bool{false, true} {
+		v12 := answerCtl(ctx, nil, newCtlState(&runOpts{lanMode: lan}), ctlRequest{Cmd: "console-unknown"})
+		old, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer { return v12 })
+		if err := endIn(ctx, r, out, old); !errors.Is(err, errOlderEnd) || !strings.Contains(err.Error(), "restart it with v1.3") {
+			t.Errorf("lan %v: %v (%s)", lan, err, v12.Message)
+		}
+	}
+	if err := endIn(ctx, r, out, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") && !strings.Contains(err.Error(), "v1.3") {
+		t.Errorf("no run: %v", err)
 	}
 }
 
