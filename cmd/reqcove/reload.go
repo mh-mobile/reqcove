@@ -34,7 +34,7 @@ func reloadCmd(ctx context.Context, args []string) error {
 // reload answers reqcove reload. Called with st.mu held.
 func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string) ctlAnswer {
 	o := st.o
-	if o.config == "" && len(st.origin.files)+len(st.origin.passFiles) == 0 && o.rules == "" {
+	if o.config == "" && len(st.origin.files)+len(st.origin.passOrigin().files) == 0 && o.rules == "" {
 		return ctlAnswer{Message: "nothing to reload: this run was started from flags alone (no --config, no --allow-hosts=@FILE, no --rules): `reqcove capture` changes its hosts, a restart the rest; nothing changed"}
 	}
 	n, err := reloadFlags(o.args)

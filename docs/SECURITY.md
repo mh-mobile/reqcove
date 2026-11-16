@@ -642,7 +642,10 @@ Since v1.1, `reqcove setup` puts the hosts in a file beside it (`hosts`,
 0600), which the file reads with `--allow-hosts=@FILE`: what can write that
 file decides what the next start records too. `run` does not check its owner
 or mode (from reading the code); `reqcove capture save` writes it only when
-it is a plain file of yours.
+it is a plain file of yours. Since v1.3, on a config that names no hosts file,
+`capture save` asks y/N, then creates one beside it (0600, never over a file
+or link there) and adds its `--allow-hosts=@FILE` line to the config: only
+that line, never through a link nor to a config not yours (unit tests).
 [Details](guide.md#security-config).
 
 ## Prompt injection

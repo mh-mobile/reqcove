@@ -268,7 +268,7 @@ iOS シミュレーターのような、このコンピュータ自身のアプ�
 
 ### フラグのファイル（`--config`）
 
-`run --config FILE`（`brew services` と `reqcove service install` のためのもの）は、`run` のフラグをファイルから読みます。つまり、そのファイルに書き込めるものが、次の起動のフラグを決めます。v1.1 から、引数をまったく付けない `reqcove run` も `~/.config/reqcove/config`（なければ Homebrew の `etc/reqcove/config`）を同じ確認をして読みます。ファイルはあなたのもので、あなただけが読めるものでなければなりません。次の 5 つのフラグはファイルに書いても受け付けないので、コマンドラインで指定してください。`--no-redact`、`--web`、`--allow-hosts '*'`、`--rules-reload`、`--lan` です。v1.1 から、`reqcove setup` はホストをその隣のファイル（`hosts`、0600）に書き、フラグのファイルは `--allow-hosts=@FILE` でそれを読みます。そのファイルに書き込めるものも、次の起動で何を記録するかを決めます。`run` はこのファイルの持ち主もパーミッションも確かめません（コードから判断したものです）。`reqcove capture save` は、あなたの普通のファイルであるときだけ書きます。[詳細](guide.ja.md#security-config)
+`run --config FILE`（`brew services` と `reqcove service install` のためのもの）は、`run` のフラグをファイルから読みます。つまり、そのファイルに書き込めるものが、次の起動のフラグを決めます。v1.1 から、引数をまったく付けない `reqcove run` も `~/.config/reqcove/config`（なければ Homebrew の `etc/reqcove/config`）を同じ確認をして読みます。ファイルはあなたのもので、あなただけが読めるものでなければなりません。次の 5 つのフラグはファイルに書いても受け付けないので、コマンドラインで指定してください。`--no-redact`、`--web`、`--allow-hosts '*'`、`--rules-reload`、`--lan` です。v1.1 から、`reqcove setup` はホストをその隣のファイル（`hosts`、0600）に書き、フラグのファイルは `--allow-hosts=@FILE` でそれを読みます。そのファイルに書き込めるものも、次の起動で何を記録するかを決めます。`run` はこのファイルの持ち主もパーミッションも確かめません（コードから判断したものです）。`reqcove capture save` は、あなたの普通のファイルであるときだけ書きます。v1.3 から、ホストのファイルを指定していない config では、`capture save` は y/N を聞いてから、その隣にファイルを作り（0600。すでにあるファイルやリンクの上には作りません）、その `--allow-hosts=@FILE` の行を config に足します。足すのはその行だけで、リンクを通しては書かず、あなたのものでない config にも書きません（単体テスト）。[詳細](guide.ja.md#security-config)
 
 ## プロンプトインジェクション
 

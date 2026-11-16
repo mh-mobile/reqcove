@@ -133,6 +133,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - 置き場所：`reqcove service install`（その `--config` の既定値）と Homebrew なしの `reqcove setup` は `~/.config/reqcove/config`。Homebrew では `reqcove setup` が `$(brew --prefix)/etc/reqcove/config` に書き、`brew services` がそれを読みます。
 - v1.1 から、引数をまったく付けない `reqcove run`（以前は断っていました）は、`--config FILE` と同じように `~/.config/reqcove/config` を読みます。なければ Homebrew のもの（その `reqcove` が Homebrew のものであるとき）を読みます。どちらもなければ、これまでどおり `--device` を求めます。引数を 1 つでも付けた `run` は、v1.0 と同じく、`--config` で指定したときだけファイルを読みます。`--config` を付けない `reqcove service install` も同じファイルを使います（インストール済みなら、入っているサービスの `--config`）。
 - v1.1 から、`reqcove setup` はホストを、その隣の別のファイル `hosts`（`~/.config/reqcove/hosts` か `$(brew --prefix)/etc/reqcove/hosts`）に書きます。1 行に 1 つのホストで、`#` から後はコメントです。config には、そのファイルを読む `--allow-hosts=@FILE` の行を書きます。`reqcove capture save` が書き換えるのもこのファイルです。それより前に書いた config（`--allow-hosts` の行にホストがあるもの）は、これまでどおり読みます。
+- v1.3 から、ホストのないホストのファイル（`--allow-hosts=@FILE`、`--pass-hosts=@FILE`。コメントだけか空のもの）を受け付け、ホストを足しません（以前は「has no hosts」で拒否しました）。`--mask-names` や `--mask-values` の `@FILE` は、行がなければこれまでどおり拒否します。記録するホストが必要なもの（`--pass-hosts` のホスト、`--rules`、`--upstream-proxy`）は、フラグがあるかではなく、実際のホストで確かめます。そのため、空のファイルの `--pass-hosts=@FILE` は、`--allow-hosts` がなくても受け付けます（以前は拒否しました）。
+- v1.3 から、`reqcove capture save` は、ホストのファイルを指定していない config（`--allow-hosts=@FILE` や `--pass-hosts=@FILE` がないもの）に、y/N を聞いたうえで 1 行を最後に足し、そのファイルを隣に作ることがあります。前の config は `config.prev` として残します。ほかの行は変えません。
 
 ### 状態ディレクトリ
 

@@ -75,7 +75,7 @@ func TestConfigRefusesLAN(t *testing.T) {
 	fs, _, allow := testFlags()
 	fs.Bool("lan", false, "")
 	p := writeConfig(t, "--allow-hosts api.example.com\n--lan\n", 0o600)
-	if err := parseConfig(fs, p, allow); err == nil || !strings.Contains(err.Error(), "--lan only on the command line") {
+	if err := parseConfig(fs, p, allow, nil); err == nil || !strings.Contains(err.Error(), "--lan only on the command line") {
 		t.Errorf("--lan in --config: %v", err)
 	}
 }

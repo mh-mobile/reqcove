@@ -520,7 +520,7 @@ func TestRawTCPStep(t *testing.T) {
 }
 
 // --pass-hosts and @FILE: hosts one a line, comments, ~/; a line that is not
-// a host stops run, nothing in it run.
+// a host stops run, nothing in it run; a file without hosts gives none.
 func TestPassHostsFlag(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -544,9 +544,10 @@ func TestPassHostsFlag(t *testing.T) {
 	if _, err := hostList("@~/evil.txt"); err == nil || !strings.Contains(err.Error(), "line 2 is not a host list") || strings.Contains(err.Error(), "rm -rf") || strings.Contains(err.Error(), "S3CRET") {
 		t.Errorf("evil.txt: %v", err)
 	}
+	// A file without hosts gives none (capture save may leave one so).
 	os.WriteFile(filepath.Join(home, "empty.txt"), []byte("# nothing\n\n"), 0o600)
-	if _, err := hostList("@~/empty.txt"); err == nil || !strings.Contains(err.Error(), "has no hosts") {
-		t.Errorf("empty.txt: %v", err)
+	if got, err := hostList("@~/empty.txt"); err != nil || got != "" {
+		t.Errorf("empty.txt: %q %v", got, err)
 	}
 	args := func(extra ...string) []string {
 		return append([]string{"--device", "phone", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"}, extra...)
@@ -834,7 +835,7 @@ func TestRunService(t *testing.T) {
 func TestWithFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fakeServices(t, "/gone/reqcove", true)
-	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, passFiles: []string{"/c/pass"}}}
+	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, pass: &hostsOrigin{files: []string{"/c/pass"}}}}
 	out := withFiles(mcpserver.StatusOut{NextSteps: []string{"first"}}, o)
 	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(out.HostsFiles, []string{"/c/hosts", "/c/pass"}) {
 		t.Errorf("files: %+v", out)
@@ -899,5 +900,31 @@ func TestOtherOnPath(t *testing.T) {
 	}
 	if got := otherOnPathStep(filepath.Join(self, "reqcove"), strings.Join([]string{self, link, noExec, isDir}, string(os.PathListSeparator))); got != "" {
 		t.Errorf("step without another = %q, want none", got)
+	}
+}
+
+// What needs hosts recorded (--pass-hosts' hosts, --rules, --upstream-proxy)
+// is checked against the hosts given, not the flags: a hosts file without
+// hosts gives none, the hosts given as they are count.
+func TestDependsOnHostsGiven(t *testing.T) {
+	dir := t.TempDir()
+	empty, rules := filepath.Join(dir, "empty"), filepath.Join(dir, "rules.yaml")
+	os.WriteFile(empty, []byte("# none yet\n"), 0o600)
+	os.WriteFile(rules, []byte("mock: []\n"), 0o600)
+	for _, c := range []struct {
+		extra []string
+		want  string // "": taken
+	}{
+		{[]string{"--pass-hosts", "@" + empty}, ""},
+		{[]string{"--allow-hosts", "@" + empty, "--pass-hosts", "@" + empty}, ""},
+		{[]string{"--allow-hosts", "@" + empty, "--pass-hosts", "api.x.com"}, "--pass-hosts needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--rules", rules}, "--rules needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--upstream-proxy", "http://127.0.0.1:1"}, "--upstream-proxy needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--allow-hosts", "api.x.com", "--rules", rules, "--pass-hosts", "api.x.com"}, ""},
+	} {
+		_, err := reloadFlags(append([]string{"--device", "phone", "--state", dir}, c.extra...))
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%q: %v, want %q", c.extra, err, c.want)
+		}
 	}
 }
