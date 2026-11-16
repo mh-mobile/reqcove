@@ -254,6 +254,9 @@ type StatusOut struct {
 	// --keep-awake on macOS (always, ac or never). On this computer only.
 	Executable string `json:"executable,omitempty"`
 	KeepAwake  string `json:"keep_awake,omitempty"`
+	// CaptureRequests are the agents' requests to record more hosts that
+	// wait for the user (request_capture_add). On this computer only.
+	CaptureRequests []CaptureRequest `json:"capture_requests,omitempty"`
 	// DiscoverUntil (RFC 3339) and DiscoverLeft: when host discovery
 	// (reqcove capture discover) ends; none when off. OutOfScopeHosts: the
 	// names it saw outside the scope, most seen first (at most MaxOutHosts of

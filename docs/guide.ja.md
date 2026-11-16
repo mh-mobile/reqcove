@@ -192,6 +192,26 @@ v1.1 から、しばらくの間、記録しているホストの外でデバイ
 
 確認状況：テスト（単体テスト：オンの間だけ名前を取ること、Apple のホスト・mitm.it・不正な名前を除くこと、マスク、上限、mitmproxy が答えないときにどちらの時計でも終わること。本物の mitmproxy での E2E テスト：TLS 接続の SNI とリクエストの Host を、接続ごとに 1 回数えること、Apple のホストを数えないこと、それらを記録しないこと、`--mcp-http` と `--ui` が読むものに出ないこと、始める前と終わったあとは取らないこと、足したホストが一覧から消えること。summarize と status のツール：ローカルのサーバーだけ）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。サイトのホスト名が、`capture add` のコマンドと一緒に `reqcove status` と `summarize` に出て、そのうち 1 つを足すと記録しました。
 
+#### エージェントにホストを頼ませる（`reqcove capture approve`）
+
+```sh
+reqcove capture requests            # エージェントが頼んだものと、その結果
+reqcove capture approve 0a1b2c3d    # ホストを表示し、y/N を聞いてから足す
+reqcove capture deny 0a1b2c3d       # 断る
+```
+
+v1.2 から、`reqcove mcp` でつないだエージェントは、記録するホストを頼めます（`request_capture_add` ツール）。ホスト名を 1〜5 個です。頼むだけでは何も記録しません。`run` が頼みを、ID と固定したホストと一緒に保ち、エージェントの答えが、あなたが実行するコマンド（`reqcove capture approve 0a1b2c3d` など）を伝えます。エージェントには、それを自分で実行しないよう伝えています。
+
+- **承認**はホストを表示して `Approve? [y/N]` と聞きます。承認になるのは `y` か `yes` だけです。足すのはちょうどそのホストで、`reqcove capture add` と同じです。新しい接続からで、保存せず、復号せずに通すホストはそのまま残し、止めている記録は止めたままです（そのホストは `capture start` が記録するものになります）。ID はそのホストに結びついています。ほかのホストでの承認は拒否します。
+- **クライアントのダイアログ：** エージェントのクライアントがフォームを表示できると伝えたとき（MCP の elicitation）、`reqcove mcp` は新しい頼みについてダイアログも出します。文はすべて Reqcove のものです。ホスト（`run` がホスト名として確かめたもの）、エージェントがその通信をマスクした状態で読むこと（`--no-redact` ではマスクしないと伝えます。`approve` も同じです）、保存しないことを伝え、エージェントの言葉は出しません。受け入れると `approve` と同じく承認します。断る、閉じる、エラー、2 分以内に答えがないときは保留のまま残り、端末で承認できます。同じホストをまた頼まれても、もう一度は出しません。
+- **頼めるもの：** ホスト名だけです（英小文字、数字、`-`、`.`。ワイルドカードと IP アドレスは不可）。小文字にし、重複を除き、並べ替えます。拒否するもの：すべて記録済みのホスト、復号せずに通すホスト（`--pass-hosts`）、10 分以内にあなたが断ったのと同じホスト、4 つめの保留、10 分で 11 個めの頼み、LAN モードでのすべての頼み。保留の間に同じホストをまた頼むと、同じ頼みを返します。
+- **時間を限ります：** 頼みは作ってから 10 分で期限切れになります。このコンピュータの時計か `run` の経過時間の、早いほうです。終わった頼み（applied、failed、denied、expired）は、`capture requests` と `get_capture_request` のために、さらに 10 分残します。`run` を再起動すると、すべて消えます。
+- **表示する場所：** `reqcove status`（「asked:」とコマンド）、このコンピュータの `status`（`capture_requests`）、エージェントの `get_capture_request`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`）です。`--mcp-http` には、どちらのツールもありません。
+- **痕跡：** 状態が変わるたびに `run` のログに 1 行残ります。承認したときは、source が `mcp` のマーカーと `scope_change` も残ります。どちらも「capture add HOST (asked by an agent, approved in the terminal)」（ダイアログなら「in the dialog」）です。
+- ほかの `capture` のコマンドと同じく、端末でだけ動きます。v1.2 より古い `run` には、v1.2 で起動し直すよう伝えます。
+
+確認状況：テストだけです。単体テスト：受け付けるホストと拒否するホスト、上限、どちらの時計でも期限が切れること、断ったことを残すこと、再起動、ほかのホストでの承認、y/N の確認、v1.1 と v1.0 の `run`、LAN モード、端末の確認。ダイアログは、メモリ上のクライアントで、受け入れ・断り・キャンセル・エラー・時間内に答えない・機能なしを、MCP の最新のプロトコルと古いプロトコルで確認。`--mcp-http` にどちらのツールもないこと。本物の mitmproxy での E2E テスト：`reqcove mcp` から頼み、このコンピュータの status に出て `--mcp-http` の status には出ないこと、承認すると新しい接続を記録すること、`mcp` のマーカーと `scope_change`、止めている間の承認。本物のクライアント（Claude Code、Codex）のダイアログは試していません。
+
 ### 2 台のコンピュータで同じ CA を使う
 
 状態ディレクトリが同じであれば、CA も同じままです。秘密鍵を含む `~/.reqcove/mitmproxy/` をディレクトリごと、もう 1 台の `~/.reqcove/` にコピーします。コピー先の reqcove は止めておくか、初めて起動する前にコピーしてください。
@@ -263,7 +283,7 @@ cleanup が自分で行うことと、状態ディレクトリの削除を断る
 ### ツールを許可する
 
 - 読むツールには読み取り専用の注釈（`readOnlyHint`）を付けています。クライアントはこれを使って確認を減らせます（どのクライアントでも確かめていません）。
-- 読み取り専用の注釈を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
+- 読み取り専用の注釈を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）、`add_marker`（書き込むのは Reqcove のメモリだけ）、`request_capture_add`（あなたに頼むだけで、承認するまで何も記録しません）です。
 - Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の注釈のないツールも許可されます（プリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
 
 たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによるもので、ここでは試していません）。
@@ -276,7 +296,8 @@ cleanup が自分で行うことと、状態ディレクトリの削除を断る
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__request_capture_add", "mcp__reqcove__get_capture_request"],
     "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
@@ -1349,6 +1370,8 @@ iPhone で確認したもの：`--mask-names`、RoamRun で操作したあとの
 | `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
 | `add_marker` | [マーカー](#マーカーを置くreqcove-mark)を置く（`text` は 1 行で 80 文字まで、マスクする）。`id`、`time`（`since` 用）、`checkpoint`（`wait_for_flows` の `after` 用）を返す。デバイスの側は何も変わらない。`--mcp-http` からは使えない |
 | `list_markers` | マーカーを古い順に（`since`）。`source` は `cli`（`reqcove mark`）か `mcp`（エージェント）。`--mcp-http` からは使えない |
+| `request_capture_add` | ホスト名を 1〜5 個、記録するようあなたに頼む。承認するまで何も記録しない（[使い方](#エージェントにホストを頼ませるreqcove-capture-approve)）。`reqcove mcp` だけ（v1.2 から） |
+| `get_capture_request` | 頼み（`id`）の結果：`pending`、`applied`、`denied`、`expired` など。`reqcove mcp` だけ（v1.2 から） |
 
 ### WebSocket のメッセージ（`list_ws_messages`）
 

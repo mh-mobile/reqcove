@@ -4,6 +4,22 @@
 
 ### Added
 
+- **An agent asks, you approve: `request_capture_add`** (a tool of
+  `reqcove mcp` alone, never `run`'s socket nor `--mcp-http`) asks for 1 to
+  5 host names to be recorded; it records nothing itself. `run` keeps the
+  request (an id, the hosts fixed, 10 minutes by either clock, dropped at a
+  restart; 3 pending, 10 made in 10 minutes; the same hosts asked again give
+  the same request; refused when all are recorded already, passed
+  undecrypted, denied in the last 10 minutes, or in LAN mode). **`reqcove capture requests`, `capture
+  approve ID`** (shows the hosts, asks y/N) **and `capture deny ID`**, in a
+  terminal only; an approval adds exactly those hosts as `capture add` does
+  (not saved, never starts a stopped recording). A client that declares MCP
+  elicitation also gets a dialog with Reqcove's text alone (accept approves;
+  decline, close or 2 minutes without an answer leave it pending).
+  `get_capture_request` says what came of it; `status` (on this computer)
+  gives `capture_requests`, `reqcove status` "asked:". Traced in `run`'s log,
+  and on approval as a marker with source `mcp` and `scope_change`. Unit and
+  E2E tests; a real client's dialog not tried.
 - **`--keep-awake=always|ac|never`** (macOS; in the config file too): what
   `run` does about sleep. `always` is the default and v1.1's behaviour
   (`caffeinate -i`: no idle sleep, on battery too); `ac` holds it on AC power

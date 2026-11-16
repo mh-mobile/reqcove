@@ -362,30 +362,31 @@ func status(ctx context.Context, args []string) error {
 		ActiveErr string                `json:"active_presets_error"`
 		// v0.6 and v0.7's names (a run not yet restarted): read when the new
 		// ones are absent, never written (removed in v1.0).
-		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
-		OldActiveErr string                `json:"active_mock_presets_error"`
-		Service      string                `json:"service"`
-		AllowHosts   []string              `json:"allow_hosts"`
-		PassHosts    []string              `json:"pass_hosts"`
-		Recording    string                `json:"recording"`
-		BaseAllow    []string              `json:"base_allow_hosts"`
-		BasePass     []string              `json:"base_pass_hosts"`
-		AllUntil     string                `json:"allow_all_until"`
-		AllLeft      string                `json:"allow_all_left"`
-		Outside      int                   `json:"records_outside_scope"`
-		Pending      string                `json:"scope_pending"`
-		ChangedAt    string                `json:"scope_changed_at"`
-		Change       string                `json:"scope_change"`
-		Version      string                `json:"version"`
-		Manager      string                `json:"manager"`
-		ConfigFile   string                `json:"config_file"`
-		ConfigUnused string                `json:"config_unused"`
-		HostsFiles   []string              `json:"hosts_files"`
-		Executable   string                `json:"executable"`
-		KeepAwake    string                `json:"keep_awake"`
-		Seen         []mcpserver.OutHost   `json:"out_of_scope_hosts"`
-		SeenKept     int                   `json:"out_of_scope_hosts_kept"`
-		DiscUntil    string                `json:"discover_until"`
+		OldActive    []mcpserver.PresetOut      `json:"active_mock_presets"`
+		OldActiveErr string                     `json:"active_mock_presets_error"`
+		Service      string                     `json:"service"`
+		AllowHosts   []string                   `json:"allow_hosts"`
+		PassHosts    []string                   `json:"pass_hosts"`
+		Recording    string                     `json:"recording"`
+		BaseAllow    []string                   `json:"base_allow_hosts"`
+		BasePass     []string                   `json:"base_pass_hosts"`
+		AllUntil     string                     `json:"allow_all_until"`
+		AllLeft      string                     `json:"allow_all_left"`
+		Outside      int                        `json:"records_outside_scope"`
+		Pending      string                     `json:"scope_pending"`
+		ChangedAt    string                     `json:"scope_changed_at"`
+		Change       string                     `json:"scope_change"`
+		Version      string                     `json:"version"`
+		Manager      string                     `json:"manager"`
+		ConfigFile   string                     `json:"config_file"`
+		ConfigUnused string                     `json:"config_unused"`
+		HostsFiles   []string                   `json:"hosts_files"`
+		Executable   string                     `json:"executable"`
+		KeepAwake    string                     `json:"keep_awake"`
+		Seen         []mcpserver.OutHost        `json:"out_of_scope_hosts"`
+		SeenKept     int                        `json:"out_of_scope_hosts_kept"`
+		DiscUntil    string                     `json:"discover_until"`
+		Requests     []mcpserver.CaptureRequest `json:"capture_requests"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -492,6 +493,9 @@ func status(ctx context.Context, args []string) error {
 		hosts += "; a change pending: " + out.Pending
 	}
 	fmt.Printf("  recorded:    %s\n", hosts)
+	for _, r := range out.Requests {
+		fmt.Printf("  asked:       %s, by an agent (until %s): %s approves it\n", strings.Join(r.Hosts, ", "), localClock(r.ExpiresAt), r.Approve)
+	}
 	printSeen(os.Stdout, out.Seen, out.SeenKept, out.DiscUntil != "")
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])

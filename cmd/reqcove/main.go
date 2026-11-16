@@ -85,6 +85,10 @@ Usage:
                      for D (at most 24h), keep the names of the hosts outside the ones
                      recorded and how often (nothing they send), for this computer's
                      agents and reqcove status; in your terminal only
+  reqcove capture requests | capture approve ID | capture deny ID
+                     the hosts agents asked to record (request_capture_add): approve
+                     (it shows them and asks y/N) adds them as capture add does; in
+                     your terminal only
   reqcove reload     read the config, its hosts files and the --rules file again, and
                      put their hosts and rules in force together (all or nothing), in
                      your terminal only; other settings take a restart
@@ -248,7 +252,7 @@ func runMCP(ctx context.Context, args []string, agent mcp.Transport) error {
 		return err
 	}
 	// The agent's connection stays up while run restarts or is not running.
-	err := mcpserver.Proxy(ctx, filepath.Join(*state, "mcp.sock"), notRunningMsg(*state), agent)
+	err := mcpserver.Proxy(ctx, filepath.Join(*state, "mcp.sock"), notRunningMsg(*state), ctlRequests{state: *state, notRunning: notRunningMsg(*state)}, agent)
 	if ctx.Err() != nil {
 		return nil // a signal: not an error
 	}
