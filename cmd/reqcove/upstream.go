@@ -18,6 +18,20 @@ import (
 // parseUpstream checks --upstream-proxy (http://HOST:PORT, answering now) and
 // returns HOST:PORT for mitmproxy.
 func parseUpstream(raw, ca string) (string, error) {
+	host, err := upstreamAddr(raw, ca)
+	if host == "" || err != nil {
+		return host, err
+	}
+	c, err := net.DialTimeout("tcp", host, 3*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("--upstream-proxy %s does not answer (start it first): %w", host, err)
+	}
+	c.Close()
+	return host, nil
+}
+
+// upstreamAddr is parseUpstream without the dial.
+func upstreamAddr(raw, ca string) (string, error) {
 	if raw == "" {
 		if ca != "" {
 			return "", errors.New("--upstream-ca needs --upstream-proxy")
@@ -28,11 +42,6 @@ func parseUpstream(raw, ca string) (string, error) {
 	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
 		return "", errors.New("--upstream-proxy: want http://HOST:PORT (no user or password, no path)") // never the value: it may hold a password
 	}
-	c, err := net.DialTimeout("tcp", u.Host, 3*time.Second)
-	if err != nil {
-		return "", fmt.Errorf("--upstream-proxy %s does not answer (start it first): %w", u.Host, err)
-	}
-	c.Close()
 	return u.Host, nil
 }
 

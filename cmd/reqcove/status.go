@@ -39,22 +39,87 @@ func (n *nodeState) get() exitnode.Status  { n.mu.Lock(); defer n.mu.Unlock(); r
 // puts this node in their own tailnet. The steps point at run's terminal instead.
 func statusOut(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) mcpserver.StatusOut {
 	n.AuthURL = ""
-	service := ""
-	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
-	// homebrew.mxcl.NAME before, or reqcove service install's; not a terminal
-	// another brew service started. Under systemd, the unit says (service.go).
-	if v := os.Getenv("XPC_SERVICE_NAME"); slices.Contains(brewLabels, v) || v == serviceLabel {
-		service = v
-	} else if os.Getenv("REQCOVE_SERVICE") == serviceUnit {
-		service = serviceUnit
-	}
+	service, manager := runService()
 	hosts := allow.Hosts
 	if hosts == nil {
 		hosts = []string{} // [], not null: nothing is recorded
 	}
-	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service}
+	restart := restartCmd(service)
+	if self, _ := selfExe(); (service == serviceLabel || service == serviceUnit) && oursStale(runtime.GOOS, self) {
+		// As reqcove status says: restart alone would start that binary (or
+		// fail, gone) again. Not this binary's path: it may be the one gone.
+		restart = "reqcove service install"
+	}
+	out := mcpserver.StatusOut{Mode: cmp.Or(n.Mode, "tailnet"), Node: n, Capture: stats, NextSteps: nextSteps(n, stats, allow, ca, devices), AllowHosts: hosts, PassHosts: allow.PassHosts, Service: service,
+		Version: mcpserver.Version, Manager: manager, RestartCommand: restart}
 	if n.LAN != nil {
 		out.LAN = n.LAN
+	}
+	return out
+}
+
+// procCgroup is where Linux says which systemd unit runs this process (a var
+// for tests).
+var procCgroup = "/proc/self/cgroup"
+
+// runService is the service that started run, and what started it (status'
+// service and manager).
+func runService() (service, manager string) {
+	// launchd's label under brew services: sh.brew.NAME (Homebrew 2026, tried),
+	// homebrew.mxcl.NAME before, or reqcove service install's; not a terminal
+	// another brew service started. Under systemd, our unit says (service.go);
+	// Homebrew's is read from the cgroup (from reading systemd's docs, not tried).
+	if v := os.Getenv("XPC_SERVICE_NAME"); slices.Contains(brewLabels, v) || v == serviceLabel {
+		service = v
+	} else if os.Getenv("REQCOVE_SERVICE") == serviceUnit {
+		service = serviceUnit
+	} else if b, err := os.ReadFile(procCgroup); err == nil {
+		for _, u := range brewUnits {
+			if strings.Contains(string(b), "/"+u+"\n") {
+				service = u
+			}
+		}
+	}
+	switch {
+	case service == serviceLabel || service == serviceUnit:
+		manager = "reqcove service"
+	case service != "":
+		manager = "brew services"
+	case terminal(os.Stdin):
+		manager = "terminal"
+	}
+	return service, manager
+}
+
+// withFiles adds what only this computer's agents get: the files run read,
+// and what is wrong with the services installed.
+func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
+	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
+	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passFiles...)
+	out.NextSteps = append(out.NextSteps, serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "")...)
+	return out
+}
+
+// liveStatus is statusOut as run answers it: the scope mitmproxy has
+// acknowledged (it may have changed since the start) with its overlay, and
+// what is pending. While stopped allow_hosts is [] (nothing is recorded),
+// during allow-all ["*"]; the base is kept in base_allow_hosts.
+func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
+	base, until := cap.Scope(), cap.AllowAllUntil()
+	out := statusOut(n, cap.Store.Stats(), cap.Recorded(), cap.CA, cap.Store.Devices())
+	out.Recording, out.BaseAllowHosts, out.BasePassHosts = capture.RecordingOn, base.Hosts, base.PassHosts
+	switch {
+	case cap.Stopped():
+		out.Recording = capture.RecordingStopped
+	case !until.IsZero():
+		left := max(time.Until(until), 0).Round(time.Second)
+		out.Recording, out.AllowAllUntil, out.AllowAllLeft = capture.RecordingAllowAll, until.Format(time.RFC3339), left.String()
+		out.NextSteps = append([]string{fmt.Sprintf("allow-all is on: every app's traffic is recorded (agents and their providers can read it) until %s (%v left); to end it now, in your terminal: %s", until.Local().Format("15:04:05"), left, captureEndCmd)}, out.NextSteps...)
+	}
+	out.RecordsOutsideScope = cap.Store.OutsideScope(base)
+	out.ScopePending = cap.ScopePending()
+	if at, why := cap.LastChange(); !at.IsZero() {
+		out.ScopeChangedAt, out.ScopeChange = at.Format(time.RFC3339), why
 	}
 	return out
 }
@@ -111,6 +176,10 @@ func localStep() string {
 	return "this Mac's browsers warn on the allowed hosts. To record them too, trust Reqcove's CA once (TLS only; macOS asks for your password):\n" + macTrustCommand(localCA)
 }
 
+// captureEndCmd is the `reqcove capture allow-all --end` the steps name: run
+// sets it to its own (with --state).
+var captureEndCmd = "reqcove capture allow-all --end"
+
 // stepLinksCmd is the `reqcove links` the steps name: run sets it to its own
 // node's (with --state).
 var stepLinksCmd = "reqcove links"
@@ -118,8 +187,10 @@ var stepLinksCmd = "reqcove links"
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
-	if node.Backend == "" && node.Mode != "lan" {
-		steps = append(steps, "the tailnet node is starting")
+	// Before tsnet's first state, and while it connects (a few seconds after
+	// a start): not ready yet, though nothing else is asked.
+	if slices.Contains([]string{"", "NoState", "Starting"}, node.Backend) && node.Mode != "lan" {
+		steps = append(steps, "the tailnet node is starting: `reqcove status` in a few seconds says what is next")
 	}
 	steps = append(steps, lanSteps(node, devices)...)
 	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {
@@ -131,13 +202,23 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 		}
 	}
 	if st, _ := stats["state"].(string); st != "ready" {
-		steps = append(steps, fmt.Sprintf("mitmproxy is %s: %v (see mitmproxy.log in the state directory)", st, stats["state_detail"]))
+		retry := ""
+		if next, _ := stats["next_attempt"].(string); next != "" {
+			retry = fmt.Sprintf("; retry %v, the next at %s", stats["retries"], next)
+		}
+		steps = append(steps, fmt.Sprintf("mitmproxy is %s: %v%s (see mitmproxy.log in the state directory)", st, stats["state_detail"], retry))
 	}
 	if e, _ := stats["rules_error"].(string); e != "" {
-		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), or none, if mitmproxy restarted meanwhile")
+		steps = append(steps, "the --rules file does not load ("+e+"): the rules before it still apply until it is fixed (--rules-reload), after a restart of mitmproxy too")
 	}
-	if !allow.All && len(allow.Patterns) == 0 {
-		steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
+	if stats["recording"] == "stopped" {
+		steps = append(steps, "recording is stopped: nothing new is recorded and the --rules file's rules do not apply (mocks, map_remote: the app reaches the real servers); to record again, in your terminal: "+mcpserver.CaptureStartCmd)
+	} else if !allow.All && len(allow.Patterns) == 0 {
+		if mcpserver.CaptureAddCmd != "" {
+			steps = append(steps, "nothing is recorded: add your app's hosts, in your terminal: "+mcpserver.CaptureAddCmd+" api.example.com")
+		} else { // LAN mode: its hosts are set at the start
+			steps = append(steps, "nothing is recorded: restart with --allow-hosts api.example.com (your app's hosts)")
+		}
 	}
 	if slices.ContainsFunc(devices, func(d capture.DeviceInfo) bool { return d.ID == exitnode.Local.ID }) {
 		if s := localStep(); s != "" {
@@ -234,6 +315,18 @@ func status(ctx context.Context, args []string) error {
 	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
+	// brew services start (or a login) returns before its run takes the
+	// state: with a service for it installed, wait for that a moment.
+	if errors.Is(err, errNotRunning) && len(servicesFor(*state)) > 0 && waitState(*state, serviceStartWait, true) {
+		session, err = dialRun(ctx, *state, "reqcove-status")
+	}
+	// Right after a start (service install or restart) or a stop: wait a
+	// moment for the answer, running or not, rather than "starting up or
+	// shutting down".
+	for deadline := time.Now().Add(startWait); errors.Is(err, errStarting) && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+		session, err = dialRun(ctx, *state, "reqcove-status")
+	}
 	switch {
 	case *asJSON && (errors.Is(err, errNotRunning) || errors.Is(err, errStarting)):
 		return err // nothing on stdout: no status tool answered, and --json prints only its JSON
@@ -268,6 +361,25 @@ func status(ctx context.Context, args []string) error {
 		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
 		OldActiveErr string                `json:"active_mock_presets_error"`
 		Service      string                `json:"service"`
+		AllowHosts   []string              `json:"allow_hosts"`
+		PassHosts    []string              `json:"pass_hosts"`
+		Recording    string                `json:"recording"`
+		BaseAllow    []string              `json:"base_allow_hosts"`
+		BasePass     []string              `json:"base_pass_hosts"`
+		AllUntil     string                `json:"allow_all_until"`
+		AllLeft      string                `json:"allow_all_left"`
+		Outside      int                   `json:"records_outside_scope"`
+		Pending      string                `json:"scope_pending"`
+		ChangedAt    string                `json:"scope_changed_at"`
+		Change       string                `json:"scope_change"`
+		Version      string                `json:"version"`
+		Manager      string                `json:"manager"`
+		ConfigFile   string                `json:"config_file"`
+		ConfigUnused string                `json:"config_unused"`
+		HostsFiles   []string              `json:"hosts_files"`
+		Seen         []mcpserver.OutHost   `json:"out_of_scope_hosts"`
+		SeenKept     int                   `json:"out_of_scope_hosts_kept"`
+		DiscUntil    string                `json:"discover_until"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -277,8 +389,48 @@ func status(ctx context.Context, args []string) error {
 	}
 	n := out.Node
 	fmt.Printf("reqcove is running (%s)\n", *state)
+	// The version from serverInfo too: a run older than v1.1 has no field.
+	runV := out.Version
+	if ir := session.InitializeResult(); runV == "" && ir != nil && ir.ServerInfo != nil {
+		runV = ir.ServerInfo.Version
+	}
+	self, _ := selfExe()
+	if runV == version {
+		fmt.Printf("  version:     %s\n", runV)
+	} else {
+		// From service alone, which runs older than v1.1 give too.
+		cmd := restartCmd(out.Service)
+		if (out.Service == serviceLabel || out.Service == serviceUnit) && oursStale(runtime.GOOS, self) {
+			cmd = selfCmd() + " service install" // restart alone would start the old binary again
+		}
+		how := "to run this one, stop it (Ctrl-C in its terminal) and start it again with this reqcove"
+		if cmd != "" {
+			how = "to restart it: " + cmd
+		}
+		fmt.Printf("  version:     %s, this reqcove is %s: %s. A restart empties the records (`%s > flows.har` keeps them first), and while it is down, a phone using its exit node has no internet\n", orDash(runV), version, how, withState("reqcove har", *state))
+	}
 	if out.Service != "" {
 		fmt.Printf("  service:     %s (%s)\n", out.Service, serviceHint(out.Service, *state))
+	} else if out.Manager == "terminal" {
+		fmt.Println("  service:     none: started in a terminal")
+	}
+	if out.ConfigFile != "" || out.Version != "" { // a run older than v1.1 does not say
+		files := "none (flags only)"
+		if out.ConfigFile != "" {
+			files = out.ConfigFile
+		}
+		if len(out.HostsFiles) > 0 {
+			files += "; hosts: " + strings.Join(out.HostsFiles, ", ")
+		}
+		if out.ConfigUnused != "" {
+			files += "; also there, not read: " + out.ConfigUnused
+		}
+		fmt.Printf("  config:      %s\n", files)
+	}
+	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), self) {
+		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
+			out.NextSteps = append(out.NextSteps, w)
+		}
 	}
 	if out.Mode == "lan" {
 		printLANStatus(os.Stdout, out.LAN)
@@ -295,6 +447,40 @@ func status(ctx context.Context, args []string) error {
 		names = append(names, name)
 	}
 	fmt.Printf("  devices:     %s\n", orDash(strings.Join(names, ", ")))
+	hosts := orDash(strings.Join(out.AllowHosts, ", "))
+	if len(out.PassHosts) > 0 {
+		hosts += "; passed undecrypted: " + strings.Join(out.PassHosts, ", ")
+	}
+	switch out.Recording {
+	case capture.RecordingStopped:
+		hosts = "nothing: stopped (no rule applies); `reqcove capture start` records " + orDash(strings.Join(out.BaseAllow, ", "))
+		if len(out.BasePass) > 0 {
+			hosts += "; passed undecrypted: " + strings.Join(out.BasePass, ", ")
+		}
+	case capture.RecordingAllowAll:
+		end := out.AllUntil
+		if t, err := time.Parse(time.RFC3339, end); err == nil {
+			end = t.Local().Format("15:04:05")
+		}
+		hosts = fmt.Sprintf("every host: allow-all until %s (%s left), then %s (the rules apply to these alone)", end, out.AllLeft, orDash(strings.Join(out.BaseAllow, ", ")))
+		if len(out.BasePass) > 0 {
+			hosts += "; passed undecrypted: " + strings.Join(out.BasePass, ", ")
+		}
+	}
+	if out.Outside > 0 {
+		hosts += fmt.Sprintf("; %d records kept of hosts outside the allowed ones (allow-all's, or removed since)", out.Outside)
+	}
+	if out.ChangedAt != "" {
+		if t, err := time.Parse(time.RFC3339, out.ChangedAt); err == nil {
+			out.ChangedAt = t.Local().Format("2006-01-02 15:04:05")
+		}
+		hosts += fmt.Sprintf("; last changed at %s (%s), not saved", out.ChangedAt, out.Change)
+	}
+	if out.Pending != "" {
+		hosts += "; a change pending: " + out.Pending
+	}
+	fmt.Printf("  recorded:    %s\n", hosts)
+	printSeen(os.Stdout, out.Seen, out.SeenKept, out.DiscUntil != "")
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
 	presets, ok := c["presets"]
@@ -357,10 +543,20 @@ func offlineStatus(state, uvx string) error {
 	case !loggedIn(b):
 		fmt.Printf("  node:  not logged in yet; `%s` will ask you to log in\n", withState("reqcove run", state))
 	default:
-		fmt.Println("  node:  has logged in before (state kept)")
+		fmt.Println("  node:  has logged in before (state kept); while it is down, a phone using its exit node has no internet: turn the exit node off there, or start it")
 	}
 	printCA(os.Stdout, state, false)
-	fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
+	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "") {
+		fmt.Println("warning: " + w)
+	}
+	for _, s := range servicesFor(state) {
+		fmt.Printf("its service (%s) is installed: start it with %s\n", s.file, restartCmd(s.name))
+	}
+	if cfg, _ := bareConfig(); cfg != "" && isDefaultState(state) {
+		fmt.Printf("start it with: reqcove run (it reads %s)\n", cfg)
+	} else {
+		fmt.Println("start it with: " + withState("reqcove run --device NAME --allow-hosts api.example.com", state))
+	}
 	return nil
 }
 
@@ -371,6 +567,33 @@ func loggedIn(tailscaledState []byte) bool {
 	var keys map[string][]byte
 	var profiles map[string]json.RawMessage
 	return json.Unmarshal(tailscaledState, &keys) == nil && json.Unmarshal(keys["_profiles"], &profiles) == nil && len(profiles) > 0
+}
+
+// printSeen prints discovery's names (status' out_of_scope_hosts): kept of
+// them, on: discovery is on now.
+func printSeen(w io.Writer, seen []mcpserver.OutHost, kept int, on bool) {
+	if len(seen) == 0 && !on {
+		return
+	}
+	what := "host discovery ended; seen outside them"
+	if on {
+		what = "host discovery on; seen outside them so far"
+	}
+	if len(seen) == 0 {
+		fmt.Fprintf(w, "  outside:     %s: none\n", what)
+		return
+	}
+	if kept > len(seen) {
+		what += fmt.Sprintf(" (the %d most seen of %d)", len(seen), kept)
+	}
+	fmt.Fprintf(w, "  outside:     %s (names from the traffic; to record one, in your terminal):\n", what)
+	for _, h := range seen {
+		add := h.Add
+		if add == "" {
+			add = "(no command: not a plain host name)"
+		}
+		fmt.Fprintf(w, "    %s (%d): %s\n", h.Host, h.Count, add)
+	}
 }
 
 // printCA says which CA the devices must trust, and how to add and remove it on an iPhone.

@@ -58,7 +58,10 @@ Usage:
                      (--local-proxy instead of, or with, --device: the iOS Simulator)
                      carry the device's traffic as a Tailscale exit node and record
                      the allowed hosts; prints what is left to set up
-  reqcove status     what reqcove is doing, and the next steps
+  reqcove run        with no arguments: run's flags from ~/.config/reqcove/config (or
+                     Homebrew's etc/reqcove/config), the file reqcove setup writes
+  reqcove status     what reqcove is doing, its version and what started it, and the
+                     next steps
   reqcove run --lan --allow-hosts HOSTS [flags]
                      LAN mode, without Tailscale: an HTTP proxy on this computer's
                      LAN address for the clients you allow
@@ -66,6 +69,25 @@ Usage:
                      the client addresses LAN mode carries, in your terminal only
   reqcove links      the login URL and the --ui, --web, --mcp-http links, in your
                      terminal only (never for an agent)
+  reqcove capture add HOST… | capture remove HOST… | capture set --allow-hosts HOSTS
+                     change the hosts the running reqcove records, in your terminal only
+                     (--pass: the hosts carried undecrypted; not saved: a restart goes back)
+  reqcove capture save
+                     write those hosts to the hosts file run read (--allow-hosts=@FILE,
+                     as reqcove setup writes it), for the next start; in your terminal only
+  reqcove capture stop | capture start
+                     record nothing new (and apply no --rules rule: the app reaches the
+                     real servers) until start; the records stay, in your terminal only
+  reqcove capture allow-all --for D | capture allow-all --end
+                     record every app's traffic for D (30m, 2h; at most 24h), not only
+                     the allowed hosts', its records kept after; in your terminal only
+  reqcove capture discover --for D | capture discover --end
+                     for D (at most 24h), keep the names of the hosts outside the ones
+                     recorded and how often (nothing they send), for this computer's
+                     agents and reqcove status; in your terminal only
+  reqcove reload     read the config, its hosts files and the --rules file again, and
+                     put their hosts and rules in force together (all or nothing), in
+                     your terminal only; other settings take a restart
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
@@ -76,8 +98,9 @@ Usage:
   reqcove har > flows.har
                      the recorded flows as a HAR file, masked unless --no-redact (-h for filters)
   reqcove service install [--config FILE] [--state DIR] | service restart | service uninstall
-                     start run now and at login without Homebrew (launchd or
-                     systemd), with run's flags in FILE (~/.config/reqcove/config)
+                     start run now and at login (launchd or systemd), with run's
+                     flags in FILE (the one a bare run reads); again: re-points it
+                     at this binary and restarts it
   reqcove cleanup    how to undo everything (--delete-state removes ~/.reqcove)
   reqcove init       add the agent skill (how to use reqcove's tools) to the agents in ~
   reqcove version
@@ -137,6 +160,8 @@ var commands = map[string]func(context.Context, []string) error{
 	"mark":    mark,
 	"service": service,
 	"mock":    mockCmd,
+	"capture": captureCmd,
+	"reload":  reloadCmd,
 }
 
 // noFlags are the commands that take nothing.

@@ -8,10 +8,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -20,6 +22,8 @@ import (
 // No test reaches the real launchd or systemd: one that forgets fakeCtl panics.
 func init() {
 	serviceCtl = func(args ...string) error { panic("serviceCtl without fakeCtl: " + strings.Join(args, " ")) }
+	startWait = 0 // no run starts: install and restart do not wait for one
+	serviceStartWait = 0
 }
 
 // fakeCtl records the commands; launchctl print and bootout and systemctl
@@ -128,10 +132,24 @@ func TestServiceInstallDarwin(t *testing.T) {
 	if !slices.EqualFunc(*got, wantCmds, slices.Equal) {
 		t.Errorf("commands %q", *got)
 	}
-	// Installed: once only.
-	if err := serviceInstall("darwin", config, state, true); err == nil || !strings.Contains(err.Error(), "installed already") {
-		t.Errorf("again: %v", err)
+	// Installed again: re-pointed at this binary, out of launchd and in again
+	// (launchd reads the file only as it loads it), and said so.
+	os.WriteFile(file, []byte(launchAgent([]string{"/old/reqcove", "run"}, path, log)), 0o644)
+	*got = nil
+	out := captureStdout(t, func() error { return serviceInstall("darwin", config, state, true) })
+	wantCmds = [][]string{wantCmds[0], wantCmds[1], {"launchctl", "bootout", "gui/" + uid + "/" + serviceLabel}, wantCmds[2]}
+	if !slices.EqualFunc(*got, wantCmds, slices.Equal) || !strings.Contains(out, "installed again "+file+": it ran /old/reqcove; now it runs "+shellWord(exe)+" run") || !strings.Contains(out, "restarted now (its records started empty)") {
+		t.Errorf("again: %q\n%s", *got, out)
 	}
+	if s := plistStrings(t, file); !slices.Equal(s, want) {
+		t.Errorf("again: plist strings %q", s)
+	}
+	// Bootstrap failing then: the old one is out already, the new file stays.
+	fakeCtl(t, false, errors.New("no session"))
+	if err := serviceInstall("darwin", config, state, true); err == nil || !strings.Contains(err.Error(), "is written, not started") || !exists(file) {
+		t.Errorf("again, start fails: %v", err)
+	}
+	fakeCtl(t, false, nil)
 	// Installed again over a log made 0644 (an earlier install's, by launchd): 0600, kept.
 	os.Remove(file)
 	os.WriteFile(log, []byte("earlier\n"), 0o644)
@@ -152,6 +170,51 @@ func TestServiceInstallDarwin(t *testing.T) {
 	}
 	if s := plistStrings(t, file); slices.Contains(s, "--state") || s[len(s)-1] != filepath.Join(home, ".reqcove/service.log") {
 		t.Errorf("default state: %q", s)
+	}
+}
+
+// Installed again on macOS: bootout can return while the old run still
+// holds the state's lock, so the new one is started only once it is free;
+// still held after the wait (a run in a terminal), started all the same,
+// and said so.
+func TestServiceInstallWaitsForState(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	state := filepath.Join(home, "st")
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	var heldAtStart []bool
+	old := serviceCtl
+	serviceCtl = func(args ...string) error {
+		switch {
+		case slices.Contains(args, "print"):
+			return errors.New("not loaded") // no Homebrew service
+		case slices.Contains(args, "bootstrap"):
+			heldAtStart = append(heldAtStart, stateHeld(state))
+		}
+		return nil
+	}
+	t.Cleanup(func() { serviceCtl = old })
+	release, err := lockState(state) // the old run, stopping
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	if err := serviceInstall("darwin", config, state, true); err != nil || !slices.Equal(heldAtStart, []bool{false}) {
+		t.Errorf("started while the old run held the lock: %v, held %v", err, heldAtStart)
+	}
+	oldWait := stateFreeWait
+	stateFreeWait = 200 * time.Millisecond
+	t.Cleanup(func() { stateFreeWait = oldWait })
+	release2, err := lockState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release2()
+	out := captureStdout(t, func() error { return serviceInstall("darwin", config, state, true) })
+	if !slices.Equal(heldAtStart, []bool{false, true}) || !strings.Contains(out, "note: "+state+" is still in use 200ms after the old run was stopped") {
+		t.Errorf("held: %v\n%s", heldAtStart, out)
 	}
 }
 
@@ -275,14 +338,16 @@ func TestServiceInstallRefuses(t *testing.T) {
 	}
 }
 
-// Homebrew's binary: brew upgrade deletes its Cellar path, so install points
-// to brew services (and setup, which writes brew's config), writing nothing
-// and asking neither launchctl nor systemctl (the init guard panics).
+// Homebrew's binary: brew upgrade deletes its Cellar path, so the service
+// runs Homebrew's opt path, which follows the upgrades. Without one, install
+// points to brew services (and setup, which writes brew's config), writing
+// nothing and asking neither launchctl nor systemctl (the init guard panics).
 func TestServiceInstallBrewBinary(t *testing.T) {
 	prefix := t.TempDir()
 	old := selfExe
 	selfExe = func() (string, error) { return prefix + "/Cellar/reqcove/0.7.0/bin/reqcove", nil }
 	t.Cleanup(func() { selfExe = old })
+	opt := filepath.Join(prefix, "opt/reqcove/bin/reqcove")
 	for _, goos := range []string{"darwin", "linux"} {
 		home, config := serviceHome(t, "cfg")
 		state := filepath.Join(home, "st")
@@ -294,6 +359,72 @@ func TestServiceInstallBrewBinary(t *testing.T) {
 		if exists(ours) || exists(state) {
 			t.Errorf("%s: wrote the service file or the state directory", goos)
 		}
+		os.MkdirAll(filepath.Dir(opt), 0o755)
+		os.WriteFile(opt, []byte("#!/bin/sh\n"), 0o755)
+		fakeCtl(t, false, nil)
+		out := captureStdout(t, func() error { return serviceInstall(goos, config, state, true) })
+		if argv := serviceArgv(goos, ours); len(argv) == 0 || argv[0] != opt {
+			t.Errorf("%s: runs %q", goos, argv)
+		}
+		if !strings.Contains(out, "this reqcove is Homebrew's: the service runs "+opt+", which brew upgrade points at the new version") {
+			t.Errorf("%s:\n%s", goos, out)
+		}
+		os.Remove(opt)
+	}
+}
+
+// Installing again with no flags keeps the installed service's --config and
+// --state (a new state would be a new node and CA); with none installed,
+// --config is the file a bare run reads.
+func TestServiceInstallKeepsArgs(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	file, _ := serviceFile(runtime.GOOS)
+	state := filepath.Join(home, "st")
+	os.MkdirAll(filepath.Dir(file), 0o755)
+	argv := []string{"/gone/reqcove", "run", "--config", config, "--state", state}
+	os.WriteFile(file, []byte(launchAgent(argv, "/bin", "/x.log")), 0o644)
+	if runtime.GOOS == "linux" {
+		os.WriteFile(file, []byte(systemdUnit(argv, "/bin")), 0o644)
+	}
+	fakeCtl(t, false, nil)
+	captureStdout(t, func() error { return service(context.Background(), []string{"install"}) })
+	exe, _ := selfExe()
+	if got := serviceArgv(runtime.GOOS, file); !slices.Equal(got, []string{exe, "run", "--config", config, "--state", state}) {
+		t.Errorf("again: %q", got)
+	}
+	// Given: those.
+	other := filepath.Join(home, "other")
+	if c, s, given := installArgs(runtime.GOOS, other, true, other, true); c != other || s != other || !given {
+		t.Errorf("given: %s %s %v", c, s, given)
+	}
+	// None installed: the file a bare run reads, the default state.
+	os.Remove(file)
+	os.MkdirAll(filepath.Dir(defaultConfig()), 0o700)
+	os.WriteFile(defaultConfig(), []byte("--device x\n"), 0o600)
+	if c, s, given := installArgs(runtime.GOOS, "unused", false, defaultState(), false); c != defaultConfig() || s != defaultState() || given {
+		t.Errorf("none: %s %s %v", c, s, given)
+	}
+}
+
+// What install writes reads back as the command it runs, quoting and all.
+func TestServiceArgv(t *testing.T) {
+	dir := t.TempDir()
+	argv := []string{`/a b/re"q\cove`, "run", "--config", `/c/50% $x & <y>`}
+	for goos, body := range map[string]string{"darwin": launchAgent(argv, "/bin", "/l"), "linux": systemdUnit(argv, "/bin")} {
+		file := filepath.Join(dir, goos)
+		os.WriteFile(file, []byte(body), 0o644)
+		if got := serviceArgv(goos, file); !slices.Equal(got, argv) {
+			t.Errorf("%s: %q", goos, got)
+		}
+	}
+	// Homebrew's unit: plain words.
+	file := filepath.Join(dir, "brew")
+	os.WriteFile(file, []byte("[Service]\nExecStart=/home/linuxbrew/.linuxbrew/opt/reqcove/bin/reqcove run --config /e/config\n"), 0o644)
+	if got := serviceArgv("linux", file); !slices.Equal(got, []string{"/home/linuxbrew/.linuxbrew/opt/reqcove/bin/reqcove", "run", "--config", "/e/config"}) {
+		t.Errorf("brew's unit: %q", got)
+	}
+	if got := serviceArgv("darwin", filepath.Join(dir, "none")); got != nil {
+		t.Errorf("none: %q", got)
 	}
 }
 
@@ -312,22 +443,28 @@ func TestServiceUninstall(t *testing.T) {
 		if err := serviceUninstall(goos); (err == nil) != (goos == "darwin") {
 			t.Errorf("%s none but loaded: %v", goos, err)
 		}
-		got := fakeCtl(t, false, nil)
+		fakeCtl(t, false, nil)
 		if err := serviceInstall(goos, config, defaultState(), false); err != nil {
 			t.Fatal(err)
 		}
 		file, _ := serviceFile(goos)
-		*got = nil
-		if err := serviceRestart(goos); err != nil {
-			t.Fatal(err)
+		// Loaded or not (launchctl bootout: stopped until the next login,
+		// where kickstart cannot find it): out, then in again.
+		for _, loaded := range []bool{true, false} {
+			got := fakeCtl(t, loaded, nil)
+			if err := serviceRestart(goos); err != nil {
+				t.Fatal(err)
+			}
+			domain := "gui/" + strconv.Itoa(os.Getuid())
+			want := [][]string{{"launchctl", "bootout", domain + "/" + serviceLabel}, {"launchctl", "bootstrap", domain, file}}
+			if goos == "linux" {
+				want = [][]string{{"systemctl", "--user", "restart", "reqcove.service"}}
+			}
+			if !slices.EqualFunc(*got, want, slices.Equal) {
+				t.Errorf("%s restart, loaded %v: %q", goos, loaded, *got)
+			}
 		}
-		restart := []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/" + serviceLabel}
-		if goos == "linux" {
-			restart = []string{"systemctl", "--user", "restart", "reqcove.service"}
-		}
-		if len(*got) != 1 || !slices.Equal((*got)[0], restart) {
-			t.Errorf("%s restart: %q", goos, *got)
-		}
+		got := fakeCtl(t, false, nil)
 		*got = nil
 		if err := serviceUninstall(goos); err != nil {
 			t.Fatal(err)
@@ -482,5 +619,117 @@ func TestPrivateLogs(t *testing.T) {
 	formula, err := os.ReadFile("../../packaging/homebrew/reqcove.rb")
 	if err != nil || !strings.Contains(string(formula), `log_path var/"log/reqcove.log"`) || brewLog("/p") != "/p/var/log/reqcove.log" {
 		t.Errorf("brewLog is not the formula's log_path (%v)", err)
+	}
+}
+
+// Not running, its service installed (stopped until the next login, or it
+// ended): status says how to start the service, for its --state only.
+func TestOfflineStatusNamesService(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-s")
+	if err := serviceInstall(runtime.GOOS, config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	want := "is installed: start it with reqcove service restart"
+	if out := captureStdout(t, func() error { return offlineStatus(state, "/nonexistent/uvx") }); !strings.Contains(out, want) {
+		t.Errorf("its state: no %q in\n%s", want, out)
+	}
+	if out := captureStdout(t, func() error { return offlineStatus(filepath.Join(t.TempDir(), "other"), "/nonexistent/uvx") }); strings.Contains(out, want) {
+		t.Errorf("another state:\n%s", out)
+	}
+}
+
+// install and restart wait for the run they started to take its state, so a
+// status right after says starting; not taken, they say so.
+func TestServiceWaitsForStart(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-w")
+	note := "note: not started after"
+	if out := captureStdout(t, func() error { return serviceInstall(runtime.GOOS, config, state, true) }); !strings.Contains(out, note) {
+		t.Errorf("install, no run:\n%s", out)
+	}
+	old := startWait
+	startWait = 2 * time.Second
+	t.Cleanup(func() { startWait = old })
+	go func() { // the run, taking its state a moment later
+		time.Sleep(200 * time.Millisecond)
+		if release, err := lockState(state); err == nil {
+			t.Cleanup(release)
+		}
+	}()
+	if out := captureStdout(t, func() error { return serviceRestart(runtime.GOOS) }); strings.Contains(out, note) || !stateHeld(state) {
+		t.Errorf("restart, run started: returned before it held its state (%v)\n%s", stateHeld(state), out)
+	}
+}
+
+// restart right after launchctl bootout: launchd still takes the job out
+// (bootstrap fails a while) and the old run still holds the state. It waits
+// for the state, then loads it again once launchd lets it.
+func TestServiceRestartWhileStopping(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	state := filepath.Join(home, "st")
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lockState(state) // the old run, stopping
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	var heldAtStart []bool
+	old, oldWait := serviceCtl, startWait
+	startWait = 2 * time.Second
+	serviceCtl = func(args ...string) error {
+		if slices.Contains(args, "bootstrap") {
+			heldAtStart = append(heldAtStart, stateHeld(state))
+			if len(heldAtStart) < 3 {
+				return errors.New("Bootstrap failed: 37: Operation already in progress")
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { serviceCtl, startWait = old, oldWait })
+	captureStdout(t, func() error {
+		if err := serviceRestart("darwin"); err != nil {
+			t.Errorf("restart: %v", err)
+		}
+		return nil
+	})
+	if !slices.Equal(heldAtStart, []bool{false, false, false}) {
+		t.Errorf("bootstrap while the old run held the state, or not retried: %v", heldAtStart)
+	}
+}
+
+// brew services start returns before its run takes the state: status, with a
+// service installed for that state, waits for it (then says starting), and
+// without one says not running at once.
+func TestStatusWaitsForServiceStart(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-b")
+	if err := serviceInstall(runtime.GOOS, config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	old := serviceStartWait
+	serviceStartWait = 2 * time.Second
+	t.Cleanup(func() { serviceStartWait = old })
+	go func() { // the run, a moment after the service started
+		time.Sleep(300 * time.Millisecond)
+		if release, err := lockState(state); err == nil {
+			t.Cleanup(release)
+		}
+	}()
+	out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", state}) })
+	if !strings.Contains(out, "reqcove is starting (") || strings.Contains(out, "not running") {
+		t.Errorf("service starting:\n%s", out)
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	begin := time.Now()
+	out = captureStdout(t, func() error { return status(context.Background(), []string{"--state", other}) })
+	if !strings.Contains(out, "not running") || time.Since(begin) > time.Second {
+		t.Errorf("no service: %v\n%s", time.Since(begin), out)
 	}
 }

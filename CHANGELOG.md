@@ -1,5 +1,305 @@
 # Changelog
 
+## v1.1.0 — 2026-11-16
+
+### Added
+
+- **`reqcove capture discover --for D`** (at most `24h`) **and `capture
+  discover --end`** (`--state DIR`): for a while, the names of the hosts
+  outside the ones recorded that the devices reach (a TLS connection's SNI,
+  the Host of a request on a connection decrypted but not recorded) and how
+  often, never what they carry, a URL path or a time, to find the hosts an
+  app talks to. Shown in `reqcove status` ("outside:", each with the
+  `reqcove capture add HOST` command, built by Reqcove for plain host names
+  only) and to this computer's agents (`status`: `out_of_scope_hosts`,
+  `out_of_scope_hosts_kept`, `discover_until`, `discover_left`; `summarize`:
+  `out_of_scope_hosts`), never over `--mcp-http` nor on the `--ui` page.
+  Apple's hosts and mitm.it left out, names masked, 1,000 kept (the least
+  seen giving way), 30 shown, a host added dropping off. Ends as allow-all
+  does (either clock; the records take no name more at the end, whether
+  mitmproxy answers or not); the names stay until `run` restarts or
+  discovery starts again. Not exhaustive: no name (an address dialed), ECH
+  (the outer name only), non-TLS connections outside the scope (from
+  reading the code). Off, it reads nothing (from reading the code); on, each
+  TLS ClientHello is read once more (mitmproxy reads it anyway for
+  `allow_hosts`; about 22 µs for 1.5 KB in a micro-benchmark on an M1 Max).
+  A run with `--allow-hosts '*'`: "nothing changed". The same guards as the other `capture`
+  commands. SECURITY's "counted, never recorded" says what changes while it
+  is on; the skill and the server's instructions: the names are data, the
+  commands the user's. Unit tests (the Store's gate, filters, masking and
+  bound; the end by either clock with mitmproxy silent; the arguments; the
+  two servers: names in the local summarize alone) and an E2E test with real
+  mitmproxy (SNI and Host counted, once a connection, none of Apple's,
+  nothing recorded, not in what `--mcp-http` and `--ui` read, none before or
+  after, an added host dropping off). Not tried on an iPhone.
+
+- **`reqcove reload`** (`--state DIR`): reads `run`'s config, the hosts files
+  it names (`--allow-hosts=@FILE`, `--pass-hosts=@FILE`) and the `--rules`
+  file again, and puts their hosts and rules in force together, without a
+  restart. Everything is checked first, the rules against the new hosts (a
+  host and the `mock` naming it go in or out in one edit), and on any failure
+  nothing changes and the answer says why. The answer says what changed,
+  which changes made with `reqcove capture` and not saved it replaces, how
+  many rules of each kind loaded (presets go off: new rules turn them off),
+  and in one line the other settings that changed, which take a restart
+  (names only, never values). A run from flags alone has "nothing to
+  reload". The same guards as `reqcove capture` (a terminal only, refused in
+  LAN mode, an older run named, the trace: `scope_change` `reload`).
+  `--rules-reload` works as before. `reqcove setup`'s last lines name it.
+  Unit tests (the parse of `run`'s arguments again never exits, logs or
+  dials `--upstream-proxy` (that it sets no mask policy and loads no
+  `--proto` is from reading the code); every flag of `run`
+  reloaded or named; nothing to reload) and an E2E test with real mitmproxy
+  (a host and its mock added together, then a broken rules file changing
+  nothing, its hosts file's edit included, then both taken out; an unsaved
+  add named; a preset off; `--mcp-http` named). Not tried on an iPhone or
+  with a service.
+
+- **`reqcove status` says what runs, and how to restart it after an
+  update.** The running `run`'s version against this `reqcove`'s (from
+  `serverInfo`, so a v1.0.0 `run` too), and when they differ the one command
+  that restarts it under what started it (`brew services restart reqcove`,
+  `reqcove service restart`, `reqcove service install` when its service runs
+  another binary, or Ctrl-C in its terminal), with "a restart empties the
+  records: `reqcove har > flows.har` first" and "while it is down, a phone
+  using its exit node has no internet". It also says what started `run`
+  (none: a terminal), the config and hosts files it read, and warns when two
+  services for reqcove are installed at once (`reqcove service install`'s and
+  Homebrew's) or when `reqcove service install`'s service runs a binary that
+  is gone or is not this one; read from the service files only, never from
+  launchctl or systemctl. The `status` tool and `--json` get `version`,
+  `manager`, `restart_command`, and on this computer only `config_file`,
+  `config_unused` and `hosts_files`; the warnings come in `next_steps`. On
+  Linux, Homebrew's unit is told from the process' cgroup (not tried). Unit
+  tests (each case, against a faked v1.0.0 `run` and with service files in a
+  temporary home); not tried by hand.
+- **`reqcove run` with no arguments at all** (refused before) reads
+  `~/.config/reqcove/config`, else Homebrew's `etc/reqcove/config` when this
+  `reqcove` is Homebrew's, and says which in its log; with both there, the
+  first, and `reqcove status` names both. Any argument: as before, a file
+  only when `--config` names it. Unit tests.
+
+- **`reqcove capture allow-all --for D`** (at most `24h`) **and `capture
+  allow-all --end`** (`--state DIR`): record every host for a while, as
+  `--allow-hosts '*'` does, without a restart, to see what the other apps
+  send. Apple's hosts and the `--pass-hosts` ones still pass undecrypted; the
+  `--rules` file's rules apply to the hosts allowed alone (a `modify_headers`
+  rule naming no host is not sent to the others). It ends by the wall clock
+  or `run`'s monotonic clock, whichever comes first (a sleep does not extend
+  it), within about a second, and fails closed: the records first, then
+  mitmproxy, which is restarted without it if it does not answer; a restart
+  of mitmproxy keeps it until its end only, a restart of `run` ends it. The
+  records made meanwhile are kept after it ends. The answer repeats `'*'`'s
+  warnings (every app's traffic readable by agents and their providers;
+  pinned apps such as banks fail meanwhile; `--upstream-proxy`,
+  `--mcp-http`, `--web`, `--local-proxy` when on). `--for` again moves the
+  end; `capture stop` ends it; refused while stopped; `capture add`,
+  `remove` and `set` meanwhile change the hosts recorded after it. `status`
+  gets `recording` `allow-all`, `allow_hosts` `["*"]`, `allow_all_until`,
+  `allow_all_left` and `records_outside_scope` (the records kept of hosts
+  outside the ones recorded); `capture_stats`' `recording` too; `next_steps`
+  gives the time left and `reqcove capture allow-all --end`; `explain_rules`
+  says no rule applies to the other hosts. Same rules as the other `capture`
+  commands (a terminal only, refused in LAN mode, an older run named, the
+  trace; the end by time leaves a log line and `scope_change`). Unit tests
+  (the duration's bounds, mitmproxy's arguments, a stop ending it, an add
+  changing the base, the end by either clock with mitmproxy silent: the
+  records narrowed first, mitmproxy killed) and E2E tests with real
+  mitmproxy (a host outside the base recorded with no rule applied, not
+  after the end, its records kept; a `--pass-hosts` host undecrypted;
+  mitmproxy killed just before the end comes back without it; the CLI's
+  answers, status and markers). Not tried on an iPhone, nor across a real
+  sleep.
+- **`reqcove capture save`** (`--state DIR`): write the hosts recorded now
+  (the base scope, while stopped too) into the hosts file `run` read them
+  from (`--allow-hosts=@FILE`), for the next start. `reqcove setup` now writes
+  the hosts to their own file beside the config (`~/.config/reqcove/hosts`;
+  Homebrew: `$(brew --prefix)/etc/reqcove/hosts`, the config staying at
+  `etc/reqcove/config`) and the config line `--allow-hosts=@FILE` (an old
+  hosts file kept as `hosts.old`); configs written before work unchanged.
+  `run` remembers which of its hosts came from which `@FILE`, and which were
+  given as they are (command line, or `--config`): those are not written, and
+  the answer names them, with the ones removed now that a start with them
+  records again. The file is replaced atomically, 0600, keeping its comments
+  and the lines whose hosts are all kept. Refused, nothing written: `"*"`, no
+  hosts to write (`run` refuses a hosts file without hosts), a file not plain
+  or not yours, the `--pass-hosts` file, LAN mode; with no hosts file (or
+  several): "nothing to save to". Hosts passed undecrypted are not saved. The
+  trace: `run`'s log, a `cli` marker, `scope_change` "capture save". Unit
+  tests (setup's files, where the hosts came from, what is written, each
+  refusal) and an E2E test with real mitmproxy (add, remove a command-line
+  host, save, then a new `run` from the config records the host added). Not
+  tried on an iPhone or with `brew services`.
+- **`reqcove capture stop` and `capture start`** (`--state DIR`): stop
+  recording for a while, without a restart, and start again with the same
+  hosts. While stopped, mitmproxy decrypts mitm.it alone, nothing new is
+  recorded (an open WebSocket's flow is closed with "recording stopped: its
+  host left the scope", and does not resume after the start), and no rule of
+  the `--rules` file applies: mock, map_local, map_remote, modify_headers and
+  resolve, presets included (those on are turned off; `activate_preset` is
+  refused with a note). The records stay readable. `stop`'s answer warns that
+  the app's requests then go to the real servers, a mocked API's too, and
+  says how many records are kept; `start`'s says the hosts it records again
+  (new connections only). `capture add`, `remove` and `set` while stopped
+  change the hosts `start` records. A restart of mitmproxy keeps it stopped; a
+  restart of `run` records again. `status` (and `reqcove status --json`) gets
+  `recording` (`on`, `stopped`), `allow_hosts` `[]` while stopped, and the
+  hosts kept in `base_allow_hosts` and `base_pass_hosts`; `capture_stats`
+  gets `recording`; `next_steps`, and the note of an empty `list_flows`,
+  `search_flows`, `summarize` or `wait_for_flows`, give `reqcove capture
+  start`; `explain_rules` says no rule applies. Same rules as the other
+  `capture` commands (a terminal only, refused in LAN mode, an older run named,
+  the trace). Unit tests (mitmproxy's arguments while stopped: mitm.it only,
+  never empty, with `"*"` too; the order of a stop and a start; the step) and
+  E2E tests with real mitmproxy (a WebSocket; a mocked URL reaching the
+  server, on a new connection and on one decrypted before; a preset turned
+  off and refused; mitmproxy killed while stopped; the CLI's answers, status
+  and markers). Not tried on an iPhone.
+- **`reqcove capture add HOST…`, `capture remove HOST…` and `capture set
+  --allow-hosts HOSTS [--pass-hosts HOSTS]`** (`--pass` for the hosts carried
+  undecrypted; `--state DIR`): change the hosts the running `run` records
+  from your terminal, without a restart, so the records stay. They talk to
+  `run` over a new socket in the state directory, `ctl.sock` (0600), not the
+  agents' `mcp.sock`. Each answer says what happened (applied, or pending
+  while mitmproxy has not acknowledged it), how many records are kept, that
+  the change is not saved (a restart goes back to `run`'s own hosts), and
+  that an added host is decrypted on new connections only (reopen the app).
+  Refused: `"*"`, removing a host a wildcard takes in (naming the wildcard),
+  a change that takes out a host a `mock` rule names (naming the rules), any
+  change in LAN mode, and outside a terminal (a guard against mistakes, not a
+  boundary: SECURITY); a `run` older than v1.1 is named, with "restart it".
+  Each change leaves a line in `run`'s log, a marker with source `cli`, and
+  in `status` `scope_change` and `scope_changed_at` ("last changed at …" in
+  `reqcove status`, which now also prints the hosts recorded). With nothing
+  recorded, `next_steps` gives `reqcove capture add api.example.com` in
+  place of "restart with --allow-hosts" (not in LAN mode); a host filter of
+  `list_flows`, `search_flows`, `summarize` or `wait_for_flows` that matches
+  nothing, for a host outside the hosts recorded, gets a note saying so with
+  the command, for the user. The skill and the server's instructions tell
+  agents never to run `reqcove capture`. Unit tests (the arguments and
+  refusals, `ctl.sock`'s mode, an older run, no answer, the note, the step)
+  and an E2E test with real mitmproxy (add: a new connection is recorded;
+  remove: one is not; the log line, markers and status); not tried on an
+  iPhone. The pending answer and the `mock` refusal as `capture` words them:
+  from reading the code (the mechanics behind them are tested, above).
+- **The hosts recorded can change while `run` runs**, without restarting
+  mitmproxy (the groundwork for `reqcove capture`, above). A host added is decrypted on new connections; a host removed
+  is no longer recorded from the next event on, a WebSocket open to it
+  included (that flow ends with the error "recording stopped: its host left
+  the scope", and does not come back if the host is added again), while its
+  open connections stay decrypted (unrecorded) until they close. A change
+  that takes out a host a `mock` rule names is refused, naming the rules
+  (checked against the rules loaded, not the file on disk), and nothing
+  changes; a `resolve` rule's host is checked the same way (from reading the
+  code; not tested). A restarted mitmproxy keeps the change. Masking is
+  never touched. `status` shows the hosts mitmproxy has acknowledged
+  (`scope_pending` while it has not). E2E tests with real mitmproxy (add,
+  then kill mitmdump; remove with a WebSocket and a keep-alive connection
+  open; a stop and a start; a mock naming the host; status); unit tests for
+  the per-event check and the order of a change.
+
+### Changed
+
+- **`reqcove service install` takes Homebrew's binary**, running Homebrew's
+  stable path `$(brew --prefix)/opt/reqcove/bin/reqcove` (it refused it
+  before, as its Cellar path goes at each `brew upgrade`). Still refused while
+  Homebrew's own service is there. **Installed already, it installs again**
+  (it refused before): the service is re-pointed at this binary and
+  restarted (`launchctl bootout` then `bootstrap`, or `systemctl --user
+  restart`), keeping the installed service's `--config` and `--state` unless
+  given, and says so. Without `--config` and none installed, it takes the
+  file a bare `run` reads. Unit tests only, never with launchd or systemd.
+- **`reqcove setup`'s last lines**: the terminal first (`reqcove run`, or
+  `reqcove run --config FILE` when a bare `run` would read another file),
+  then the start at login (`reqcove service install`, or `brew services start
+  reqcove`), then how to change things while it runs (`reqcove capture add
+  HOST`, `capture save`; else edit the file and restart). The guide's service
+  sections become "Run it in the background": a table of how to start,
+  update and stop per way of running, and one config file. Unit tests.
+
+- **A restarted mitmproxy gets the rules that loaded last**, from a private
+  copy in the state directory (`rules-loaded`, 0600, removed when `run`
+  stops), not the rules file as it is on disk then. Up to v1.0, a file broken
+  meanwhile ended `run` at the restart, or, with `--rules-reload`, the
+  restarted mitmproxy went on without any rules (a mock or `map_remote` lost
+  sends test requests to the real servers). Now, under `--rules-reload`, the
+  restarted one also looks at the file again and says why it does not load;
+  if the rules that loaded last no longer load (a file they name is gone),
+  `run` stops with the reason, with or without `--rules-reload`. E2E test
+  with real mitmproxy (file broken, mitmdump killed); unit tests with a
+  stand-in.
+- **mitmproxy is started again without end**: after it exits, and at the
+  start when it does not say hello within 2 minutes, it is retried after 1
+  second, each wait doubled up to 5 minutes. Up to v1.0, `run` stopped after 5
+  failed restarts in a row (or on a slow first start). `run` still stops with
+  an error on what retrying cannot mend: rules that do not load, and, before
+  mitmproxy has come up once, one that cannot be launched or exits before its
+  hello. `capture_stats` (and `status`, `reqcove status`) has `retries`,
+  `last_failure` and `next_attempt`; `reqcove status` says the retry and when
+  the next is (at the first start, before `run` answers status, only its log
+  does). Unit tests with a stand-in for mitmproxy.
+- **Changes mitmproxy did not acknowledge** (`scope_pending`, discovery
+  asked) are told it again every few seconds, not only when it starts again.
+  A `capture stop` during allow-all that it does not acknowledge restarts it,
+  stopped, as allow-all's end does (it would have gone on decrypting every
+  host, with no end). A `reqcove reload` whose new rules it does not
+  acknowledge restarts it with the new hosts and rules, never one without the
+  other. Host discovery shows on only once mitmproxy has it on, and one asked
+  while mitmproxy starts is turned on at its hello. Unit tests.
+- **While mitmproxy restarts**, `capture add`, `remove`, `set` and `reqcove
+  reload` answer "mitmproxy is restarting: try again in a moment; nothing
+  changed" (the guide said they went pending). Unit test.
+- **A body under way when its host leaves what is recorded** (a remove, a
+  stop, allow-all's end) is copied no more: nothing more queued for reqcove,
+  nothing kept for mitmweb; a WebSocket's next message closes its flow, the
+  ones after it are not queued. With `--web`, mitmweb still lists the
+  requests on connections decrypted before, unmasked, without bodies: the
+  answers say so (from reading the code). A test with mitmproxy's Python.
+- **`reqcove reload` refuses a hosts file that gives `"*"`** while the hosts
+  recorded are not `"*"`, as `capture set` does (`capture allow-all --for D`
+  is the way). Unit test.
+- **`capture save`**: a host given on the command line and in the hosts file
+  too, removed, is named as coming back at the next start (it was dropped
+  from the file silently). Unit test.
+- **`status`'s `restart_command`** is `reqcove service install` when the
+  service runs another binary than `run`, or one gone, as `reqcove status`
+  says. Unit test.
+- **`reqcove service install` again, on macOS**, waits (at most 10 s) for the
+  old run to let go of the state directory before starting the new one, and
+  says so when it does not. Unit test.
+- **`reqcove service restart` on macOS starts a service stopped until the
+  next login** (`launchctl bootout`), also right after it, while launchd is
+  still taking it out: it takes it out and loads it again, as `service
+  install` does, waiting for the old run to let go of the state and retrying
+  while launchd refuses (at most 5 s). `launchctl kickstart -k` alone
+  answered that it could not find it, or failed (37) while it was going.
+  Unit tests; both errors seen by hand.
+- **`reqcove status`, while `run` is not running**, says that its service is
+  installed and the command that starts it (`reqcove service restart`, `brew
+  services restart reqcove`), for the service of that state directory. Unit
+  test.
+- **`reqcove service install` and `service restart` wait** (at most 5 s) for
+  the run they started to take its state directory, so a `reqcove status`
+  right after says it is starting rather than not running; when it has not,
+  they say so, with the log. Unit test; the race seen by hand (`status` typed
+  with `service install`).
+- **`reqcove status` waits a moment** (at most 5 s) when a run holds the state
+  but its tools do not answer yet (just started, or stopping), then says
+  running or not running; still neither, it says which: "reqcove is
+  starting" or "reqcove is stopping" (`run` leaves a `stopping` file in the
+  state directory while it stops). Before: "starting, or stopping", read as
+  "running or stopped". Unit tests.
+- **`reqcove status` in the seconds after a start**, while the node is still
+  connecting to Tailscale (`NoState`, `Starting`), says "the tailnet node is
+  starting" rather than "ready: turn on the exit node". Unit test; seen by
+  hand after `reqcove service restart`.
+- **`reqcove status` right after `brew services start`** (or a login): with a
+  service installed for that state and no run holding it yet, it waits (at
+  most 3 s) for one, rather than "not running: start it with brew services
+  restart reqcove". Unit test; seen by hand.
+- **A `--config` file that is not there** (a service started before `reqcove
+  setup`): the error says `reqcove setup` writes it. Unit test.
+
 ## v1.0.0 — 2026-11-15
 
 ### Security

@@ -10,7 +10,7 @@
 # The release's version, for `reqcove version`.
 ARG VERSION=dev
 
-FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
 
 FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS build
 ARG TARGETOS TARGETARCH VERSION
@@ -50,7 +50,7 @@ RUN for f in /opt/uv/cache/archive-v0/*/bin/*; do \
         *) echo "a shell script uv's rewrite does not know: $f" >&2; exit 1 ;; esac; \
     done
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=mitmproxy --chown=65532:65532 /opt/uv /opt/uv
 # The state directory, 0700 and nonroot's: a new named volume takes both.

@@ -18,6 +18,7 @@ var documented = []string{
 	"skills/reqcove/SKILL.md",
 	"README.md", "README.ja.md", "CONTRIBUTING.md",
 	"docs/SECURITY.md", "docs/SECURITY.ja.md",
+	"docs/masking.md", "docs/masking.ja.md",
 	"docs/guide.md", "docs/guide.ja.md",
 	"docs/another-mac.md", "docs/another-mac.ja.md",
 	"docs/container.md", "docs/container.ja.md",
@@ -207,6 +208,12 @@ func parseDocumented(words []string) error {
 	}
 	if words[0] == "mark" { // mark TEXT: its words go anywhere among the flags
 		_, args = wordsAndFlags(args)
+	}
+	if words[0] == "capture" && len(args) > 0 { // capture add HOST…: its subcommand first, then hosts among the flags
+		if !slices.Contains([]string{"add", "remove", "set", "stop", "start", "save", "allow-all", "discover"}, args[0]) {
+			return fmt.Errorf("capture takes add, remove, set, stop, start, save, allow-all or discover, not %q", args)
+		}
+		_, args = wordsAndFlags(args[1:], "allow-hosts", "pass-hosts", "for")
 	}
 	for i := 1; i < len(args); i++ { // NAME, N: a placeholder, valid for its flag
 		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(args[i]) && isInt(fs, args[i-1]) {

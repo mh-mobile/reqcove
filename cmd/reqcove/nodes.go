@@ -286,6 +286,38 @@ func lockState(dir string) (func(), error) {
 	return func() { f.Close() }, nil
 }
 
+// stateFreeWait bounds waitStateFree in service install (a var for tests).
+var stateFreeWait = 10 * time.Second
+
+// waitStateFree waits, at most d, for no run to hold dir's lock; false if
+// one still does.
+func waitStateFree(dir string, d time.Duration) bool { return waitState(dir, d, false) }
+
+// stoppingFile, in the state directory, says the run that holds it is
+// stopping.
+const stoppingFile = "stopping"
+
+// startWait bounds how long service install and restart wait for the run
+// they started to take its state's lock, and status for a run that holds it
+// to answer or let go (a var for tests).
+var startWait = 5 * time.Second
+
+// serviceStartWait bounds how long status waits, with a service installed
+// for its state and no run holding it, for one to start: brew services start
+// returns before it does (a var for tests).
+var serviceStartWait = 3 * time.Second
+
+// waitState waits, at most d, until a run holds dir's lock (held) or none
+// does; false on the deadline.
+func waitState(dir string, d time.Duration, held bool) bool {
+	for deadline := time.Now().Add(d); stateHeld(dir) != held; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+	return true
+}
+
 // stateHeld reports whether a run holds dir's lock (lockState), making no file.
 // It holds the lock shared for a moment, which lockState waits out.
 func stateHeld(dir string) bool {

@@ -178,7 +178,7 @@ func (s *Store) refusedLocked() []RefusedHost {
 	for k, n := range counts {
 		// A host as a host name: an SNI is the phone's app's to choose, and these
 		// go into a command run suggests (--pass-hosts …).
-		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && validHost(k.host) && k.host != "mitm.it" {
+		if n >= refusedAfter && trusting[k.device] && !seen[k] && !s.allow.Passed(k.host) && ValidHost(k.host) && k.host != "mitm.it" {
 			out = append(out, RefusedHost{k.device, s.names[k.device], k.host, n, domains[key{k.device, registrable(k.host)}]})
 		}
 	}
@@ -202,6 +202,24 @@ func (s *Store) PassHost(host string) bool {
 	}
 	for _, p := range s.allow.PassHosts { // a host filter matches subdomains: so does this
 		if p = strings.TrimPrefix(p, "*."); strings.HasSuffix(p, "."+host) {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordsUnder reports whether the hosts recorded now (--allow-hosts, as
+// changed live) take in host or one of its subdomains, as a host filter
+// matches them.
+func (s *Store) RecordsUnder(host string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	host = normHost(host)
+	if s.allow.Allowed(host) {
+		return true
+	}
+	for _, h := range s.allow.Hosts {
+		if strings.HasSuffix(strings.TrimPrefix(h, "*."), "."+host) {
 			return true
 		}
 	}

@@ -369,3 +369,56 @@ func TestUnmaskedNote(t *testing.T) {
 		session.Close()
 	}
 }
+
+// A host filter that matches nothing, for a host outside the hosts recorded:
+// the note says so and gives the user's command (CaptureAddCmd), only for a
+// valid host; none for a host whose subdomains are recorded, nor when flows came.
+func TestScopeNote(t *testing.T) {
+	defer func() { CaptureAddCmd = "" }()
+	st := capture.NewStore(10, 1<<20)
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.net"})
+	st.SetScope(allow, true)
+	st.Apply([]byte(`{"v":2,"ev":"request","id":"a","device":"d","host":"api.example.net","url":"https://api.example.net/x"}`))
+	ct, sst := mcp.NewInMemoryTransports()
+	if _, err := New(st, nil).Connect(context.Background(), sst, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	note := func(tool, host string) string {
+		args := map[string]any{"host": host}
+		switch tool {
+		case "wait_for_flows":
+			args["timeout"] = 1
+		case "search_flows":
+			args["query"] = "x"
+		}
+		return call[struct {
+			Note string `json:"note"`
+		}](t, session, tool, args).Note
+	}
+	CaptureAddCmd = "reqcove capture add --state '/tmp/a b'"
+	for _, tool := range []string{"list_flows", "summarize", "search_flows", "wait_for_flows"} {
+		if got := note(tool, "B.Example.org"); !strings.Contains(got, `"b.example.org" is not among the hosts recorded`) || !strings.Contains(got, "the user runs in their terminal: reqcove capture add --state '/tmp/a b' b.example.org (pass it on; never run it yourself)") {
+			t.Errorf("%s: %q", tool, got)
+		}
+	}
+	for _, host := range []string{"example.net", "api.example.net"} { // its subdomain is recorded; flows came
+		if got := note("list_flows", host); got != "" {
+			t.Errorf("%s: %q", host, got)
+		}
+	}
+	if got := note("wait_for_flows", "example.net"); got != "" { // none came, but its subdomain is recorded
+		t.Errorf("wait, example.net: %q", got)
+	}
+	if got := note("list_flows", "a_b.org"); !strings.Contains(got, "not among the hosts recorded") || strings.Contains(got, "capture add") {
+		t.Errorf("not a valid host: %q", got)
+	}
+	CaptureAddCmd = "" // LAN mode
+	if got := note("list_flows", "b.example.org"); !strings.Contains(got, "not among the hosts recorded") || strings.Contains(got, "capture add") {
+		t.Errorf("no command: %q", got)
+	}
+}

@@ -99,7 +99,7 @@ func TestPresetTools(t *testing.T) {
 // run's two servers: the local one has the preset (and marker) tools, --mcp-http's none.
 func TestServersPresetToolsLocalOnly(t *testing.T) {
 	status := func() StatusOut { return StatusOut{} }
-	local, remote := Servers(storeWith("a"), status, status, &fakePresets{})
+	local, remote := Servers(storeWith("a"), status, status, &fakePresets{}, nil)
 	for _, c := range []struct {
 		s    *mcp.Server
 		want int
@@ -134,7 +134,7 @@ func TestRemoteStatsWithoutTargets(t *testing.T) {
 	st := storeWith("a")
 	st.Apply([]byte(`{"v":2,"ev":"hello","rules":{"resolve":1},"rules_error":"","resolve":["api.example.com -> 192.0.2.7:443"],"upstream":"127.0.0.1:8080"}`))
 	status := func() StatusOut { return StatusOut{Capture: st.Stats()} }
-	local, remote := Servers(st, status, status, &fakePresets{})
+	local, remote := Servers(st, status, status, &fakePresets{}, nil)
 	for _, c := range []struct {
 		s      *mcp.Server
 		remote bool
@@ -319,7 +319,7 @@ func TestStatusActivePresets(t *testing.T) {
 // instructions.
 func TestRemovedNamesGone(t *testing.T) {
 	status := func() StatusOut { return StatusOut{} }
-	local, remote := Servers(storeWith("a"), status, status, &fakePresets{})
+	local, remote := Servers(storeWith("a"), status, status, &fakePresets{}, nil)
 	proxied, err := toolList(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestRecordToolsSayData(t *testing.T) {
 func TestRemovedToolsAnswer(t *testing.T) {
 	ct, st := mcp.NewInMemoryTransports()
 	status := func() StatusOut { return StatusOut{} }
-	local, _ := Servers(storeWith("a"), status, status, &fakePresets{})
+	local, _ := Servers(storeWith("a"), status, status, &fakePresets{}, nil)
 	if _, err := local.Connect(context.Background(), st, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -413,5 +413,43 @@ func TestRemovedToolsAnswer(t *testing.T) {
 	// Other unknown tools stay unknown.
 	if _, err := run.CallTool(context.Background(), &mcp.CallToolParams{Name: "activate_mocks"}); err == nil || !strings.Contains(err.Error(), "unknown tool") {
 		t.Errorf("activate_mocks: %v", err)
+	}
+}
+
+// Discovery's names (outside) are the local server's summarize alone: never
+// in --mcp-http's summarize, status or capture_stats. OutHosts builds the
+// command only for a plain host name.
+func TestOutHostsLocalOnly(t *testing.T) {
+	CaptureAddCmd = "reqcove capture add --state '/tmp/a b'"
+	defer func() { CaptureAddCmd = "" }()
+	outside := func() []OutHost {
+		return OutHosts([]capture.SeenHost{{Host: "seen.example.net", Count: 3}, {Host: "[redacted].example.net", Count: 1}})
+	}
+	status := func() StatusOut { return StatusOut{Capture: map[string]any{}} }
+	local, remote := Servers(storeWith("a"), status, status, &fakePresets{}, outside)
+	call := func(s *mcp.Server, tool string) string {
+		t.Helper()
+		ct, st := mcp.NewInMemoryTransports()
+		if _, err := s.Connect(context.Background(), st, nil); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(context.Background(), ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: map[string]any{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(res)
+		return string(b)
+	}
+	if got := call(local, "summarize"); !strings.Contains(got, `{"add":"reqcove capture add --state '/tmp/a b' seen.example.net","count":3,"host":"seen.example.net"}`) || !strings.Contains(got, `{"count":1,"host":"[redacted].example.net"}`) {
+		t.Errorf("local summarize: %s", got)
+	}
+	for _, tool := range []string{"summarize", "status", "capture_stats"} {
+		if got := call(remote, tool); strings.Contains(got, "seen.example.net") {
+			t.Errorf("--mcp-http's %s: %s", tool, got)
+		}
 	}
 }

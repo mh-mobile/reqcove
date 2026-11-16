@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/mh-mobile/reqcove/internal/exitnode"
 )
 
 // syncBuf is a log destination tests read while run writes.
@@ -121,24 +123,62 @@ func TestRulesReloadPresetsE2E(t *testing.T) {
 	}
 }
 
+// TestStatusFollowsScopeE2E (REQCOVE_E2E=1, real mitmproxy): run's status
+// (the status tool, `reqcove status`, --ui's steps) shows the scope as changed
+// live, not the one run started with.
+func TestStatusFollowsScopeE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvr-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	allow, _ := capture.ParseAllowHosts([]string{"a.example.com"})
+	c, err := capture.Start(ctx, capture.Config{Dir: filepath.Join(dir, "s"), Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec, AllowHosts: allow,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	if got := liveStatus(exitnode.Status{}, c).AllowHosts; !slices.Equal(got, []string{"a.example.com"}) {
+		t.Fatalf("at the start: allow_hosts %v", got)
+	}
+	changed, _ := capture.ParseAllowHosts([]string{"a.example.com", "b.example.com"})
+	if changed, err = changed.WithPass([]string{"b.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetScope(ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	if out := liveStatus(exitnode.Status{}, c); !slices.Equal(out.AllowHosts, []string{"a.example.com", "b.example.com"}) || !slices.Equal(out.PassHosts, []string{"b.example.com"}) || out.ScopePending != "" {
+		t.Errorf("after the change: allow_hosts %v, pass_hosts %v, pending %q", out.AllowHosts, out.PassHosts, out.ScopePending)
+	}
+}
+
 // fakeMitmdump stands in for uv's mitmdump: its first run says hello and
-// lives until killed; every later run exits at once, so the restarts fail.
+// lives until killed; every later run says its rules do not load, a failure
+// that ends the capture.
 const fakeMitmdump = `#!/usr/bin/env python3
 import json, os, socket, sys, time
 d = os.environ["FAKE_DIR"]
 n = len(os.listdir(os.path.join(d, "runs"))) + 1
 open(os.path.join(d, "runs", str(n)), "w").write(str(os.getpid()))
-if n > 1:
-    sys.exit(3)
 path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("reqcove_socket="))
 s = socket.socket(socket.AF_UNIX); s.connect(path)
-s.sendall((json.dumps({"v": 2, "ev": "hello", "mitmproxy": "fake"}) + "\n").encode())
+s.sendall((json.dumps({"v": 2, "ev": "hello", "mitmproxy": "fake", "rules_error": "map_remote[0]: ValueError" if n > 1 else ""}) + "\n").encode())
 time.sleep(600)
 `
 
-// When mitmproxy keeps failing and reqcove gives up on it, run returns an
-// error (exits non-zero), not nil as for Ctrl-C: a service sees it failed.
-func TestRunFailsWhenMitmproxyGivesUp(t *testing.T) {
+// When mitmproxy fails for good (here the restarted one's rules no longer
+// load), run returns an error (exits non-zero), not nil as for Ctrl-C: a
+// service sees it failed.
+func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "rcvf-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
 		t.Fatal(err)
@@ -193,10 +233,10 @@ func TestRunFailsWhenMitmproxyGivesUp(t *testing.T) {
 	syscall.Kill(pid, syscall.SIGKILL)
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "gave up after") {
+		if err == nil || !strings.Contains(err.Error(), "no longer load") {
 			t.Errorf("run: %v, want mitmproxy's failure", err)
 		}
 	case <-ctx.Done():
-		t.Fatal("run did not stop after mitmproxy gave up")
+		t.Fatal("run did not stop after mitmproxy failed for good")
 	}
 }

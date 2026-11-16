@@ -33,6 +33,7 @@ import threading
 import time
 import types
 import urllib.parse
+import weakref
 import zlib
 from pathlib import Path
 
@@ -182,10 +183,16 @@ class _Decoder:
 
 
 class _Head:
-    """The stream callable for one body: pass chunks through, copy the head."""
+    """The stream callable for one body: pass chunks through, copy the head.
+    Once the flow's host leaves what is recorded (a remove, a stop, allow-all's
+    end: cut, in configure), nothing more is copied, queued or kept for
+    mitmweb; the chunks still pass."""
 
     def __init__(self, addon, flow, direction, headers):
         self.addon, self.flow_id, self.dir = addon, flow.id, direction
+        self.meta = flow.metadata  # "reqcove_cut" there: the flow's other body is cut too
+        self.host = flow.metadata.get("reqcove_host", flow.request.pretty_host)  # as recorded, before any rule
+        self.cut = False
         self.limit = addon.head_limit
         self.head = bytearray()
         # --web: the whole body as on the wire, up to web_keep, for mitmweb (which
@@ -205,8 +212,19 @@ class _Head:
             self.dec = _Decoder(self.encoding)
         except Exception as e:
             self.dec, self.note = None, str(e)[:SHORT]  # copy the head as it is on the wire
+        if self.meta.get("reqcove_cut") or not addon._in_scope(self.host):
+            self.cut_off()  # a response whose request was cut, or came after its host left
+        else:
+            addon.heads.add(self)
+
+    def cut_off(self):
+        self.cut, self.keep = True, None
+        self.meta["reqcove_cut"] = True
+        self.addon.kept.pop((self.flow_id, self.dir), None)
 
     def __call__(self, data):
+        if self.cut:
+            return data
         try:
             self.size += len(data)
             if self.keep is not None:
@@ -247,7 +265,7 @@ class _Head:
 
     def _send(self, final=False):
         self.last_flush = time.monotonic()
-        if len(self.head) == self.sent_len and not final:
+        if self.cut or len(self.head) == self.sent_len and not final:
             return
         self.sent_len, self.sent_size = len(self.head), self.size
         self.addon.put_body({
@@ -537,6 +555,7 @@ MOCK_BODY = 1 << 20  # a mock's body, inline or from a file, at most
 MOCK_DELAY_MS = 30000  # under URLSession's default timeout (60 s): slow, not a timeout
 PRESET_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 PRESET_SECONDS, PRESET_TIMES = 300, 20  # activate_preset's bounds (Go checks them too)
+STOPPED_PRESET = "recording is stopped (reqcove capture stop): no rule applies, presets included, so none can be turned on; the user runs reqcove capture start in their terminal first (pass it on; never run it yourself)"
 GQL_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]{0,99}")
 GQL_NAME_RUN = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 GQL_NUMBER_RUN = re.compile(r"[-0-9][0-9.eE+-]*")
@@ -924,6 +943,28 @@ WEB_MAX_BYTES = 256 << 20
 RULES_POLL = 1.0  # seconds between looks at the --rules file, with --rules-reload
 
 
+def _read(path):
+    """The file's bytes, None when it cannot be read."""
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
+
+def _out_of_scope_rules(rules, allowed, passed, scope):
+    """The resolve and mock rules naming a host the scope (allowed, passed)
+    leaves out, each in a line (they would never apply: a typo, or a host
+    taken out); scope names it in the line."""
+    out = []
+    for kind, names in (("resolve", rules["resolve"].order), ("mock", rules["mock"].hosts())):
+        for i, name in enumerate(names):
+            if passed(name):  # never decrypted, so no rule applies to it
+                out.append(f"{kind}[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
+            elif not allowed(name):
+                out.append(f"{kind}[{i}]: {name} is not in {scope}")
+    return out
+
+
 def _stamp(path):
     """What changes when the file is saved, in place or by a rename; None when it is gone."""
     try:
@@ -957,12 +998,15 @@ def _rule_items(data, kind):
     return out
 
 
-def load_rules(path):
+def load_rules(path, base=None):
     """The --rules file as mitmproxy's own rule addons, which reqcove calls
-    from its hooks (so rules never touch skipped flows or mitm.it).
+    from its hooks (so rules never touch skipped flows or mitm.it). Files the
+    rules name are relative to base, the file's own directory by default (a
+    copy's is the file's).
 
     Errors name the rule by kind and index, never its text (filters, regexes
     and values can carry tokens); only resolve's names and addresses are said."""
+    base = Path(base) if base else Path(path).parent
     data = ruamel.yaml.YAML(typ="safe", pure=True).load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
         raise ValueError("the file must map mock, map_remote, map_local, modify_headers and resolve to lists")
@@ -992,7 +1036,7 @@ def load_rules(path):
         plain, presets = [], []  # match keys, so a plain rule and a preset never share one
         for i, (spec, preset, description) in enumerate(_rule_items(data, kind)):
             try:
-                rule = _parse_rule(kind, spec, Path(path).parent)
+                rule = _parse_rule(kind, spec, base)
                 flt, subject = _spec_parts(spec)
                 key = (kind, flt, subject.lower() if kind == "modify_headers" else subject)
                 # Derived parts only: never the filter, the regex, a value or a path.
@@ -1035,7 +1079,7 @@ def load_rules(path):
         raise ValueError("mock must be a list of mappings")
     for i, spec in enumerate(specs):
         try:
-            mock.add(spec, Path(path).parent)
+            mock.add(spec, base)
             method, url, op, status, _, _, preset, _, delay, fault = mock.replacements[-1]
             book.rules.append(("mock", i, preset, {"method": method, "url": url, "operation": op, "status": None if fault else status, "delay_ms": delay, "fault": fault}, None))
         except RuleError as e:
@@ -1102,6 +1146,7 @@ class Reqcove:
         self.rules = None  # load_rules(), or None without --rules
         self.web_keep = 0  # --web: bodies up to this many bytes kept for mitmweb
         self.kept = {}  # (flow id, "request" or "response") -> the body to give mitmweb
+        self.heads = weakref.WeakSet()  # the bodies being copied (_Head), cut when their host leaves the scope
         self.web_flows = collections.deque()  # (flow, bytes kept): mitmweb's flows, oldest first
         self.web_bytes = 0
         self.flow_rules = {}  # flow id -> the rules its request got, so a reload mid-flow does not mix two sets
@@ -1112,6 +1157,10 @@ class Reqcove:
         self.upstream = None  # (host, port) of --upstream-proxy
         self.rules_error = ""
         self.control_server = None
+        self.scope_gen = 0  # reqcove_scope_gen: the scope's generation, on what it admits
+        self.stopped = False  # reqcove_stopped (reqcove capture stop): nothing recorded, no rule applies
+        self.everything = False  # reqcove_allow_all (reqcove capture allow-all): every host recorded, the rules on the base alone
+        self.discover = False  # reqcove_discover (reqcove capture discover): names outside the scope told to reqcove
         threading.Thread(target=self._writer, daemon=True).start()
 
     async def _serve_control(self, path):
@@ -1132,6 +1181,13 @@ class Reqcove:
                         out = {"error": str(e)}
                     except Exception as e:  # never mitmproxy's text: it quotes URLs, filters and regexes
                         out = {"error": f"explain_rules failed: {type(e).__name__}"}
+                elif req.get("op") == "scope":  # a live scope change from run, whole
+                    out = self._scope(req)
+                elif req.get("op") == "discover":  # reqcove capture discover --for / --end, or its end by time
+                    ctx.options.update(reqcove_discover=bool(req.get("on")))
+                    out = {"ok": True}
+                elif req.get("op") == "activate" and self.stopped:
+                    out = {"error": STOPPED_PRESET}
                 elif req.get("op") == "check":  # reqcove mock add: the file as it would be, at path (next to target), checked as at start
                     out = self._check(str(req.get("path", "")), str(req.get("target", "")), ctx.options.reqcove_rules, ctx.options.reqcove_rules_reload)
                 elif not self.rules or not self.rules["mock"].book.entries:
@@ -1159,6 +1215,56 @@ class Reqcove:
             return
         async with server:
             await server.serve_forever()
+
+    def _scope(self, req):
+        """op scope: the scope as a whole (mitmproxy's allow_hosts, decrypting
+        per connection; the hosts recorded; its generation), or with check only
+        whether it would be taken. Refused, nothing changed, when a rule loaded
+        names a host it leaves out: checked against the rules in force, never
+        the file on disk. The answer names this mitmdump and the generation."""
+        gen, allow, hosts, stopped, everything = req.get("gen"), req.get("allow_hosts"), req.get("rules"), bool(req.get("stopped")), bool(req.get("allow_all"))
+        if not (isinstance(gen, int) and isinstance(allow, list) and all(isinstance(a, str) for a in allow) and isinstance(hosts, dict)):
+            return {"error": "scope: a bad request"}
+        try:
+            allowed_res = [re.compile(p) for p in hosts.get("patterns") or []]
+            passing = [re.compile(p) for p in hosts.get("pass") or []]
+            for a in allow:
+                re.compile(a)
+        except (re.error, TypeError):
+            return {"error": "scope: a bad pattern"}
+
+        def allowed(h):
+            h = h.lower().rstrip(".")
+            return h != "mitm.it" and (bool(hosts.get("all")) or any(r.match(h) for r in allowed_res))
+
+        def passed(h):
+            h = h.lower().rstrip(".")
+            return any(r.match(h) for r in passing)
+
+        new = None
+        if "rules_file" in req:  # reqcove reload: these rules with this scope, checked against it, never the rules in force
+            path = ctx.options.reqcove_rules
+            if not (isinstance(req["rules_file"], str) and path):
+                return {"error": "scope: a bad request"}
+            new, why = self._load_checked(req["rules_file"], Path(path).parent, allowed, passed, "the new scope")
+            if new is None:
+                return {"error": f"the --rules file does not load: {why}"}
+        elif self.rules and (problems := _out_of_scope_rules(self.rules, allowed, passed, "the new scope")):
+            return {"error": "the --rules file's rules name hosts the new scope leaves out: " + "; ".join(problems)}
+        if not req.get("check"):
+            try:
+                ctx.options.update(allow_hosts=allow, reqcove_allow_hosts=json.dumps(hosts), reqcove_scope_gen=gen, reqcove_stopped=stopped, reqcove_allow_all=everything)
+            except Exception as e:  # never mitmproxy's text: it quotes the patterns
+                return {"error": f"scope: {type(e).__name__}"}
+            if new is not None:  # with the scope, no await between: the presets of the rules before go with them
+                self.rules, self.rules_error = new, ""
+                if _read(path) == _read(ctx.options.reqcove_rules_copy):
+                    self.rules_stamp = _stamp(path)  # --rules-reload's look: these are the file's (a newer save is taken as usual)
+                self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
+        out = {"ok": True, "gen": self.scope_gen, "instance": ctx.options.reqcove_instance}
+        if new is not None:
+            out["rules_loaded"] = rule_counts(new)
+        return out
 
     def _list_rules(self):
         """list_rules: each rule by kind and its index in the file, its preset
@@ -1199,7 +1305,11 @@ class Reqcove:
         host = r.pretty_host.lower().rstrip(".")
         rules = self.rules
         out = {"in_scope": False, "loaded": rules is not None, "rules_error": self.rules_error}
+        if self.stopped:
+            return dict(out, scope="recording is stopped (reqcove capture stop): nothing is decrypted but on connections already open, nothing is recorded, and no rule applies, presets included, until the user runs reqcove capture start")
         # As requestheaders and next_layer decide it.
+        if check.is_valid_host(r.pretty_host) and not self._allowed(host) and self._in_scope(host):
+            return dict(out, scope="recorded while allow-all is on (reqcove capture allow-all), but not in --allow-hosts: no rule applies to it")
         if not check.is_valid_host(r.pretty_host) or not self._allowed(host):
             return dict(out, scope="not in --allow-hosts: carried but not recorded, and no rule applies to it")
         if self._passed(host):
@@ -1278,10 +1388,16 @@ class Reqcove:
         loader.add_option("reqcove_allow_hosts", str, "{}", "Hosts recorded, as JSON from reqcove.")
         loader.add_option("reqcove_rules", str, "", "The --rules file.")
         loader.add_option("reqcove_rules_reload", bool, False, "Re-read the --rules file when it changes.")
+        loader.add_option("reqcove_rules_copy", str, "", "reqcove's private copy of the --rules file as it last loaded: loaded instead of it, and replaced on a reload.")
         loader.add_option("reqcove_web_keep", int, 0, "With mitmweb: keep bodies up to this many bytes for it to show.")
         loader.add_option("reqcove_web_max_flows", int, WEB_MAX_FLOWS, "With mitmweb: the most flows it keeps (tests set fewer).")
         loader.add_option("reqcove_upstream", str, "", "host:port of an HTTP proxy that decrypted requests go on to.")
         loader.add_option("reqcove_control", str, "", "Unix socket where reqcove turns presets on and off.")
+        loader.add_option("reqcove_scope_gen", int, 0, "The generation of reqcove_allow_hosts (and allow_hosts), on the events it admits.")
+        loader.add_option("reqcove_instance", str, "", "This mitmdump's name from reqcove, on its hello and its scope answers.")
+        loader.add_option("reqcove_stopped", bool, False, "reqcove capture stop: nothing recorded, no rule applied (reqcove_allow_hosts is the scope kept for the start).")
+        loader.add_option("reqcove_discover", bool, False, "reqcove capture discover: tell reqcove the names of hosts outside the scope (SNI, Host), never more.")
+        loader.add_option("reqcove_allow_all", bool, False, "reqcove capture allow-all: every host recorded (allow_hosts empty); the rules apply to reqcove_allow_hosts alone.")
 
     def configure(self, updated):
         self.path = ctx.options.reqcove_socket
@@ -1294,40 +1410,50 @@ class Reqcove:
                     self.secret = f.read().strip() or None
             except OSError:
                 self.secret = None
+        self.scope_gen = ctx.options.reqcove_scope_gen
+        if ctx.options.reqcove_stopped and not self.stopped and self.rules:
+            self.rules["mock"].book.active.clear()  # presets go off at a stop, and stay off after the start
+        self.stopped = ctx.options.reqcove_stopped
+        self.everything = ctx.options.reqcove_allow_all
+        self.discover = ctx.options.reqcove_discover
         if "reqcove_allow_hosts" in updated:
             rules = json.loads(ctx.options.reqcove_allow_hosts or "{}")
             self.allow_all = bool(rules.get("all"))
             self.allow = [re.compile(p) for p in rules.get("patterns") or []]
             self.passing = [re.compile(p) for p in rules.get("pass") or []]
+        if {"reqcove_scope_gen", "reqcove_stopped", "reqcove_allow_all", "reqcove_allow_hosts"} & set(updated):
+            for h in list(self.heads):  # bodies under way of a host no longer recorded: nothing more copied
+                if not self._in_scope(h.host):
+                    h.cut_off()
+                    self.heads.discard(h)
         if "reqcove_upstream" in updated:
             host, _, port = ctx.options.reqcove_upstream.rpartition(":")
             self.upstream = (host.strip("[]"), int(port)) if host else None  # [::1]:8080
-        if "reqcove_rules" in updated:
+        if {"reqcove_rules", "reqcove_rules_copy"} & set(updated):
             self.rules, self.rules_error = None, ""
-            if ctx.options.reqcove_rules:
-                self.rules_stamp = _stamp(ctx.options.reqcove_rules)
-                # On an error reqcove reads it from the hello and refuses to start;
-                # none of the rules applies meanwhile.
-                self.rules, self.rules_error = self._load_checked(ctx.options.reqcove_rules)
+            path, copy = ctx.options.reqcove_rules, ctx.options.reqcove_rules_copy
+            if path:
+                self.rules_stamp = _stamp(path)
+                if copy and _read(copy) != _read(path):
+                    # A restart with the file changed since it last loaded (broken,
+                    # maybe): --rules-reload's watch takes it, or says why not.
+                    self.rules_stamp = False
+                # The copy reqcove made of the rules that loaded last, never the
+                # file on disk. On an error reqcove reads it from the hello and
+                # ends the run; none of the rules applies meanwhile.
+                self.rules, self.rules_error = self._load_checked(copy or path, Path(path).parent)
 
-    def _load_checked(self, path):
-        """The rules in path, checked as at start, or None and why not (never a
+    def _load_checked(self, path, base=None, allowed=None, passed=None, scope="--allow-hosts"):
+        """The rules in path, checked as at start (against the scope in force,
+        or allowed and passed, named scope), or None and why not (never a
         rule's text: modify_headers rules often carry tokens)."""
         try:
-            rules = load_rules(path)
+            rules = load_rules(path, base)
             if self.upstream and rules["resolve"].names():
                 # Burp connects by the name in the SNI, looked up again on this computer: the rule would not apply.
                 raise ValueError("resolve does not go with --upstream-proxy (Burp connects by the name, not the address); use the proxy's own host overrides, such as Burp's Hostname resolution overrides")
-            for i, name in enumerate(rules["resolve"].order):
-                if self._passed(name):  # never decrypted, so no rule applies to it
-                    raise ValueError(f"resolve[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
-                if not self._in_scope(name):  # would never apply: a typo
-                    raise ValueError(f"resolve[{i}]: {name} is not in --allow-hosts")
-            for i, name in enumerate(rules["mock"].hosts()):
-                if self._passed(name):
-                    raise ValueError(f"mock[{i}]: {name} is in --pass-hosts: carried undecrypted, no rule applies to it")
-                if not self._in_scope(name):
-                    raise ValueError(f"mock[{i}]: {name} is not in --allow-hosts")
+            if problems := _out_of_scope_rules(rules, allowed or self._allowed, passed or self._passed, scope):
+                raise ValueError(problems[0])
             return rules, ""
         except Exception as e:
             why = str(e) if isinstance(e, ValueError) else type(e).__name__
@@ -1365,13 +1491,38 @@ class Reqcove:
                 self.rules_stamp = stamp
                 if self.rules:
                     self.rules["mock"].book.active.clear()  # a changed file turns presets off, loaded or not
-                rules, why = self._load_checked(path) if stamp else (None, "the file is gone")
+                rules, why = self._take(path) if stamp else (None, "the file is gone")
                 if rules is not None:
                     self.rules = rules
                 self.rules_error = why
             except Exception as e:  # the watch must not die quietly
                 self.rules_error = type(e).__name__
             self.put_event(dict(self._rules_info(), v=VERSION, ev="rules"))
+
+    def _take(self, path):
+        """_load_checked for a reload: the bytes read once, into reqcove's copy's
+        .new beside it (0600), which replaces the copy once they load, so a
+        restarted mitmproxy gets these rules."""
+        copy = ctx.options.reqcove_rules_copy
+        if not copy:
+            return self._load_checked(path)
+        new = copy + ".new"
+        try:
+            b = Path(path).read_bytes()
+            fd = os.open(new, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(b)
+            rules, why = self._load_checked(new, Path(path).parent)
+            if rules is not None:
+                os.replace(new, copy)  # before they apply: what applies is what a restart gets
+            return rules, why
+        except OSError as e:
+            return None, type(e).__name__
+        finally:
+            try:
+                os.unlink(new)
+            except OSError:
+                pass
 
     def _rules_info(self):
         rules = self.rules  # once: the writer thread asks too, for the hello on a reconnect
@@ -1461,10 +1612,18 @@ class Reqcove:
         host = host.lower().rstrip(".")
         return any(r.match(host) for r in self.passing)
 
+    def _recorded(self, host):
+        # The hosts recorded now: none while stopped, every one but mitm.it
+        # during allow-all, else the base (_allowed).
+        return not self.stopped and (self._allowed(host) or self.everything and host.lower().rstrip(".") != "mitm.it")
+
     def _in_scope(self, host):
         # A --pass-hosts host is not recorded as flows, even in a request riding
-        # an allowed host's decrypted connection (HTTP/2 coalescing).
-        return self._allowed(host) and not self._passed(host)
+        # an allowed host's decrypted connection (HTTP/2 coalescing). Stopped:
+        # none, so no rule applies either, on a connection decrypted before too.
+        # _allowed stays the base: rules are checked against it, and apply to
+        # it alone (allow-all records the others, no rule touching them).
+        return self._recorded(host) and not self._passed(host)
 
     def running(self):
         # Connect now, not on the first flow: reqcove waits for this hello
@@ -1520,6 +1679,8 @@ class Reqcove:
             flow.request.stream = True
             if flow.request.pretty_host.lower().rstrip(".") == "mitm.it":
                 return  # the CA's page: served, never recorded, and not "out of scope" either
+            if self.discover:
+                self._seen(flow.request.pretty_host, flow.request.port)
             self.out_of_scope += 1
             self.put_event({"v": VERSION, "ev": "skip"})  # carries the count to reqcove
             # Decrypted all the same, a --pass-hosts host's too (coalesced onto an
@@ -1539,9 +1700,10 @@ class Reqcove:
             "client": f"{peer[0]}:{peer[1]}" if peer else None,
             "ts": r.timestamp_start, "method": r.method, "url": r.pretty_url,
             "host": r.pretty_host, "path": r.path, "http_version": r.http_version,
-            "headers": headers, "note": note,
+            "headers": headers, "note": note, "gen": self.scope_gen,
         }
-        rules = self.rules
+        flow.metadata["reqcove_host"] = r.pretty_host  # the host recorded, for _Head's cut and websocket_message's
+        rules = self.rules if self._allowed(r.pretty_host) else None  # allow-all's other hosts: no rule (a modify_headers rule without a host would send a token anywhere)
         if rules:
             self.flow_rules[flow.id] = rules  # the response's rules too, whatever a reload does meanwhile
             mocks = rules["mock"].candidates(flow)
@@ -1941,7 +2103,8 @@ class Reqcove:
         self.put_event({"v": VERSION, "ev": "error", "id": flow.id, "msg": msg})
 
     def websocket_message(self, flow):
-        if flow.metadata.get("reqcove_skip"):
+        meta = flow.metadata
+        if meta.get("reqcove_skip"):
             flow.websocket.messages.clear()
             return
         m = flow.websocket.messages[-1]
@@ -1949,6 +2112,13 @@ class Reqcove:
             "v": VERSION, "ev": "ws", "id": flow.id, "from_client": m.from_client,
             "size": len(m.content), "text": m.is_text, "ts": m.timestamp,
         }
+        if meta.get("reqcove_ws_gen") != self.scope_gen:  # checked again once the scope changed: its host may have left
+            meta["reqcove_ws_gen"] = self.scope_gen
+            if not self._in_scope(meta.get("reqcove_host", flow.request.pretty_host)):
+                meta["reqcove_skip"] = True  # nothing more queued; this one, without its head, closes its flow in reqcove (its gate)
+                flow.websocket.messages.clear()
+                self.put_event(ev)
+                return
         if m.is_text:
             # A token bucket per socket: past it a message keeps its count, not
             # its head, so a flood cannot fill the one pipeline into reqcove.
@@ -1999,8 +2169,11 @@ class Reqcove:
         (Apple's): those it passes through itself, unrecorded. Script addons run
         before mitmproxy's own NextLayer (12.3.1), which leaves a layer chosen
         here; a change of that order fails TestPassHosts."""
-        if not self.passing or nl.layer is not None or len(nl.context.layers) != 1:
+        if nl.layer is not None or len(nl.context.layers) != 1:
             return
+        passing = bool(self.passing) and not self.stopped
+        if not (passing or self.discover):
+            return  # nothing read: discovery off costs nothing
         data = nl.data_client()
         if not starts_like_tls_record(data):
             return
@@ -2011,10 +2184,14 @@ class Reqcove:
         if hello is None:
             return  # more to come: mitmproxy asks again (it waits, as it has ignore_hosts: Apple's, always)
         ip, port = nl.context.server.address or ("", 443)
+        if self.discover:  # once a connection (the first layer's, with the whole hello: TestDiscoverE2E counts)
+            self._seen(hello.sni, port)
+        if not passing:
+            return
         # The name the client sent, or without one (an app dialing an address),
         # the address: what --pass-hosts names, and what status suggests.
         sni = (hello.sni or ip).lower().rstrip(".")
-        if not sni or not (self._allowed(sni) and self._passed(sni)):
+        if not sni or not (self._recorded(sni) and self._passed(sni)):  # during allow-all every --pass-hosts host: mitmproxy would decrypt it
             return
         # mitmproxy's own ignore_hosts (Apple's) come first, by name or address.
         if any(re.search(p, f"{sni}:{port}") or re.search(p, f"{ip}:{port}") for p in ctx.options.ignore_hosts):
@@ -2025,6 +2202,20 @@ class Reqcove:
             "alpn": [_alpn(a) for a in hello.alpn_protocols[:8]],
         }
         nl.layer = layer
+
+    def _seen(self, name, port):
+        """Discovery: a host name outside the scope (the base, and not passed
+        undecrypted), told to reqcove, which counts it: never the connection's
+        content, a path or a time. Not Apple's (mitmproxy's ignore_hosts, by
+        name and port as it matches them), nor mitm.it, nor a name that is no
+        host name. A connection without SNI (an address dialed) has no name,
+        and with ECH only the outer, public name is seen."""
+        name = (name or "").lower().rstrip(".")
+        if not name or name == "mitm.it" or not check.is_valid_host(name) or self._allowed(name) or self._passed(name):
+            return
+        if any(re.search(p, f"{name}:{port}") for p in ctx.options.ignore_hosts):
+            return
+        self.put_event({"v": VERSION, "ev": "seen", "host": name})
 
     def tcp_start(self, flow):
         p = flow.metadata.get("reqcove_pass")
@@ -2051,7 +2242,7 @@ class Reqcove:
         ev = {
             "v": VERSION, "ev": "pass_open", "conn": c.id, "device": p["device"],
             "sni": p["sni"], "alpn": p["alpn"], "server": f"{addr[0]}:{addr[1]}" if addr else None,
-            "ts": c.timestamp_start or time.time(),
+            "ts": c.timestamp_start or time.time(), "gen": self.scope_gen,
         }
         if p.get("raw"):
             ev["raw"], ev["alpn_negotiated"] = True, _alpn(c.alpn) if c.alpn else ""
@@ -2083,6 +2274,7 @@ class Reqcove:
             "sni": data.context.client.sni, "msg": str(data.conn.error or "")[:SHORT],
             # without SNI (an IP address dialed directly), the destination
             "host": data.context.server.address[0] if data.context.server.address else None,
+            "gen": self.scope_gen,
         })
 
     def _hello(self):
@@ -2093,6 +2285,7 @@ class Reqcove:
             "dropped_bodies": self.dropped_bodies, "dropped_events": self.dropped_events,
             **self._rules_info(),
             "upstream": "%s:%d" % self.upstream if self.upstream else "",
+            "instance": ctx.options.reqcove_instance, "gen": self.scope_gen,
         }
 
     def _encode(self, msg):

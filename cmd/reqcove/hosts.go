@@ -1,18 +1,107 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"maps"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 )
+
+// writeHosts writes hosts into the hosts file path (--allow-hosts=@path), one
+// a line, whole or not at all, 0600. An existing file must be a plain file of
+// this user's: its comments, and its lines whose hosts are all kept, stay as
+// they are, new hosts at the end; a new file starts with head. It is read
+// back as run reads it before it takes the file's place.
+func writeHosts(path string, hosts []string, head string) error {
+	old := head
+	switch fi, err := os.Lstat(path); {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("%s is not a plain file (a link?): hosts are written to a plain file only", path)
+	default:
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+			return fmt.Errorf("%s is not yours: its hosts decide what is recorded", path)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		old = string(b)
+	}
+	keep, written := setOf(hosts), map[string]bool{}
+	var text strings.Builder
+	for line := range strings.Lines(old) {
+		body, _, _ := strings.Cut(line, "#")
+		r, err := capture.ParseAllowHosts(hostsOf(body))
+		if err != nil || slices.ContainsFunc(r.Hosts, func(h string) bool { return !keep[h] }) {
+			continue // a host taken out (the others on its line come at the end), or not a host list
+		}
+		text.WriteString(strings.TrimSuffix(line, "\n") + "\n")
+		for _, h := range r.Hosts {
+			written[h] = true
+		}
+	}
+	for _, h := range hosts {
+		if !written[h] {
+			text.WriteString(h + "\n")
+			written[h] = true
+		}
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".hosts.tmp*") // 0600
+	if err != nil {
+		return err
+	}
+	_, err = tmp.WriteString(text.String())
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		var got string
+		if got, err = hostList("@" + tmp.Name()); err == nil {
+			if r, _ := capture.ParseAllowHosts(hostsOf(got)); !maps.Equal(setOf(r.Hosts), keep) {
+				err = fmt.Errorf("%s would not read back as written", path)
+			}
+		}
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+// hostsOf is spec's hosts as hostsOnly takes them, without its log line.
+func hostsOf(spec string) []string {
+	var out []string
+	for h := range strings.SplitSeq(spec, ",") {
+		out = append(out, hostOf(strings.TrimSpace(h)))
+	}
+	return out
+}
+
+func setOf(hosts []string) map[string]bool {
+	out := map[string]bool{}
+	for _, h := range hosts {
+		out[h] = true
+	}
+	return out
+}
 
 // hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
 // a port, saying so: only hosts are matched, not schemes, paths or ports.
@@ -20,16 +109,9 @@ import (
 // the hosts in the file, one a line (or comma-separated), # starting a
 // comment. @~/ is the home directory: the shell expands no ~ after @.
 func hostList(v string) (string, error) {
-	path, ok := strings.CutPrefix(v, "@")
-	if !ok {
-		return v, nil
-	}
-	if rest, ok := strings.CutPrefix(path, "~/"); ok {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		path = filepath.Join(home, rest)
+	path, ok, err := atFile(v)
+	if !ok || err != nil {
+		return v, err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -56,6 +138,24 @@ func hostList(v string) (string, error) {
 	return strings.Join(hosts, ","), nil
 }
 
+// atFile is the file of an @FILE value, absolute (@~/ is the home
+// directory: the shell expands no ~ after @); ok false for a value without @.
+func atFile(v string) (path string, ok bool, err error) {
+	path, ok = strings.CutPrefix(v, "@")
+	if !ok {
+		return "", false, nil
+	}
+	if rest, cut := strings.CutPrefix(path, "~/"); cut {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", true, err
+		}
+		path = filepath.Join(home, rest)
+	}
+	path, err = filepath.Abs(path)
+	return path, true, err
+}
+
 // hostOf is the host in a value given for one: a URL's, or host:port's.
 func hostOf(h string) string {
 	if u, err := url.Parse(h); err == nil && strings.Contains(h, "://") && u.Hostname() != "" {
@@ -67,7 +167,7 @@ func hostOf(h string) string {
 	return h
 }
 
-func hostsOnly(flagName string, specs []string) []string {
+func hostsOnly(lg *log.Logger, flagName string, specs []string) []string {
 	var out []string
 	for _, spec := range specs {
 		var hosts []string
@@ -78,7 +178,7 @@ func hostsOnly(flagName string, specs []string) []string {
 				shown = u.Scheme + "://" + u.Host + "/…" // a pasted URL's path and query can hold a token
 			}
 			if host != h {
-				log.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
+				lg.Printf("%s: %q taken as %q (hosts are matched, not paths or ports)", flagName, shown, host)
 			}
 			hosts = append(hosts, host)
 		}
@@ -127,16 +227,9 @@ func maskPolicy(nameSpecs, valueSpecs []string) (names, values []string, err err
 // specLines is v itself, or with @FILE the file's lines that are not blank
 // or a comment (#), and the file's path.
 func specLines(v, flag string) ([]string, string, error) {
-	path, ok := strings.CutPrefix(v, "@")
-	if !ok {
-		return []string{v}, "", nil
-	}
-	if rest, ok := strings.CutPrefix(path, "~/"); ok {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, "", err
-		}
-		path = filepath.Join(home, rest)
+	path, ok, err := atFile(v)
+	if !ok || err != nil {
+		return []string{v}, "", err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

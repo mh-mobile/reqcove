@@ -166,6 +166,40 @@ func TestRunConfigRefused(t *testing.T) {
 	}
 }
 
+// A run with no arguments at all reads ~/.config/reqcove/config, else
+// Homebrew's etc/reqcove/config (both there: the first, the other named);
+// with any argument, or neither file, nothing is read (as in v1.0).
+func TestBareRun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldTS, oldExe := tailscaleStatus, selfExe
+	t.Cleanup(func() { tailscaleStatus, selfExe = oldTS, oldExe })
+	tailscaleStatus = func() ([]byte, error) { return nil, os.ErrNotExist }
+	prefix := t.TempDir()
+	selfExe = func() (string, error) { return prefix + "/Cellar/reqcove/1.1.0/bin/reqcove", nil }
+	if _, err := parseRunFlags(nil); err == nil || !strings.Contains(err.Error(), "--device is required") || !strings.Contains(err.Error(), "reqcove run with no arguments reads it") {
+		t.Errorf("none: %v", err)
+	}
+	state := "--state " + filepath.Join(home, "st") + "\n"
+	os.MkdirAll(filepath.Join(prefix, "etc/reqcove"), 0o700)
+	brew := filepath.Join(prefix, "etc/reqcove/config")
+	os.WriteFile(brew, []byte("--device brews\n"+state), 0o600)
+	o, err := parseRunFlags(nil)
+	if err != nil || !slices.Equal(o.devices, []string{"brews"}) || o.config != brew || o.configUnused != "" {
+		t.Fatalf("Homebrew's: %+v %v", o, err)
+	}
+	os.MkdirAll(filepath.Dir(defaultConfig()), 0o700)
+	os.WriteFile(defaultConfig(), []byte("--device mine\n"+state), 0o600)
+	o, err = parseRunFlags(nil)
+	if err != nil || !slices.Equal(o.devices, []string{"mine"}) || o.config != defaultConfig() || o.configUnused != brew {
+		t.Fatalf("both: %+v %v", o, err)
+	}
+	o, err = parseRunFlags([]string{"--device", "flags", "--state", filepath.Join(home, "st")})
+	if err != nil || !slices.Equal(o.devices, []string{"flags"}) || o.config != "" {
+		t.Errorf("flags only: %+v %v", o, err)
+	}
+}
+
 // Under brew services (launchd's label in XPC_SERVICE_NAME) status says so.
 func TestStatusService(t *testing.T) {
 	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
@@ -184,5 +218,12 @@ func TestStatusService(t *testing.T) {
 	t.Setenv("XPC_SERVICE_NAME", "application.com.apple.Terminal.123") // a terminal's
 	if s := statusOut(exitnode.Status{}, map[string]any{"state": "ready"}, allow, capture.CA{}, nil).Service; s != "" {
 		t.Errorf("from a terminal: %q", s)
+	}
+}
+
+// A service started before setup: its log says what writes the file.
+func TestReadConfigMissing(t *testing.T) {
+	if _, _, err := readConfig(filepath.Join(t.TempDir(), "config")); err == nil || !strings.Contains(err.Error(), "reqcove setup writes it") {
+		t.Errorf("missing: %v", err)
 	}
 }

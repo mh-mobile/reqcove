@@ -17,7 +17,8 @@ import (
 // command line's, a repeatable one (--device, --allow-hosts) adds up. Flags
 // that take masking off, record everything, show traffic unmasked or let a
 // file change where requests go while running are refused there: they stay on
-// the command line, where someone typed them. Never read unless named.
+// the command line, where someone typed them. Read only when named, or by a
+// `run` with no arguments at all (bareConfig).
 
 // configOnlyOnCommandLine are refused in a --config file.
 var configOnlyOnCommandLine = map[string]string{
@@ -67,6 +68,9 @@ func readConfig(path string) (words []string, lines []int, err error) {
 	// Opened once, checked and read through the same descriptor: no swap
 	// between the check and the read; O_NONBLOCK so a FIFO cannot hang it.
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) { // a service started before setup wrote it
+		return nil, nil, fmt.Errorf("--config: %w: reqcove setup writes it (in your terminal)", err)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("--config: %w", err)
 	}
@@ -205,4 +209,22 @@ func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string) error {
 		return fmt.Errorf("--config %s: --allow-hosts '*' only on the command line (it records every site)", path)
 	}
 	return nil
+}
+
+// bareConfig is the file a run with no arguments reads: ~/.config/reqcove/config,
+// else Homebrew's etc/reqcove/config when this reqcove is Homebrew's ("" for
+// none); other is the second when both are there (not read).
+func bareConfig() (path, other string) {
+	cands := []string{defaultConfig()}
+	if brew := brewPrefix(); brew != "" {
+		cands = append(cands, setupConfig(brew))
+	}
+	var found []string
+	for _, c := range cands {
+		if _, err := os.Stat(c); err == nil {
+			found = append(found, c)
+		}
+	}
+	found = append(found, "", "")
+	return found[0], found[1]
 }

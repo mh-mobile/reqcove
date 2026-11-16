@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/netip"
 	"os"
@@ -33,12 +34,76 @@ type runOpts struct {
 	upstreamProxy, upstreamCA, upstream string
 	lanIface                            string
 	localProxy                          bool
+	origin                              hostsOrigin
+	// config is the --config file read (in full), "" for none; configUnused
+	// the other file a bare run finds there too, not read.
+	config, configUnused string
+	// args are run's arguments, a bare run's --config FILE in place (reqcove
+	// reload parses them again); the others are what only a restart takes.
+	args                  []string
+	maskNames, maskValues []string
+	proto, dnsFlag        string
+}
+
+// hostsOrigin is where run's --allow-hosts came from, for capture save: the
+// @FILEs read, the hosts in them, and the hosts given as they are, with where
+// ("the command line" or "the --config file"), in a file too or not: a
+// restart takes those again whatever the file says.
+type hostsOrigin struct {
+	files, passFiles []string
+	inFiles          map[string]bool
+	given            map[string]string
+}
+
+// add notes value v of --allow-hosts (pass: --pass-hosts), hosts its hosts
+// (@FILE read), given in from.
+func (o *hostsOrigin) add(v, hosts, from string, pass bool) {
+	file, ok, _ := atFile(v)
+	if pass {
+		if ok {
+			o.passFiles = append(o.passFiles, file)
+		}
+		return
+	}
+	if ok && !slices.Contains(o.files, file) {
+		o.files = append(o.files, file)
+	}
+	r, _ := capture.ParseAllowHosts(hostsOf(hosts)) // a bad one: run refuses it next
+	for _, h := range r.Hosts {
+		if ok {
+			if o.inFiles == nil {
+				o.inFiles = map[string]bool{}
+			}
+			o.inFiles[h] = true
+		} else {
+			if o.given == nil {
+				o.given = map[string]string{}
+			}
+			o.given[h] = from
+		}
+	}
 }
 
 // parseRunFlags defines run's flags, reads --config and the command line, and
 // refuses what does not go together, warning of what is risky; it also sets
 // the mask policy and loads --proto.
 func parseRunFlags(args []string) (*runOpts, error) {
+	return runFlags(args, false)
+}
+
+// reloadFlags is parseRunFlags for reqcove reload, of the arguments run
+// started with (o.args): it changes nothing (no mask policy; --proto checked,
+// not loaded; no upstream dialled), logs nothing, and never exits: a flag or
+// file that no longer parses is its error.
+func reloadFlags(args []string) (*runOpts, error) {
+	return runFlags(args, true)
+}
+
+func runFlags(args []string, reload bool) (*runOpts, error) {
+	lg := log.Default()
+	if reload {
+		lg = log.New(io.Discard, "", 0)
+	}
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
 	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
@@ -46,14 +111,18 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		return nil
 	})
 	var allowSpecs, passSpecs []string
+	var origin hostsOrigin
+	from := "the --config file"
 	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything; @FILE reads them from a file, one a line. Without it, nothing is recorded.`, func(v string) error {
-		v, err := hostList(v)
-		allowSpecs = append(allowSpecs, v)
+		hosts, err := hostList(v)
+		allowSpecs = append(allowSpecs, hosts)
+		origin.add(v, hosts, from, false)
 		return err
 	})
 	fs.Func("pass-hosts", `allowed hosts carried undecrypted, as --allow-hosts' (not "*"; @FILE too): for apps that refuse Reqcove's certificate there (certificate pinning). Only their connections are recorded (host, times, bytes): no URL, headers or bodies`, func(v string) error {
-		v, err := hostList(v)
-		passSpecs = append(passSpecs, v)
+		hosts, err := hostList(v)
+		passSpecs = append(passSpecs, hosts)
+		origin.add(v, hosts, from, true)
 		return err
 	})
 	rulesReload := fs.Bool("rules-reload", false, "take the --rules file again whenever it changes, while running (whatever can write the file can then change where the devices' requests go)")
@@ -87,16 +156,43 @@ func parseRunFlags(args []string) (*runOpts, error) {
 	lanIface := fs.String("lan-interface", "", "with --lan, the interface to listen on (default: the default route's, such as en0)")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
 	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	bare := len(args) == 0 && !reload
+	var config, configUnused string
 	if takeFlags == nil { // the docs test reads no file
+		if bare { // no arguments at all: the file setup writes, if any
+			if path, other := bareConfig(); path != "" {
+				args = []string{"--config", path}
+				note := "run with no arguments: reading " + path
+				if other != "" {
+					note += "; " + other + " is there too, not read (--config FILE to read that one)"
+				}
+				log.Print(note)
+				configUnused = other
+			}
+		}
 		if path, ok, err := configFile(args); err != nil {
 			return nil, err
 		} else if ok {
 			if err := parseConfig(fs, path, &allowSpecs); err != nil {
 				return nil, err
 			}
+			if reload { // parseConfig leaves fs exiting on an error
+				fs.Init(fs.Name(), flag.ContinueOnError)
+			}
+			if config, err = filepath.Abs(path); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if err := parseFlags(fs, args); err != nil {
+	from = "the command line"
+	if reload {
+		fs.Init(fs.Name(), flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		fs.Usage = func() {}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+	} else if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if *proxyPort < 0 || *proxyPort > 65535 { // LAN mode took 65616 as 80 (16 bits)
@@ -111,13 +207,16 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		if names := iosDevices(); len(names) > 0 {
 			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
 		}
+		if bare && config == "" {
+			msg += ". Or keep it in " + defaultConfig() + " (reqcove setup writes it): reqcove run with no arguments reads it"
+		}
 		return nil, errors.New(msg)
 	}
 	dns, err := parseDNS(*dnsFlag)
 	if err != nil {
 		return nil, err
 	}
-	allow, err := capture.ParseAllowHosts(hostsOnly("--allow-hosts", allowSpecs))
+	allow, err := capture.ParseAllowHosts(hostsOnly(lg, "--allow-hosts", allowSpecs))
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +224,7 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		if !allow.All && len(allow.Patterns) == 0 {
 			return nil, errors.New("--pass-hosts needs --allow-hosts: hosts outside it pass undecrypted already, and nothing about them is recorded")
 		}
-		if allow, err = allow.WithPass(hostsOnly("--pass-hosts", passSpecs)); err != nil {
+		if allow, err = allow.WithPass(hostsOnly(lg, "--pass-hosts", passSpecs)); err != nil {
 			return nil, err
 		}
 		for _, h := range allow.PassHosts {
@@ -136,23 +235,23 @@ func parseRunFlags(args []string) (*runOpts, error) {
 			covered := allow.Allowed(name) || slices.ContainsFunc(allow.Hosts, func(a string) bool { return this.Allowed(strings.TrimPrefix(a, "*.")) })
 			switch {
 			case capture.AppleIgnored(name):
-				log.Printf("WARN: --pass-hosts %s: one of Apple's, which mitmproxy passes undecrypted itself: nothing about it is recorded", h)
+				lg.Printf("WARN: --pass-hosts %s: one of Apple's, which mitmproxy passes undecrypted itself: nothing about it is recorded", h)
 			case !covered:
-				log.Printf("WARN: --pass-hosts %s: not in --allow-hosts, so it passes undecrypted already, and nothing about it is recorded", h)
+				lg.Printf("WARN: --pass-hosts %s: not in --allow-hosts, so it passes undecrypted already, and nothing about it is recorded", h)
 			}
 		}
 		for _, a := range allow.Hosts {
 			if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
-				log.Printf("WARN: --allow-hosts %s: connections to that address are decrypted whatever name they carry; --pass-hosts does not apply to them", a)
+				lg.Printf("WARN: --allow-hosts %s: connections to that address are decrypted whatever name they carry; --pass-hosts does not apply to them", a)
 			}
 		}
-		log.Printf("--pass-hosts: %s carried undecrypted; their connections (host, times, bytes) are recorded, nothing inside them", strings.Join(allow.PassHosts, ", "))
+		lg.Printf("--pass-hosts: %s carried undecrypted; their connections (host, times, bytes) are recorded, nothing inside them", strings.Join(allow.PassHosts, ", "))
 	}
 	switch {
 	case allow.All:
-		log.Print("WARN: --allow-hosts '*': every decrypted request is recorded, including other apps' and sites'. Agents, and their model providers, can read them.")
+		lg.Print("WARN: --allow-hosts '*': every decrypted request is recorded, including other apps' and sites'. Agents, and their model providers, can read them.")
 	case len(allow.Patterns) == 0:
-		log.Print("no --allow-hosts: traffic is carried but nothing is decrypted or recorded. Add --allow-hosts api.example.com for your app.")
+		lg.Print("no --allow-hosts: traffic is carried but nothing is decrypted or recorded. Add --allow-hosts api.example.com for your app.")
 	}
 	if *rules != "" {
 		if !allow.All && len(allow.Patterns) == 0 {
@@ -168,7 +267,7 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		return nil, errors.New("--rules-reload needs --rules FILE")
 	}
 	if *noRedact {
-		log.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
+		lg.Print("WARN: --no-redact: secrets are kept unmasked in the records (headers, URLs, bodies, error text)")
 	}
 	if *mitmSpec == capture.LockedMitmSpec && pythonBelow(*python, 3, 14) {
 		return nil, fmt.Errorf("--python %s: the locked mitmproxy needs Python 3.14 or later; with an older one, give --mitmproxy-spec too (fetched through uvx, no lock)", *python)
@@ -177,20 +276,31 @@ func parseRunFlags(args []string) (*runOpts, error) {
 	if err != nil {
 		return nil, err
 	}
-	if *noRedact && len(maskNames)+len(maskValues) > 0 {
-		log.Print("WARN: --mask-names and --mask-values do nothing with --no-redact")
-	} else if err := capture.SetMaskPolicy(maskNames, maskValues); err != nil {
-		return nil, err
+	switch {
+	case *noRedact && len(maskNames)+len(maskValues) > 0:
+		lg.Print("WARN: --mask-names and --mask-values do nothing with --no-redact")
+	case reload:
+		if err := capture.CheckMaskPolicy(maskNames, maskValues); err != nil {
+			return nil, err
+		}
+	default:
+		if err := capture.SetMaskPolicy(maskNames, maskValues); err != nil {
+			return nil, err
+		}
 	}
 	if *protoFile != "" {
 		if *noRedact {
-			log.Print("WARN: --proto does nothing with --no-redact: protobuf bodies are kept as they came")
+			lg.Print("WARN: --proto does nothing with --no-redact: protobuf bodies are kept as they came")
 		}
-		n, err := capture.LoadProtoSchema(*protoFile)
+		load := capture.LoadProtoSchema
+		if reload {
+			load = capture.CheckProtoSchema
+		}
+		n, err := load(*protoFile)
 		if err != nil {
 			return nil, fmt.Errorf("--proto %s: %w", *protoFile, err)
 		}
-		log.Printf("--proto: %d message types from %s", n, *protoFile)
+		lg.Printf("--proto: %d message types from %s", n, *protoFile)
 	}
 	if *uiFlag && *proxyPort == 80 {
 		return nil, errors.New("--ui uses the node's port 80: give --proxy-port another")
@@ -202,29 +312,35 @@ func parseRunFlags(args []string) (*runOpts, error) {
 		return nil, fmt.Errorf("--mcp-http uses the node's port %d: give --proxy-port another", exitnode.MCPPort)
 	}
 	if *mcpHTTP && *noRedact {
-		log.Print("WARN: --mcp-http with --no-redact: agents on your other devices (Grok Bot in xAI's cloud) read the records unmasked")
+		lg.Print("WARN: --mcp-http with --no-redact: agents on your other devices (Grok Bot in xAI's cloud) read the records unmasked")
 	}
 	if *upstreamProxy != "" && !allow.All && len(allow.Patterns) == 0 {
 		return nil, fmt.Errorf("--upstream-proxy needs --allow-hosts: only decrypted requests go on to it")
 	}
-	upstream, err := parseUpstream(*upstreamProxy, *upstreamCA)
+	check := parseUpstream
+	if reload {
+		check = upstreamAddr
+	}
+	upstream, err := check(*upstreamProxy, *upstreamCA)
 	if err != nil {
 		return nil, err
 	}
 	if len(allow.PassHosts) > 0 && (*rules != "" || upstream != "") {
-		log.Print("WARN: --pass-hosts with --rules or --upstream-proxy: the hosts passed through skip both and reach their own servers directly (a host --rules sends to staging reaches production); only their requests mitmproxy decrypts anyway (plain HTTP, or on an allowed host's connection) still go through --upstream-proxy")
+		lg.Print("WARN: --pass-hosts with --rules or --upstream-proxy: the hosts passed through skip both and reach their own servers directly (a host --rules sends to staging reaches production); only their requests mitmproxy decrypts anyway (plain HTTP, or on an allowed host's connection) still go through --upstream-proxy")
 	}
 	if upstream != "" && allow.All {
 		// Burp looks HTTPS names up again on this computer; a site can answer that
 		// lookup with 127.0.0.1 or a LAN address (DNS rebinding).
-		log.Print("WARN: --upstream-proxy with --allow-hosts '*': the proxy connects to HTTPS hosts by name, looked up again on this computer, so a site the iPhone visits can point it at this computer or the LAN. Keep --allow-hosts to the hosts you test.")
+		lg.Print("WARN: --upstream-proxy with --allow-hosts '*': the proxy connects to HTTPS hosts by name, looked up again on this computer, so a site the iPhone visits can point it at this computer or the LAN. Keep --allow-hosts to the hosts you test.")
 	}
 	return &runOpts{
 		devices: devices, allow: allow, rules: *rules, rulesReload: *rulesReload, web: *web, noRedact: *noRedact,
 		state: *state, hostname: hostname, dns: dns, mitmSpec: *mitmSpec, python: *python, uvx: *uvx,
 		proxyPort: *proxyPort, mcpHTTP: *mcpHTTP, ui: *uiFlag, verbose: *verbose, lanMode: *lanMode,
 		upstreamProxy: *upstreamProxy, upstreamCA: *upstreamCA, upstream: upstream,
-		lanIface: *lanIface, localProxy: *localProxy,
+		lanIface: *lanIface, localProxy: *localProxy, origin: origin,
+		config: config, configUnused: configUnused,
+		args: args, maskNames: maskNames, maskValues: maskValues, proto: *protoFile, dnsFlag: *dnsFlag,
 	}, nil
 }
 

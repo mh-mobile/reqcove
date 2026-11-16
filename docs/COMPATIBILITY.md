@@ -8,7 +8,8 @@ anything here, and some did.
 What stays as it is within a major version, what may change in any release, and
 how changes are announced. The lists come from the code (the tools as the MCP
 server registers them, each command's flags, the rules file's loader), not from
-memory. Points checked by tests say so; the rest comes from reading code.
+memory. Where tests check a point, the last line of its section says so; the
+rest comes from reading code.
 
 1. [Versions](#versions)
 2. [Stable within a major version](#stable-within-a-major-version)
@@ -94,7 +95,7 @@ Each tool's fields:
 
 `reqcove status --json` prints the `status` tool's JSON. When no run answers
 (none runs, or one is starting or stopping), it prints nothing on stdout and
-exits 1, saying why on stderr (unit test). Its fields:
+exits 1, saying why on stderr. Its fields:
 
 - `mode`, `next_steps`, `allow_hosts`, `pass_hosts`, `service`, `capture`
   (`capture_stats`' fields, below), `active_presets` and `active_presets_error`.
@@ -102,6 +103,46 @@ exits 1, saying why on stderr (unit test). Its fields:
   `header`, `host`, `address`, `method`, `url`, `operation`, `status`,
   `delay_ms`, `fault`, `active`, `remaining`, `expires_at` (as `list_presets`'
   presets).
+- Since v1.1, while the hosts are changed live (`reqcove capture`, `reqcove reload`):
+  `scope_pending` (a change mitmproxy has not acknowledged yet, text for
+  people; absent when none), `scope_changed_at` (RFC 3339) and `scope_change`
+  (the command, such as `capture add api.example.com` or `reload`), absent before the
+  first change. `allow_hosts` and `pass_hosts` are the hosts mitmproxy has
+  acknowledged.
+- Since v1.1, `recording`: `on`, or `stopped` (`reqcove capture stop`, until
+  `capture start`; more values may come). While stopped, `allow_hosts` is `[]`
+  and `pass_hosts` absent (nothing is recorded); `base_allow_hosts` and
+  `base_pass_hosts` are the hosts recorded when it is on (absent when none),
+  while stopped the ones `start` records. Absent from a run older than v1.1.
+- Since v1.1, `recording` is also `allow-all` (`reqcove capture allow-all
+  --for D`, until it ends): `allow_hosts` is `["*"]`, `pass_hosts` the hosts
+  still passed undecrypted, `base_allow_hosts` the hosts recorded after it;
+  `allow_all_until` (RFC 3339) and `allow_all_left` (a Go duration, such as
+  `29m10s`) say when it ends, absent when off. `records_outside_scope`: the
+  records kept whose host `base_allow_hosts` does not record (allow-all's,
+  kept after it ends, or those of hosts removed since); absent when none.
+- Since v1.1, about the run itself: `version` (as `reqcove version` prints
+  it, as `serverInfo`'s), `manager` (what started it: `terminal`,
+  `reqcove service` for `reqcove service install`'s LaunchAgent or unit,
+  `brew services`; more values may come; absent when it cannot be told),
+  `restart_command` (the command that restarts it under its service, such as
+  `brew services restart reqcove`, or `reqcove service install` when that
+  service runs another binary than `run`, or one gone; absent from a
+  terminal), and, on this
+  computer only (not over `--mcp-http`), `config_file` (the `--config` file
+  it read, in full; absent for flags only), `config_unused` (the other config
+  file a `run` with no arguments found there and did not read) and
+  `hosts_files` (the files `--allow-hosts=@FILE` and `--pass-hosts=@FILE`
+  read). Absent from a run older than v1.1: `reqcove status` takes the
+  version from `serverInfo` then.
+- Since v1.1, on this computer only (not over `--mcp-http`), host discovery
+  (`reqcove capture discover`): `discover_until` (RFC 3339) and
+  `discover_left` while it is on; `out_of_scope_hosts` (each with `host`,
+  `count`, and `add`, the command that records it, absent for a name that is
+  not a plain host name; at most 30, most seen first) and
+  `out_of_scope_hosts_kept` (how many names are kept), absent when none.
+  `summarize` gets `out_of_scope_hosts` too, the same, not narrowed by its
+  filters.
 - `node`: `backend`, `node`, `ips`, `exit_node_approved`,
   `tailnet_lock`, `tailnet_lock_signed`, `node_key`, `devices`, `device_os`,
   `device_problems`, `health`. `backend`'s values and `health`'s texts are
@@ -109,14 +150,22 @@ exits 1, saying why on stderr (unit test). Its fields:
 - `lan`, in LAN mode only: `interface`, `network`, `listen`, `stopped`,
   `allowed` (each with `addr` and `allowed_at`), `refused`, `refused_more`.
 
+Checked by a unit test: when no run answers, nothing on stdout, exit status 1
+and the reason on stderr. By unit tests too: v1.1's fields, and a new
+`reqcove status` reading a v1.0.0 `run`'s answer.
+
 #### `capture_stats`
 
 Its documented fields: `flows`, `flows_with_truncated_bodies`, `evicted`,
 `checkpoint`, `oldest_flow`, `newest_flow`, `max_flows`, `max_bytes`, `state`,
 `started`, `redacting`, `out_of_scope`, `passed_through`, `raw_tcp`,
 `raw_tcp_hosts`, `refused_hosts`,
-`pass_hosts`, `mitmproxy`, `python` (their versions), `presets`, `rules_loaded`
-(once a rules file was taken), and, while masking is on, `mask_names` and
+`pass_hosts`, `mitmproxy`, `python` (their versions), `presets`, `retries` (since
+v1.1: attempts in a row to start mitmproxy again), `last_failure` (since v1.1:
+why it last failed, text for people; "" when it has not), `next_attempt` (since
+v1.1: while it waits to try again), `rules_loaded`
+(once a rules file was taken), `recording` (since v1.1: `on`, `stopped` or
+`allow-all`, as `status`'s; while stopped, `pass_hosts` is none), and, while masking is on, `mask_names` and
 `mask_values` (the matches per name and per pattern number). The others are
 [not stable](#not-stable).
 
@@ -159,6 +208,13 @@ The commands and their flags, from each command's flag set:
 | `reqcove links` | `--state` |
 | `reqcove lan allow ADDR`, `lan deny ADDR`, `lan list` | `--state` |
 | `reqcove mark [TEXT]` (`-- TEXT` for one starting with `-`) | `--state` |
+| `reqcove capture add HOST…`, `capture remove HOST…` (since v1.1) | `--pass`, `--state` |
+| `reqcove capture set` (since v1.1) | `--allow-hosts`, `--pass-hosts`, `--state` |
+| `reqcove capture stop`, `capture start` (since v1.1) | `--state` |
+| `reqcove capture save` (since v1.1) | `--state` |
+| `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
+| `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
+| `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
@@ -186,6 +242,18 @@ stable ([below](#not-stable)).
   `--config` by default) and `reqcove setup` without Homebrew; with Homebrew,
   `reqcove setup` writes `$(brew --prefix)/etc/reqcove/config`, which
   `brew services` reads.
+- Since v1.1, a `reqcove run` with no arguments at all (refused before)
+  reads `~/.config/reqcove/config`, else Homebrew's (when that `reqcove` is
+  Homebrew's), as `--config FILE` does; with neither, it asks for `--device`
+  as before. A `run` with any argument reads a file only when `--config`
+  names it, as in v1.0. `reqcove service install` without `--config` takes
+  the same file (installed already: the installed service's `--config`).
+- Since v1.1, `reqcove setup` writes the hosts to their own file beside it,
+  `hosts` (`~/.config/reqcove/hosts`, or `$(brew --prefix)/etc/reqcove/hosts`),
+  one host a line, `#` starting a comment, and the config line
+  `--allow-hosts=@FILE` for it; `reqcove capture save` rewrites that file.
+  A config written before (hosts on the `--allow-hosts` line) is read as
+  before.
 
 ### The state directory
 
@@ -246,19 +314,23 @@ These may change in any release, a patch release included:
   `reqcove mcp`, and over `--mcp-http`.
 - `reqcove mcp` lists its own version's tools, not those of the `run` it
   connects to, and without their output schemas, so that a `run` of another
-  version is not refused for its answers (tests).
+  version is not refused for its answers.
 - When `run`'s version is not `reqcove mcp`'s, the first answer after it
   connects carries a note: run both at one version, restart `reqcove run` with
-  the newer one, then reconnect the agent's MCP server (tests).
+  the newer one, then reconnect the agent's MCP server.
 - A tool this `reqcove mcp` has and the `run` lacks: a preset, rule or marker
-  tool answers that the running reqcove (its version) has no such tool (tests);
-  any other gets `run`'s own error, an unknown tool (tests).
+  tool answers that the running reqcove (its version) has no such tool; any
+  other gets `run`'s own error, an unknown tool.
 - Mixed versions are not supported beyond these notes: run `reqcove run` and
   `reqcove mcp` at one version. A v1.0.0 `reqcove mcp` has no
   `list_mock_presets`, `activate_mock` or `deactivate_mock`, even against an
   older `run`; a call to one of them, to `run` or to `reqcove mcp`, gets a tool
-  error naming what replaced it (tests). A v1.0.0 `reqcove status` still reads
-  an older `run`'s `active_mock_presets` and `mock_presets` (tests); a v0.6 or
-  v0.7 `reqcove status` against a v1.0.0 `run` shows no preset on, since
-  those versions read only the old names (from reading their code); their
+  error naming what replaced it. A v1.0.0 `reqcove status` still reads an
+  older `run`'s `active_mock_presets` and `mock_presets`; a v0.6 or v0.7
+  `reqcove status` against a v1.0.0 `run` shows no preset on, since those
+  versions read only the old names (from reading their code); their
   `reqcove mcp` passes `run`'s answer on as it is.
+
+Checked by tests: the tools listed without output schemas, the note when the
+versions differ, both answers for a tool the `run` lacks, the error for a
+removed tool, and a v1.0.0 `reqcove status` reading an older `run`'s fields.

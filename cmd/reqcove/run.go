@@ -52,6 +52,13 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
+	// While it holds the state but its tools do not answer, status says
+	// starting, or with this file stopping (left by a run killed while it
+	// stopped: removed here).
+	stopping := filepath.Join(o.state, stoppingFile)
+	os.Remove(stopping)
+	defer os.Remove(stopping)
+	go func(done <-chan struct{}) { <-done; os.WriteFile(stopping, nil, 0o600) }(ctx.Done()) // ctx is replaced below
 	linksCmd := withState("reqcove links", o.state)
 	user := newUserLinks(os.Stderr, red, o.state, linksCmd)
 	user.lan = o.lanMode
@@ -124,12 +131,32 @@ func run(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		<-cap.Done() // mitmproxy gave up (or ctx ended): the node stops too
+		<-cap.Done() // mitmproxy failed for good (or ctx ended): the node stops too
 		cancel()
 	}()
 	var node nodeState
 	if o.lanMode {
 		node.set(exitnode.Status{Mode: "lan"}) // before the first status: not a tailnet node starting
+	}
+	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
+	// and no ctl.sock for one older than v1.1.
+	if err := serveCtl(ctx, o.state, cap, o); err != nil {
+		return err
+	}
+	if !o.lanMode {
+		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
+		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
+		captureEndCmd = withState("reqcove capture allow-all --end", o.state)
+		discoverEndCmd = withState("reqcove capture discover --end", o.state)
+		allowAllNotes = allowAllWarnings(o)
+		if o.web {
+			openNote = webOpenNote
+		}
+		defer func() {
+			mcpserver.CaptureAddCmd, mcpserver.CaptureStartCmd = "", "reqcove capture start"
+			captureEndCmd, allowAllNotes, openNote = "reqcove capture allow-all --end", nil, ""
+			discoverEndCmd = "reqcove capture discover --end"
+		}()
 	}
 	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
 	if err != nil {
@@ -324,17 +351,18 @@ func privateOutput(fs ...*os.File) {
 func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeState, mcpToken string) (http.Handler, error) {
 	mcpSock := filepath.Join(o.state, "mcp.sock")
 	remoteStatus := func() mcpserver.StatusOut {
-		return statusOut(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices())
+		return liveStatus(node.get(), cap)
 	}
+	// The local server's alone: discovery's names, never --mcp-http's.
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
-		out := remoteStatus()
+		out := withDiscovery(withFiles(remoteStatus(), o), cap)
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()
 			out.SetActivePresets(cap.Presets(ctx))
 		}
 		return out
-	}, remoteStatus, cap)
+	}, remoteStatus, cap, func() []mcpserver.OutHost { shown, _ := outsideHosts(cap); return shown })
 	var mcpHandler http.Handler
 	if o.mcpHTTP { // its own server: read-only, never the preset tools
 		mcpHandler = mcpserver.HTTP(remote, mcpToken, exitnode.Caller)
@@ -354,9 +382,9 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 func uiPage(o *runOpts, cap *capture.Capture, node *nodeState, uiToken string) *webui.UI {
 	page := webui.New(cap.Store, uiToken, func(id string, all bool) []string {
 		if all { // one of the user's own devices: the steps as `reqcove status` gives them
-			return withoutMacStep(statusOut(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices()).NextSteps)
+			return withoutMacStep(liveStatus(node.get(), cap).NextSteps)
 		}
-		return pageSteps(node.get(), cap.Store.Stats(), o.allow, cap.CA, cap.Store.Devices(), id)
+		return pageSteps(node.get(), cap.Store.Stats(), cap.Recorded(), cap.CA, cap.Store.Devices(), id)
 	})
 	if o.hostname != "reqcove" {
 		page.Node = o.hostname

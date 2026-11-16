@@ -118,7 +118,7 @@ func TestMaskXML(t *testing.T) {
 			}
 		}
 	}
-	// Not read as XML (SECURITY says so): XML as an element's text, escaped or
+	// Not read as XML (docs/masking.md says so): XML as an element's text, escaped or
 	// in CDATA; a WebSocket message (no content type) without a declaration.
 	for in, ct := range map[string]string{
 		`<req>&lt;Password&gt;Sx1&lt;/Password&gt;</req>`:           "text/xml",
@@ -126,18 +126,18 @@ func TestMaskXML(t *testing.T) {
 		`<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>Sx1</auth>`: "",
 	} {
 		if got := string(maskBody([]byte(in), ct, true)); got != in {
-			t.Errorf("SECURITY says this passes: %s", got)
+			t.Errorf("docs/masking.md says this passes: %s", got)
 		}
 	}
-	// XML's masking reads before JSON's (SECURITY says so): in a JSON body
+	// XML's masking reads before JSON's (docs/masking.md says so): in a JSON body
 	// labelled XML, a masked attribute takes the quote JSON's reading needs.
 	if got := string(maskBody([]byte(`{"xml": "<b data-token=x\"", "password": "Sx1"}`), "application/xml", true)); !strings.Contains(got, `"password": "Sx1"`) {
-		t.Errorf("JSON labelled XML: SECURITY says the field after the tag passes: %s", got)
+		t.Errorf("JSON labelled XML: docs/masking.md says the field after the tag passes: %s", got)
 	}
-	// Not decoded: SAML's POST binding, a base64 form field (SECURITY says so).
+	// Not decoded: SAML's POST binding, a base64 form field (docs/masking.md says so).
 	saml := "SAMLResponse=" + url.QueryEscape(base64.StdEncoding.EncodeToString([]byte("<saml:Assertion>x</saml:Assertion>")))
 	if got := string(maskBody([]byte(saml), "application/x-www-form-urlencoded", true)); got != saml {
-		t.Errorf("SAMLResponse: SECURITY says it passes: %s", got)
+		t.Errorf("SAMLResponse: docs/masking.md says it passes: %s", got)
 	}
 	for ct, want := range map[string]bool{"text/xml; charset=utf-8": true, "application/soap+xml": true, "application/atom+xml": true, "Application/XML": true, "text/html": false, "application/json": false} {
 		if isXML(ct, "<a/>") != want {

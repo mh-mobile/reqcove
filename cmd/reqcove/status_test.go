@@ -52,6 +52,8 @@ func TestNextSteps(t *testing.T) {
 		want    []string // substrings, in order; none: no steps
 	}{
 		{"all set", ok, ready, allow, nil, nil},
+		{"connecting", exitnode.Status{Mode: "tailnet", Backend: "NoState"}, ready, allow, nil, []string{"the tailnet node is starting"}},
+		{"connecting, logged in", exitnode.Status{Mode: "tailnet", Backend: "Starting"}, ready, allow, nil, []string{"the tailnet node is starting"}},
 		{"login", exitnode.Status{Backend: "NeedsLogin", AuthURL: "https://login.example/a/1"}, ready, allow, nil, []string{"`reqcove links` prints it"}},
 		{"lock", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", Health: []string{"tailnet lock: " + healthmsg.LockedOut}}, ready, allow, nil, []string{"tailscale lock sign nodekey:ab"}},
 		// Just after start the key looks unsigned until the netmap is checked: no step yet.
@@ -59,6 +61,7 @@ func TestNextSteps(t *testing.T) {
 		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net", "autoApprovers"}},
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},
+		{"mitmproxy retrying", ok, map[string]any{"state": "restarting", "state_detail": "exit 1", "retries": int64(7), "next_attempt": "2026-11-15T10:00:00.000Z"}, allow, nil, []string{"mitmproxy is restarting: exit 1; retry 7, the next at 2026-11-15T10:00:00.000Z"}},
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},
 		{"rules reload failed", ok, map[string]any{"state": "ready", "rules_error": "map_remote[0]: bad"}, allow, nil, []string{"--rules file does not load (map_remote[0]: bad)", "rules before it still apply"}},
 		{"CA not trusted", ok, ready, allow, []capture.DeviceInfo{{Name: "phone", Carried: true, TLSFailures: 3}}, []string{"phone refuses", "Reqcove CA (mac, 2026-11-07)", "http://mitm.it"}},
@@ -88,6 +91,7 @@ func TestNextSteps(t *testing.T) {
 // TestStatusCommand: `reqcove status` asks a running reqcove over its socket
 // and prints the next steps.
 func TestStatusCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())           // no service of this computer's read
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,6 +119,7 @@ func TestStatusCommand(t *testing.T) {
 // `reqcove status` shows the presets from capture_stats' presets and the ones
 // on from active_presets.
 func TestStatusCommandPresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -135,6 +140,7 @@ func TestStatusCommandPresets(t *testing.T) {
 // `reqcove status` against a v0.7 run (not yet restarted) reads its names,
 // mock_presets and active_mock_presets (v1.0 reads them, never writes them).
 func TestStatusCommandPresetsV07(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -665,5 +671,159 @@ func TestPresetNames(t *testing.T) {
 func TestStatsPresets(t *testing.T) {
 	if got := statsPresets(map[string]any{"presets": []string{"mx"}}); !slices.Equal(got, []string{"mx"}) {
 		t.Errorf("statsPresets: %v", got)
+	}
+}
+
+// fakeServices writes, in this HOME, reqcove service install's file running
+// bin (none for ""), and Homebrew's when brew.
+func fakeServices(t *testing.T, bin string, brew bool) {
+	t.Helper()
+	home, _ := os.UserHomeDir()
+	ours, _ := serviceFile(runtime.GOOS)
+	os.MkdirAll(filepath.Dir(ours), 0o755)
+	os.Remove(ours)
+	brewFile := filepath.Join(filepath.Dir(ours), "homebrew.mxcl.reqcove.plist")
+	body := launchAgent([]string{bin, "run", "--config", "/c"}, "/bin", "/l")
+	if runtime.GOOS == "linux" {
+		brewFile = filepath.Join(home, ".config/systemd/user/homebrew.reqcove.service")
+		body = systemdUnit([]string{bin, "run", "--config", "/c"}, "/bin")
+	}
+	if bin != "" {
+		os.WriteFile(ours, []byte(body), 0o644)
+	}
+	os.Remove(brewFile)
+	if brew {
+		os.WriteFile(brewFile, nil, 0o644)
+	}
+}
+
+// A new reqcove status against a v1.0.0 run, which sends no field of v1.1's
+// (serverInfo has its version): the restart command from service alone, with
+// the records' warning; the services on disk: two at once, ours running a
+// binary that is gone or another one. And a v1.1 run's fields.
+func TestStatusUpgrade(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir, _ := os.MkdirTemp("/tmp", "rcvs-") // short socket path
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	old := mcpserver.Version
+	mcpserver.Version = "v1.0.0" // the run's serverInfo
+	t.Cleanup(func() { mcpserver.Version = old })
+	var answer mcpserver.StatusOut
+	st := capture.NewStore(10, 1<<20)
+	if err := mcpserver.Serve(ctx, filepath.Join(dir, "mcp.sock"), mcpserver.New(st, func() mcpserver.StatusOut {
+		a := answer
+		a.Node, a.Capture = exitnode.Status{Backend: "Running"}, st.Stats()
+		return a
+	})); err != nil {
+		t.Fatal(err)
+	}
+	self, _ := selfExe()
+	har := "A restart empties the records (`reqcove har --state " + dir + " > flows.har` keeps them first), and while it is down, a phone using its exit node has no internet"
+	check := func(what string, want []string, not ...string) {
+		t.Helper()
+		out := captureStdout(t, func() error { return status(ctx, []string{"--state", dir}) })
+		for _, w := range want {
+			if !strings.Contains(out, w) {
+				t.Errorf("%s: no %q in:\n%s", what, w, out)
+			}
+		}
+		for _, w := range not {
+			if strings.Contains(out, w) {
+				t.Errorf("%s: %q in:\n%s", what, w, out)
+			}
+		}
+	}
+	answer = mcpserver.StatusOut{Service: "sh.brew.reqcove"}
+	check("brew services", []string{"version:     v1.0.0, this reqcove is " + version + ": to restart it: brew services restart reqcove. " + har}, "config:", "two services")
+	answer = mcpserver.StatusOut{}
+	check("a terminal", []string{"v1.0.0, this reqcove is " + version + ": to run this one, stop it (Ctrl-C in its terminal) and start it again with this reqcove. " + har})
+	answer = mcpserver.StatusOut{Service: serviceLabel}
+	fakeServices(t, self, false)
+	check("ours, this binary", []string{"to restart it: reqcove service restart. "}, "not this reqcove", "is gone")
+	ours, _ := serviceFile(runtime.GOOS)
+	fakeServices(t, "/gone/reqcove", true)
+	check("ours, gone, and Homebrew's", []string{
+		"to restart it: " + selfCmd() + " service install. ",
+		"two services for reqcove are installed (" + ours + ", ",
+		ours + " runs /gone/reqcove, which is gone",
+	})
+	other := filepath.Join(t.TempDir(), "reqcove")
+	os.WriteFile(other, nil, 0o755)
+	other, _ = filepath.EvalSymlinks(other)
+	fakeServices(t, other, false)
+	check("ours, another binary", []string{"to restart it: " + selfCmd() + " service install. ", ours + " runs " + other + ", not this reqcove (" + self + "): reqcove service install points it at this one"}, "two services")
+	// A v1.1 run: its version field, what started it, the files it read.
+	fakeServices(t, "", false)
+	answer = mcpserver.StatusOut{Version: version, Manager: "terminal", ConfigFile: "/c/config", ConfigUnused: "/b/config", HostsFiles: []string{"/c/hosts"}}
+	check("v1.1", []string{"version:     " + version + "\n", "service:     none: started in a terminal", "config:      /c/config; hosts: /c/hosts; also there, not read: /b/config"}, "this reqcove is", "two services")
+	answer = mcpserver.StatusOut{Version: version}
+	check("v1.1, flags only", []string{"config:      none (flags only)"})
+}
+
+// What started run, and the command that restarts it there: install
+// again when our service runs another binary, or one gone, as reqcove
+// status says.
+func TestRunService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	old, oldTerm := procCgroup, terminal
+	t.Cleanup(func() { procCgroup, terminal = old, oldTerm })
+	procCgroup = filepath.Join(t.TempDir(), "cgroup")
+	os.WriteFile(procCgroup, []byte("0::/user.slice/user-1000.slice/user@1000.service/app.slice/homebrew.reqcove.service\n"), 0o644)
+	terminal = func(*os.File) bool { return true }
+	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
+	for _, c := range []struct{ xpc, unit, service, manager, restart string }{
+		{"", "", "homebrew.reqcove.service", "brew services", "brew services restart reqcove"}, // Homebrew's unit, from the cgroup
+		{"sh.brew.reqcove", "", "sh.brew.reqcove", "brew services", "brew services restart reqcove"},
+		{serviceLabel, "", serviceLabel, "reqcove service", "reqcove service restart"},
+		{"", serviceUnit, serviceUnit, "reqcove service", "reqcove service restart"},
+	} {
+		t.Setenv("XPC_SERVICE_NAME", c.xpc)
+		t.Setenv("REQCOVE_SERVICE", c.unit)
+		out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil)
+		if out.Service != c.service || out.Manager != c.manager || out.RestartCommand != c.restart || out.Version != mcpserver.Version {
+			t.Errorf("%+v: %q %q %q %q", c, out.Service, out.Manager, out.RestartCommand, out.Version)
+		}
+	}
+	self, _ := selfExe()
+	for _, bin := range []string{"/gone/reqcove", self} {
+		fakeServices(t, bin, false)
+		for _, env := range [][2]string{{"XPC_SERVICE_NAME", serviceLabel}, {"REQCOVE_SERVICE", serviceUnit}} {
+			t.Setenv("XPC_SERVICE_NAME", "")
+			t.Setenv("REQCOVE_SERVICE", "")
+			t.Setenv(env[0], env[1])
+			want := "reqcove service install"
+			if bin == self {
+				want = "reqcove service restart"
+			}
+			if out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil); out.RestartCommand != want {
+				t.Errorf("ours running %s (%s): %q, want %q", bin, env[0], out.RestartCommand, want)
+			}
+		}
+	}
+	t.Setenv("XPC_SERVICE_NAME", "")
+	t.Setenv("REQCOVE_SERVICE", "")
+	os.WriteFile(procCgroup, []byte("0::/user.slice/user-1000.slice/session-2.scope\n"), 0o644)
+	if out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil); out.Service != "" || out.Manager != "terminal" || out.RestartCommand != "" {
+		t.Errorf("a terminal: %+v", out)
+	}
+	terminal = func(*os.File) bool { return false }
+	if out := statusOut(exitnode.Status{}, map[string]any{}, allow, capture.CA{}, nil); out.Manager != "" {
+		t.Errorf("cannot tell: %q", out.Manager)
+	}
+}
+
+// This computer's status gets the files run read and the services' warnings.
+func TestWithFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fakeServices(t, "/gone/reqcove", true)
+	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, passFiles: []string{"/c/pass"}}}
+	out := withFiles(mcpserver.StatusOut{NextSteps: []string{"first"}}, o)
+	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(out.HostsFiles, []string{"/c/hosts", "/c/pass"}) {
+		t.Errorf("files: %+v", out)
+	}
+	if steps := strings.Join(out.NextSteps, "\n"); !strings.HasPrefix(steps, "first\n") || !strings.Contains(steps, "two services for reqcove are installed") || !strings.Contains(steps, "runs /gone/reqcove, which is gone") {
+		t.Errorf("steps:\n%s", steps)
 	}
 }
