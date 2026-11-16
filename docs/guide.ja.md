@@ -82,7 +82,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 ### 動かしたまま、記録するものを変える
 
-v1.1 から、記録するホストを再起動せずに変えられます。そのため記録は残ります。端末で実行します。
+v1.1 から、記録するホストを再起動せずに変えられます。そのため記録は残ります。コマンドは、いま動いている `run` を変えます。ターミナルで起動した `run` でも、サービスが起動した `run` でも同じです（別の `run` には `--state DIR`）。コマンドは端末で実行します。
 
 ```sh
 reqcove capture add api.example.com          # これも記録する
@@ -1115,7 +1115,7 @@ Exit Node とのほかの違いは次のとおりです。
 | | ターミナル | `reqcove service install` | `brew services` |
 |---|---|---|---|
 | 起動 | `reqcove run`（Ctrl-C で止まる） | `reqcove service install`：すぐに起動し、ログインのたびにも起動 | `brew services start reqcove`：すぐに起動し、ログインのたびにも起動 |
-| 終わったあと | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| 終わったあと | `reqcove run` | `reqcove service restart`（次のログインまで止めたあとも） | `brew services restart reqcove` |
 | アップデートのあと | Ctrl-C のあと `reqcove run` | `reqcove service restart`。別のバイナリ（別のパスや Homebrew のもの）に移ったときは `reqcove service install` | `brew upgrade reqcove` のあと `brew services restart reqcove` |
 | 設定ファイル、ホストのファイル、ルールのファイルを編集したあと | ホストとルールは `reqcove reload`。ほかは Ctrl-C のあと `reqcove run` | `reqcove reload`。ほかは `reqcove service restart` | `reqcove reload`。ほかは `brew services restart reqcove` |
 | 次のログインまで止める | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove` | `brew services kill reqcove`（Homebrew のヘルプによるもので、試していません） |
@@ -1137,7 +1137,7 @@ Exit Node とのほかの違いは次のとおりです。
 
 - 置き場所：`~/.config/reqcove/config` です。Homebrew で入れた場合（このバイナリが `Cellar/reqcove/` の下にあるとき）は、`reqcove setup` は代わりに Homebrew の `$(brew --prefix)/etc/reqcove/config` に書きます。`brew services` が読むのはこちらです。ホストは隣の `hosts` に書き、`--allow-hosts=@FILE` で読みます。
 - 引数をまったく付けない `reqcove run`（v1.1 から）は、`~/.config/reqcove/config` を読みます。なければ Homebrew のもの（この `reqcove` が Homebrew のものであるとき）を読み、どちらを読んだかをログに書きます。両方あるときは先のものを読み、`reqcove status` が両方を表示します。引数を 1 つでも付けたときは、これまでどおり `--config` で指定したときだけファイルを読みます。どちらのファイルもなければ、これまでどおり `--device` を求めます。
-- `reqcove service install` も同じファイルを使います（または `--config FILE`）。
+- `reqcove service install` は、引数なしの `run` が読むファイルを使います（または `--config FILE`）。入れ直したときは、前に使っていたファイルのままです。`brew services` は、いつも Homebrew のファイルを読みます。そのため両方のファイルがあると、2 つのサービスは別のファイルを読みます。
 - 行の書き方：
   - `#` から後ろはコメントです。シェルと同じように引用符でくくれます：`--device "Taro's iPhone"`。`~/` はホームディレクトリです。サービスは `/` で起動するので、パスはフルパスか `~/` から書きます。
   - コマンドラインのフラグはファイルのあとに読むので、1 回だけ指定するフラグはコマンドラインのものが勝ち、繰り返せるフラグは足し合わされます。

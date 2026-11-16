@@ -291,8 +291,21 @@ var stateFreeWait = 10 * time.Second
 
 // waitStateFree waits, at most d, for no run to hold dir's lock; false if
 // one still does.
-func waitStateFree(dir string, d time.Duration) bool {
-	for deadline := time.Now().Add(d); stateHeld(dir); time.Sleep(50 * time.Millisecond) {
+func waitStateFree(dir string, d time.Duration) bool { return waitState(dir, d, false) }
+
+// stoppingFile, in the state directory, says the run that holds it is
+// stopping.
+const stoppingFile = "stopping"
+
+// startWait bounds how long service install and restart wait for the run
+// they started to take its state's lock, and status for a run that holds it
+// to answer or let go (a var for tests).
+var startWait = 5 * time.Second
+
+// waitState waits, at most d, until a run holds dir's lock (held) or none
+// does; false on the deadline.
+func waitState(dir string, d time.Duration, held bool) bool {
+	for deadline := time.Now().Add(d); stateHeld(dir) != held; time.Sleep(50 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			return false
 		}

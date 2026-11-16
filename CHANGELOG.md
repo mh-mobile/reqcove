@@ -267,6 +267,32 @@
 - **`reqcove service install` again, on macOS**, waits (at most 10 s) for the
   old run to let go of the state directory before starting the new one, and
   says so when it does not. Unit test.
+- **`reqcove service restart` on macOS starts a service stopped until the
+  next login** (`launchctl bootout`), also right after it, while launchd is
+  still taking it out: it takes it out and loads it again, as `service
+  install` does, waiting for the old run to let go of the state and retrying
+  while launchd refuses (at most 5 s). `launchctl kickstart -k` alone
+  answered that it could not find it, or failed (37) while it was going.
+  Unit tests; both errors seen by hand.
+- **`reqcove status`, while `run` is not running**, says that its service is
+  installed and the command that starts it (`reqcove service restart`, `brew
+  services restart reqcove`), for the service of that state directory. Unit
+  test.
+- **`reqcove service install` and `service restart` wait** (at most 5 s) for
+  the run they started to take its state directory, so a `reqcove status`
+  right after says it is starting rather than not running; when it has not,
+  they say so, with the log. Unit test; the race seen by hand (`status` typed
+  with `service install`).
+- **`reqcove status` waits a moment** (at most 5 s) when a run holds the state
+  but its tools do not answer yet (just started, or stopping), then says
+  running or not running; still neither, it says which: "reqcove is
+  starting" or "reqcove is stopping" (`run` leaves a `stopping` file in the
+  state directory while it stops). Before: "starting, or stopping", read as
+  "running or stopped". Unit tests.
+- **`reqcove status` in the seconds after a start**, while the node is still
+  connecting to Tailscale (`NoState`, `Starting`), says "the tailnet node is
+  starting" rather than "ready: turn on the exit node". Unit test; seen by
+  hand after `reqcove service restart`.
 
 ## v1.0.0 — 2026-11-15
 

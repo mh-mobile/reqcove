@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -207,7 +208,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		}
 	}
 	for _, c := range start {
-		if err := serviceCtl(c...); err != nil {
+		if err := ctlRetry(c...); err != nil {
 			if again { // the old one is stopped already: the new file stays
 				return fmt.Errorf("%w: %s is written, not started: %s service install again, or log out and in", err, file, selfCmd())
 			}
@@ -219,6 +220,8 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	for _, a := range argv {
 		cmd = append(cmd, shellWord(a))
 	}
+	// So that a status run right after says starting, not "not running".
+	started := waitState(state, startWait, true)
 	if again {
 		fmt.Printf("installed again %s: it ran %s; now it runs %s, restarted now (its records started empty) and at each login\n", file, orDash(shellWord(was)), strings.Join(cmd, " "))
 	} else {
@@ -235,6 +238,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 	if !uvx {
 		fmt.Println("note: uvx is not on this PATH; give --uvx /full/path/uvx in the config file, or install uv")
 	}
+	notStarted(started, state)
 	rc := selfCmd()
 	fmt.Printf("then: %s (the login URL, the first time, in your terminal); %s; %[3]s service restart after it ended; %[3]s service uninstall stops and removes it\n", withState(rc+" links", state), withState(rc+" status", state), rc)
 	return nil
@@ -451,10 +455,46 @@ func serviceRestart(goos string) error {
 	if _, err := os.Stat(file); err != nil {
 		return fmt.Errorf("not installed (no %s): reqcove service install", file)
 	}
+	state := serviceState(goos, file)
 	if goos == "darwin" {
-		return serviceCtl("launchctl", "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+serviceLabel)
+		// Out, then in again, as install does: kickstart cannot find a job
+		// stopped until the next login (launchctl bootout), and fails (37)
+		// on one launchd is still taking out. bootout returns before the old
+		// run lets go of the state: waited for.
+		domain := "gui/" + strconv.Itoa(os.Getuid())
+		serviceCtl("launchctl", "bootout", domain+"/"+serviceLabel) // not loaded, or going: fine
+		waitStateFree(state, stateFreeWait)
+		err = ctlRetry("launchctl", "bootstrap", domain, file)
+	} else {
+		err = serviceCtl("systemctl", "--user", "restart", serviceUnit)
 	}
-	return serviceCtl("systemctl", "--user", "restart", serviceUnit)
+	if err != nil {
+		return err
+	}
+	notStarted(waitState(state, startWait, true), state)
+	return nil
+}
+
+// ctlRetry runs a start command again for a while (startWait) while it
+// fails: launchd refuses to load a job it is still taking out.
+func ctlRetry(args ...string) error {
+	for deadline := time.Now().Add(startWait); ; time.Sleep(200 * time.Millisecond) {
+		if err := serviceCtl(args...); err == nil || time.Now().After(deadline) {
+			return err
+		}
+	}
+}
+
+// notStarted says so when the run a service started has not taken its state
+// yet: it may still start (a slow first start), or have failed.
+func notStarted(started bool, state string) {
+	if !started {
+		log := "journalctl --user -u reqcove"
+		if runtime.GOOS == "darwin" {
+			log = filepath.Join(state, serviceLog)
+		}
+		fmt.Printf("note: not started after %v: %s says whether it is starting; if not, the log says why: %s\n", startWait, withState(selfCmd()+" status", state), log)
+	}
 }
 
 // brewOpt is Homebrew's stable path to its reqcove, which brew upgrade
@@ -518,6 +558,18 @@ func serviceWarnings(goos string, svcs []installedService, self string) []string
 		}
 	}
 	return out
+}
+
+// serviceState is the state directory a service file's run uses: its
+// --state, else the default.
+func serviceState(goos, file string) string {
+	argv := serviceArgv(goos, file)
+	for i := 1; i+1 < len(argv); i++ {
+		if argv[i] == "--state" {
+			return argv[i+1]
+		}
+	}
+	return defaultState()
 }
 
 // oursStale: reqcove service install's service runs another binary than

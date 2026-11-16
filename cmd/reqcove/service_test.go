@@ -22,6 +22,7 @@ import (
 // No test reaches the real launchd or systemd: one that forgets fakeCtl panics.
 func init() {
 	serviceCtl = func(args ...string) error { panic("serviceCtl without fakeCtl: " + strings.Join(args, " ")) }
+	startWait = 0 // no run starts: install and restart do not wait for one
 }
 
 // fakeCtl records the commands; launchctl print and bootout and systemctl
@@ -441,22 +442,28 @@ func TestServiceUninstall(t *testing.T) {
 		if err := serviceUninstall(goos); (err == nil) != (goos == "darwin") {
 			t.Errorf("%s none but loaded: %v", goos, err)
 		}
-		got := fakeCtl(t, false, nil)
+		fakeCtl(t, false, nil)
 		if err := serviceInstall(goos, config, defaultState(), false); err != nil {
 			t.Fatal(err)
 		}
 		file, _ := serviceFile(goos)
-		*got = nil
-		if err := serviceRestart(goos); err != nil {
-			t.Fatal(err)
+		// Loaded or not (launchctl bootout: stopped until the next login,
+		// where kickstart cannot find it): out, then in again.
+		for _, loaded := range []bool{true, false} {
+			got := fakeCtl(t, loaded, nil)
+			if err := serviceRestart(goos); err != nil {
+				t.Fatal(err)
+			}
+			domain := "gui/" + strconv.Itoa(os.Getuid())
+			want := [][]string{{"launchctl", "bootout", domain + "/" + serviceLabel}, {"launchctl", "bootstrap", domain, file}}
+			if goos == "linux" {
+				want = [][]string{{"systemctl", "--user", "restart", "reqcove.service"}}
+			}
+			if !slices.EqualFunc(*got, want, slices.Equal) {
+				t.Errorf("%s restart, loaded %v: %q", goos, loaded, *got)
+			}
 		}
-		restart := []string{"launchctl", "kickstart", "-k", "gui/" + strconv.Itoa(os.Getuid()) + "/" + serviceLabel}
-		if goos == "linux" {
-			restart = []string{"systemctl", "--user", "restart", "reqcove.service"}
-		}
-		if len(*got) != 1 || !slices.Equal((*got)[0], restart) {
-			t.Errorf("%s restart: %q", goos, *got)
-		}
+		got := fakeCtl(t, false, nil)
 		*got = nil
 		if err := serviceUninstall(goos); err != nil {
 			t.Fatal(err)
@@ -611,5 +618,86 @@ func TestPrivateLogs(t *testing.T) {
 	formula, err := os.ReadFile("../../packaging/homebrew/reqcove.rb")
 	if err != nil || !strings.Contains(string(formula), `log_path var/"log/reqcove.log"`) || brewLog("/p") != "/p/var/log/reqcove.log" {
 		t.Errorf("brewLog is not the formula's log_path (%v)", err)
+	}
+}
+
+// Not running, its service installed (stopped until the next login, or it
+// ended): status says how to start the service, for its --state only.
+func TestOfflineStatusNamesService(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-s")
+	if err := serviceInstall(runtime.GOOS, config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	want := "is installed: start it with reqcove service restart"
+	if out := captureStdout(t, func() error { return offlineStatus(state, "/nonexistent/uvx") }); !strings.Contains(out, want) {
+		t.Errorf("its state: no %q in\n%s", want, out)
+	}
+	if out := captureStdout(t, func() error { return offlineStatus(filepath.Join(t.TempDir(), "other"), "/nonexistent/uvx") }); strings.Contains(out, want) {
+		t.Errorf("another state:\n%s", out)
+	}
+}
+
+// install and restart wait for the run they started to take its state, so a
+// status right after says starting; not taken, they say so.
+func TestServiceWaitsForStart(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-w")
+	note := "note: not started after"
+	if out := captureStdout(t, func() error { return serviceInstall(runtime.GOOS, config, state, true) }); !strings.Contains(out, note) {
+		t.Errorf("install, no run:\n%s", out)
+	}
+	old := startWait
+	startWait = 2 * time.Second
+	t.Cleanup(func() { startWait = old })
+	go func() { // the run, taking its state a moment later
+		time.Sleep(200 * time.Millisecond)
+		if release, err := lockState(state); err == nil {
+			t.Cleanup(release)
+		}
+	}()
+	if out := captureStdout(t, func() error { return serviceRestart(runtime.GOOS) }); strings.Contains(out, note) || !stateHeld(state) {
+		t.Errorf("restart, run started: returned before it held its state (%v)\n%s", stateHeld(state), out)
+	}
+}
+
+// restart right after launchctl bootout: launchd still takes the job out
+// (bootstrap fails a while) and the old run still holds the state. It waits
+// for the state, then loads it again once launchd lets it.
+func TestServiceRestartWhileStopping(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	state := filepath.Join(home, "st")
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lockState(state) // the old run, stopping
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	var heldAtStart []bool
+	old, oldWait := serviceCtl, startWait
+	startWait = 2 * time.Second
+	serviceCtl = func(args ...string) error {
+		if slices.Contains(args, "bootstrap") {
+			heldAtStart = append(heldAtStart, stateHeld(state))
+			if len(heldAtStart) < 3 {
+				return errors.New("Bootstrap failed: 37: Operation already in progress")
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { serviceCtl, startWait = old, oldWait })
+	captureStdout(t, func() error {
+		if err := serviceRestart("darwin"); err != nil {
+			t.Errorf("restart: %v", err)
+		}
+		return nil
+	})
+	if !slices.Equal(heldAtStart, []bool{false, false, false}) {
+		t.Errorf("bootstrap while the old run held the state, or not retried: %v", heldAtStart)
 	}
 }

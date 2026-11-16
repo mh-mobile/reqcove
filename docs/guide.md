@@ -166,7 +166,8 @@ after an update: unit tests only (a v1.0.0 `run` faked).
 ### Change what is recorded while it runs
 
 Since v1.1, the hosts recorded change without a restart, so the records stay.
-In your terminal:
+The commands change the `run` that is running, whether a terminal or a
+service started it (`--state DIR` for another one). Type them in a terminal:
 
 ```sh
 reqcove capture add api.example.com          # record it too
@@ -2264,7 +2265,7 @@ no internet; turn the exit node off then.
 | | In a terminal | `reqcove service install` | `brew services` |
 |---|---|---|---|
 | Start | `reqcove run` (Ctrl-C stops it) | `reqcove service install`: now and at each login | `brew services start reqcove`: now and at each login |
-| After it ended | `reqcove run` | `reqcove service restart` | `brew services restart reqcove` |
+| After it ended | `reqcove run` | `reqcove service restart` (after stopping it until the next login too) | `brew services restart reqcove` |
 | After an update | Ctrl-C, then `reqcove run` | `reqcove service restart`; after moving to another binary (a new path, or Homebrew's), `reqcove service install` | `brew upgrade reqcove`, then `brew services restart reqcove` |
 | After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove service restart` | `reqcove reload`; for the rest, `brew services restart reqcove` |
 | Stop until the next login | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user stop reqcove` | `brew services kill reqcove` (from Homebrew's help, not tried) |
@@ -2315,7 +2316,10 @@ running, `reqcove service install` over an installed one).
   and `reqcove status` names both. With any argument, it reads a file only
   when `--config` names it, as before; with neither file, it asks for
   `--device` as before.
-- **`reqcove service install`** takes the same file (or `--config FILE`).
+- **`reqcove service install`** takes the file a bare `run` reads (or
+  `--config FILE`); installed again, it keeps the file it had. `brew services`
+  always reads Homebrew's. So with both files there, the two services read
+  different files.
 - Its lines:
   - `#` starts a comment. Quote as a shell would: `--device "Taro's iPhone"`.
     `~/` is your home. Give paths in full or from `~/`, as a service starts

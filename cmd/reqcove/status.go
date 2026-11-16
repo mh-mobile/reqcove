@@ -187,8 +187,10 @@ var stepLinksCmd = "reqcove links"
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
-	if node.Backend == "" && node.Mode != "lan" {
-		steps = append(steps, "the tailnet node is starting")
+	// Before tsnet's first state, and while it connects (a few seconds after
+	// a start): not ready yet, though nothing else is asked.
+	if slices.Contains([]string{"", "NoState", "Starting"}, node.Backend) && node.Mode != "lan" {
+		steps = append(steps, "the tailnet node is starting: `reqcove status` in a few seconds says what is next")
 	}
 	steps = append(steps, lanSteps(node, devices)...)
 	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {
@@ -313,6 +315,13 @@ func status(ctx context.Context, args []string) error {
 	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
+	// Right after a start (service install or restart) or a stop: wait a
+	// moment for the answer, running or not, rather than "starting up or
+	// shutting down".
+	for deadline := time.Now().Add(startWait); errors.Is(err, errStarting) && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+		session, err = dialRun(ctx, *state, "reqcove-status")
+	}
 	switch {
 	case *asJSON && (errors.Is(err, errNotRunning) || errors.Is(err, errStarting)):
 		return err // nothing on stdout: no status tool answered, and --json prints only its JSON
@@ -532,8 +541,14 @@ func offlineStatus(state, uvx string) error {
 		fmt.Println("  node:  has logged in before (state kept); while it is down, a phone using its exit node has no internet: turn the exit node off there, or start it")
 	}
 	printCA(os.Stdout, state, false)
-	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "") {
+	svcs := installedServices(runtime.GOOS)
+	for _, w := range serviceWarnings(runtime.GOOS, svcs, "") {
 		fmt.Println("warning: " + w)
+	}
+	for _, s := range svcs {
+		if serviceState(runtime.GOOS, s.file) == state {
+			fmt.Printf("its service (%s) is installed: start it with %s\n", s.file, restartCmd(s.name))
+		}
 	}
 	if cfg, _ := bareConfig(); cfg != "" && isDefaultState(state) {
 		fmt.Printf("start it with: reqcove run (it reads %s)\n", cfg)
