@@ -401,6 +401,7 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 		out := withDiscovery(withFiles(remoteStatus(), o), cap)
 		out.HostsFiles = ctl.hostsFiles() // as they are now: a first save's new file at once
 		out.CaptureRequests = ctl.reqs.pending()
+		out.ConsoleSessions = ctl.consoleSessions()
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()

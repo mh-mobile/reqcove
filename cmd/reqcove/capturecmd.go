@@ -55,10 +55,12 @@ type ctlRequest struct {
 	ID         string   `json:"id,omitempty"`          // requests (one), approve, deny: an agent's request (since v1.2)
 	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or console; deny: console (or none: terminal)
 	Confirm    string   `json:"confirm,omitempty"`     // save: the token of the change to the config run showed, confirmed (since v1.3)
+	Tailnet    bool     `json:"tailnet,omitempty"`     // console: the tailnet page's (reqcove console --tailnet, since v1.3)
 	// Set by reqcove console's page alone, never read from ctl.sock: the scope
-	// revision the page read (a change on an older one is refused), and from:
-	// "console", traced as such.
-	rev, from string
+	// revision the page read (a change on an older one is refused), from:
+	// "console", traced as such, and device: the tailnet page's caller's
+	// machine name, which the trace names (none: this computer's page).
+	rev, from, device string
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -70,6 +72,7 @@ type ctlAnswer struct {
 	Port     int                        `json:"port,omitempty"`     // console: the page's, on 127.0.0.1 (since v1.2)
 	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
 	File     string                     `json:"file,omitempty"`     // console: the code file's name, in the state directory (since v1.3)
+	Addr     string                     `json:"addr,omitempty"`     // console --tailnet: the tailnet page's IPv4:PORT (since v1.3)
 	Confirm  string                     `json:"confirm,omitempty"`  // save: the change to the config Message shows, to confirm with this token (since v1.3)
 	after    func()                     // run once the answer is sent (restart)
 }
@@ -118,7 +121,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 	if r.Cmd != "allow-all" && r.Cmd != "discover" && (r.For != "" || r.End) {
 		return r, fmt.Errorf("--for and --end go with capture allow-all and capture discover (usage: %s)", captureUse)
 	}
-	if r.Confirm != "" && r.Cmd != "save" {
+	if r.Confirm != "" && r.Cmd != "save" || r.Tailnet && r.Cmd != "console" {
 		return r, errors.New("usage: " + captureUse)
 	}
 	if requestOps[r.Cmd] {
@@ -397,6 +400,11 @@ type ctlState struct {
 	status func() mcpserver.StatusOut
 	page   *page
 	dir    string // the state directory: the code files'
+	// pageNow is page, read without mu (status counts its sessions); tailnet,
+	// the tailnet page once opened (reqcove console --tailnet; never carried
+	// across a restart).
+	pageNow atomic.Pointer[page]
+	tailnet atomic.Pointer[page]
 	// startConfig is the --config file's bytes as run read them at its start,
 	// with the lines capture save added since (restart.go's snapshot);
 	// restart, run's: it stops and execs again, with that snapshot's path.
@@ -440,8 +448,34 @@ func (st *ctlState) revision() string {
 // scopeOps are the ops that may change the scope, or its saved hosts.
 var scopeOps = map[string]bool{"add": true, "remove": true, "set": true, "stop": true, "start": true, "save": true, "allow-all": true, "discover": true, "reload": true, "approve": true}
 
+// consoleSessions are reqcove console's live sessions, for this computer's
+// status: nil before a page is opened.
+func (st *ctlState) consoleSessions() *mcpserver.ConsoleSessions {
+	l, tn := st.pageNow.Load(), st.tailnet.Load()
+	if l == nil && tn == nil {
+		return nil
+	}
+	out := &mcpserver.ConsoleSessions{}
+	if l != nil {
+		out.Local, _ = l.count()
+	}
+	if tn != nil {
+		_, out.Tailnet = tn.count()
+	}
+	return out
+}
+
 // fromConsole ends the trace of a change made on reqcove console's page.
 const fromConsole = " (from the console on this computer)"
+
+// consoleFrom ends the trace of a change made on a page of reqcove console:
+// device, the tailnet page's caller's machine name; "": this computer's.
+func consoleFrom(device string) string {
+	if device == "" {
+		return fromConsole
+	}
+	return " (from the console on " + device + ", over the tailnet)"
+}
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
 // returns the state it answers from; status is what reqcove console's page shows.
@@ -453,6 +487,7 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpt
 	}
 	if h := carried; h != nil && h.pageLn != nil {
 		st.page = carriedPage(ctx, cap, st, h)
+		st.pageNow.Store(st.page)
 	}
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
@@ -505,7 +540,7 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if _, err := req.normalized(); err != nil {
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 		}
-		return openPage(cap, st)
+		return openPage(cap, st, req.Tailnet)
 	}
 	if req.Cmd == "console-end" { // in LAN mode too, as console
 		if _, err := req.normalized(); err != nil {
@@ -538,7 +573,10 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if req.rev != st.revision() {
 			return ctlAnswer{Message: "refused: the hosts changed since this page read them (in another tab, or by reqcove capture in a terminal): the page shows them as they are now; nothing changed"}
 		}
-		why += fromConsole
+		why += consoleFrom(req.device)
+	}
+	if req.device != "" && (req.Cmd == "approve" || req.Cmd == "deny") {
+		req.Via = "console on " + req.device + " (tailnet)"
 	}
 	if scopeOps[req.Cmd] {
 		defer st.gen.Add(1)

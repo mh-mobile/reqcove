@@ -5,6 +5,7 @@ const KEY = "reqcove-session";
 const DURATIONS = ["30m", "1h", "2h", "4h", "8h", "12h", "24h"];
 let timer = 0;
 let last = null; // the state shown last: its rev goes with a change, its warnings before a confirm
+let again = "run reqcove console again in your terminal"; // the tailnet page's: console --tailnet
 
 function $(id) { return document.getElementById(id); }
 
@@ -44,13 +45,20 @@ async function api(method, path, body) {
   }
   const r = await fetch(path, opts);
   const d = await r.json().catch(() => ({}));
-  if (r.status === 401) ended(d.error || "no session: run reqcove console again in your terminal");
+  if (r.status === 401) ended(d.error || "no session: " + again);
   return { ok: r.ok, d };
 }
 
 function show(d) {
   $("line").textContent = "Updated " + new Date().toLocaleTimeString() + " (every 5 s)";
   $("main").hidden = false;
+  // The tailnet page: only what ends with the run (run refuses the rest there too).
+  const tn = !!d.tailnet;
+  if (tn) again = "run reqcove console --tailnet again in your terminal";
+  $("tailnet-note").hidden = !tn;
+  $("settings-box").hidden = $("har-box").hidden = $("save").hidden = $("seen-box").hidden = tn;
+  $("seen-count").hidden = !tn;
+  $("seen-count").textContent = tn ? (d.discovered_kept || 0) + " names seen outside the hosts recorded (listed, with Add, on this computer's page)" : "";
 
   const reqs = $("requests");
   reqs.replaceChildren();
@@ -101,7 +109,7 @@ function show(d) {
   let files = d.config_file || (d.version ? "none (flags only)" : "");
   if (d.hosts_files) files += "; hosts: " + d.hosts_files.join(", ");
   if (d.config_unused) files += "; also there, not read: " + d.config_unused;
-  row(run, "config", files);
+  if (!d.tailnet) row(run, "config", files); // the tailnet page: no path of this computer
   row(run, "keep awake", d.keep_awake);
   if (d.mode === "lan") row(run, "mode", "LAN (reqcove status shows its proxy)");
   else row(run, "node", (d.node || "-") + " " + (d.ips || []).join(" ") + "; exit node approved: " + (d.exit_node_approved ? "yes" : "no"));
@@ -340,7 +348,7 @@ async function saveHAR() {
   }
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    if (r.status === 401) ended(d.error || "no session: run reqcove console again in your terminal");
+    if (r.status === 401) ended(d.error || "no session: " + again);
     $("rec-result").textContent = d.error || "no HAR file";
     return false;
   }
@@ -536,7 +544,7 @@ async function refresh() {
     const { ok, d } = await api("GET", "/api/state");
     if (ok) show(d);
   } catch (e) {
-    $("line").textContent = "reqcove is not answering (run stopped, or restarting?); trying again. If it stays so, run reqcove console again in your terminal";
+    $("line").textContent = "reqcove is not answering (run stopped, or restarting?); trying again. If it stays so, " + again;
   }
 }
 
@@ -565,10 +573,10 @@ async function start() {
       return ended("reqcove is not answering (run stopped?)");
     }
   }
-  if (!sessionStorage.getItem(KEY)) return ended("Open the link reqcove console prints in your terminal.");
+  if (!sessionStorage.getItem(KEY)) return ended("Open the link reqcove console prints in your terminal (or scan the QR code reqcove console --tailnet shows).");
   setup();
-  refresh();
-  loadSettings();
+  await refresh();
+  if (last && !last.tailnet) loadSettings();
   loadPresets();
   loadCA();
   timer = setInterval(refresh, 5000);

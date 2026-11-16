@@ -175,7 +175,7 @@ func (p *page) presetSet(w http.ResponseWriter, r *http.Request) {
 		case err != nil:
 			reply(false, "refused: "+err.Error())
 		case was:
-			log.Printf("reqcove console: the preset %s turned off%s", in.Name, fromConsole)
+			log.Printf("reqcove console: the preset %s turned off%s", in.Name, from(r))
 			reply(true, in.Name+" is off")
 		default:
 			reply(true, in.Name+" was off already")
@@ -222,7 +222,7 @@ func (p *page) presetSet(w http.ResponseWriter, r *http.Request) {
 		reply(false, "refused: "+err.Error())
 		return
 	}
-	log.Printf("reqcove console: the preset %s turned on for %ds%s%s%s", a.Name, seconds, timesNote(a.Times), offNote(a.TurnedOff), fromConsole)
+	log.Printf("reqcove console: the preset %s turned on for %ds%s%s%s", a.Name, seconds, timesNote(a.Times), offNote(a.TurnedOff), from(r))
 	msg := fmt.Sprintf("%s is on for %s", a.Name, (time.Duration(seconds) * time.Second).String())
 	if a.Times != nil {
 		msg += fmt.Sprintf(" or %d requests", *a.Times)

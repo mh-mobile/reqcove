@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,11 +13,13 @@ import (
 	"flag"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"maps"
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +34,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/skip2/go-qrcode"
 )
 
 // `reqcove console` (since v1.2) opens a page of run's state and the agents'
@@ -45,6 +50,15 @@ import (
 // terminal, as the capture commands: a speed bump for an agent, not a
 // boundary (any process of this user reaches ctl.sock). `reqcove console
 // --end` ends every session and unused code.
+//
+// `reqcove console --tailnet` (since v1.3) opens a second page, for this
+// user's own devices on the tailnet (an iPhone scanning its QR code): on the
+// node's tailnet address, a port of its own (not --ui's :80: another origin),
+// with its own codes and sessions. It serves only what ends with the run (no
+// file written, no setting, no restart, no HAR: refused there), and checks on
+// every request who calls, from the connection (never a header): one of this
+// user's own devices (untagged, of the node's user), the one that traded the
+// code. Its sessions last 1 h idle and 12 h in all, and end with the run.
 
 const (
 	pageCodeTTL   = 60 * time.Second
@@ -53,6 +67,16 @@ const (
 	maxPageCodes  = 32             // codes remembered, used or not, to tell one used twice
 	maxPageBody   = 4 << 10
 	sessionHeader = "X-Reqcove-Session"
+	tailnetIdle   = time.Hour      // the tailnet page's: a session not used that long ends
+	tailnetCap    = 12 * time.Hour // and none lasts longer
+)
+
+// The tailnet page's listener (on the node's tailnet IPv4 address) and who a
+// connection's address is (one of this user's own devices); tests stand in
+// for them.
+var (
+	listenTailnet = exitnode.ListenConsole
+	ownDeviceAt   = exitnode.OwnDeviceAt
 )
 
 //go:embed ui
@@ -73,14 +97,52 @@ var openBrowser = func(ctx context.Context, file string) error {
 func consoleCmd(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("console", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
-	end := fs.Bool("end", false, "end every session of the page and every link not opened yet")
+	end := fs.Bool("end", false, "end every session of the pages and every link not opened yet")
+	tailnet := fs.Bool("tailnet", false, "open the page for your own devices on the tailnet (a QR code for the iPhone): only what ends with the run, never a file written, a setting or a restart")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if *end {
+	switch {
+	case *end && *tailnet:
+		return errors.New("reqcove console --end ends every page's sessions, the tailnet page's too: give it alone")
+	case *end:
 		return endIn(ctx, os.Stdin, os.Stdout, *state)
+	case *tailnet:
+		return tailnetIn(ctx, os.Stdin, os.Stdout, *state)
 	}
 	return uiIn(ctx, os.Stdin, os.Stdout, *state)
+}
+
+// errOlderTailnet: a run older than v1.3 takes the tailnet op as the local
+// page's (it does not know the field) and answers no tailnet address.
+var errOlderTailnet = errors.New("this run is older than v1.3, which has no page on the tailnet: restart it with v1.3 or later (a restart empties the records); nothing opened on the tailnet")
+
+// tailnetIn is `reqcove console --tailnet`: the link, with its code, as a QR
+// code and as text, in this terminal alone (no browser opened, no file).
+func tailnetIn(ctx context.Context, in, out *os.File, state string) error {
+	if !terminal(in) || !terminal(out) {
+		return errNotTerminal
+	}
+	a, err := askRun(ctx, state, ctlRequest{Cmd: "console", Tailnet: true})
+	if errors.Is(err, errOlderUI) {
+		return errOlderTailnet
+	}
+	if err != nil {
+		return err
+	}
+	if !a.OK || a.Code == "" {
+		return errors.New(a.Message)
+	}
+	if ap, err := netip.ParseAddrPort(a.Addr); err != nil || !ap.Addr().Is4() {
+		return errOlderTailnet
+	}
+	url := fmt.Sprintf("http://%s/#c=%s", a.Addr, a.Code)
+	q, err := qrcode.New(url, qrcode.Medium)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s\n%s  %s\n", a.Message, q.ToSmallString(false), url)
+	return nil
 }
 
 var errNotTerminal = errors.New("reqcove console runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
@@ -169,9 +231,18 @@ type page struct {
 	mux     *http.ServeMux
 	now     func() (mono, wall time.Time)
 
+	tailnet  bool // the tailnet page (console --tailnet)
 	mu       sync.Mutex
 	codes    map[[32]byte]*pageCode
-	sessions map[[32]byte]time.Time // last used (monotonic reading)
+	sessions map[[32]byte]pageSession
+}
+
+// pageSession is a session's: when it was last used and made (monotonic
+// readings), and on the tailnet page, the device that traded the code (its
+// StableID, and its name for status and the traces).
+type pageSession struct {
+	last, made time.Time
+	device     exitnode.Device
 }
 
 type pageCode struct {
@@ -180,13 +251,17 @@ type pageCode struct {
 }
 
 // openPage is the console op (st.mu held): the page, opened once, and a new code.
-func openPage(cap *capture.Capture, st *ctlState) ctlAnswer {
+func openPage(cap *capture.Capture, st *ctlState, tailnet bool) ctlAnswer {
+	if tailnet {
+		return openTailnet(cap, st)
+	}
 	if st.page == nil {
 		p, err := servePage(st.ctx, cap, st)
 		if err != nil {
 			return ctlAnswer{Message: "refused: the page: " + err.Error()}
 		}
 		st.page = p
+		st.pageNow.Store(p)
 		log.Printf("reqcove console: the page listens on http://%s (this computer only) until run ends", p.host)
 	}
 	code := st.page.mint()
@@ -211,21 +286,26 @@ func openPage(cap *capture.Capture, st *ctlState) ctlAnswer {
 // ended, the code files removed.
 func endPage(st *ctlState) ctlAnswer {
 	sweepCodeFiles(st.dir)
-	if st.page == nil {
+	if st.page == nil && st.tailnet.Load() == nil {
 		return ctlAnswer{OK: true, Message: "no page of reqcove console was opened in this run: nothing to end"}
 	}
-	p := st.page
-	p.mu.Lock()
-	sessions, codes := len(p.sessions), 0
-	clear(p.sessions)
-	mono, wall := p.now()
-	for _, c := range p.codes {
-		if !c.used && !c.ended && !due(c.expires, mono, wall) {
-			codes++
+	sessions, codes := 0, 0
+	for _, p := range []*page{st.page, st.tailnet.Load()} {
+		if p == nil {
+			continue
 		}
-		c.ended = !c.used
+		p.mu.Lock()
+		sessions += len(p.sessions)
+		clear(p.sessions)
+		mono, wall := p.now()
+		for _, c := range p.codes {
+			if !c.used && !c.ended && !due(c.expires, mono, wall) {
+				codes++
+			}
+			c.ended = !c.used
+		}
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 	log.Printf("reqcove console --end: %d sessions and %d unused links ended", sessions, codes)
 	return ctlAnswer{OK: true, Message: fmt.Sprintf("ended: %d sessions of the page and %d links not opened yet; open pages say so (reqcove console opens a new one)", sessions, codes)}
 }
@@ -248,7 +328,7 @@ func servePage(ctx context.Context, cap *capture.Capture, st *ctlState) (*page, 
 // kept open for run's life, holds the port while ln is closed, until a
 // restart carries it across its exec (restart.go).
 func serveOn(ctx context.Context, cap *capture.Capture, st *ctlState, ln net.Listener, f *os.File) *page {
-	p := newPage(cap, st, ln.Addr().String())
+	p := newPage(cap, st, ln.Addr().String(), false)
 	p.sock = f
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go srv.Serve(ln)
@@ -262,7 +342,7 @@ func carriedPage(ctx context.Context, cap *capture.Capture, st *ctlState, h *han
 	p := serveOn(ctx, cap, st, h.pageLn, h.page)
 	mono, _ := p.now()
 	for _, s := range h.sessions {
-		p.sessions[s.hash] = mono.Add(-s.idle)
+		p.sessions[s.hash] = pageSession{last: mono.Add(-s.idle), made: mono.Add(-s.idle)}
 	}
 	log.Printf("reqcove console: the page carried across the restart, on http://%s (this computer only), with %d sessions", p.host, len(p.sessions))
 	return p
@@ -274,18 +354,49 @@ func (p *page) carry() []carriedSession {
 	defer p.mu.Unlock()
 	mono, wall := p.now()
 	var out []carriedSession
-	for k, last := range p.sessions {
-		if !due(last.Add(pageIdle), mono, wall) {
-			out = append(out, carriedSession{hash: k, idle: mono.Sub(last)})
+	for k, s := range p.sessions {
+		if !p.over(s, mono, wall) {
+			out = append(out, carriedSession{hash: k, idle: mono.Sub(s.last)})
 		}
 	}
 	return out
 }
 
-func newPage(cap *capture.Capture, st *ctlState, host string) *page {
-	p := &page{st: st, cap: cap, host: host, mux: http.NewServeMux(),
+// pageRoutes are the page's API, behind a session; tailnet: served on the
+// tailnet page too (only what ends with the run). Any other is refused there:
+// a route added later stays this computer's until it says otherwise.
+type pageRoute struct {
+	pattern string
+	h       func(*page, http.ResponseWriter, *http.Request)
+	tailnet bool
+}
+
+func pageRoutes() []pageRoute {
+	return []pageRoute{
+		{"GET /api/state", (*page).state, true},
+		{"POST /api/approve", (*page).approve, true},
+		{"POST /api/deny", (*page).deny, true},
+		{"POST /api/change", (*page).scope, true}, // save refused there (scope)
+		{"GET /api/presets", (*page).presetList, true},
+		{"POST /api/preset", (*page).presetSet, true},
+		{"POST /api/marker", (*page).marker, true},
+		{"GET /api/ca", (*page).ca, true},
+		{"GET /api/save", (*page).saveDiff, false},
+		{"GET /api/settings", (*page).settings, false},
+		{"POST /api/settings", (*page).setSetting, false},
+		{"GET /api/restart", (*page).restartDiff, false},
+		{"POST /api/restart", (*page).restartNow, false},
+		{"GET /api/har", (*page).harFile, false},
+	}
+}
+
+// localOnly is the tailnet page's answer to this computer's routes.
+const localOnly = "refused: on the tailnet page only what ends with the run (no file written, no setting, no restart, no HAR): this is the page on this computer's (reqcove console)"
+
+func newPage(cap *capture.Capture, st *ctlState, host string, tailnet bool) *page {
+	p := &page{st: st, cap: cap, host: host, mux: http.NewServeMux(), tailnet: tailnet,
 		now:   func() (time.Time, time.Time) { t := time.Now(); return t, t },
-		codes: map[[32]byte]*pageCode{}, sessions: map[[32]byte]time.Time{}}
+		codes: map[[32]byte]*pageCode{}, sessions: map[[32]byte]pageSession{}}
 	if cap != nil {
 		p.presets = cap
 	}
@@ -293,21 +404,43 @@ func newPage(cap *capture.Capture, st *ctlState, host string) *page {
 		p.mux.HandleFunc("GET "+path, p.file(file))
 	}
 	p.mux.HandleFunc("POST /api/session", p.trade)
-	p.mux.HandleFunc("GET /api/state", p.authed(p.state))
-	p.mux.HandleFunc("POST /api/approve", p.authed(p.approve))
-	p.mux.HandleFunc("POST /api/deny", p.authed(p.deny))
-	p.mux.HandleFunc("POST /api/change", p.authed(p.scope))
-	p.mux.HandleFunc("GET /api/save", p.authed(p.saveDiff))
-	p.mux.HandleFunc("GET /api/settings", p.authed(p.settings))
-	p.mux.HandleFunc("POST /api/settings", p.authed(p.setSetting))
-	p.mux.HandleFunc("GET /api/restart", p.authed(p.restartDiff))
-	p.mux.HandleFunc("POST /api/restart", p.authed(p.restartNow))
-	p.mux.HandleFunc("GET /api/presets", p.authed(p.presetList))
-	p.mux.HandleFunc("POST /api/preset", p.authed(p.presetSet))
-	p.mux.HandleFunc("POST /api/marker", p.authed(p.marker))
-	p.mux.HandleFunc("GET /api/ca", p.authed(p.ca))
-	p.mux.HandleFunc("GET /api/har", p.authed(p.harFile))
+	for _, rt := range pageRoutes() {
+		h := func(w http.ResponseWriter, r *http.Request) { rt.h(p, w, r) }
+		if tailnet && !rt.tailnet {
+			h = func(w http.ResponseWriter, _ *http.Request) {
+				answer(w, http.StatusForbidden, map[string]any{"error": localOnly})
+			}
+		}
+		p.mux.HandleFunc(rt.pattern, p.authed(h))
+	}
 	return p
+}
+
+// openTailnet is the console op with --tailnet (st.mu held): the tailnet
+// page, opened once, and a new code. Never a code file: the terminal shows
+// the link and its QR code.
+func openTailnet(cap *capture.Capture, st *ctlState) ctlAnswer {
+	if st.o.lanMode {
+		return ctlAnswer{Message: "refused: in LAN mode there is no tailnet node, so no page on it (reqcove console opens this computer's); nothing opened"}
+	}
+	p := st.tailnet.Load()
+	if p == nil {
+		ln, err := listenTailnet()
+		if err != nil {
+			return ctlAnswer{Message: "refused: the page on the tailnet: " + err.Error() + "; nothing opened"}
+		}
+		p = newPage(cap, st, ln.Addr().String(), true)
+		srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second,
+			IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0)}
+		go srv.Serve(ln)
+		go func() { <-st.ctx.Done(); srv.Close() }()
+		st.tailnet.Store(p)
+		log.Printf("reqcove console --tailnet: the page listens on http://%s, for your own devices on the tailnet, until run ends", p.host)
+	}
+	code := p.mint()
+	log.Print("reqcove console --tailnet: a one-use code given to the terminal (60 s)") // never the code
+	return ctlAnswer{OK: true, Code: code, Addr: p.host,
+		Message: "the page of this run for your own devices on the tailnet (only what ends with the run: no file written, no setting, no restart), until run ends: scan the QR code, or open the link, within 60 s, on one of your own devices with the tailnet on; it works once, and the page then works on that device alone (run reqcove console --tailnet again for another)"}
 }
 
 func secret(n int) string {
@@ -338,6 +471,26 @@ func (p *page) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	if p.tailnet {
+		// Who calls, from the connection alone, on every request: a kept-alive
+		// connection outlives a device retagged or removed.
+		d, ok := ownDeviceAt(r.RemoteAddr)
+		if !ok {
+			h.Set("Connection", "close")
+			answer(w, http.StatusForbidden, map[string]any{"error": "refused: only your own devices on the tailnet (the same user as reqcove's node, neither tagged)"})
+			return
+		}
+		// Another origin's request (--ui's page on :80 among them) is never one of this page's.
+		if o := r.Header.Values("Origin"); len(o) > 0 && (len(o) != 1 || o[0] != "http://"+p.host) {
+			h.Set("Connection", "close")
+			answer(w, http.StatusForbidden, map[string]any{"error": "refused: this page's requests come from this page only"})
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, d))
+		np := &noPaths{ResponseWriter: w, dir: p.st.dir}
+		defer np.flush()
+		w = np
+	}
 	if r.Host != p.host { // DNS rebinding: a site's own name pointed at 127.0.0.1
 		answer(w, http.StatusMisdirectedRequest, map[string]any{"error": "refused: this page answers http://" + p.host + " only"})
 		return
@@ -401,42 +554,104 @@ func (p *page) trade(w http.ResponseWriter, r *http.Request) {
 	}
 	c.used = true
 	if len(p.sessions) >= maxSessions {
-		lru := slices.MinFunc(slices.Collect(maps.Keys(p.sessions)), func(a, b [32]byte) int { return p.sessions[a].Compare(p.sessions[b]) })
+		lru := slices.MinFunc(slices.Collect(maps.Keys(p.sessions)), func(a, b [32]byte) int { return p.sessions[a].last.Compare(p.sessions[b].last) })
 		delete(p.sessions, lru)
 	}
 	token := secret(32)
-	p.sessions[sha256.Sum256([]byte(token))] = mono
+	d, _ := caller(r) // the tailnet page's: the device that traded the code (ServeHTTP checked it)
+	p.sessions[sha256.Sum256([]byte(token))] = pageSession{last: mono, made: mono, device: d}
+	if p.tailnet {
+		log.Printf("reqcove console --tailnet: a session for %s", d.Name)
+	}
 	answer(w, http.StatusOK, map[string]any{"token": token})
+}
+
+// callerKey: the tailnet page's caller, in a request's context.
+type callerKey struct{}
+
+// caller is the device that sent r to the tailnet page (ServeHTTP's check);
+// none on this computer's page.
+func caller(r *http.Request) (exitnode.Device, bool) {
+	d, ok := r.Context().Value(callerKey{}).(exitnode.Device)
+	return d, ok
+}
+
+// from ends the trace of a change made on the page r came to.
+func from(r *http.Request) string {
+	d, _ := caller(r)
+	return consoleFrom(d.Name)
+}
+
+// over: s has ended (idle too long; on the tailnet page, or made too long ago).
+func (p *page) over(s pageSession, mono, wall time.Time) bool {
+	if !p.tailnet {
+		return due(s.last.Add(pageIdle), mono, wall)
+	}
+	return due(s.last.Add(tailnetIdle), mono, wall) || due(s.made.Add(tailnetCap), mono, wall)
+}
+
+// count is the live sessions, by device name on the tailnet page.
+func (p *page) count() (n int, by map[string]int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	mono, wall := p.now()
+	for _, s := range p.sessions {
+		if p.over(s, mono, wall) {
+			continue
+		}
+		n++
+		if p.tailnet {
+			if by == nil {
+				by = map[string]int{}
+			}
+			by[s.device.Name]++
+		}
+	}
+	return n, by
 }
 
 // authed takes requests with a live session in their header alone.
 func (p *page) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !p.live(r.Header.Get(sessionHeader)) {
-			answer(w, http.StatusUnauthorized, map[string]any{"error": "no session: ended (by reqcove console --end, a link opened twice or 12 h idle), or run restarted: run reqcove console again in your terminal"})
+		d, _ := caller(r)
+		if !p.live(r.Header.Get(sessionHeader), d) {
+			why := "no session: ended (by reqcove console --end, a link opened twice or 12 h idle), or run restarted: run reqcove console again in your terminal"
+			if p.tailnet {
+				why = "no session on this device: ended (by reqcove console --end, a link opened twice, 1 h idle or 12 h in all, or used from another device), or run restarted: run reqcove console --tailnet again in your terminal"
+			}
+			answer(w, http.StatusUnauthorized, map[string]any{"error": why})
 			return
 		}
 		next(w, r)
 	}
 }
 
-func (p *page) live(token string) bool {
+// live: token is a session of this page's, not ended; on the tailnet page,
+// the one device d traded the code for (its StableID). Used from another
+// device, it ends: someone else has the token.
+func (p *page) live(token string, d exitnode.Device) bool {
 	if token == "" {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	k := sha256.Sum256([]byte(token))
-	last, ok := p.sessions[k]
+	s, ok := p.sessions[k]
 	mono, wall := p.now()
-	if ok && due(last.Add(pageIdle), mono, wall) {
+	switch {
+	case !ok:
+		return false
+	case p.over(s, mono, wall):
 		delete(p.sessions, k)
-		ok = false
+		return false
+	case p.tailnet && (s.device.ID == "" || s.device.ID != d.ID):
+		delete(p.sessions, k)
+		log.Printf("reqcove console --tailnet: %s's session used from %s: ended", s.device.Name, d.Name)
+		return false
 	}
-	if ok {
-		p.sessions[k] = mono
-	}
-	return ok
+	s.last = mono
+	p.sessions[k] = s
+	return true
 }
 
 // pageState is what the page shows: named fields of the status, never the
@@ -479,6 +694,9 @@ type pageState struct {
 	Discovered     []pageHost   `json:"discovered"`
 	DiscoveredKept int          `json:"discovered_kept,omitempty"`
 	Warnings       pageWarnings `json:"warnings"`
+	// Tailnet: the tailnet page's state: no local path, discovery's names
+	// as their count alone (discovered_kept); its panels are what ends with the run.
+	Tailnet bool `json:"tailnet,omitempty"`
 }
 
 // pageHost is a name host discovery saw: a host (capture.ValidHost) alone,
@@ -503,7 +721,7 @@ type pageRequest struct {
 	Masked    string   `json:"masked"`
 }
 
-func (p *page) state(w http.ResponseWriter, _ *http.Request) {
+func (p *page) state(w http.ResponseWriter, r *http.Request) {
 	rev := p.st.revision() // before the scope: a change in between makes it stale, never the other way
 	var s mcpserver.StatusOut
 	if p.st.status != nil {
@@ -529,9 +747,13 @@ func (p *page) state(w http.ResponseWriter, _ *http.Request) {
 		out.Requests = append(out.Requests, pageRequest{ID: r.ID, Hosts: r.Hosts, ExpiresAt: r.ExpiresAt, Masked: mcpserver.Masked(r)})
 	}
 	for _, h := range s.OutOfScopeHosts {
-		if capture.ValidHost(h.Host) && len(out.Discovered) < mcpserver.MaxOutHosts {
+		if capture.ValidHost(h.Host) && len(out.Discovered) < mcpserver.MaxOutHosts && !p.tailnet {
 			out.Discovered = append(out.Discovered, pageHost{Host: h.Host, Count: h.Count})
 		}
+	}
+	if p.tailnet { // this computer's paths and files stay on its page (noPaths takes those in the words)
+		out.Tailnet, out.Executable, out.ConfigFile, out.ConfigUnused, out.HostsFiles, out.ServiceCmds = true, "", "", "", nil, nil
+		out.DiscoveredKept = s.OutOfScopeHostsKept
 	}
 	answer(w, http.StatusOK, out)
 }
@@ -574,13 +796,18 @@ func (p *page) scope(w http.ResponseWriter, r *http.Request) {
 		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: not JSON of the page"})
 		return
 	}
+	if p.tailnet && in.Cmd == "save" { // a file written: this computer's page's
+		answer(w, http.StatusForbidden, map[string]any{"error": localOnly + "; nothing written"})
+		return
+	}
 	if !pageOps[in.Cmd] || in.Rev == "" {
 		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: the page changes the hosts with add, remove, stop, start, save, allow-all and discover alone, and the scope it read (capture set and reload are your terminal's; a restart is the Restart button's); nothing changed"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)
 	defer cancel()
-	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: in.Cmd, Hosts: in.Hosts, Pass: in.Pass, For: in.For, End: in.End, Confirm: in.Confirm, rev: in.Rev, from: "console"})
+	d, _ := caller(r)
+	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: in.Cmd, Hosts: in.Hosts, Pass: in.Pass, For: in.For, End: in.End, Confirm: in.Confirm, rev: in.Rev, from: "console", device: d.Name})
 	answer(w, http.StatusOK, map[string]any{"ok": a.OK, "message": a.Message})
 }
 
@@ -654,12 +881,16 @@ func (p *page) approve(w http.ResponseWriter, r *http.Request) {
 		ID    string
 		Hosts []string
 	}
-	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "approve", ID: in.ID, Hosts: in.Hosts, Via: "console"} })
+	d, _ := caller(r)
+	p.change(w, r, &in, func() ctlRequest {
+		return ctlRequest{Cmd: "approve", ID: in.ID, Hosts: in.Hosts, Via: "console", device: d.Name}
+	})
 }
 
 func (p *page) deny(w http.ResponseWriter, r *http.Request) {
 	var in struct{ ID string }
-	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "deny", ID: in.ID, Via: "console"} })
+	d, _ := caller(r)
+	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "deny", ID: in.ID, Via: "console", device: d.Name} })
 }
 
 func (p *page) change(w http.ResponseWriter, r *http.Request, in any, req func() ctlRequest) {
@@ -671,4 +902,61 @@ func (p *page) change(w http.ResponseWriter, r *http.Request, in any, req func()
 	defer cancel()
 	a := answerCtl(ctx, p.cap, p.st, req()) // never under p.mu: the console op takes st.mu, then p.mu
 	answer(w, http.StatusOK, map[string]any{"ok": a.OK, "message": a.Message})
+}
+
+// noPaths holds the tailnet page's answer and gives it with every path of
+// this computer taken out of its JSON's words: the state directory (in the
+// commands next steps and answers name), and any absolute or ~ path. An
+// answer it cannot read is refused whole.
+type noPaths struct {
+	http.ResponseWriter
+	dir  string
+	code int
+	buf  bytes.Buffer
+}
+
+func (n *noPaths) WriteHeader(code int)        { n.code = code }
+func (n *noPaths) Write(b []byte) (int, error) { return n.buf.Write(b) }
+
+func (n *noPaths) flush() {
+	b := n.buf.Bytes()
+	if mt, _, _ := mime.ParseMediaType(n.Header().Get("Content-Type")); mt == "application/json" {
+		var v any
+		if err := json.Unmarshal(b, &v); err != nil {
+			n.code, b = http.StatusInternalServerError, []byte(`{"error":"refused: an answer not checked for this computer's paths"}`)
+		} else {
+			b, _ = json.Marshal(withoutPaths(v, n.dir))
+		}
+		n.Header().Del("Content-Length")
+	}
+	n.ResponseWriter.WriteHeader(cmp.Or(n.code, http.StatusOK))
+	n.ResponseWriter.Write(b)
+}
+
+// localPath is a path in words: absolute or from ~, after a space, a quote,
+// a parenthesis or = (a URL's // follows a colon).
+var localPath = regexp.MustCompile(`(^|[\s'"(=])~?/[^\s'",;)]*[^\s'",;).]`)
+
+const pathHidden = "(a path on this computer)"
+
+func withoutPaths(v any, dir string) any {
+	switch x := v.(type) {
+	case string:
+		if dir != "" {
+			if abs, err := filepath.Abs(dir); err == nil {
+				x = strings.ReplaceAll(x, shellWord(abs), pathHidden)
+				x = strings.ReplaceAll(x, abs, pathHidden)
+			}
+		}
+		return localPath.ReplaceAllString(x, "${1}"+pathHidden)
+	case []any:
+		for i := range x {
+			x[i] = withoutPaths(x[i], dir)
+		}
+	case map[string]any:
+		for k := range x {
+			x[k] = withoutPaths(x[k], dir)
+		}
+	}
+	return v
 }

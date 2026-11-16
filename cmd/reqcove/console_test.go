@@ -944,6 +944,43 @@ func TestPageScopeE2E(t *testing.T) {
 		t.Errorf("logged as a terminal's:\n%s", logged.String())
 	}
 
+	// The tailnet page: the same changes, traced with the device's name; their
+	// answers without this computer's paths (allow-all's and discovery's name
+	// their --end command, with --state).
+	wasL, wasO, wasA, wasD := listenTailnet, ownDeviceAt, captureEndCmd, discoverEndCmd
+	listenTailnet = func() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
+	ownDeviceAt = func(string) (exitnode.Device, bool) { return exitnode.Device{ID: "nIPHONE", Name: "iphone"}, true }
+	captureEndCmd, discoverEndCmd = withState("reqcove capture allow-all --end", state), withState("reqcove capture discover --end", state)
+	defer func() { listenTailnet, ownDeviceAt, captureEndCmd, discoverEndCmd = wasL, wasO, wasA, wasD }()
+	tbase, tcode := openTailnetUI(t, state)
+	tauth := map[string]string{sessionHeader: trade(t, tbase, tcode)}
+	for _, tc := range []struct {
+		body  map[string]any
+		trace string
+	}{
+		{map[string]any{"cmd": "allow-all", "for": "30m"}, "capture allow-all --for 30m"},
+		{map[string]any{"cmd": "allow-all", "end": true}, "capture allow-all --end"},
+		{map[string]any{"cmd": "discover", "for": "1h"}, "capture discover --for 1h"},
+		{map[string]any{"cmd": "discover", "end": true}, "capture discover --end"},
+		{map[string]any{"cmd": "stop"}, "capture stop"},
+		{map[string]any{"cmd": "start"}, "capture start"},
+	} {
+		_, sb := call(t, tbase, "GET", "/api/state", "", tauth)
+		var ts pageState
+		json.Unmarshal([]byte(sb), &ts)
+		tc.body["rev"] = ts.Rev
+		b, _ := json.Marshal(tc.body)
+		r, out := call(t, tbase, "POST", "/api/change", string(b), tauth)
+		var a struct {
+			OK      bool
+			Message string
+		}
+		if json.Unmarshal([]byte(out), &a) != nil || r.StatusCode != 200 || !a.OK || strings.Contains(out+sb, state) || strings.Contains(out+sb, dir) {
+			t.Errorf("tailnet %s: %d %s\n%s", b, r.StatusCode, out, sb)
+		}
+		waitLog(t, logged, tc.trace+" (from the console on iphone, over the tailnet): ", 1)
+	}
+
 	// Another change since the page read the scope: refused, nothing changed.
 	old := stateNow().Rev
 	sock(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.3"}})
