@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -291,6 +292,8 @@ func newPage(cap *capture.Capture, st *ctlState, host string) *page {
 	p.mux.HandleFunc("GET /api/state", p.authed(p.state))
 	p.mux.HandleFunc("POST /api/approve", p.authed(p.approve))
 	p.mux.HandleFunc("POST /api/deny", p.authed(p.deny))
+	p.mux.HandleFunc("POST /api/change", p.authed(p.scope))
+	p.mux.HandleFunc("GET /api/save", p.authed(p.saveDiff))
 	return p
 }
 
@@ -425,7 +428,8 @@ func (p *page) live(token string) bool {
 
 // pageState is what the page shows: named fields of the status, never the
 // whole (no flow contents, no token or link, no agent's or client's text:
-// markers, presets, scope_change, the hosts seen outside the scope).
+// markers, presets, scope_change); of the hosts seen outside the scope
+// (discovery's), the names that are hosts alone, with their counts.
 type pageState struct {
 	Version      string        `json:"version"`
 	Executable   string        `json:"executable,omitempty"`
@@ -447,6 +451,34 @@ type pageState struct {
 	ScopePending string        `json:"scope_pending,omitempty"`
 	NextSteps    []string      `json:"next_steps"`
 	Requests     []pageRequest `json:"requests"`
+	// The scope panel's: the revision a change sends back (a change on an
+	// older one is refused); the hosts the hosts files hold now and those given
+	// as they are (pinned: a start takes them whatever the files say), for
+	// the "unsaved" badges; discovery's; the warnings shown before a confirm.
+	Rev            string       `json:"rev"`
+	Saved          []string     `json:"saved"`
+	PassSaved      []string     `json:"pass_saved"`
+	Pinned         []string     `json:"pinned"`
+	PassPinned     []string     `json:"pass_pinned"`
+	DiscoverUntil  string       `json:"discover_until,omitempty"`
+	Discovered     []pageHost   `json:"discovered"`
+	DiscoveredKept int          `json:"discovered_kept,omitempty"`
+	Warnings       pageWarnings `json:"warnings"`
+}
+
+// pageHost is a name host discovery saw: a host (capture.ValidHost) alone,
+// never a command; the page puts it in as text.
+type pageHost struct {
+	Host  string `json:"host"`
+	Count int    `json:"count"`
+}
+
+// pageWarnings are the CLI's own warnings of stop, remove and allow-all
+// (their answers carry the same words), shown before the page's confirm.
+type pageWarnings struct {
+	Stop     string `json:"stop"`
+	Remove   string `json:"remove"`
+	AllowAll string `json:"allow_all"`
 }
 
 type pageRequest struct {
@@ -457,21 +489,143 @@ type pageRequest struct {
 }
 
 func (p *page) state(w http.ResponseWriter, _ *http.Request) {
+	rev := p.st.revision() // before the scope: a change in between makes it stale, never the other way
 	var s mcpserver.StatusOut
 	if p.st.status != nil {
 		s = p.st.status()
 	}
 	n, _ := s.Node.(exitnode.Status)
+	o := p.st.originNow.Load()
 	out := pageState{Version: s.Version, Executable: s.Executable, Service: s.Service, Manager: s.Manager,
-		ConfigFile: s.ConfigFile, ConfigUnused: s.ConfigUnused, HostsFiles: s.HostsFiles, Mode: s.Mode,
+		ConfigFile: s.ConfigFile, ConfigUnused: s.ConfigUnused, HostsFiles: p.st.hostsFiles(), Mode: s.Mode,
 		Node: n.Node, IPs: n.IPs, ExitApproved: n.ExitApproved, Devices: slices.Sorted(maps.Values(n.Devices)),
 		Recording: s.Recording, Hosts: s.BaseAllowHosts, PassHosts: s.BasePassHosts, AllowAll: s.AllowAllUntil,
-		ScopePending: s.ScopePending, NextSteps: s.NextSteps, Requests: []pageRequest{}}
+		ScopePending: s.ScopePending, NextSteps: s.NextSteps, Requests: []pageRequest{},
+		Rev: rev, Saved: fileHosts(o.files), PassSaved: fileHosts(o.passOrigin().files),
+		Pinned: slices.Sorted(maps.Keys(o.given)), PassPinned: slices.Sorted(maps.Keys(o.passOrigin().given)),
+		DiscoverUntil: s.DiscoverUntil, Discovered: []pageHost{}, DiscoveredKept: s.OutOfScopeHostsKept,
+		Warnings: pageWarnings{Stop: stopWarning, Remove: removeWarning(), AllowAll: allowAllWarning()}}
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
 	}
 	for _, r := range p.st.reqs.pending() {
 		out.Requests = append(out.Requests, pageRequest{ID: r.ID, Hosts: r.Hosts, ExpiresAt: r.ExpiresAt, Masked: mcpserver.Masked(r)})
+	}
+	for _, h := range s.OutOfScopeHosts {
+		if capture.ValidHost(h.Host) && len(out.Discovered) < mcpserver.MaxOutHosts {
+			out.Discovered = append(out.Discovered, pageHost{Host: h.Host, Count: h.Count})
+		}
+	}
+	answer(w, http.StatusOK, out)
+}
+
+// fileHosts are the hosts in files now (a file not read gives none).
+func fileHosts(files []string) []string {
+	out := []string{}
+	for _, f := range files {
+		v, err := hostList("@" + f)
+		if err != nil || v == "" {
+			continue
+		}
+		r, _ := capture.ParseAllowHosts(hostsOf(v))
+		out = append(out, r.Hosts...)
+	}
+	return out
+}
+
+// pageOps are the changes the page makes, as reqcove capture does: never
+// set (the CLI's alone), reload, restart, console, nor the request ops
+// (approve and deny have their own).
+var pageOps = map[string]bool{"add": true, "remove": true, "stop": true, "start": true, "save": true, "allow-all": true, "discover": true}
+
+// scope is POST /api/change: one of pageOps, with the scope revision the
+// page read, made as reqcove capture makes it (answerCtl checks it again),
+// traced as made from the console.
+func (p *page) scope(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Cmd     string   `json:"cmd"`
+		Hosts   []string `json:"hosts"`
+		Pass    bool     `json:"pass"`
+		For     string   `json:"for"`
+		End     bool     `json:"end"`
+		Confirm string   `json:"confirm"`
+		Rev     string   `json:"rev"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if dec.Decode(&in) != nil {
+		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: not JSON of the page"})
+		return
+	}
+	if !pageOps[in.Cmd] || in.Rev == "" {
+		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: the page changes the hosts with add, remove, stop, start, save, allow-all and discover alone, and the scope it read (capture set, reload and restart are your terminal's); nothing changed"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)
+	defer cancel()
+	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: in.Cmd, Hosts: in.Hosts, Pass: in.Pass, For: in.For, End: in.End, Confirm: in.Confirm, rev: in.Rev, from: "console"})
+	answer(w, http.StatusOK, map[string]any{"ok": a.OK, "message": a.Message})
+}
+
+// pageSave is GET /api/save: what Save would write, before the page's
+// confirm. message: refused, or nothing to save (no confirm then).
+type pageSave struct {
+	Message string         `json:"message,omitempty"`
+	Files   []pageSaveFile `json:"files,omitempty"`
+	Pinned  []string       `json:"pinned,omitempty"`     // hosts on now, given as they are: not written
+	Config  string         `json:"config,omitempty"`     // the --config file the lines go to
+	Add     []string       `json:"config_add,omitempty"` // the lines added to it (a file created)
+	Notes   []string       `json:"notes,omitempty"`
+	Confirm string         `json:"confirm,omitempty"` // the token of this change, sent back with save
+}
+
+type pageSaveFile struct {
+	Path    string   `json:"path"`
+	Pass    bool     `json:"pass,omitempty"`
+	Created bool     `json:"created,omitempty"`
+	Now     []string `json:"now"`   // its hosts now
+	Write   []string `json:"write"` // its hosts once saved
+}
+
+// saveDiff is GET /api/save: capture save's plan (planSave), nothing written.
+func (p *page) saveDiff(w http.ResponseWriter, _ *http.Request) {
+	if p.st.o.lanMode || p.cap == nil {
+		answer(w, http.StatusOK, pageSave{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"})
+		return
+	}
+	p.st.mu.Lock()
+	defer p.st.mu.Unlock()
+	base := p.cap.Base()
+	sp, no := planSave(base, p.st)
+	if no != "" {
+		answer(w, http.StatusOK, pageSave{Message: no + "; nothing written"})
+		return
+	}
+	if len(sp.saves) == 0 {
+		answer(w, http.StatusOK, pageSave{Message: strings.Join(append([]string{"nothing to save: the hosts are all given as they are (a start takes them again)"}, sp.notes...), "; ")})
+		return
+	}
+	out := pageSave{Notes: sp.notes, Confirm: sp.token}
+	for _, s := range sp.saves {
+		f := pageSaveFile{Path: s.path, Pass: s.pass, Created: s.created, Now: []string{}, Write: append([]string{}, s.hosts...)}
+		if !s.created {
+			f.Now = fileHosts([]string{s.path})
+		}
+		out.Files = append(out.Files, f)
+	}
+	for _, l := range []struct {
+		o     hostsOrigin
+		hosts []string
+	}{{p.st.origin, base.Hosts}, {p.st.origin.passOrigin(), base.PassHosts}} {
+		written := savable(l.hosts, l.o)
+		for _, h := range l.hosts {
+			if _, ok := l.o.given[h]; ok && !slices.Contains(written, h) && !slices.Contains(out.Pinned, h) {
+				out.Pinned = append(out.Pinned, h)
+			}
+		}
+	}
+	if sp.plan != nil {
+		out.Config, out.Add = p.st.o.config, sp.plan.added
 	}
 	answer(w, http.StatusOK, out)
 }

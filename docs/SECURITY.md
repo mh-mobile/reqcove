@@ -289,7 +289,8 @@ more hosts, every host for up to 24 hours with `allow-all`. `run` checks each
 request itself: `"*"` is refused (but as `allow-all --for`, time-limited),
 and so is a change in LAN mode (tests). Each change leaves a line in `run`'s log, a
 marker with source `cli` and `scope_change` in `status` (an E2E test), so
-one you did not make shows.
+one you did not make shows. Since v1.3 the `reqcove console` page makes the
+same changes but `set` ([below](#reqcove-console-page)).
 
 `reqcove reload` (since v1.1) goes the same way, with the same guards and
 trace: it reads the config, its hosts files and the `--rules` file again and
@@ -345,10 +346,12 @@ the **names** of the hosts outside the ones recorded that the devices reach
 recorded) and how often: never content, a URL path or a time. So while it is
 on, "counted, never recorded" holds for what those hosts carry, not for their
 names.
-- **Local only:** the names reach `reqcove status` and this computer's
-  agents (`status`, `summarize`), never `--mcp-http` nor the `--ui` page (an
-  E2E test: not in what `--mcp-http` and `--ui` read; a unit test of the two
-  servers). Agents read them as data,
+- **Local only:** the names reach `reqcove status`, this computer's
+  agents (`status`, `summarize`) and, since v1.3, the `reqcove console` page
+  on 127.0.0.1 (host names alone, put in as text: tests; at most 30, from
+  the code), never
+  `--mcp-http` nor the `--ui` page (an E2E test: not in what `--mcp-http`
+  and `--ui` read; a unit test of the two servers). Agents read them as data,
   not instructions, as other names from the traffic; they are masked as
   other host fields, Apple's hosts and mitm.it are left out, and a command
   to add one is built by Reqcove only for a plain host name.
@@ -397,11 +400,25 @@ through `reqcove mcp`).
   (an E2E test). Requests live in memory only, and a restart of `run` drops
   them.
 
+<a id="reqcove-console-page"></a>
 Since v1.2 **`reqcove console`** opens a page of `run`'s state and of these
 requests, with Approve and Deny, in this computer's browser
-([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). It changes nothing but
-that: an approval goes as `reqcove capture approve` does, for the hosts the
-request holds, traced "approved in the console"; a denial as `capture deny`.
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). An approval goes as
+`reqcove capture approve` does, for the hosts the request holds, traced
+"approved in the console"; a denial as `capture deny`. Since v1.3 the page
+also changes the hosts, as `reqcove capture` does and through the same
+checks in `run` (an E2E test: each change answers as through `ctl.sock`):
+add and remove (recorded or passed undecrypted), stop and start, allow-all
+and discovery for 30 minutes to 24 hours and their end, and save, which
+writes the hosts files and, on a config without `--allow-hosts=@FILE`,
+creates the hosts file beside it and adds that line, after showing it. Its
+endpoint takes those changes alone: never `capture set`, `reload`,
+`restart`, a rule, a setting, a path, or a field other than the change's
+(tests: each refused before it reaches `run`). Stop, remove and allow-all
+show `run`'s own warnings before a confirm. A change made on a page that read
+the hosts before another change (another tab, the CLI) is refused (tests).
+Each is traced "(from the console on this computer)": `run`'s log, a `cli`
+marker and `scope_change` (an E2E test).
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
   from the first `reqcove console` until it ends (`reqcove restart` keeps it,
   below); never on the tailnet node, the
@@ -452,9 +469,13 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   code traded by someone else first shows as above. In the moment before your tab's trade fails and ends every session,
   that other session can approve a pending request: `reqcove capture
   requests` then shows it approved in the console (read from the code; that a
-  second trade ends every session is tested). What it shows is not secret beyond `reqcove status`: never the flows'
-  contents, a token, a link or a login URL, or text from an agent or an MCP
-  client.
+  second trade ends every session is tested). Since v1.3 a session can
+  change the hosts too, as `reqcove capture` can: such a session (yours, or
+  one traded first by someone else) can turn on allow-all for up to 24 hours,
+  recording every app's traffic for agents to read, or stop recording; the
+  log and the markers show it "(from the console on this computer)". What it
+  shows is not secret beyond `reqcove status`: never the flows' contents, a
+  token, a link or a login URL, or text from an agent or an MCP client.
 
 Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
 with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does

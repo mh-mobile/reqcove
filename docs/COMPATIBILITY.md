@@ -357,7 +357,7 @@ These may change in any release, a patch release included:
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
-  answers.
+  answers (v1.3's `/api/change` and `/api/save` among them).
 - What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`
   variables, the fds) and the files it leaves in the state directory and
   beside the config (`restart-*.config`, `restart-note`, `config.failed`).

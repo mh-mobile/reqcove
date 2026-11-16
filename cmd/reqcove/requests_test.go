@@ -501,7 +501,7 @@ func TestCaptureRequestE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := serveMCP(ctx, o, c, &node, ctl.reqs, "tok")
+	handler, err := serveMCP(ctx, o, c, &node, ctl, "tok")
 	if err != nil {
 		t.Fatal(err)
 	}

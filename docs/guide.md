@@ -641,8 +641,33 @@ hosts) and a change pending, and the next steps; and the requests waiting,
 each with its hosts, until when, and **Approve** and **Deny**. Approve adds
 the hosts the page showed, as `reqcove capture approve` does (`run` refuses
 other hosts), traced "capture add HOST (asked by an agent, approved in the
-console)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
-the hosts, stop and start, save, allow-all and discovery stay commands.
+console)"; Deny is `reqcove capture deny`.
+
+Since v1.3 its **Scope** panel changes the hosts too, as `reqcove capture`
+does (`run` checks each change again; in LAN mode it refuses them, as ever):
+- the hosts recorded and those passed undecrypted, each with **Remove**, and
+  **Add** (a host, with "pass undecrypted" for `--pass`);
+- **Stop recording** and **Start recording**;
+- **Allow all** and **Discover** for 30 minutes to 24 hours, each with
+  **End** and the time left;
+- the names discovery saw (host names alone, at most 30), each with **Add**;
+- **Save**.
+
+Stop, Remove (while recording is on) and Allow all first show the warning
+`reqcove capture` gives, word for word, and ask; every answer is shown as
+`run` gave it. Save shows first what it would write: each hosts file's hosts
+now and once saved, the hosts that are pinned (given on `run`'s command line
+or inline in the config: a start takes them again whatever the file says;
+Save never writes them), and, on a config with no `--allow-hosts=@FILE`
+line, the file it creates beside the config and the line it adds there (the
+page asks where `capture save` asks y/N). Hosts not in their hosts file yet
+are marked "unsaved". After a first save, the page and `reqcove status` name
+the new hosts file at once, and the next Save writes it. A change made on a
+page that read the hosts before another change (in another tab, or
+`reqcove capture` in a terminal) is refused, and the page shows them as they
+are now. Changes are traced as `capture`'s, "(from the console on this
+computer)": `run`'s log, a `cli` marker and `scope_change`. `capture set`,
+`reqcove reload` and `reqcove restart` stay commands.
 
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system
   picks, from the first `reqcove console` until `run` ends (`reqcove restart`
@@ -663,7 +688,8 @@ the hosts, stop and start, save, allow-all and discovery stay commands.
   one. A `run` older than v1.3 says to restart it with v1.3.
 - **Never shown:** the flows' contents, any token, link or login URL, and any
   text from an agent or an MCP client (the hosts it asked for are checked as
-  host names first).
+  host names first). Discovery's names are shown when they are host names
+  (others are left out).
 - In a terminal only, as the `capture` commands; a `run` older than v1.2 says
   to restart it with v1.2.
 
@@ -678,14 +704,24 @@ log; LAN mode; the terminal check, the link printed and the code file
 handed to a stand-in for `open`, the code never in its arguments, a v1.1
 `run`; the code file 0600, never through a symlink nor over a file, removed
 after its time, at `--end` and when `run` starts and ends; `--end` ending
-sessions and codes, in LAN mode too, and a v1.2 `run`'s answers), and E2E with real mitmproxy (approved in the console through its
-listener, the `mcp` marker "approved in the console"); by hand in a
+sessions and codes, in LAN mode too, and a v1.2 `run`'s answers; the Scope
+panel's endpoints: each of those checks, the page's changes alone (`set`,
+`reload`, `restart` and the others refused, none reaching `run`), an older
+scope refused, discovery's names checked as host names, the warnings `run`'s
+own, LAN mode), and E2E with real mitmproxy (approved in the console through its
+listener, the `mcp` marker "approved in the console"; each change of the
+Scope panel answering as through `ctl.sock`, traced "(from the console on
+this computer)", the warnings shown before the confirm in the answers, an
+older scope refused, Save's diff then a first save on a config with its
+hosts inline, the new hosts file in the page and in `status` at once, a
+second Save writing it; discovery's names on the page); by hand in a
 Chromium-based browser on macOS (2026-11-16): the page showed the state and
 the agents' requests, and Approve applied the hosts (traced "approved in the
 console"). The file's link, its `#c=` kept, reached a page on 127.0.0.1 in
 headless Chromium and Firefox on macOS (2026-11-16). Not tried: the file in
 Safari, Linux's `xdg-open`, the page in another browser, another user of this
-computer.
+computer, and the Scope panel in a browser (its script, its confirms and
+countdowns are from reading the code).
 
 ### Use one CA on two computers
 

@@ -15,3 +15,13 @@ button { font: inherit; padding: .3rem 1rem; margin-right: .5rem; border-radius:
 button.approve { border-color: var(--ok); color: var(--ok); }
 button.deny { border-color: var(--no); color: var(--no); }
 button:disabled { opacity: .5; cursor: default; }
+h3 { font-size: .9rem; margin: 1rem 0 .3rem; color: var(--muted); font-weight: 600; }
+.list { list-style: none; padding: 0; margin: 0; }
+.list li { display: flex; align-items: center; gap: .5rem; margin-bottom: .25rem; }
+.list li span:first-child { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.badge { font-size: .75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; color: var(--muted); }
+.badge.unsaved { border-color: var(--no); color: var(--no); }
+.list button, #scope p button { padding: .1rem .6rem; }
+.left { margin: 0 .5rem; color: var(--muted); }
+input[type=text], select { font: inherit; padding: .2rem .4rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); }
+#scope-result { white-space: pre-wrap; overflow-wrap: anywhere; }

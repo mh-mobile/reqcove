@@ -837,7 +837,7 @@ func TestWithFiles(t *testing.T) {
 	fakeServices(t, "/gone/reqcove", true)
 	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, pass: &hostsOrigin{files: []string{"/c/pass"}}}}
 	out := withFiles(mcpserver.StatusOut{NextSteps: []string{"first"}}, o)
-	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(out.HostsFiles, []string{"/c/hosts", "/c/pass"}) {
+	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(newCtlState(o).hostsFiles(), []string{"/c/hosts", "/c/pass"}) {
 		t.Errorf("files: %+v", out)
 	}
 	if steps := strings.Join(out.NextSteps, "\n"); !strings.HasPrefix(steps, "first\n") || !strings.Contains(steps, "two services for reqcove are installed") || !strings.Contains(steps, "runs /gone/reqcove, which is gone") {
