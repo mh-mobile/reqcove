@@ -111,7 +111,7 @@ func TestStatusWhileStarting(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) })
-	if !strings.Contains(out, "reqcove is starting, or stopping") || strings.Contains(out, "not running") {
+	if !strings.Contains(out, "reqcove is starting up or shutting down") || strings.Contains(out, "not running") {
 		t.Errorf("status while starting:\n%s", out)
 	}
 	if err := har(context.Background(), []string{"--state", dir}); err == nil || !strings.Contains(err.Error(), "starting") {
@@ -140,5 +140,23 @@ func TestStatusWhileStarting(t *testing.T) {
 	captureStdout(t, func() error { return status(context.Background(), []string{"--state", empty}) })
 	if exists(filepath.Join(empty, "lock")) {
 		t.Error("status made a lock file")
+	}
+}
+
+// status waits a moment (startWait) for a run that holds the state but does
+// not answer: here it lets go, and status says not running.
+func TestStatusWaitsWhileStopping(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); unlock() }()
+	old := startWait
+	startWait = 3 * time.Second
+	t.Cleanup(func() { startWait = old })
+	out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", dir}) })
+	if !strings.Contains(out, "reqcove is not running") || strings.Contains(out, "shutting down") {
+		t.Errorf("status while stopping:\n%s", out)
 	}
 }

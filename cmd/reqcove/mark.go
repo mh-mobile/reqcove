@@ -68,7 +68,7 @@ func sendMark(ctx context.Context, w io.Writer, state, text string) error {
 
 var (
 	errNotRunning = errors.New("reqcove is not running")
-	errStarting   = errors.New("reqcove is starting, or stopping")
+	errStarting   = errors.New("reqcove is starting up or shutting down")
 )
 
 // dialRun connects to the running reqcove's MCP socket as client, the
@@ -83,7 +83,7 @@ func dialRun(ctx context.Context, state, client string) (*mcp.ClientSession, err
 	conn, err := d.DialContext(hctx, "unix", filepath.Join(state, "mcp.sock"))
 	if err != nil {
 		if stateHeld(state) {
-			return nil, fmt.Errorf("%w (%s): its tools are not up (mitmproxy starts first, and the first start downloads it): try again in a moment", errStarting, state)
+			return nil, fmt.Errorf("%w (%s): a run holds its state, but its tools do not answer yet (mitmproxy starts first, and the first start downloads it): try again in a moment", errStarting, state)
 		}
 		return nil, errNotRunning
 	}

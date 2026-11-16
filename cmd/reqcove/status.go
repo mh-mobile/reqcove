@@ -313,6 +313,13 @@ func status(ctx context.Context, args []string) error {
 	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
+	// Right after a start (service install or restart) or a stop: wait a
+	// moment for the answer, running or not, rather than "starting up or
+	// shutting down".
+	for deadline := time.Now().Add(startWait); errors.Is(err, errStarting) && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+		session, err = dialRun(ctx, *state, "reqcove-status")
+	}
 	switch {
 	case *asJSON && (errors.Is(err, errNotRunning) || errors.Is(err, errStarting)):
 		return err // nothing on stdout: no status tool answered, and --json prints only its JSON
