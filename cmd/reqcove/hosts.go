@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"maps"
@@ -19,53 +20,70 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 )
 
-// hostsText is the hosts file path with hosts (none: a file without hosts).
-// An existing file must be a plain file of this user's: its comments, and its
-// lines whose hosts are all kept, stay as they are, new hosts at the end; a
-// new file starts with head.
-func hostsText(path string, hosts []string, head string) (string, error) {
+// hostsText is the hosts file path with hosts (none: a file without hosts),
+// and the revision of the file it was made from (fileRev's). An existing file
+// must be a plain file of this user's: its comments, and its lines whose
+// hosts are all kept, stay as they are, new hosts at the end; a new file
+// starts with head.
+func hostsText(path string, hosts []string, head string) (text, rev string, err error) {
 	old := head
 	switch fi, err := os.Lstat(path); {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
-		return "", err
+		return "", "", err
 	case !fi.Mode().IsRegular():
-		return "", fmt.Errorf("%s is not a plain file (a link?): hosts are written to a plain file only", path)
+		return "", "", fmt.Errorf("%s is not a plain file (a link?): hosts are written to a plain file only", path)
 	default:
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-			return "", fmt.Errorf("%s is not yours: its hosts decide what is recorded", path)
+			return "", "", fmt.Errorf("%s is not yours: its hosts decide what is recorded", path)
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		old = string(b)
+		old, rev = string(b), configRev(b)
 	}
 	keep, written := setOf(hosts), map[string]bool{}
-	var text strings.Builder
+	var out strings.Builder
 	for line := range strings.Lines(old) {
 		body, _, _ := strings.Cut(line, "#")
 		r, err := capture.ParseAllowHosts(hostsOf(body))
 		if err != nil || slices.ContainsFunc(r.Hosts, func(h string) bool { return !keep[h] }) {
 			continue // a host taken out (the others on its line come at the end), or not a host list
 		}
-		text.WriteString(strings.TrimSuffix(line, "\n") + "\n")
+		out.WriteString(strings.TrimSuffix(line, "\n") + "\n")
 		for _, h := range r.Hosts {
 			written[h] = true
 		}
 	}
 	for _, h := range hosts {
 		if !written[h] {
-			text.WriteString(h + "\n")
+			out.WriteString(h + "\n")
 			written[h] = true
 		}
 	}
-	return text.String(), nil
+	return out.String(), rev, nil
+}
+
+// fileRev is the revision of the file at path, read through no link: its
+// bytes' hash, "" for none there.
+func fileRev(path string) (string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(f)
+	return configRev(b), err
 }
 
 // writeHostsText puts text in the hosts file path's place, 0600, read back as
-// run reads it (its hosts must be hosts) before.
-func writeHostsText(path, text string, hosts []string) error {
+// run reads it (its hosts must be hosts) before, and the file still the one
+// text was made from (rev, hostsText's) just before.
+func writeHostsText(path, text string, hosts []string, rev string) error {
 	keep := setOf(hosts)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".hosts.tmp*") // 0600
 	if err != nil {
@@ -81,6 +99,11 @@ func writeHostsText(path, text string, hosts []string) error {
 			if r, _ := capture.ParseAllowHosts(hostsOf(got)); !maps.Equal(setOf(r.Hosts), keep) {
 				err = fmt.Errorf("%s would not read back as written", path)
 			}
+		}
+	}
+	if err == nil {
+		if now, rerr := fileRev(path); rerr != nil || now != rev {
+			err = fmt.Errorf("%s changed since it was read (save again)", path)
 		}
 	}
 	if err == nil {

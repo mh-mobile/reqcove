@@ -854,10 +854,12 @@ func save(cap *capture.Capture, st *ctlState, confirm, why, from string) ctlAnsw
 	return t
 }
 
-// hostsSave is a hosts file a save writes: its hosts and text; created: new,
+// hostsSave is a hosts file a save writes: its hosts and text, and the
+// revision of the file the text was made from ("" for none); created: new,
 // beside the config, which gets its line.
 type hostsSave struct {
 	path, text    string
+	rev           string
 	hosts         []string
 	pass, created bool
 }
@@ -948,7 +950,7 @@ func saveScope(base capture.HostRules, st *ctlState, confirm string) (ctlAnswer,
 		if s.created {
 			continue
 		}
-		if err := writeHostsText(s.path, s.text, s.hosts); err != nil {
+		if err := writeHostsText(s.path, s.text, s.hosts, s.rev); err != nil {
 			if len(did) == 0 {
 				return refuse("refused: " + err.Error())
 			}
@@ -1014,11 +1016,11 @@ func planSave(base capture.HostRules, st *ctlState) (sp savePlan, no string) {
 			}
 			edits = append(edits, hostsFileLine(config, s.pass))
 		}
-		text, err := hostsText(s.path, s.hosts, head)
+		text, rev, err := hostsText(s.path, s.hosts, head)
 		if err != nil {
 			return sp, "refused: " + err.Error()
 		}
-		sp.saves[i].text, files[s.path] = text, text
+		sp.saves[i].text, sp.saves[i].rev, files[s.path] = text, rev, text
 	}
 	sp.notes = saveNotes(base, o, pass, sp.saves)
 	if len(sp.saves) == 0 {
@@ -1033,12 +1035,17 @@ func planSave(base capture.HostRules, st *ctlState) (sp savePlan, no string) {
 	if err != nil {
 		return sp, "refused: " + err.Error()
 	}
+	// The token of the files read as well as of what is written: an edit to
+	// one since the change was shown refuses it, whatever it would write.
 	h := sha256.New()
 	if sp.plan != nil {
+		fmt.Fprintf(h, "%s\x00", sp.plan.rev)
 		h.Write(sp.plan.new)
+	} else {
+		fmt.Fprintf(h, "%s\x00", configRevNow(config))
 	}
 	for _, s := range sp.saves {
-		fmt.Fprintf(h, "\x00%s\x00%s", s.path, s.text)
+		fmt.Fprintf(h, "\x00%s\x00%s\x00%s", s.path, s.rev, s.text)
 	}
 	sp.token = hex.EncodeToString(h.Sum(nil))
 	return sp, ""
