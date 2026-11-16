@@ -94,7 +94,7 @@ Each tool's fields:
 - These values keep their meaning: `status`' `mode` (`tailnet`, `lan`),
   `capture_stats`' `state` (`starting`, `ready`, `restarting`, `failed`), a
   preset's `kind` (`mock`, `map_remote`, `modify_headers`, `resolve`), a marker's
-  `source` (`cli`, `mcp`), a `list_passthrough` connection's `reason`
+  `source` (`cli`, `mcp`; since v1.3 `console` too), a `list_passthrough` connection's `reason`
   (`pass_hosts`, `raw_tcp`). A minor release may add a value (a new mode, say).
 - A field that holds text written for people (`next_steps`, `note`, `msg`,
   error fields such as `list_rules`' and `explain_rules`' `rules_error`, and
@@ -311,6 +311,14 @@ and the restart then checks in `run` alone and says so (unit tests).
   no hosts file (`--allow-hosts=@FILE`, or `--pass-hosts=@FILE`), at its end,
   after asking y/N, and create that file beside it; the config before is kept
   as `config.prev`. It changes no other line.
+- Since v1.3, `reqcove setup` always writes the `--allow-hosts=@FILE` line
+  and the hosts file beside the config: with no host answered, a file of
+  comments alone, which gives no hosts (before: a commented-out
+  `--allow-hosts` line and no file). It checks the config and the hosts
+  file it would write as the next start reads them, and writes nothing if
+  that start would refuse them. Where the Tailscale CLI answers on this
+  computer, it lists your own untagged devices to pick by number (a name
+  can still be typed).
 
 ### The state directory
 
@@ -362,8 +370,9 @@ These may change in any release, a patch release included:
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
-  answers (v1.3's `/api/change`, `/api/save`, `/api/settings` and
-  `/api/restart` among them).
+  answers (v1.3's `/api/change`, `/api/save`, `/api/settings`,
+  `/api/restart`, `/api/presets`, `/api/preset`, `/api/marker`, `/api/ca` and
+  `/api/har` among them).
 - `run --check-config`, the hidden check mode a restart asks of the binary
   it would exec.
 - What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`

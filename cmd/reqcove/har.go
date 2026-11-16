@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"sort"
@@ -45,7 +46,26 @@ func har(ctx context.Context, args []string) error {
 		return err
 	}
 	defer session.Close()
-	call := func(name string, args, out any) error {
+	w := bufio.NewWriter(os.Stdout)
+	n, redacting, err := writeHAR(ctx, toolCaller(ctx, session), w, in, *limit)
+	if !redacting {
+		fmt.Fprintln(os.Stderr, "the flows are not masked (reqcove run --no-redact): check before sharing the file")
+	}
+	if err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%d flows\n", n)
+	return nil
+}
+
+// toolCall calls an MCP tool, its structured answer into out.
+type toolCall func(name string, args, out any) error
+
+func toolCaller(ctx context.Context, session *mcp.ClientSession) toolCall {
+	return func(name string, args, out any) error {
 		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 		if err != nil {
 			return err
@@ -61,44 +81,52 @@ func har(ctx context.Context, args []string) error {
 		b, _ := json.Marshal(res.StructuredContent)
 		return json.Unmarshal(b, out)
 	}
+}
 
+// writeHAR writes the flows the tools give (in, at most limit, the newest; 0
+// for all) as a HAR 1.2 file to w, oldest first; redacting is
+// capture_stats', read before the first entry (false: not masked).
+func writeHAR(ctx context.Context, call toolCall, w io.Writer, in mcpserver.FilterIn, limit int) (n int, redacting bool, err error) {
 	var ids []string // newest first, as list_flows pages
 	for page := (mcpserver.ListIn{FilterIn: in, PageIn: mcpserver.PageIn{Limit: 500}}); ; {
 		var out mcpserver.ListOut
 		if err := call("list_flows", page, &out); err != nil {
-			return err
+			return 0, true, err
 		}
 		for _, f := range out.Flows {
 			ids = append(ids, f.ID)
 		}
-		if out.NextCursor == 0 || *limit > 0 && len(ids) >= *limit {
+		if out.NextCursor == 0 || limit > 0 && len(ids) >= limit {
 			break
 		}
 		page.Cursor = out.NextCursor
 	}
-	if *limit > 0 && len(ids) > *limit {
-		ids = ids[:*limit]
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
 
 	var stats mcpserver.StatsOut
 	if err := call("capture_stats", nil, &stats); err != nil {
-		return err
+		return 0, true, err
 	}
 	comment := "masked as it arrived; bodies are their kept heads"
-	if r, _ := stats.Stats["redacting"].(bool); !r {
+	redacting, _ = stats.Stats["redacting"].(bool)
+	if !redacting {
 		comment = "NOT masked: reqcove run --no-redact; bodies are their kept heads"
-		fmt.Fprintln(os.Stderr, "the flows are not masked (reqcove run --no-redact): check before sharing the file")
 	}
-	w := bufio.NewWriter(os.Stdout)
-	fmt.Fprintf(w, `{"log":{"version":"1.2","creator":{"name":"reqcove","version":%q},"comment":%q,"entries":[`, version, comment)
-	n := 0
+	if _, err := fmt.Fprintf(w, `{"log":{"version":"1.2","creator":{"name":"reqcove","version":%q},"comment":%q,"entries":[`, version, comment); err != nil {
+		return 0, redacting, err
+	}
 	for i := len(ids) - 1; i >= 0; i-- {
+		if ctx.Err() != nil {
+			return n, redacting, ctx.Err()
+		}
 		var v capture.FlowView
 		if err := call("get_flow", mcpserver.GetIn{ID: ids[i], Bodies: true}, &v); err != nil {
 			if strings.Contains(err.Error(), "no flow") { // get_flow's (Store.Get's) words
 				continue // evicted since the list
 			}
-			return err
+			return n, redacting, err
 		}
 		e := harEntry(v)
 		if v.WSMessages > 0 { // its kept messages, masked as they arrived, as Chrome writes them
@@ -119,20 +147,18 @@ func har(ctx context.Context, args []string) error {
 		}
 		b, err := json.Marshal(e)
 		if err != nil {
-			return err
+			return n, redacting, err
 		}
 		if n > 0 {
-			w.WriteString(",")
+			b = append([]byte(","), b...)
 		}
-		w.Write(b)
+		if _, err := w.Write(b); err != nil {
+			return n, redacting, err
+		}
 		n++
 	}
-	w.WriteString("]}}\n")
-	if err := w.Flush(); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "%d flows\n", n)
-	return nil
+	_, err = io.WriteString(w, "]}}\n")
+	return n, redacting, err
 }
 
 type harNV struct {
@@ -271,7 +297,7 @@ func harEntry(v capture.FlowView) harEntryOut {
 		notes = append(notes, "answered by a reqcove mock rule, not the server")
 	}
 	if v.Preset != "" {
-		notes = append(notes, "the mock preset "+v.Preset+", turned on by an agent")
+		notes = append(notes, "the mock preset "+v.Preset+", turned on by an agent or on reqcove console's page")
 	}
 	for _, r := range v.Rewrites {
 		notes = append(notes, "rule: "+r)

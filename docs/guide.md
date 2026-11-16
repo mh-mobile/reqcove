@@ -41,15 +41,23 @@ with an empty answer. It starts nothing and removes nothing.
   the service reads, and the hosts to their own file beside it, which that
   file reads with `--allow-hosts=@FILE` (since v1.1; `reqcove capture save`
   writes it).
+  - Since v1.3, where the Tailscale CLI answers on this computer
+    (`tailscale`, or the Mac app's), it lists your own devices in the
+    tailnet, untagged, iPhones first: answer with a number, or type a name.
   - The file is `~/.config/reqcove/config` (`reqcove service install`'s). For
     a brew install (this binary under `Cellar/reqcove/`), it is Homebrew's
     `$(brew --prefix)/etc/reqcove/config` (`brew services`').
   - The hosts file is `hosts` beside it: `~/.config/reqcove/hosts`, or
     `$(brew --prefix)/etc/reqcove/hosts`. One host a line; `#` starts a
-    comment. No hosts answered: no hosts file, and the `--allow-hosts` line
-    stays a comment.
+    comment. No hosts answered: since v1.3 the hosts file is written all the
+    same, comments alone (no hosts: nothing is recorded), with its
+    `--allow-hosts=@FILE` line, so `reqcove capture save` and the console's
+    Save fill it later (before v1.3: no hosts file, and the line stayed a
+    comment).
   - Both are 0600, and their directory 0700 when new. Before they take the
-    files' place, they are checked as `run` reads them.
+    files' place, they are checked as `run` reads them; since v1.3 both are
+    checked together, as the next start reads them, before anything is
+    written: one that start would refuse writes nothing.
   - `*` and a name starting with `-` are asked again. A pasted URL keeps its
     host only.
   - No hosts yet: once `run` runs, `reqcove status` (or an agent's
@@ -104,7 +112,10 @@ at once, nothing written). Tried too: `reqcove links` from Claude Code's `!`.
 Tried by hand with a v1.1 build from a local formula (macOS, 2026-11-16):
 setup wrote Homebrew's config and its hosts file and pointed to `brew services
 start reqcove`, whose run read them and recorded the iPhone. The hosts file
-otherwise: unit tests (the file, its `@` line, an old one kept).
+otherwise: unit tests (the file, its `@` line, an old one kept; since v1.3
+the file of comments alone when no host is answered, a set the next start
+refuses writing nothing, the device list from a stand-in for `tailscale
+status`). Not tried by hand: v1.3's setup.
 
 <a id="security-login-url"></a>
 
@@ -708,7 +719,37 @@ flags included; `--mask-values` and what an `@FILE` holds only as
 then it asks, and restarts as `reqcove restart` does
 ([below](#restart-in-place-reqcove-restart)). An edit made after the list was
 shown is refused, nothing stopped. The page keeps its session across the
-restart.
+restart. Before it asks, it offers the records as a HAR file (below).
+
+Since v1.3 the page has these panels too:
+- **Presets and rules**: the `--rules` file's presets by name and kind,
+  whether each is on, until when and (a mock) how many requests are left;
+  **Turn on** for 1 to 5 minutes, **Turn off**, as an agent's
+  `activate_preset` and `deactivate_preset` do (while recording is stopped,
+  mitmproxy refuses, as it does an agent). Before turning one on, the page
+  says what that kind changes; for a `map_remote` preset, where the requests
+  go then, with their cookies and tokens (its scheme and host; "not shown"
+  when it is not a plain one). If the file changed that destination since
+  the page showed it, the page's request is refused. The rules are listed by
+  kind, index (`mock[0]`) and preset name, never their values (no URL,
+  filter, header, body, address or path); a file that does not load is said
+  to, without its error (run's log has it).
+- **Add a marker**, as `reqcove mark` does, with source `console`
+  (`list_markers`).
+- **CA**: its name, SHA-256 fingerprint and expiry, a QR code of
+  http://mitm.it for the iPhone's camera, and how to add it on an iPhone and
+  remove it, as `reqcove status` prints them.
+- **Save the records as a HAR file…**: the file `reqcove har` writes (what
+  the agents' tools return, masked, body heads only), saved where your
+  browser saves downloads (your Downloads folder, usually), with the
+  permissions the browser gives files there: check them, and where it is,
+  before sharing it. The page asks for it with its session, in a header,
+  never a link with a token. Refused while `run` masks nothing
+  (`--no-redact`): use `reqcove har` in your terminal then.
+- **This run** also shows the service's commands (how to stop it, its log,
+  how to restart it; or, from a terminal, how to install one; read-only),
+  and with `--ui` a link to its page's address, without its token (open the
+  link `reqcove links` prints once in that browser).
 
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system
   picks, from the first `reqcove console` until `run` ends (`reqcove restart`
@@ -775,6 +816,19 @@ devices alone; the restart's list with an edit by hand of a terminal-only
 flag and a changed `@FILE`, a list made stale refused, the restart asked).
 Not tried: the panel in a browser (its script and confirms are from reading
 the code), the device list on a real tailnet.
+
+The other panels: unit tests (with a stand-in for mitmproxy: no rule's value,
+description or error text in an answer, a `map_remote` destination a plain
+scheme and host or "not shown", turned on only with the destination shown,
+1 to 5 minutes, a field added refused; the marker's source `console`; the
+CA's fields alone, its key in the state directory never; the HAR an
+attachment of JSON with `nosniff` and `no-store`, masked, refused without
+masking, no token taken in a URL; v1.2's guards on each new request; the
+`--ui` link without a token) and an E2E test with real mitmproxy (presets
+and rules from a real file, none of its values shown; on with the
+destination, off; refused once recording stopped). Not tried: the panels in
+a browser (the QR code drawn, the HAR download, the confirms: from reading
+the code).
 
 ### Use one CA on two computers
 

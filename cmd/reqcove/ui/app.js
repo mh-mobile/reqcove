@@ -20,6 +20,9 @@ function row(dl, name, value) {
   dl.append(el("dt", name), el("dd", value));
 }
 
+// say puts an answer, word for word, in the status line id.
+function say(id, d) { $(id).textContent = d.message || d.error || ""; }
+
 function clock(rfc) {
   const t = new Date(rfc);
   return isNaN(t) ? rfc : t.toLocaleTimeString();
@@ -85,6 +88,16 @@ function show(d) {
   row(run, "version", d.version);
   row(run, "binary", d.executable);
   row(run, "service", d.service ? d.service + (d.manager ? " (" + d.manager + ")" : "") : d.manager === "terminal" ? "none: started in a terminal" : "");
+  for (const c of d.service_commands || []) row(run, "", c);
+  if (d.flows_url && /^http:\/\/[0-9.]+\/$/.test(d.flows_url)) {
+    const a = el("a", d.flows_url);
+    a.href = d.flows_url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    const dd = el("dd");
+    dd.append(a, el("span", " (--ui's page, from your own devices on the tailnet: open it with the link reqcove links prints once, which carries its token)", "muted"));
+    run.append(el("dt", "flows"), dd);
+  }
   let files = d.config_file || (d.version ? "none (flags only)" : "");
   if (d.hosts_files) files += "; hosts: " + d.hosts_files.join(", ");
   if (d.config_unused) files += "; also there, not read: " + d.config_unused;
@@ -315,9 +328,134 @@ async function setSetting(s, values, ask) {
   loadSettings();
 }
 
-// beforeRestart is where the page offers the records as a HAR file before a
-// restart empties them (to come); true: go on.
-async function beforeRestart(d) { return true; }
+// saveHAR fetches the records as a HAR file, with the session header (never
+// a token in a URL), and saves it from a blob; true when saved.
+async function saveHAR() {
+  let r;
+  try {
+    r = await fetch("/api/har", { cache: "no-store", credentials: "omit", headers: { "X-Reqcove-Session": sessionStorage.getItem(KEY) || "" } });
+  } catch (e) {
+    $("rec-result").textContent = "reqcove did not answer";
+    return false;
+  }
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) ended(d.error || "no session: run reqcove console again in your terminal");
+    $("rec-result").textContent = d.error || "no HAR file";
+    return false;
+  }
+  const name = (/filename="(reqcove-[0-9-]+\.har)"/.exec(r.headers.get("Content-Disposition") || "") || [])[1] || "reqcove.har";
+  const url = URL.createObjectURL(await r.blob());
+  const a = el("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  $("rec-result").textContent = "Saved as " + name + " where your browser saves downloads (your Downloads folder, usually), with the permissions it gives files there: it holds what the agents' tools return, masked, body heads only. Check it before you share it.";
+  return true;
+}
+
+// beforeRestart offers the records as a HAR file before a restart empties
+// them; true: go on.
+async function beforeRestart(d) {
+  if (!(d.records > 0)) return true;
+  if (!confirm("A restart empties the " + d.records + " records. Save them as a HAR file first (to your browser's downloads)?")) return true;
+  if (await saveHAR()) return true;
+  return confirm("No HAR file: " + $("rec-result").textContent + "\n\nRestart anyway?");
+}
+
+// The presets and rules panel: names and kinds alone; a preset turned on
+// for the minutes chosen (at most 5) after run's words for its kind, and a
+// map_remote one's destination, which goes back with it.
+async function loadPresets() {
+  if (!sessionStorage.getItem(KEY)) return; // ended
+  let d;
+  try {
+    ({ d } = await api("GET", "/api/presets"));
+  } catch (e) {
+    $("presets-note").textContent = "reqcove did not answer";
+    return;
+  }
+  if (!d.presets) return;
+  const notes = [];
+  if (d.message) notes.push(d.message);
+  if (!d.message && !d.loaded) notes.push("No --rules file in effect (it is given in your terminal: reqcove run --rules FILE).");
+  if (d.problem) notes.push("The --rules file, or its last change, does not load: run's log and reqcove status say why.");
+  $("presets-note").textContent = notes.join(" ");
+  const list = $("presets");
+  list.replaceChildren();
+  if (d.presets.length === 0) list.append(el("li", d.message ? "" : "none: a rule marked preset: NAME in the --rules file", "muted"));
+  for (const x of d.presets) {
+    const badges = [x.kind];
+    if (x.active) badges.push("on" + (x.expires_at ? " until " + clock(x.expires_at) : "") + (x.remaining != null ? ", " + x.remaining + " left" : ""));
+    const e = li(x.name + (x.target ? " -> " + x.target : ""), badges, null);
+    if (x.active) {
+      e.append(button("Turn off", () => preset({ name: x.name, on: false })));
+    } else {
+      const m = el("select");
+      for (const v of [1, 2, 3, 4, 5]) m.append(el("option", String(v)));
+      m.value = "5";
+      m.setAttribute("aria-label", "minutes");
+      e.append(m, el("span", "min", "muted"), button("Turn on", () => {
+        const what = (d.warnings[x.kind] || "") + (x.kind === "map_remote" ? ": " + x.target : "");
+        if (!confirm("Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?")) return;
+        const body = { name: x.name, on: true, minutes: Number(m.value) };
+        if (x.kind === "map_remote") body.target = x.target;
+        preset(body);
+      }));
+    }
+    list.append(e);
+  }
+  const rules = $("rules");
+  rules.replaceChildren();
+  if (d.rules.length === 0) rules.append(el("li", "none", "muted"));
+  for (const r of d.rules) {
+    rules.append(li(r.kind + "[" + r.index + "]" + (r.preset ? " (preset " + r.preset + ")" : ""), r.active ? ["on"] : [], null));
+  }
+}
+
+async function preset(body) {
+  for (const b of $("presets").querySelectorAll("button")) b.disabled = true;
+  try {
+    const { d } = await api("POST", "/api/preset", body);
+    say("presets-result", d);
+  } catch (e) {
+    $("presets-result").textContent = "reqcove did not answer: reqcove status says what came of it";
+  }
+  loadPresets();
+}
+
+// The CA panel: its name, fingerprint and expiry, a QR code of its address (d.url)
+// drawn from its rows, and the steps.
+async function loadCA() {
+  let d;
+  try {
+    ({ d } = await api("GET", "/api/ca"));
+  } catch (e) {
+    return;
+  }
+  if (!d.url) return;
+  $("ca-note").textContent = d.message || "";
+  const dl = $("ca");
+  dl.replaceChildren();
+  row(dl, "name", d.name);
+  row(dl, "SHA-256", d.sha256);
+  row(dl, "until", d.not_after);
+  const c = $("ca-qr"), n = d.qr.length, px = 4;
+  c.width = c.height = n * px;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#000";
+  d.qr.forEach((rowBits, y) => { for (let x = 0; x < rowBits.length; x++) if (rowBits[x] === "1") g.fillRect(x * px, y * px, px, px); });
+  const steps = $("ca-steps");
+  steps.replaceChildren();
+  c.setAttribute("aria-label", "QR code of " + d.url);
+  if (d.add.length) steps.append(el("li", "Add on an iPhone: " + d.add.join(" ")));
+  if (d.remove) steps.append(el("li", "Remove from it: " + d.remove));
+}
 
 // restart lists what a restart changes (every setting the config on disk
 // has otherwise than run started with), the records it empties, then asks.
@@ -363,6 +501,19 @@ function setup() {
   $("start").onclick = () => change({ cmd: "start" });
   $("save").onclick = save;
   $("restart").onclick = restart;
+  $("har").onclick = saveHAR;
+  $("mark").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("mark-text").value.trim();
+    if (!text) return;
+    try {
+      const { d } = await api("POST", "/api/marker", { text });
+      say("rec-result", d);
+      if (d.ok) $("mark-text").value = "";
+    } catch (err) {
+      $("rec-result").textContent = "reqcove did not answer";
+    }
+  };
   $("all-on").onclick = () => change({ cmd: "allow-all", for: $("all-for").value }, last && "Record every host for " + $("all-for").value + "?\n" + last.warnings.allow_all);
   $("all-end").onclick = () => change({ cmd: "allow-all", end: true });
   $("disc-on").onclick = () => change({ cmd: "discover", for: $("disc-for").value });
@@ -408,7 +559,10 @@ async function start() {
   setup();
   refresh();
   loadSettings();
+  loadPresets();
+  loadCA();
   timer = setInterval(refresh, 5000);
+  setInterval(loadPresets, 15000);
 }
 
 start();

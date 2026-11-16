@@ -146,7 +146,7 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 	}
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
-	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable)", func(v string) error {
+	fs.Func("device", "device whose traffic is carried: machine name, device name (your own devices), tailnet IP or StableID (repeatable); its requests to the allowed hosts are decrypted and recorded, for the agents to read", func(v string) error {
 		devices = append(devices, v)
 		return nil
 	})
@@ -171,7 +171,7 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 	noRedact := fs.Bool("no-redact", false, "keep secrets unmasked in the records (headers, URLs, bodies, error text)")
 	protoFile := fs.String("proto", "", "a compiled protobuf schema (protoc --descriptor_set_out=FILE --include_imports): messages of its gRPC, Connect and Twirp methods are read with their field names and masked by name; without it, protobuf shows its structure only")
 	var maskNameSpecs, maskValueSpecs []string
-	fs.Func("mask-names", "names to mask as secret too, as the built-in ones are (headers, URL and form parameters, JSON fields, GraphQL arguments), comma-separated, or @FILE (one a line)", func(v string) error {
+	fs.Func("mask-names", "names to mask as secret too, as the built-in ones are (headers, URL and form parameters, JSON fields, GraphQL arguments), comma-separated, or @FILE (one a line); a name taken out leaves its values unmasked in what is recorded from then on, for the agents and pages to read", func(v string) error {
 		maskNameSpecs = append(maskNameSpecs, v)
 		return nil
 	})
@@ -189,7 +189,7 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 	proxyPort := fs.Int("proxy-port", 8080, "the proxy port for the iPhone's Wi-Fi proxy setting: the Remote Proxy's on the tailnet, or with --lan the LAN proxy's; 0 turns the Remote Proxy off")
 	mcpHTTP := fs.Bool("mcp-http", false, fmt.Sprintf("serve the MCP tools on the node's port %d (http://NODE:%d/mcp) for agents on your own devices on the tailnet, such as Grok Bot, with the token reqcove links prints", exitnode.MCPPort, exitnode.MCPPort))
 	uiFlag := fs.Bool("ui", false, "serve a read-only page of the flows on the node's port 80: your own devices on the tailnet see every device's, a --device device of another user its own (a link with a token is printed)")
-	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …): http://HOST:PORT")
+	upstreamProxy := fs.String("upstream-proxy", "", "send decrypted requests on through this HTTP proxy (Burp Suite, ZAP, …), which reads them unmasked (cookies, tokens, bodies: masking is for the records alone): http://HOST:PORT")
 	upstreamCA := fs.String("upstream-ca", "", "the upstream proxy's CA (PEM or DER, as Burp exports it): trusted instead of the public CAs; for a proxy that decrypts")
 	verbose := fs.Bool("verbose", false, "log tsnet's backend and every flow decision")
 	lanMode := fs.Bool("lan", false, "LAN mode, without Tailscale: an HTTP proxy on this computer's LAN address (--proxy-port), for clients on that network you allow (reqcove lan allow ADDR, or run's prompt); ports 80 and 443 only")

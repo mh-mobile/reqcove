@@ -677,19 +677,29 @@ func printCA(w io.Writer, state string, lan bool) {
 		return
 	}
 	fmt.Fprintf(w, "  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
+	add, remove := caSteps(ca.Name, lan)
+	fmt.Fprintf(w, "    add on an iPhone:    %s\n", add[0])
+	fmt.Fprintf(w, "                         %s\n", add[1])
+	if lan {
+		fmt.Fprintf(w, "                         %s\n", lanCAAdvice(caPEM(state), ca.SHA256))
+	}
+	fmt.Fprintf(w, "    remove from iPhone:  %s\n", remove)
+	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
+		fmt.Fprintf(w, "    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
+	}
+}
+
+// caSteps are how an iPhone adds the CA name (two lines) and removes it, as
+// status prints them and reqcove console's page shows them; lan: through the
+// LAN proxy.
+func caSteps(name string, lan bool) (add [2]string, remove string) {
 	with := "with the exit node on"
 	if lan {
 		with = "with the Wi-Fi proxy set to the LAN proxy"
 	}
-	fmt.Fprintf(w, "    add on an iPhone:    %s, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,\n", with)
-	fmt.Fprintln(w, "                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
-	if lan {
-		fmt.Fprintf(w, "                         %s\n", lanCAAdvice(caPEM(state), ca.SHA256))
-	}
-	fmt.Fprintf(w, "    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
-	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
-		fmt.Fprintf(w, "    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
-	}
+	return [2]string{with + ", open http://mitm.it in Safari (type http:// yourself), get the iOS profile,",
+			"install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)"},
+		fmt.Sprintf("Settings, General, VPN & Device Management, %q, Remove Profile", name)
 }
 
 // cleanup lists how to undo reqcove, and with --delete-state removes the state directory.

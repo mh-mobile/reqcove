@@ -161,12 +161,13 @@ func sweepCodeFiles(dir string) int {
 // page is reqcove console's server. Codes and sessions are kept by their hash:
 // a lookup times nothing of the value.
 type page struct {
-	st   *ctlState
-	cap  *capture.Capture
-	host string   // 127.0.0.1:PORT: the only Host taken, and as http://, the only Origin
-	sock *os.File // the listening socket, kept for a restart (serveOn)
-	mux  *http.ServeMux
-	now  func() (mono, wall time.Time)
+	st      *ctlState
+	cap     *capture.Capture
+	presets mcpserver.Presets // cap's, or none (tests stand in for it)
+	host    string            // 127.0.0.1:PORT: the only Host taken, and as http://, the only Origin
+	sock    *os.File          // the listening socket, kept for a restart (serveOn)
+	mux     *http.ServeMux
+	now     func() (mono, wall time.Time)
 
 	mu       sync.Mutex
 	codes    map[[32]byte]*pageCode
@@ -285,6 +286,9 @@ func newPage(cap *capture.Capture, st *ctlState, host string) *page {
 	p := &page{st: st, cap: cap, host: host, mux: http.NewServeMux(),
 		now:   func() (time.Time, time.Time) { t := time.Now(); return t, t },
 		codes: map[[32]byte]*pageCode{}, sessions: map[[32]byte]time.Time{}}
+	if cap != nil {
+		p.presets = cap
+	}
 	for path, file := range map[string]string{"/{$}": "index.html", "/app.js": "app.js", "/app.css": "app.css"} {
 		p.mux.HandleFunc("GET "+path, p.file(file))
 	}
@@ -298,6 +302,11 @@ func newPage(cap *capture.Capture, st *ctlState, host string) *page {
 	p.mux.HandleFunc("POST /api/settings", p.authed(p.setSetting))
 	p.mux.HandleFunc("GET /api/restart", p.authed(p.restartDiff))
 	p.mux.HandleFunc("POST /api/restart", p.authed(p.restartNow))
+	p.mux.HandleFunc("GET /api/presets", p.authed(p.presetList))
+	p.mux.HandleFunc("POST /api/preset", p.authed(p.presetSet))
+	p.mux.HandleFunc("POST /api/marker", p.authed(p.marker))
+	p.mux.HandleFunc("GET /api/ca", p.authed(p.ca))
+	p.mux.HandleFunc("GET /api/har", p.authed(p.harFile))
 	return p
 }
 
@@ -439,6 +448,8 @@ type pageState struct {
 	Executable   string        `json:"executable,omitempty"`
 	Service      string        `json:"service,omitempty"`
 	Manager      string        `json:"manager,omitempty"`
+	ServiceCmds  []string      `json:"service_commands,omitempty"` // local paths: the local page's alone
+	FlowsURL     string        `json:"flows_url,omitempty"`        // --ui's page, bare: never its token
 	ConfigFile   string        `json:"config_file,omitempty"`
 	ConfigUnused string        `json:"config_unused,omitempty"`
 	HostsFiles   []string      `json:"hosts_files,omitempty"`
@@ -512,6 +523,8 @@ func (p *page) state(w http.ResponseWriter, _ *http.Request) {
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
 	}
+	out.ServiceCmds = serviceCommands(s.Service, s.Manager, p.st.dir)
+	out.FlowsURL = flowsURL(p.st.o, n.IPs)
 	for _, r := range p.st.reqs.pending() {
 		out.Requests = append(out.Requests, pageRequest{ID: r.ID, Hosts: r.Hosts, ExpiresAt: r.ExpiresAt, Masked: mcpserver.Masked(r)})
 	}

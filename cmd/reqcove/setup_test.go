@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +22,9 @@ func setupHome(t *testing.T) (home, config string) {
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", selfOnPath(t, t.TempDir()))
 	os.Mkdir(filepath.Join(home, ".claude"), 0o700)
+	old := tailscaleStatus // the app's CLI would list this computer's real tailnet
+	t.Cleanup(func() { tailscaleStatus = old })
+	tailscaleStatus = func() ([]byte, error) { return nil, os.ErrNotExist }
 	return home, defaultConfig()
 }
 
@@ -155,9 +159,9 @@ func TestSetupWrites(t *testing.T) {
 	}
 }
 
-// An existing file is shown and kept unless the answer is yes; then replaced
-// whole, the old one kept as .old. No hosts: the --allow-hosts line stays a
-// comment.
+// An existing hosts file: its comments kept, the old one as .old. No hosts
+// answered: the --allow-hosts=@FILE line all the same, and a file of
+// comments alone, which run reads as no hosts (Save writes it later).
 func TestSetupExisting(t *testing.T) {
 	home, config := setupHome(t)
 	os.MkdirAll(filepath.Dir(config), 0o700)
@@ -180,7 +184,7 @@ func TestSetupExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	words, _, err := readConfig(config)
-	if err != nil || !slices.Equal(words, []string{"--device=phone"}) {
+	if err != nil || !slices.Equal(words, []string{"--device=phone", "--allow-hosts=@" + setupHosts(config)}) {
 		t.Errorf("replaced: %q, %v\n%s", words, err, out)
 	}
 	if fi, _ := os.Stat(config); fi.Mode().Perm() != 0o600 {
@@ -327,10 +331,82 @@ func TestSetupHostsFile(t *testing.T) {
 		t.Errorf("old: %q\n%s", b, out)
 	}
 	_, config = setupHome(t)
-	if _, err := runSetup(t, "phone\n\nn\n", config, false); err != nil {
+	out, err = runSetup(t, "phone\n\nn\n", config, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if words, _, err := readConfig(config); err != nil || !slices.Equal(words, []string{"--device=phone"}) || exists(filepath.Join(filepath.Dir(config), "hosts")) {
+	hostsFile = setupHosts(config)
+	if words, _, err := readConfig(config); err != nil || !slices.Equal(words, []string{"--device=phone", "--allow-hosts=@" + hostsFile}) {
 		t.Errorf("no hosts: %q, %v", words, err)
+	}
+	if b, _ := os.ReadFile(hostsFile); string(b) != hostsHead || !strings.Contains(out, shellWord(hostsFile)+" with no hosts yet (yours only, 0600)") {
+		t.Errorf("no hosts: file %q\n%s", b, out)
+	}
+	if fi, err := os.Stat(hostsFile); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("no hosts: %v", err)
+	}
+	o, err := checkFlags([]string{"--config", config}, nil, nil) // as the next start reads them
+	if err != nil || len(o.allow.Patterns) != 0 || !slices.Equal(o.origin.files, []string{hostsFile}) {
+		t.Errorf("no hosts, read back: %v %+v", err, o)
+	}
+}
+
+// A set the next start would refuse: nothing written, no .old, said why;
+// the check is given the texts setup would write.
+func TestSetupRefused(t *testing.T) {
+	_, config := setupHome(t)
+	hostsFile := setupHosts(config)
+	os.MkdirAll(filepath.Dir(config), 0o700)
+	os.WriteFile(config, []byte("--device mine\n"), 0o600)
+	os.WriteFile(hostsFile, []byte("# mine\nold.example.com\n"), 0o600)
+	var got []byte
+	var files map[string]string
+	setupCheck = func(args []string, config []byte, f map[string]string) (*runOpts, error) {
+		got, files = config, f
+		return nil, errors.New("--rules needs --allow-hosts")
+	}
+	t.Cleanup(func() { setupCheck = checkFlags })
+	out, err := runSetup(t, "y\nphone\nnew.example.com\nn\n", config, false)
+	if err == nil || !strings.Contains(err.Error(), "the next start would refuse these settings (--rules needs --allow-hosts): nothing written") {
+		t.Errorf("%v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(config); string(b) != "--device mine\n" || exists(config+".old") || exists(hostsFile+".old") {
+		t.Errorf("written: %q", b)
+	}
+	if b, _ := os.ReadFile(hostsFile); string(b) != "# mine\nold.example.com\n" {
+		t.Errorf("hosts written: %q", b)
+	}
+	if !strings.Contains(string(got), "--allow-hosts=\"@"+hostsFile+"\"") || files[hostsFile] != "# mine\nnew.example.com\n" {
+		t.Errorf("checked: %q %q", got, files)
+	}
+}
+
+// Tailscale on this computer lists the user's own untagged devices: one is
+// picked by its number (written by name), a name typed still works, a
+// number out of range is asked again; others' and tagged ones are not shown.
+func TestSetupDeviceList(t *testing.T) {
+	_, config := setupHome(t)
+	tailscaleStatus = func() ([]byte, error) {
+		return []byte(`{"Self":{"UserID":1},"Peer":{
+			"a":{"DNSName":"mac-mini.tail.ts.net.","OS":"macOS","UserID":1,"Online":true},
+			"b":{"DNSName":"taro-iphone.tail.ts.net.","OS":"iOS","UserID":1},
+			"c":{"DNSName":"hanako-iphone.tail.ts.net.","OS":"iOS","UserID":2,"Online":true},
+			"d":{"DNSName":"ci.tail.ts.net.","OS":"linux","UserID":1,"Online":true,"Tags":["tag:ci"]},
+			"e":{"DNSName":"-x.tail.ts.net.","OS":"iOS","UserID":1}}}`), nil
+	}
+	out, err := runSetup(t, "3\n1\na.example.com\nn\n", config, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "     1. taro-iphone (iOS)\n     2. mac-mini (macOS, online)\n   The iPhone: its number") || strings.Contains(out, "hanako") || strings.Contains(out, "ci (") || strings.Contains(out, "-x") ||
+		!strings.Contains(out, "a number from 1 to 2, or a name") {
+		t.Errorf("list:\n%s", out)
+	}
+	if words, _, err := readConfig(config); err != nil || words[0] != "--device=taro-iphone" {
+		t.Errorf("picked: %q %v", words, err)
+	}
+	out, err = runSetup(t, "y\nTaro's iPad\n\nn\n", config, false)
+	if words, _, _ := readConfig(config); err != nil || words[0] != "--device=Taro's iPad" {
+		t.Errorf("typed: %q %v\n%s", words, err, out)
 	}
 }

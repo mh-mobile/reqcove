@@ -13,6 +13,9 @@
 <main id="main" hidden>
 <section><h2>Asked by agents</h2><div id="requests"></div><p id="result" role="status"></p></section>
 <section><h2>Recorded</h2><dl id="recorded"></dl>
+<form id="mark"><input id="mark-text" type="text" maxlength="80" placeholder="about to tap Pay" autocomplete="off" spellcheck="false" aria-label="marker text"> <button>Add a marker</button></form>
+<p><button id="har" type="button">Save the records as a HAR file…</button></p>
+<p id="rec-result" role="status"></p>
 <div id="scope">
 <h3>Hosts recorded</h3><ul id="hosts" class="list"></ul>
 <h3>Passed undecrypted</h3><ul id="pass" class="list"></ul>
@@ -26,6 +29,19 @@
 <p id="scope-result" role="status"></p>
 </div>
 <p id="scope-lan" class="muted" hidden>In LAN mode the hosts recorded are the ones run started with: nothing here changes them.</p>
+</section>
+<section><h2>Presets and rules</h2>
+<p class="muted">The --rules file's presets: one turned on changes what the device gets, or where its requests go, for at most 5 minutes. The rules are listed by kind and name, never their values.</p>
+<p id="presets-note" class="muted"></p>
+<ul id="presets" class="list"></ul>
+<h3>Rules</h3><ul id="rules" class="list"></ul>
+<p id="presets-result" role="status"></p>
+</section>
+<section><h2>CA</h2>
+<p id="ca-note" class="muted"></p>
+<dl id="ca"></dl>
+<canvas id="ca-qr" width="0" height="0" aria-label="QR code of the address the CA comes from"></canvas>
+<ol id="ca-steps"></ol>
 </section>
 <section><h2>Settings</h2>
 <p class="muted">Written to the config file; run takes them at its next restart. The config's other lines are kept, the file before as config.prev.</p>
