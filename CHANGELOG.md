@@ -4,6 +4,9 @@
 
 ### Added
 
+- **`reqcove run` with arguments but without `--device` or `--config`**,
+  while the file a bare run reads is there: the error says that file is not
+  read when run has arguments, and to add `--config FILE`. Unit test.
 - **An agent asks, you approve: `request_capture_add`** (a tool of
   `reqcove mcp` alone, never `run`'s socket nor `--mcp-http`) asks for 1 to
   5 host names to be recorded; it records nothing itself. `run` keeps the

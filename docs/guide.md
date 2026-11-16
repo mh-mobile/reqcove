@@ -2441,11 +2441,16 @@ no internet; turn the exit node off then.
   Other apps that keep the Mac awake (Amphetamine, a `caffeinate` of yours)
   add up with it: whatever Reqcove holds, the Mac stays awake while one of
   them does. `pmset -g assertions` lists who holds what; `reqcove status`
-  shows `run`'s choice ("keep awake:").
+  shows `run`'s choice ("keep awake:"). Seen on a Mac (2026-11-16): the
+  Claude and ChatGPT desktop apps (Electron) held `NoIdleSleepAssertion`
+  for as long as they ran, so it did not idle-sleep whatever `--keep-awake`
+  said.
 
   Tried: unit tests (the flag, the config file, caffeinate's assertion for
   each, status); two `caffeinate` assertions seen side by side in `pmset -g
-  assertions`. Not tried: a real sleep with `ac` or `never`.
+  assertions`; `run --keep-awake=ac` on AC power holding `PreventSystemSleep`
+  (not `always`'s `PreventUserIdleSystemSleep`) and `reqcove status` saying
+  so. Not tried: a real sleep with `ac` or `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or

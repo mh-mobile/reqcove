@@ -214,6 +214,10 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 		}
 		if bare && config == "" {
 			msg += ". Or keep it in " + defaultConfig() + " (reqcove setup writes it): reqcove run with no arguments reads it"
+		} else if path, _ := bareConfig(); !bare && config == "" && path != "" {
+			// reqcove run --keep-awake=ac, say: any argument and the file is
+			// not read (as in v1.0), which is easy to forget.
+			msg += ". " + path + " is not read when run has arguments: add --config " + shellWord(path)
 		}
 		return nil, errors.New(msg)
 	}

@@ -194,6 +194,11 @@ func TestBareRun(t *testing.T) {
 	if err != nil || !slices.Equal(o.devices, []string{"mine"}) || o.config != defaultConfig() || o.configUnused != brew {
 		t.Fatalf("both: %+v %v", o, err)
 	}
+	// Arguments without --device or --config: the file is not read, and the
+	// error says how to read it.
+	if _, err := parseRunFlags([]string{"--keep-awake=ac", "--state", filepath.Join(home, "st")}); err == nil || !strings.Contains(err.Error(), defaultConfig()+" is not read when run has arguments: add --config "+defaultConfig()) {
+		t.Errorf("arguments, the file there: %v", err)
+	}
 	o, err = parseRunFlags([]string{"--device", "flags", "--state", filepath.Join(home, "st")})
 	if err != nil || !slices.Equal(o.devices, []string{"flags"}) || o.config != "" {
 		t.Errorf("flags only: %+v %v", o, err)
