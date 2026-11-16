@@ -231,7 +231,7 @@ More in [docs/SECURITY.md](docs/SECURITY.md).
   ([tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)):
   turn the exit node off and on again.
 - The computer must stay awake: `reqcove run` keeps macOS from idle sleep, not
-  from a closed lid.
+  from a closed lid (`--keep-awake=ac` holds it on AC power only, since v1.2).
 
 More in [the guide](docs/guide.md#limits).
 

@@ -185,4 +185,5 @@ var restartSettings = []struct {
 	{"verbose", func(o *runOpts) string { return fmt.Sprint(o.verbose) }},
 	{"lan-interface", func(o *runOpts) string { return o.lanIface }},
 	{"local-proxy", func(o *runOpts) string { return fmt.Sprint(o.localProxy) }},
+	{"keep-awake", func(o *runOpts) string { return o.keepAwake }},
 }

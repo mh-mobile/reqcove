@@ -759,7 +759,13 @@ func TestStatusUpgrade(t *testing.T) {
 	answer = mcpserver.StatusOut{Version: version, Manager: "terminal", ConfigFile: "/c/config", ConfigUnused: "/b/config", HostsFiles: []string{"/c/hosts"}}
 	check("v1.1", []string{"version:     " + version + "\n", "service:     none: started in a terminal", "config:      /c/config; hosts: /c/hosts; also there, not read: /b/config"}, "this reqcove is", "two services")
 	answer = mcpserver.StatusOut{Version: version}
-	check("v1.1, flags only", []string{"config:      none (flags only)"})
+	check("v1.1, flags only", []string{"config:      none (flags only)"}, "binary:", "keep awake:")
+	// v1.2: run's binary when it is not this one (two reqcoves on PATH), and
+	// its --keep-awake.
+	answer = mcpserver.StatusOut{Version: version, Executable: self, KeepAwake: "ac"}
+	check("v1.2, this binary", []string{"keep awake:  ac: no sleep on AC power"}, "binary:")
+	answer = mcpserver.StatusOut{Version: version, Executable: "/opt/homebrew/Cellar/reqcove/1.2.0/bin/reqcove"}
+	check("v1.2, another binary", []string{"binary:      run is /opt/homebrew/Cellar/reqcove/1.2.0/bin/reqcove; this reqcove is " + self}, "keep awake:")
 }
 
 // What started run, and the command that restarts it there: install
@@ -825,5 +831,16 @@ func TestWithFiles(t *testing.T) {
 	}
 	if steps := strings.Join(out.NextSteps, "\n"); !strings.HasPrefix(steps, "first\n") || !strings.Contains(steps, "two services for reqcove are installed") || !strings.Contains(steps, "runs /gone/reqcove, which is gone") {
 		t.Errorf("steps:\n%s", steps)
+	}
+}
+
+// run gives its binary and, on macOS, its --keep-awake to this computer's
+// agents (withFiles; the --mcp-http status never goes through it).
+func TestWithFilesBinary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	out := withFiles(mcpserver.StatusOut{}, &runOpts{keepAwake: "ac"})
+	self, _ := selfExe()
+	if out.Executable != self || (out.KeepAwake == "ac") != (runtime.GOOS == "darwin") {
+		t.Errorf("%q %q", out.Executable, out.KeepAwake)
 	}
 }

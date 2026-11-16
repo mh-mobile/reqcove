@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`--keep-awake=always|ac|never`** (macOS; in the config file too): what
+  `run` does about sleep. `always` is the default and v1.1's behaviour
+  (`caffeinate -i`: no idle sleep, on battery too); `ac` holds it on AC power
+  only (`caffeinate -s`); `never` holds nothing (the Energy settings decide).
+  `reqcove status` shows it ("keep awake:"), and `status` (on this computer)
+  gives `keep_awake`; `reqcove reload` names it as needing a restart. Unit
+  tests; a real sleep not tried.
+- **`reqcove status` names `run`'s binary when it is not this one**
+  ("binary:"), even at the same version: a `reqcove` built from source and
+  Homebrew's on one Mac run whichever PATH finds first. `status` (on this
+  computer only) gives `executable`. Unit tests.
+
 ## v1.1.0 — 2026-11-16
 
 ### Added

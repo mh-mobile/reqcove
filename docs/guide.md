@@ -2303,7 +2303,24 @@ no internet; turn the exit node off then.
   use: stop the service first.
 - **Sleep**: `run` keeps the Mac from idle sleep while it runs
   (`caffeinate -i`, also on battery: it drains it), not from closing the lid
-  or choosing Sleep.
+  or choosing Sleep. Since v1.2, `--keep-awake` chooses (in the config file
+  too; a restart takes a change, not `reqcove reload`):
+  - `always` (the default, as before);
+  - `ac`: no sleep while on AC power (`caffeinate -s`); on battery the Mac
+    sleeps as the Energy settings say, and a phone using its exit node has
+    no internet meanwhile;
+  - `never`: Reqcove holds nothing. The Energy settings, or `sudo pmset -c
+    sleep 0` (on AC power only), do the same for the whole Mac, as Tailscale
+    suggests for a Mac exit node.
+
+  Other apps that keep the Mac awake (Amphetamine, a `caffeinate` of yours)
+  add up with it: whatever Reqcove holds, the Mac stays awake while one of
+  them does. `pmset -g assertions` lists who holds what; `reqcove status`
+  shows `run`'s choice ("keep awake:").
+
+  Tried: unit tests (the flag, the config file, caffeinate's assertion for
+  each, status); two `caffeinate` assertions seen side by side in `pmset -g
+  assertions`. Not tried: a real sleep with `ac` or `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or

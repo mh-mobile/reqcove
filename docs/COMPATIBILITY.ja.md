@@ -64,6 +64,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 - v1.1 から、`recording`：`on` か `stopped`（`reqcove capture stop` から `capture start` まで。値は今後増えることがあります）。止めている間、`allow_hosts` は `[]` で、`pass_hosts` はありません（何も記録しません）。`base_allow_hosts` と `base_pass_hosts` は、記録しているときに記録するホストです（ないときはフィールドもありません）。止めている間は、`start` で記録するホストです。v1.1 より前の `run` にはありません。
 - v1.1 から、`recording` は `allow-all` にもなります（`reqcove capture allow-all --for D` から、終わるまで）。その間 `allow_hosts` は `["*"]`、`pass_hosts` は復号せずに通したままのホスト、`base_allow_hosts` は終わったあとに記録するホストです。`allow_all_until`（RFC 3339）と `allow_all_left`（`29m10s` のような Go の duration）が終わる時刻を伝えます。オフのときはありません。`records_outside_scope` は、残っている記録のうち、ホストが `base_allow_hosts` の外にあるものの数です（allow-all の間の記録で、終わったあとも残るもの、またはあとで外したホストのもの）。ないときはフィールドもありません。
 - v1.1 から、`run` 自身について：`version`（`reqcove version` が表示するもの。`serverInfo` のものと同じ）、`manager`（起動したもの：`terminal`、`reqcove service install` の LaunchAgent かユニットなら `reqcove service`、`brew services`。値は増えることがあります。見分けられないときはありません）、`restart_command`（サービスの下で再起動するコマンド。`brew services restart reqcove` など。そのサービスが `run` と別のバイナリや、もうないバイナリを動かすときは `reqcove service install`。ターミナルから起動したときはありません）。さらにこのコンピュータでだけ（`--mcp-http` ではなし）、`config_file`（読んだ `--config` のファイル、フルパス。フラグだけのときはありません）、`config_unused`（引数なしの `run` が見つけて読まなかった、もう 1 つの設定ファイル）、`hosts_files`（`--allow-hosts=@FILE` と `--pass-hosts=@FILE` が読んだファイル）。v1.1 より古い `run` にはありません。そのとき `reqcove status` はバージョンを `serverInfo` から取ります。
+- v1.2 から、このコンピュータでだけ（`--mcp-http` ではなし）：`executable`（`run` のバイナリ。シンボリックリンクはたどった先）と、macOS では `keep_awake`（`always`、`ac`、`never`）。v1.2 より古い `run` にはありません。
 - v1.1 から、このコンピュータだけで（`--mcp-http` では返しません）、ホストの発見（`reqcove capture discover`）について：オンの間の `discover_until`（RFC 3339）と `discover_left`。`out_of_scope_hosts`（各要素に `host`、`count`、それを記録するコマンドの `add`。`add` は普通のホスト名でないときはありません。多い順に最大 30 件）と、残している名前の数の `out_of_scope_hosts_kept`。ないときはフィールドもありません。`summarize` も同じ `out_of_scope_hosts` を返します。フィルターでは絞りません。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
@@ -93,7 +94,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 | コマンド | フラグ |
 |---|---|
-| `reqcove run` | `--device`、`--allow-hosts`、`--pass-hosts`、`--rules`、`--rules-reload`、`--proto`、`--upstream-proxy`、`--upstream-ca`、`--local-proxy`、`--proxy-port`、`--lan`、`--lan-interface`、`--ui`、`--web`、`--mcp-http`、`--dns`、`--no-redact`、`--mask-names`、`--mask-values`、`--state`、`--hostname`、`--verbose`、`--config` |
+| `reqcove run` | `--device`、`--allow-hosts`、`--pass-hosts`、`--rules`、`--rules-reload`、`--proto`、`--upstream-proxy`、`--upstream-ca`、`--local-proxy`、`--proxy-port`、`--lan`、`--lan-interface`、`--ui`、`--web`、`--mcp-http`、`--dns`、`--no-redact`、`--mask-names`、`--mask-values`、`--state`、`--hostname`、`--verbose`、`--config`、`--keep-awake`（v1.2） |
 | `reqcove status` | `--json`、`--state` |
 | `reqcove har` | `--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit`、`--state`（HAR 1.2 のファイルを標準出力へ） |
 | `reqcove links` | `--state` |
