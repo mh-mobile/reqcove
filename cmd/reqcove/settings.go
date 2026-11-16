@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -279,6 +282,51 @@ func configRevNow(config string) string {
 	return configRev(b)
 }
 
+// fileFlags are the flags whose @FILE a restart reads: the hosts and the masking.
+var fileFlags = []string{"allow-hosts", "pass-hosts", "mask-names", "mask-values"}
+
+// restartInputs are what a restart would read: b, the config's text (nil for
+// none), and the @FILEs of fileFlags in it and on run's command line, each
+// read once (texts: by absolute path; one not read left out); rev is the
+// revision of them all, which the page's restart confirms.
+func restartInputs(config string, args []string, b []byte) (texts map[string]string, rev string) {
+	fs := runFlagSet()
+	uses, _ := commandLine(fs, args)
+	if config != "" {
+		file, _, _ := configUses(fs, config, b)
+		uses = append(file, uses...)
+	}
+	texts = map[string]string{}
+	h := sha256.New()
+	h.Write(b)
+	for _, u := range uses {
+		p, ok, err := atFile(u.value)
+		if !slices.Contains(fileFlags, u.name) || !ok || err != nil {
+			continue
+		}
+		t, err := os.ReadFile(p)
+		fmt.Fprintf(h, "\x00%s\x00%v\x00%d\x00", p, err == nil, len(t))
+		h.Write(t)
+		if err == nil {
+			texts[p] = string(t)
+		}
+	}
+	return texts, hex.EncodeToString(h.Sum(nil))
+}
+
+// restartRevNow is restartInputs' rev for the config on disk ("" unread).
+func restartRevNow(o *runOpts) string {
+	var b []byte
+	if o.config != "" {
+		var err error
+		if b, err = configBytes(o.config, 0); err != nil {
+			return ""
+		}
+	}
+	_, rev := restartInputs(o.config, o.args, b)
+	return rev
+}
+
 func recordCount(cap *capture.Capture) any {
 	if cap == nil {
 		return 0
@@ -288,28 +336,30 @@ func recordCount(cap *capture.Capture) any {
 
 // restartDiff is GET /api/restart: every flag of the config on disk that
 // differs from the config run started from (st.startConfig, with capture
-// save's lines), the terminal's own too, --mask-values and what @FILEs hold
-// as changed alone.
+// save's lines), the terminal's own too, --mask-values and what masking
+// @FILEs hold as changed alone, and the hosts that hosts files give otherwise
+// than when run last read or wrote them. Its rev covers the config and those
+// files (restartInputs).
 func (p *page) restartDiff(w http.ResponseWriter, _ *http.Request) {
 	st := p.st
 	records := recordCount(p.cap)
 	out := pageRestart{Diff: []pageDiff{}, Records: records, Warning: "A restart empties the records: " + restartEmpties(records) + " (the markers, the agents' requests, hosts not saved, allow-all and discovery, the presets turned on go too)"}
 	st.mu.Lock()
-	start := st.startConfig
+	start, origin := st.startConfig, st.origin
 	st.mu.Unlock()
 	config := st.o.config
-	if config == "" {
-		answer(w, http.StatusOK, out) // flags alone: started again as it is
-		return
+	var now []byte
+	if config != "" {
+		var err error
+		if now, err = configBytes(config, 0); err != nil {
+			out.Message = "a restart would be refused: " + err.Error()
+			answer(w, http.StatusOK, out)
+			return
+		}
 	}
-	now, err := configBytes(config, 0)
-	if err != nil {
-		out.Message = "a restart would be refused: " + err.Error()
-		answer(w, http.StatusOK, out)
-		return
-	}
-	out.Rev = configRev(now)
-	n, err := checkFlags(st.o.args, now, nil)
+	texts, rev := restartInputs(config, st.o.args, now)
+	out.Rev = rev
+	n, err := checkFlags(st.o.args, now, texts)
 	if err != nil {
 		out.Message = "a restart would be refused: the next start would refuse the settings: " + err.Error()
 		answer(w, http.StatusOK, out)
@@ -340,6 +390,15 @@ func (p *page) restartDiff(w http.ResponseWriter, _ *http.Request) {
 	}{{"mask-names", st.o.maskNames, n.maskNames}, {"mask-values", st.o.maskValues, n.maskValues}} {
 		if !slices.Equal(m.was, m.next) && !slices.ContainsFunc(out.Diff, func(d pageDiff) bool { return d.Flag == m.flag }) {
 			out.Diff = append(out.Diff, pageDiff{Flag: m.flag, Changed: true}) // in an @FILE
+		}
+	}
+	for _, h := range []struct {
+		flag     string
+		was, now hostsOrigin
+	}{{"allow-hosts", origin, n.origin}, {"pass-hosts", origin.passOrigin(), n.origin.passOrigin()}} {
+		a, b := slices.Sorted(maps.Keys(h.was.inFiles)), slices.Sorted(maps.Keys(h.now.inFiles))
+		if !slices.Equal(a, b) { // an edit to a hosts file, which the config's lines do not show
+			out.Diff = append(out.Diff, pageDiff{Flag: h.flag + "=@FILE (its hosts)", Was: a, Now: b})
 		}
 	}
 	answer(w, http.StatusOK, out)

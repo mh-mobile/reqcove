@@ -553,8 +553,8 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if _, err := req.normalized(); err != nil {
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing stopped"}
 		}
-		if req.from == "console" && req.rev != configRevNow(st.o.config) {
-			return ctlAnswer{Message: "refused: the config changed since the page listed what a restart changes (another tab, or an edit): look again; nothing stopped"}
+		if req.from == "console" && req.rev != restartRevNow(st.o) {
+			return ctlAnswer{Message: "refused: the config or a file it reads changed since the page listed what a restart changes (another tab, or an edit): look again; nothing stopped"}
 		}
 		return restartOp(ctx, st, recordCount(cap))
 	}
