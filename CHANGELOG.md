@@ -19,7 +19,7 @@
   `run` older than v1.3 says to restart it with v1.3. Unit tests.
 - **`reqcove restart`** (in a terminal only) restarts the running `run` in
   the same process (an exec: launchd, systemd and brew services see the
-  same process): it checks the config on disk and the command line as the
+  same process; from the code, not tried): it checks the config on disk and the command line as the
   next start reads them, and that the binary `run` was started from (its
   path as started, links kept: Homebrew's `opt` path) is still there, and
   refuses, nothing stopped, saying why; then stops as Ctrl-C does (system

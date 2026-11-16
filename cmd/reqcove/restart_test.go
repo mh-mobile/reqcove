@@ -698,7 +698,8 @@ func sha(s string) [32]byte { return sha256.Sum256([]byte(s)) }
 // TestRestartE2E (REQCOVE_E2E=1, real mitmproxy): a real run, in LAN mode
 // on the loopback (no tailnet node: tsnet needs a tailnet), started through
 // a link, restarted with reqcove restart's op, then restarted after an edit
-// on disk that its start refuses (--uvx gone), then stopped. Each restart
+// on disk that its start refuses late (its LAN proxy's port taken, after
+// mitmproxy, caffeinate and the system proxy are up), then stopped. Each restart
 // keeps the pid, the page's port and session; a second run never takes the
 // state meanwhile; mitmdump and caffeinate are stopped and reaped before the
 // exec (one caffeinate after); on macOS, with --local-proxy and a fake
@@ -795,8 +796,16 @@ esac
 		out, _ := exec.Command("pgrep", "-f", fmt.Sprintf("caffeinate -i -w %d$", cmd.Process.Pid)).Output()
 		return strings.Fields(string(out))
 	}
+	mitmdumps := func() int { // the failing start's, too, whose pid file is gone
+		out, _ := exec.Command("pgrep", "-f", "mitmdump.*"+state).Output()
+		return len(strings.Fields(string(out)))
+	}
 	ctx := t.Context()
 	waitReady(1, nil)
+	mitmdumps0 := mitmdumps()
+	if mitmdumps0 == 0 {
+		t.Fatalf("no mitmdump of %s found by its arguments", state)
+	}
 	a, err := askRun(ctx, state, ctlRequest{Cmd: "console"})
 	if err != nil || !a.OK {
 		t.Fatalf("console: %v %+v", err, a)
@@ -842,7 +851,14 @@ esac
 		t.Errorf("caffeinate: before %q, after %q", caff, now)
 	}
 
-	failing := start + "--uvx=/nonexistent/uvx\n"
+	// A start that fails late: mitmproxy, caffeinate and the system proxy up,
+	// then the LAN proxy's port taken (the checks do not bind it).
+	taken, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	failing := strings.Replace(start, fmt.Sprintf("--proxy-port=%d", port), fmt.Sprintf("--proxy-port=%d", taken.Addr().(*net.TCPAddr).Port), 1)
 	os.WriteFile(config, []byte(failing), 0o600)
 	mitm = pidOf()
 	if a, err := askRun(ctx, state, ctlRequest{Cmd: "restart"}); err != nil || !a.OK {
@@ -850,7 +866,7 @@ esac
 	}
 	waitReady(3, held)
 	pageWorks("after the retry")
-	if l := logged(); !strings.Contains(l, "restart: the start after a restart failed (uv not found (/nonexistent/uvx)") || !strings.Contains(l, config+" is back as run had started from it") {
+	if l := logged(); !strings.Contains(l, "restart: the start after a restart failed (LAN proxy on 127.0.0.1:") || !strings.Contains(l, config+" is back as run had started from it") {
 		t.Errorf("log:\n%s", l)
 	}
 	if read(t, config) != start || read(t, config+".failed") != failing || !gone(mitm) {
@@ -859,6 +875,12 @@ esac
 	out, _ := exec.Command(bin, "status", "--state", state).Output()
 	if !strings.Contains(string(out), "restart: the start after a restart failed") {
 		t.Errorf("status:\n%s", out)
+	}
+	if n := mitmdumps(); n != mitmdumps0 {
+		t.Errorf("after the retry: %d mitmdumps of this state, %d at first", n, mitmdumps0)
+	}
+	if now := caffeinates(); runtime.GOOS == "darwin" && len(now) != 1 {
+		t.Errorf("after the retry: caffeinate %q", now)
 	}
 	if m, _ := filepath.Glob(filepath.Join(state, "restart-*.config")); len(m) > 0 {
 		t.Errorf("snapshots left: %q", m)
@@ -871,7 +893,7 @@ esac
 	case <-time.After(time.Minute):
 		t.Fatal("run did not stop")
 	}
-	if !gone(mitm) || len(caffeinates()) > 0 {
+	if !gone(mitm) || len(caffeinates()) > 0 || mitmdumps() > 0 {
 		t.Errorf("after the stop: mitmdump gone %v, caffeinate %q", gone(mitm), caffeinates())
 	}
 	if proxyCheck {
@@ -884,7 +906,7 @@ esac
 				seq.WriteString("B")
 			}
 		}
-		if seq.String() != "PBPBPB" { // started, restarted, restarted (its first start failing before the proxy), stopped
+		if seq.String() != "PBPBPBPB" { // started; restarted; restarted, its start failing after the proxy, retried; stopped
 			t.Errorf("the system proxy pointed (P) and put back (B): %s", seq.String())
 		}
 	}

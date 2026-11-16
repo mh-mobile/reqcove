@@ -176,8 +176,8 @@ reqcove restart    # in your terminal; --state DIR for another node
 Since v1.3, `reqcove restart` asks the running `run` to stop and start again
 in the same process, as it was started: the same binary path and arguments,
 the config on disk as it is now. Under `reqcove service install`'s service or
-`brew services` it stays the service's process, so you need not know which
-started it.
+`brew services` it stays the service's process (from the code: an exec keeps
+the pid; not tried under them), so you need not know which started it.
 
 - **Checked first, nothing stopped when refused:** the config on disk and
   `run`'s command line as the next start reads them (a flag or file it would
@@ -201,7 +201,7 @@ started it.
   start, with the hosts file line `capture save` added; not `config.prev`),
   keeps the one that failed as `config.failed` beside it, and starts once
   more. If that fails too, it stays down, as a failed start always does (no
-  service restarts it). `reqcove status` says what happened (a `restart:`
+  service restarts it: none of them is set to; from the code). `reqcove status` says what happened (a `restart:`
   line), until `run` is next started by hand or by its service. A run
   started from flags alone (no `--config`) has no config to put back: a
   failed start stays down.
@@ -218,9 +218,10 @@ or missing is neither read nor removed, and no retry; the retry made once;
 the exec of a test binary keeping the page's port, its session and the
 state's lock, the variables and the fds not reaching a child), and E2E with
 real mitmproxy (`run` in LAN mode on the loopback, started through a link:
-two restarts, the second after an edit its start refuses; the pid, the
+two restarts, the second after an edit its start refuses late, once
+mitmproxy, caffeinate and the system proxy are up; the pid, the
 page's port and session kept, the state never free, mitmdump and caffeinate
-stopped before each exec, the config put back and kept as `config.failed`,
+stopped before each exec (the failed start's too), the config put back and kept as `config.failed`,
 `reqcove status` saying so; on macOS with `--local-proxy`, the system proxy
 put back at each stop, through a stand-in `networksetup`). Not tried: a
 tailnet node, under launchd, `brew services` or systemd, after `brew upgrade`
