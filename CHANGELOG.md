@@ -17,6 +17,24 @@
   session of the page and every link not opened yet; the pages say so, the
   links say they were ended. A new ctl op, `console-end`, in LAN mode too; a
   `run` older than v1.3 says to restart it with v1.3. Unit tests.
+- **`reqcove restart`** (in a terminal only) restarts the running `run` in
+  the same process (an exec: launchd, systemd and brew services see the
+  same process; from the code, not tried): it checks the config on disk and the command line as the
+  next start reads them, and that the binary `run` was started from (its
+  path as started, links kept: Homebrew's `opt` path) is still there, and
+  refuses, nothing stopped, saying why; then stops as Ctrl-C does (system
+  proxy put back, mitmproxy, the node and caffeinate stopped) and starts
+  again. The state's lock and the `reqcove console` page's port and
+  sessions (as hashes) are carried across, so no other run takes the state
+  and an open page stays open. A start that fails puts back the config
+  `run` had started from (kept from its start, in memory, then in a 0600
+  file in the state directory; not `config.prev`), keeps the failed one as
+  `config.failed`, and starts once more; failing again, it stays down;
+  `reqcove status` says what happened. A new ctl op, `restart`, in LAN mode
+  too; a `run` older than v1.3 says to stop it and start it again. Unit
+  tests (an exec of a test binary among them) and an E2E test with real
+  mitmproxy (LAN mode on the loopback); not tried: a tailnet node, under a
+  service manager, after `brew upgrade`.
 
 - **`reqcove capture save` on a config with its hosts inline** (v1.0's
   setup, or one written by hand): the first save shows what it would do and
@@ -37,6 +55,9 @@
 
 ### Changed
 
+- **caffeinate** (`--keep-awake`) is stopped when `run` stops, not left to
+  end with `run`'s process: a restart keeps the process. E2E test.
+
 - **A hosts file without hosts** (comments only, or empty) is taken, giving
   none; it was refused ("has no hosts"). `--mask-names` and `--mask-values`
   `@FILE`s without lines are still refused. `--pass-hosts`, `--rules` and
@@ -55,6 +76,16 @@
   60 seconds stay `run`'s, as before. Against a v1.2 `run` (no file) it opens
   nothing and prints the link alone. Unit tests; the link's `#c=` kept
   through the file in headless Chromium and Firefox (not tried: Safari).
+
+### Fixed
+
+- **A computer whose name is long** (over 39 characters, GitHub's macOS
+  runners among them) could not start a `run` that makes its own CA: the
+  CA's name (`Reqcove CA (<computer>, <date>)`) went over X.509's 64
+  characters and mitmproxy refused it ("making the CA: exit status 1"; a
+  GitHub macOS runner's name made it 86 characters).
+  The computer's name in it is cut to 39 characters. Unit test; the E2E
+  test of `reqcove restart` on CI's macOS.
 
 ## v1.2.0 — 2026-11-16
 

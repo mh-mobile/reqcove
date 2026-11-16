@@ -232,6 +232,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
 | `reqcove console` (since v1.2) | `--end` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
+| `reqcove restart` (since v1.3) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
@@ -256,6 +257,16 @@ prints the link), and `reqcove console --end` asks with another new op,
 `console-end`: a v1.2 `run` answers it with its usage (in LAN mode, with its
 LAN refusal), and `reqcove console --end` then says to restart `run` with
 v1.3 or later (unit tests with both answers).
+
+`reqcove restart` (since v1.3) asks `run` over `ctl.sock` with a new op,
+`restart` (no other field; in LAN mode too): `run` answers `ok` and starts
+the restart once the answer is sent, or refuses, nothing stopped. A v1.2 or
+older `run` answers it with its usage (in LAN mode, with its LAN refusal),
+and `reqcove restart` then says to stop it and start it again (unit tests
+with both answers). The variables `REQCOVE_RESTART_*` that a restart sets
+for the new process, the copy of the config it keeps in the state
+directory (`restart-*.config`), `config.failed` and the `restart-note`
+file that `reqcove status` reads are not stable ([below](#not-stable)).
 
 ### The `--config` file
 
@@ -347,6 +358,9 @@ These may change in any release, a patch release included:
   minor release.
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
   answers.
+- What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`
+  variables, the fds) and the files it leaves in the state directory and
+  beside the config (`restart-*.config`, `restart-note`, `config.failed`).
 - The `poc/` folder: the maintainer's notes, not in the repository.
 - Anything else this page does not list as stable.
 

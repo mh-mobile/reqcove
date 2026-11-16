@@ -6,7 +6,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 
 各節ではいちばん大事な注意を手順のそばに書いています。オプションごとのそのほかのセキュリティの注意は、その節の「セキュリティの詳細」に折りたたんであります（クリックすると開きます）。テストや実機で確かめたことは、そこの「確認状況」に書いています。要点と、「状態ディレクトリ」「あなた自身のデバイス」という言葉の意味は、[SECURITY.ja.md](SECURITY.ja.md) を見てください。「セキュリティの詳細」に書いているのは、SECURITY.ja.md に書いていないことだけです。
 
-1. [セットアップする](#セットアップする)：[初回の起動](#初回の起動ログインと承認) · [停止・再起動・アップデート](#停止再起動アップデート) · [2 台で同じ CA](#2-台のコンピュータで同じ-ca-を使う) · [元に戻す](#元に戻すreqcove-cleanup)
+1. [セットアップする](#セットアップする)：[初回の起動](#初回の起動ログインと承認) · [停止・再起動・アップデート](#停止再起動アップデート) · [同じプロセスで再起動](#同じプロセスで再起動するreqcove-restart) · [2 台で同じ CA](#2-台のコンピュータで同じ-ca-を使う) · [元に戻す](#元に戻すreqcove-cleanup)
 2. [エージェントに通信を読ませる](#エージェントに通信を読ませる)：[ツールを許可する](#ツールを許可する) · [Skill](#使い方を教える-skill-を入れるreqcove-init) · [マーカー](#マーカーを置くreqcove-mark) · [ほかのデバイスのエージェント](#ほかのデバイスのエージェントから使う--mcp-http)
 3. [自分でフローを見る](#自分でフローを見る)：[iPhone で](#iphone-で見る--ui) · [HAR ファイルで](#har-ファイルに書き出すreqcove-har) · [mitmweb で](#mitmweb-で見る--web)
 4. [iPhone アプリ以外のクライアントを記録する](#iphone-アプリ以外のクライアントを記録する)：[証明書ピンニングをするアプリ](#証明書ピンニングをするアプリを通す--pass-hosts) · [HTTP として読まれない接続](#http-として読まれない接続raw-tcp) · [gRPC](#grpc) · [Android](#android-を記録する) · [iOS シミュレーター](#ios-シミュレーターを記録する--local-proxy) · [Web アプリのバックエンド](#web-アプリのバックエンドを記録する) · [Wi-Fi のプロキシ](#exit-node-を使わずに-wi-fi-のプロキシでつなぐ) · [別の Mac](#別の-mac-を記録する)
@@ -79,6 +79,23 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - アップデート（`brew upgrade reqcove` や、ソースからのビルドで新しいバージョンを入れたとき）：新しい reqcove で `run` を起動し直し、エージェントを一度再接続します。新しいツールを使うためで、バージョンが違う間はツールがそう伝えます。Skill も新しくするため、`reqcove init` をもう一度実行します。動いている `run` は、再起動するまで古いバージョンのままです。`reqcove status` は、`run` のバージョンが自分と違うときにそう伝え、`run` を起動したもの（ターミナル、`reqcove service install` のサービス、`brew services`）に合わせて、再起動するコマンドを 1 つ示します（[表](#起動アップデート停止)）。再起動すると記録は空になるので、先に `reqcove har > flows.har` を実行してください。
 
 確認状況：Claude Code のセッション中に `run` を再起動して確認しました。アップデートのあとに `reqcove status` が表示するものは、単体テスト（v1.0.0 の `run` を模したもの）と手作業で確かめました。手作業では（2026-11-16）、`brew services` で動かしたまま `brew upgrade` で v1.1.0 から v1.2 のビルドにすると、バージョンの違いを伝え、そのあと `brew services restart reqcove` を実行しました。
+
+### 同じプロセスで再起動する（`reqcove restart`）
+
+```sh
+reqcove restart    # 自分のターミナルで。ほかのノードには --state DIR
+```
+
+v1.3 から、`reqcove restart` は動いている `run` に、止まって同じプロセスで起動し直すよう頼みます。起動したときと同じバイナリのパスと引数で、config はディスクにある今のものを読みます。`reqcove service install` のサービスや `brew services` のもとでも、サービスのプロセスのままです（exec は pid を変えないので。コードから判断したもので、それらのもとでは試していません）。そのため、何が起動したかを知らなくても使えます。
+
+- **先に確かめ、拒否するときは何も止めません：** ディスクの config と `run` のコマンドラインを、次の起動と同じように確かめます（拒否されるフラグやファイルがあれば理由を伝えます。`reqcove reload` と同じ確かめ方です）。`run` を起動したバイナリがまだあることも確かめます。そのパスは `run` を起動したときのもの（サービスが起動するときの絶対パスか、そのとき PATH で見つけたもの）で、リンクは解決しません。Homebrew の `opt/reqcove` のままなので、`brew upgrade` のあとの再起動は新しいバージョンを起動します（コードから判断したもので、試していません）。
+- **そのあと Ctrl-C と同じように止まります：** システムの Web プロキシを戻し（`--local-proxy`）、mitmproxy、ノード、caffeinate を止めます。起動し直すまで、デバイスはインターネットにつながりません。
+- **再起動で空になるもの：** 記録（フローの id とカーソルも）、マーカー、エージェントの頼み、`reqcove capture` で変えて保存していないホスト、allow-all と発見、オンにしたプリセット、まだ開いていない `reqcove console` のリンクです。**残るもの：** 状態ディレクトリとそのトークン、CA、ノード、`reqcove console` のページのポートとセッション（開いているページは開いたまま）です。その間、ほかの `run` は状態ディレクトリを使えません。
+- **新しい起動が失敗したとき**（たとえば `--uvx` のファイルがなくなったとき）、`run` は起動したときの config に戻します（起動したときに持っておいた写しで、`capture save` が足したホストのファイルの行も含みます。`config.prev` ではありません）。失敗した config は隣に `config.failed` として残し、もう一度だけ起動します。それも失敗すると、起動の失敗がいつもそうであるように止まったままです（サービスも起動し直しません。どれもそう設定していないためで、コードから判断したものです）。何が起きたかは `reqcove status` が伝えます（`restart:` の行）。次に手作業かサービスで `run` を起動するまで伝えます。フラグだけで起動した `run`（`--config` なし）には戻す config がないので、起動に失敗すると止まったままです。
+- **config が別の `--state` を指すようになったとき：** 新しい起動はそれを使います。結果は、その状態ディレクトリを指す `reqcove status --state DIR` が伝えます。
+- `reqcove capture` と同じく、端末でだけ実行します。v1.3 より古い `run` には、止めて起動し直すよう伝えます。
+
+確認状況：単体テスト（確かめること。起動したときの config の写しを、2 回書いたあと、書いたあと手で編集したあと、`capture save` がホストのファイルの行を足したあと、残っていた写しがあるとき、`--state` を変えたときに確認。写しがリンク、ほかのユーザーのもの、0600 でない、名前が違う、状態ディレクトリの外にある、ないときは、読まず消さず、起動し直さないこと。起動し直しは 1 回だけなこと。テスト用バイナリの exec で、ページのポート、セッション、状態ディレクトリのロックが残り、変数と fd が子プロセスに渡らないこと）と、本物の mitmproxy での E2E テスト（ループバックで LAN モードの `run` をリンクから起動し、2 回再起動。2 回めは、mitmproxy、caffeinate、システムのプロキシが動いてから起動が失敗する編集のあと。pid、ページのポートとセッションが残ること、状態ディレクトリが空かないこと、exec の前に mitmdump と caffeinate が止まること（失敗した起動のものも）、config が戻って `config.failed` が残ること、`reqcove status` がそれを伝えること。macOS では `--local-proxy` で、止まるたびにシステムのプロキシが戻ること。`networksetup` は代わりのものを使用）。試していないもの：tailnet のノード、launchd、`brew services`、systemd のもと、`brew upgrade` と `brew cleanup` のあと、Linux。
 
 ### 動かしたまま、記録するものを変える
 
@@ -225,8 +242,8 @@ reqcove console --end    # 開いているページとまだ開いていない�
 
 v1.2 から、`reqcove console` は動いている `run` に、状態とエージェントの頼みのページを頼み、そのリンクを表示します。v1.3 からは、`run` が状態ディレクトリに書いたファイルを `open`（macOS）か `xdg-open`（Linux）で開きます。リンクそのものは渡しません。渡すと、このコンピュータのほかのユーザーに `ps` で見えるからです。ファイルはブラウザをリンクに送り、`run` は 60 秒後にファイルを消します。開けなかったとき、ファイルがブラウザ以外のアプリで開いたとき（`open` は `.html` のファイルに決まったアプリを選ぶので、ふだんのブラウザとは限りません）、ブラウザが状態ディレクトリを読めないとき（サンドボックスのブラウザは `~/.reqcove` を読めないことがあります）は、表示したリンクを自分で開いてください。ファイルを書かない v1.2 の `run` に対しては何も開かず、リンクを表示するだけです。ページは `reqcove status` と同じものを 5 秒ごとに更新して表示します。バージョン、`run` のバイナリ、サービス、config とホストのファイル、スリープの扱い（keep awake）、ノードとそのデバイス、記録しているもの（on、stopped、または allow-all といつまでか、とそのホスト）と保留中の変更、次の手順です。待っている頼みも、ホスト、いつまでか、**Approve** と **Deny** と一緒に表示します。Approve はページが表示したホストを `reqcove capture approve` と同じく足し（ほかのホストは `run` が拒否します）、「capture add HOST (asked by an agent, approved in the console)」と残ります。Deny は `reqcove capture deny` です。ページから変えられるのはこれだけです。ホスト、stop と start、save、allow-all、discover はコマンドのままです。
 
-- **このコンピュータだけ：** `run` は 127.0.0.1 で、システムが選ぶポートで待ち受けます。最初の `reqcove console` から `run` が終わるまでです。tailnet のノード、LAN、`--ui` のページでは待ち受けません。LAN モードでも状態は表示します（頼みはそこでは、これまでどおり拒否します）。
-- **リンクは 1 回だけ、60 秒：** リンクは `#` のあとに 1 回だけ使えるコードを持ちます。ページはそれを、そのタブだけに置くセッションに換え（タブを閉じるとブラウザは忘れます。`run` は下の上限まで持ちます）、アドレスバーから消します。もう一度 `reqcove console` を実行すると新しいリンクになります。同じリンクが 2 回開かれると、`reqcove console` のページをすべて閉じ、それを伝えます。ほかの誰かがリンクを持っていたかもしれないからです。同時に開けるのは 4 つまでで（5 つめは、いちばん長く使っていないものを閉じます）、12 時間使わないと閉じ、`run` を再起動するとすべて閉じます。
+- **このコンピュータだけ：** `run` は 127.0.0.1 で、システムが選ぶポートで待ち受けます。最初の `reqcove console` から `run` が終わるまでです（`reqcove restart` では続きます）。tailnet のノード、LAN、`--ui` のページでは待ち受けません。LAN モードでも状態は表示します（頼みはそこでは、これまでどおり拒否します）。
+- **リンクは 1 回だけ、60 秒：** リンクは `#` のあとに 1 回だけ使えるコードを持ちます。ページはそれを、そのタブだけに置くセッションに換え（タブを閉じるとブラウザは忘れます。`run` は下の上限まで持ちます）、アドレスバーから消します。もう一度 `reqcove console` を実行すると新しいリンクになります。同じリンクが 2 回開かれると、`reqcove console` のページをすべて閉じ、それを伝えます。ほかの誰かがリンクを持っていたかもしれないからです。同時に開けるのは 4 つまでで（5 つめは、いちばん長く使っていないものを閉じます）、12 時間使わないと閉じ、`run` を再起動するとすべて閉じます。ただし `reqcove restart`（v1.3 から）では閉じず、使っていなかった時間もそのまま引き継ぎます。
 - **`reqcove console --end`**（v1.3 から）：ページをすべて閉じ、まだ開いていないリンクをすべて終えます。ページはそれを伝えます。もう一度 `reqcove console` を実行すると新しいページを開きます。v1.3 より古い `run` には、v1.3 で起動し直すよう伝えます。
 - **表示しないもの：** フローの中身、トークン、リンク、ログイン用の URL、エージェントや MCP クライアントからの文（頼まれたホストは、先にホスト名として確かめます）。
 - ほかの `capture` のコマンドと同じく、端末でだけ動きます。v1.2 より古い `run` には、v1.2 で起動し直すよう伝えます。
@@ -1159,7 +1176,8 @@ Exit Node とのほかの違いは次のとおりです。
 | 起動 | `reqcove run`（Ctrl-C で止まる） | `reqcove service install`：すぐに起動し、ログインのたびにも起動 | `brew services start reqcove`：すぐに起動し、ログインのたびにも起動 |
 | 終わったあと | `reqcove run` | `reqcove service restart`（次のログインまで止めたあとも） | `brew services restart reqcove` |
 | アップデートのあと | Ctrl-C のあと `reqcove run` | `reqcove service restart`。別のバイナリ（別のパスや Homebrew のもの）に移ったときは `reqcove service install` | `brew upgrade reqcove` のあと `brew services restart reqcove` |
-| 設定ファイル、ホストのファイル、ルールのファイルを編集したあと | ホストとルールは `reqcove reload`。ほかは Ctrl-C のあと `reqcove run` | `reqcove reload`。ほかは `reqcove service restart` | `reqcove reload`。ほかは `brew services restart reqcove` |
+| 設定ファイル、ホストのファイル、ルールのファイルを編集したあと | ホストとルールは `reqcove reload`。ほかは `reqcove restart`、または Ctrl-C のあと `reqcove run` | `reqcove reload`。ほかは `reqcove restart` か `reqcove service restart` | `reqcove reload`。ほかは `reqcove restart` か `brew services restart reqcove` |
+| 同じプロセスで再起動する（v1.3 から） | `reqcove restart`（[同じプロセスで再起動](#同じプロセスで再起動するreqcove-restart)） | `reqcove restart` | `reqcove restart` |
 | 次のログインまで止める | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove` か `systemctl --user stop reqcove` | `brew services kill reqcove`（Homebrew のヘルプによるもので、試していません） |
 | 止めて取り除く | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
 | ログ | ターミナル | macOS：状態ディレクトリの `service.log`。Linux：`journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |

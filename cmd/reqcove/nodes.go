@@ -215,10 +215,19 @@ func shellWord(s string) string {
 // directory that holds other files and was never reqcove's (no lock file), so
 // that neither its chmod nor `cleanup --delete-state` reaches someone else's files.
 func openState(dir string) (func(), error) {
+	f, err := openStateFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
+
+// openStateFile is openState's lock: the open lock file, closed to let go.
+func openStateFile(dir string) (*os.File, error) {
 	if err := claimState(dir); err != nil {
 		return nil, err
 	}
-	return lockState(dir)
+	return lockFile(dir)
 }
 
 // claimState makes dir (0700) reqcove's state directory with its marker,
@@ -261,6 +270,16 @@ const stateMarker = ".reqcove-state"
 // status, har or mark asking whether a run is starting (stateHeld), and a
 // cleanup, hold the lock for a moment.
 func lockState(dir string) (func(), error) {
+	f, err := lockFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
+
+// lockFile is lockState's lock: the open lock file, which a restart carries
+// across its exec (restart.go).
+func lockFile(dir string) (*os.File, error) {
 	path := filepath.Join(dir, "lock")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -283,7 +302,7 @@ func lockState(dir string) (func(), error) {
 		f.Close()
 		return nil, fmt.Errorf("%s was deleted while this reqcove waited for its lock", dir)
 	}
-	return func() { f.Close() }, nil
+	return f, nil
 }
 
 // stateFreeWait bounds waitStateFree in service install (a var for tests).

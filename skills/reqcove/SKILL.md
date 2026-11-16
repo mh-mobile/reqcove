@@ -14,7 +14,7 @@ records through the reqcove MCP tools (`reqcove mcp`).
 
 ## Rules
 
-- Never start, stop or restart `reqcove run`, nor run `reqcove cleanup` (it
+- Never start, stop or restart `reqcove run` (`reqcove restart` included), nor run `reqcove cleanup` (it
   can put the system's proxy settings back) or `reqcove service install`,
   `service restart` or `service uninstall` (they start and stop `run`: a
   restart or an uninstall empties the records). The commands you may run:

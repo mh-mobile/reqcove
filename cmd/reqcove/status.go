@@ -360,6 +360,9 @@ func status(ctx context.Context, args []string) error {
 	if n := staleSkillNote(); n != "" {
 		fmt.Fprintln(os.Stderr, "note: "+n) // stderr: --json stays clean
 	}
+	if !*asJSON {
+		defer printRestartNote(os.Stdout, *state)
+	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
 	// brew services start (or a login) returns before its run takes the
@@ -855,4 +858,12 @@ func keepAwakeText(mode string) string {
 		return "never: the Mac sleeps as the Energy settings say (other apps can keep it awake: pmset -g assertions); while it sleeps, a phone using its exit node has no internet"
 	}
 	return "always: no idle sleep, on battery too (--keep-awake=ac holds it on AC power only)"
+}
+
+// printRestartNote says what came of a failed start after the last restart
+// (restart.go), until a fresh start.
+func printRestartNote(w io.Writer, state string) {
+	if b, err := os.ReadFile(filepath.Join(state, restartNote)); err == nil && len(b) > 0 {
+		fmt.Fprintln(w, "restart: "+strings.TrimSpace(string(b)))
+	}
 }

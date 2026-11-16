@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -47,11 +48,28 @@ func run(ctx context.Context, args []string) error {
 	if _, err := exec.LookPath(o.uvx); err != nil {
 		return fmt.Errorf("uv not found (%s): install it first, https://docs.astral.sh/uv/ ; reqcove fetches mitmproxy and Python with it", o.uvx)
 	}
-	unlock, err := openState(o.state)
+	h := carried // what a restart carried in (nil: none)
+	lock, err := stateLock(o.state)
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	// Asked for by the restart op (restart.go): the snapshot's path.
+	var restartTo atomic.Pointer[string]
+	defer func() {
+		if restartTo.Load() == nil && (h == nil || lock != h.lock) { // carried on, or still the retry's
+			lock.Close()
+		}
+	}()
+	keep := ""
+	if h != nil {
+		keep = h.snapPath
+	}
+	if n := sweepSnapshots(o.state, keep); n > 0 {
+		log.Printf("removed %d copies of a config that earlier restarts left (a crash?)", n)
+	}
+	if h == nil || !h.restarted {
+		os.Remove(filepath.Join(o.state, restartNote)) // an earlier restart's: a fresh start
+	}
 	// While it holds the state but its tools do not answer, status says
 	// starting, or with this file stopping (left by a run killed while it
 	// stopped: removed here).
@@ -83,7 +101,7 @@ func run(ctx context.Context, args []string) error {
 	if err := restoreSystemProxy(o.state); err != nil {
 		log.Printf("WARN: the system's web proxies, pointed at reqcove by a run that did not stop cleanly, could not be put back: %v. System Settings, Network, Details, Proxies", err)
 	}
-	keepAwake(ctx, o.keepAwake)
+	defer keepAwake(o.keepAwake)() // stopped before a restart's exec too
 	upstreamCAFile, err := upstreamCA(o)
 	if err != nil {
 		return err
@@ -148,6 +166,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	ctl.restart = func(snapshot string) { restartTo.Store(&snapshot); cancel() }
 	if !o.lanMode {
 		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
 		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
@@ -178,7 +197,7 @@ func run(ctx context.Context, args []string) error {
 		page = uiPage(o, cap, &node, uiToken)
 		pageFn = page.Serve
 	}
-	onStatus := readyOnStatus(o, cap, &node, user, lanCfg, page, mcpHandler, uiToken, mcpToken, webAddr)
+	onStatus := readyOnStatus(o, cap, &node, user, lanCfg, page, mcpHandler, uiToken, mcpToken, webAddr, h.ready)
 	if localLn != nil {
 		logLocalProxy(o.state, o.allow, cap.CA.SHA256)
 	}
@@ -196,6 +215,16 @@ func run(ctx context.Context, args []string) error {
 			OnDevices:  cap.Store.SetDeviceNames, OnStatus: onStatus,
 		})
 	})
+	if snap := restartTo.Load(); snap != nil { // stopped as below: the exec follows run's defers
+		r := &restartExec{lock: lock, snapshot: *snap}
+		ctl.mu.Lock()
+		if p := ctl.page; p != nil {
+			r.page, r.sessions = p.sock, p.carry()
+		}
+		ctl.mu.Unlock()
+		log.Print("restart: stopping, then starting again")
+		return r
+	}
 	if len(o.devices) > 0 || o.lanMode {
 		fmt.Fprintln(os.Stderr, "\nreqcove is stopping. On the iPhone, turn off the exit node, or set the Wi-Fi proxy back to Off: without reqcove it cannot reach the internet.")
 	}
@@ -219,8 +248,17 @@ var restartDelay time.Duration
 // CAs from several machines can tell their profiles apart.
 func caName() string {
 	host, _ := os.Hostname()
+	return caNameFor(host, time.Now())
+}
+
+// caNameFor cuts a long host name short: X.509 caps a common name at 64
+// characters, and mitmproxy refuses to make a CA with a longer one.
+func caNameFor(host string, now time.Time) string {
 	host = strings.TrimSuffix(host, ".local")
-	return fmt.Sprintf("Reqcove CA (%s, %s)", host, time.Now().Format("2006-01-02"))
+	if r := []rune(host); len(r) > 39 { // 64 less "Reqcove CA (" and ", 2006-01-02)"
+		host = string(r[:39])
+	}
+	return fmt.Sprintf("Reqcove CA (%s, %s)", host, now.Format("2006-01-02"))
 }
 
 // shareCA copies the default state's CA into a new --state's.

@@ -44,7 +44,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload), console (reqcove console) or console-end (its --end, since v1.3)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload), console (reqcove console), console-end (its --end, since v1.3) or restart (reqcove restart, since v1.3)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -66,6 +66,7 @@ type ctlAnswer struct {
 	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
 	File     string                     `json:"file,omitempty"`     // console: the code file's name, in the state directory (since v1.3)
 	Confirm  string                     `json:"confirm,omitempty"`  // save: the change to the config Message shows, to confirm with this token (since v1.3)
+	after    func()                     // run once the answer is sent (restart)
 }
 
 const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end | capture requests | capture approve ID | capture deny ID  [--state DIR]"
@@ -88,7 +89,7 @@ func captureCmd(ctx context.Context, args []string) error {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
 	switch req.Cmd {
-	case "request", "console", "console-end": // the agents' op, through reqcove mcp; reqcove console's
+	case "request", "console", "console-end", "restart": // the agents' op, through reqcove mcp; reqcove console's; reqcove restart's
 		return errors.New("usage: " + captureUse)
 	case "approve", "deny":
 		if len(req.Hosts) != 1 {
@@ -146,7 +147,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start", "save", "console", "console-end":
+	case "stop", "start", "save", "console", "console-end", "restart":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -233,8 +234,8 @@ func (r ctlRequest) String() string {
 		return s + " --for " + r.For // a duration: ParseDuration took it
 	case r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save":
 		return s
-	case r.Cmd == "reload":
-		return "reload"
+	case r.Cmd == "reload" || r.Cmd == "restart":
+		return r.Cmd
 	}
 	if r.Pass {
 		s += " --pass"
@@ -317,7 +318,7 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	if err != nil {
 		need := "v1.1"
 		switch {
-		case req.Cmd == "console-end":
+		case req.Cmd == "console-end" || req.Cmd == "restart":
 			need = "v1.3"
 		case requestOps[req.Cmd] || req.Cmd == "console":
 			need = "v1.2"
@@ -337,8 +338,10 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 		}
 		return a, fmt.Errorf("the running reqcove did not answer: %w", err)
 	}
-	if req.Cmd == "console-end" && !a.OK && (strings.HasPrefix(a.Message, v11Usage) || strings.HasPrefix(a.Message, lanRefusal)) {
+	if older := !a.OK && (strings.HasPrefix(a.Message, v11Usage) || strings.HasPrefix(a.Message, lanRefusal)); older && req.Cmd == "console-end" {
 		return a, errOlderEnd
+	} else if older && req.Cmd == "restart" {
+		return a, errOlderRestart
 	}
 	if !a.OK && strings.HasPrefix(a.Message, v11Usage) {
 		switch {
@@ -389,10 +392,15 @@ type ctlState struct {
 	status func() mcpserver.StatusOut
 	page   *page
 	dir    string // the state directory: the code files'
+	// startConfig is the --config file's bytes as run read them at its start,
+	// with the lines capture save added since (restart.go's snapshot);
+	// restart, run's: it stops and execs again, with that snapshot's path.
+	startConfig []byte
+	restart     func(snapshot string)
 }
 
 func newCtlState(o *runOpts) *ctlState {
-	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state), ctx: context.Background()}
+	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state), ctx: context.Background(), startConfig: o.configText}
 }
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
@@ -402,6 +410,9 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpt
 	st.ctx, st.status, st.dir = ctx, status, state
 	if cap != nil { // nil: tests of LAN mode
 		st.reqs.redacting = cap.Store.Redacting
+	}
+	if h := carried; h != nil && h.pageLn != nil {
+		st.page = carriedPage(ctx, cap, st, h)
 	}
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
@@ -429,7 +440,12 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpt
 				}
 				ctx, cancel := context.WithTimeout(ctx, ctlWait-time.Second) // the answer before the CLI gives up
 				defer cancel()
-				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, st, req))
+				a := answerCtl(ctx, cap, st, req)
+				json.NewEncoder(conn).Encode(a)
+				if a.after != nil {
+					conn.Close() // the answer out before run stops
+					a.after()
+				}
 			}()
 		}
 	}()
@@ -456,6 +472,16 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 		}
 		return endPage(st)
+	}
+	if req.Cmd == "restart" { // in LAN mode too
+		if _, err := req.normalized(); err != nil {
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing stopped"}
+		}
+		var records any = 0
+		if cap != nil {
+			records = cap.Store.Stats()["flows"]
+		}
+		return restartOp(st, records)
 	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
@@ -860,6 +886,9 @@ func saveScope(base capture.HostRules, st *ctlState, confirm string) (ctlAnswer,
 			undo() // so that a retry's exclusive create works
 			return refuse("refused: the config: " + err.Error())
 		}
+		// A failed start after a restart puts back the start config with it:
+		// the config never loses the hosts file saved to.
+		st.startConfig = withLines(st.startConfig, plan.added)
 	}
 	var did []string // what was written, the files created first
 	if plan != nil {

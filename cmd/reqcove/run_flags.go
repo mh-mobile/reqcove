@@ -39,6 +39,9 @@ type runOpts struct {
 	// config is the --config file read (in full), "" for none; configUnused
 	// the other file a bare run finds there too, not read.
 	config, configUnused string
+	// configText is the --config file's bytes as run read them at its start
+	// (restart.go's snapshot); nil for none.
+	configText []byte
 	// args are run's arguments, a bare run's --config FILE in place (reqcove
 	// reload parses them again); the others are what only a restart takes.
 	args                  []string
@@ -200,6 +203,7 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 	}
 	bare := len(args) == 0 && !reload
 	var config, configUnused string
+	var configText []byte
 	if takeFlags == nil { // the docs test reads no file
 		if bare { // no arguments at all: the file setup writes, if any
 			if path, other := bareConfig(); path != "" {
@@ -218,7 +222,10 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 			var text []byte
 			if reload {
 				text = chk.config
+			} else if text, err = configBytes(path, 0); err != nil { // read once: parsed, and kept for a restart's retry
+				return nil, err
 			}
+			configText = text
 			if err := parseConfig(fs, path, &allowSpecs, text); err != nil {
 				return nil, err
 			}
@@ -396,7 +403,7 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 		proxyPort: *proxyPort, mcpHTTP: *mcpHTTP, ui: *uiFlag, verbose: *verbose, lanMode: *lanMode,
 		upstreamProxy: *upstreamProxy, upstreamCA: *upstreamCA, upstream: upstream,
 		lanIface: *lanIface, localProxy: *localProxy, keepAwake: *keepAwakeFlag, origin: origin,
-		config: config, configUnused: configUnused,
+		config: config, configUnused: configUnused, configText: configText,
 		args: args, maskNames: maskNames, maskValues: maskValues, proto: *protoFile, dnsFlag: *dnsFlag,
 	}, nil
 }

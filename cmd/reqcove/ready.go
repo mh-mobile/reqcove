@@ -189,7 +189,7 @@ func statsPresets(stats map[string]any) []string {
 
 // readyOnStatus is run's OnStatus: it keeps the node's status, and prints the
 // ready block and its QR codes once, when the node is ready.
-func readyOnStatus(o *runOpts, cap *capture.Capture, node *nodeState, user *userLinks, lanCfg *exitnode.LAN, page *webui.UI, mcpHandler http.Handler, uiToken, mcpToken, webAddr string) func(exitnode.Status) {
+func readyOnStatus(o *runOpts, cap *capture.Capture, node *nodeState, user *userLinks, lanCfg *exitnode.LAN, page *webui.UI, mcpHandler http.Handler, uiToken, mcpToken, webAddr string, ready func()) func(exitnode.Status) {
 	var shown bool
 	var gate readyGate
 	onStatus := func(s exitnode.Status) {
@@ -200,6 +200,7 @@ func readyOnStatus(o *runOpts, cap *capture.Capture, node *nodeState, user *user
 			return
 		}
 		shown = true
+		ready() // a good start: a restart's retry is not needed now
 		// One block when ready, so what to do is not lost among the lines above.
 		// Tokens stay in this terminal, as the login URL does: never in the MCP tools.
 		var uiLink, webLink string

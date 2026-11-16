@@ -403,7 +403,8 @@ requests, with Approve and Deny, in this computer's browser
 that: an approval goes as `reqcove capture approve` does, for the hosts the
 request holds, traced "approved in the console"; a denial as `capture deny`.
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
-  from the first `reqcove console` until it ends; never on the tailnet node, the
+  from the first `reqcove console` until it ends (`reqcove restart` keeps it,
+  below); never on the tailnet node, the
   LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
 - **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
   code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
@@ -421,7 +422,7 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   `reqcove console --end`, which also ends every code not traded yet (tests).
   At most 4 sessions, in
   `run`'s memory only, each ending after 12 hours unused and all at `run`'s
-  end. The code and tokens are never logged and never in an answer but the
+  end (but at `reqcove restart`, below). The code and tokens are never logged and never in an answer but the
   trade's own (tests); `run` keeps them as hashes (from the code).
 - **What it guards against:** a page open in the browser (another site, or
   one pointing its own name at 127.0.0.1): every request must name exactly
@@ -454,6 +455,39 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   second trade ends every session is tested). What it shows is not secret beyond `reqcove status`: never the flows'
   contents, a token, a link or a login URL, or text from an agent or an MCP
   client.
+
+Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
+with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does
+and exec the binary it was started from, in the same process
+([guide](guide.md#restart-in-place-reqcove-restart)). What crosses the exec:
+- **The state's lock and the page's port**, as open files: no other `run`
+  takes the state, and no other process the port, in between (an E2E test
+  tries the lock throughout; that no one else bound the port was not tried
+  with another user). The new process makes them close-on-exec again before
+  it starts anything, so mitmdump and caffeinate never get them (tests: a
+  child of the new process holds neither).
+- **In its environment:** their numbers, the page's sessions as hashes with
+  how long each was unused (never a token or a code: the hashes let no one
+  in, and nothing logs them; tests), and the path of the start config's copy.
+  The new process unsets them before it starts anything (tests: a child's
+  environment holds none), but its own initial environment stays readable to
+  your user and root for its life (`ps -E`, `/proc/PID/environ`); hence
+  nothing secret goes there. Without the port, no session is taken.
+- **The start config's copy:** the bytes `run` read from `--config` at its
+  start, held in memory, written at the restart to a new file in the state
+  directory (0600, created anew, never through a symlink, a random name),
+  so that a failed start can put that config back. It can hold what the
+  config holds (`--mask-values` patterns): the same exposure as the config.
+  The new process reads it only from the path in its environment, and only a
+  plain file of your user's, mode 0600, named as a copy, directly in a
+  reqcove state directory; anything else is neither read nor removed, and no
+  start is retried (tests). It is removed once the new start is up, or when
+  the retry fails and `run` stays down; a copy a crash left is removed by the
+  next start in that state directory, after the same checks, never the one
+  handed over before the retry is decided (tests).
+- **Not carried:** the records, markers and the agents' requests (in memory),
+  the console's links not opened yet. The retry is made once (marked in the
+  environment): a start that fails again stays down.
 
 ## Masking
 

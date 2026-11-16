@@ -34,7 +34,8 @@ import (
 // `reqcove console` (since v1.2) opens a page of run's state and the agents'
 // requests, with Approve and Deny, in this computer's browser. run serves it
 // on 127.0.0.1 alone (a port the OS picks), never the tailnet node, the LAN or
-// --ui's page, from the first `reqcove console` until run ends. The link carries a
+// --ui's page, from the first `reqcove console` until run ends (reqcove
+// restart carries it and its sessions across: restart.go). The link carries a
 // one-use code (60 s) in its fragment, which the page trades for a session
 // token it keeps in sessionStorage and sends as a header: no cookie, so a page
 // of another site open in the browser sends nothing that counts. The browser
@@ -161,7 +162,8 @@ func sweepCodeFiles(dir string) int {
 type page struct {
 	st   *ctlState
 	cap  *capture.Capture
-	host string // 127.0.0.1:PORT: the only Host taken, and as http://, the only Origin
+	host string   // 127.0.0.1:PORT: the only Host taken, and as http://, the only Origin
+	sock *os.File // the listening socket, kept for a restart (serveOn)
 	mux  *http.ServeMux
 	now  func() (mono, wall time.Time)
 
@@ -232,11 +234,50 @@ func servePage(ctx context.Context, cap *capture.Capture, st *ctlState) (*page, 
 	if err != nil {
 		return nil, err
 	}
+	f, err := ln.(*net.TCPListener).File() // close-on-exec, as Go makes every fd
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return serveOn(ctx, cap, st, ln, f), nil
+}
+
+// serveOn serves the page on ln until ctx ends; f, a copy of ln's socket
+// kept open for run's life, holds the port while ln is closed, until a
+// restart carries it across its exec (restart.go).
+func serveOn(ctx context.Context, cap *capture.Capture, st *ctlState, ln net.Listener, f *os.File) *page {
 	p := newPage(cap, st, ln.Addr().String())
+	p.sock = f
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go srv.Serve(ln)
 	go func() { <-ctx.Done(); srv.Close() }()
-	return p, nil
+	return p
+}
+
+// carriedPage is the page a restart carried across its exec (h.pageLn), with
+// its sessions, each as idle as it was.
+func carriedPage(ctx context.Context, cap *capture.Capture, st *ctlState, h *handover) *page {
+	p := serveOn(ctx, cap, st, h.pageLn, h.page)
+	mono, _ := p.now()
+	for _, s := range h.sessions {
+		p.sessions[s.hash] = mono.Add(-s.idle)
+	}
+	log.Printf("reqcove console: the page carried across the restart, on http://%s (this computer only), with %d sessions", p.host, len(p.sessions))
+	return p
+}
+
+// carry is the page's live sessions, by hash (never a token), for a restart.
+func (p *page) carry() []carriedSession {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	mono, wall := p.now()
+	var out []carriedSession
+	for k, last := range p.sessions {
+		if !due(last.Add(pageIdle), mono, wall) {
+			out = append(out, carriedSession{hash: k, idle: mono.Sub(last)})
+		}
+	}
+	return out
 }
 
 func newPage(cap *capture.Capture, st *ctlState, host string) *page {

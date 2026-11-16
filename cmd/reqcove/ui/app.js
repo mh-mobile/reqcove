@@ -96,7 +96,7 @@ async function refresh() {
     const { ok, d } = await api("GET", "/api/state");
     if (ok) show(d);
   } catch (e) {
-    $("line").textContent = "reqcove is not answering (run stopped?); trying again";
+    $("line").textContent = "reqcove is not answering (run stopped, or restarting?); trying again. If it stays so, run reqcove console again in your terminal";
   }
 }
 
