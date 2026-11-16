@@ -14,7 +14,7 @@ option's security points is folded under "Security details" in its section
 directory" and "your own devices" mean; those blocks add to it and do not
 repeat it.
 
-1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
+1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [restart in place](#restart-in-place-reqcove-restart) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
 2. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [allow the tools](#allow-the-tools) · [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
 3. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
 4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [connections not read as HTTP](#connections-not-read-as-http-raw-tcp) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
@@ -166,6 +166,65 @@ Tried: a restart under a Claude Code session. What `reqcove status` says
 after an update: unit tests (a v1.0.0 `run` faked), and by hand (2026-11-16)
 after `brew upgrade` from v1.1.0 to a v1.2 build under `brew services`: it
 named the version difference, then `brew services restart reqcove`.
+
+### Restart in place (`reqcove restart`)
+
+```sh
+reqcove restart    # in your terminal; --state DIR for another node
+```
+
+Since v1.3, `reqcove restart` asks the running `run` to stop and start again
+in the same process, as it was started: the same binary path and arguments,
+the config on disk as it is now. Under `reqcove service install`'s service or
+`brew services` it stays the service's process, so you need not know which
+started it.
+
+- **Checked first, nothing stopped when refused:** the config on disk and
+  `run`'s command line as the next start reads them (a flag or file it would
+  refuse, with the reason, as `reqcove reload` checks them), and the binary
+  `run` was started from still being there. That path is the one `run` was
+  started with (absolute, as services start it, or found on PATH then), links
+  kept: Homebrew's `opt/reqcove` is kept, so after `brew upgrade` a restart
+  starts the new version (read from the code; not tried).
+- **Then it stops as Ctrl-C stops it:** the system's web proxies put back
+  (`--local-proxy`), mitmproxy, the node and caffeinate stopped. Devices lose
+  the internet until it is up again.
+- **What a restart empties:** the records (flow ids and cursors too), the
+  markers, the agents' requests, the hosts changed by `reqcove capture` and
+  not saved, allow-all and discovery, the presets turned on, the
+  `reqcove console` links not opened yet. **What it keeps:** the state
+  directory and its tokens, the CA, the node; the `reqcove console` page's
+  port, and its sessions (a page open stays open); no other `run` can take
+  the state meanwhile.
+- **When the new start fails** (a file it reads is gone, say `--uvx`'s),
+  `run` puts back the config it had started from (a copy it kept from its
+  start, with the hosts file line `capture save` added; not `config.prev`),
+  keeps the one that failed as `config.failed` beside it, and starts once
+  more. If that fails too, it stays down, as a failed start always does (no
+  service restarts it). `reqcove status` says what happened (a `restart:`
+  line), until `run` is next started by hand or by its service. A run
+  started from flags alone (no `--config`) has no config to put back: a
+  failed start stays down.
+- **The config names another `--state`:** the new start uses it, and
+  `reqcove status --state DIR` for it says how it went.
+- In a terminal only, as `reqcove capture`. A `run` older than v1.3 says to
+  stop it and start it again.
+
+Tried: unit tests (the checks; the copy of the start config, after two writes
+and after a write then an edit by hand, after a `capture save` that added the
+hosts file line, with a leftover copy and with `--state` changed; a copy that
+is a link, another user's, not 0600, wrongly named, outside a state directory
+or missing is neither read nor removed, and no retry; the retry made once;
+the exec of a test binary keeping the page's port, its session and the
+state's lock, the variables and the fds not reaching a child), and E2E with
+real mitmproxy (`run` in LAN mode on the loopback, started through a link:
+two restarts, the second after an edit its start refuses; the pid, the
+page's port and session kept, the state never free, mitmdump and caffeinate
+stopped before each exec, the config put back and kept as `config.failed`,
+`reqcove status` saying so; on macOS with `--local-proxy`, the system proxy
+put back at each stop, through a stand-in `networksetup`). Not tried: a
+tailnet node, under launchd, `brew services` or systemd, after `brew upgrade`
+and `brew cleanup`, on Linux.
 
 ### Change what is recorded while it runs
 
@@ -585,7 +644,8 @@ console)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
 the hosts, stop and start, save, allow-all and discovery stay commands.
 
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system
-  picks, from the first `reqcove console` until `run` ends; never on the tailnet
+  picks, from the first `reqcove console` until `run` ends (`reqcove restart`
+  keeps it); never on the tailnet
   node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
   requests are refused there, as ever).
 - **The link works once, for 60 seconds:** it carries a one-use code after
@@ -595,7 +655,8 @@ the hosts, stop and start, save, allow-all and discovery stay commands.
   gives a new link. A link opened a second time closes every page of
   `reqcove console` and says so: someone else may have had it. At most 4 pages
   at once (a 5th closes the one used least recently); one unused for 12
-  hours closes; a restart of `run` closes them all.
+  hours closes; a restart of `run` closes them all, but `reqcove restart`
+  (since v1.3), which keeps them, each as long unused as it was.
 - **`reqcove console --end`** (since v1.3) closes every page and ends every
   link not opened yet; the pages say so. `reqcove console` again opens a new
   one. A `run` older than v1.3 says to restart it with v1.3.
@@ -2447,7 +2508,8 @@ no internet; turn the exit node off then.
 | Start | `reqcove run` (Ctrl-C stops it) | `reqcove service install`: now and at each login | `brew services start reqcove`: now and at each login |
 | After it ended | `reqcove run` | `reqcove service restart` (after stopping it until the next login too) | `brew services restart reqcove` |
 | After an update | Ctrl-C, then `reqcove run` | `reqcove service restart`; after moving to another binary (a new path, or Homebrew's), `reqcove service install` | `brew upgrade reqcove`, then `brew services restart reqcove` |
-| After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove service restart` | `reqcove reload`; for the rest, `brew services restart reqcove` |
+| After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, `reqcove restart`, or Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove restart` or `reqcove service restart` | `reqcove reload`; for the rest, `reqcove restart` or `brew services restart reqcove` |
+| Restart in the same process (since v1.3) | `reqcove restart` ([restart in place](#restart-in-place-reqcove-restart)) | `reqcove restart` | `reqcove restart` |
 | Stop until the next login | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user stop reqcove` | `brew services kill reqcove` (from Homebrew's help, not tried) |
 | Stop and remove | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
 | The log | the terminal | macOS: `service.log` in the state directory; Linux: `journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |

@@ -572,8 +572,14 @@ func restartCommand(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
-		return errors.New("reqcove restart runs only in a terminal: it empties the records and stops the devices' traffic for a moment, which is the user's choice (an agent never runs it). Run it in your own terminal")
+	return restartIn(ctx, os.Stdin, os.Stdout, *state)
+}
+
+var errRestartNotTerminal = errors.New("reqcove restart runs only in a terminal: it empties the records and stops the devices' traffic for a moment, which is the user's choice (an agent never runs it). Run it in your own terminal")
+
+func restartIn(ctx context.Context, in, out *os.File, state string) error {
+	if !terminal(in) || !terminal(out) {
+		return errRestartNotTerminal
 	}
-	return sendCapture(ctx, os.Stdout, *state, ctlRequest{Cmd: "restart"})
+	return sendCapture(ctx, out, state, ctlRequest{Cmd: "restart"})
 }

@@ -34,7 +34,8 @@ import (
 // `reqcove console` (since v1.2) opens a page of run's state and the agents'
 // requests, with Approve and Deny, in this computer's browser. run serves it
 // on 127.0.0.1 alone (a port the OS picks), never the tailnet node, the LAN or
-// --ui's page, from the first `reqcove console` until run ends. The link carries a
+// --ui's page, from the first `reqcove console` until run ends (reqcove
+// restart carries it and its sessions across: restart.go). The link carries a
 // one-use code (60 s) in its fragment, which the page trades for a session
 // token it keeps in sessionStorage and sends as a header: no cookie, so a page
 // of another site open in the browser sends nothing that counts. The browser

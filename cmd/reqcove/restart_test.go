@@ -889,3 +889,36 @@ esac
 		}
 	}
 }
+
+// reqcove restart: in a terminal only; a run older than v1.3 (its usage, or
+// in LAN mode its refusal) says to stop it and start it again.
+func TestRestartCmd(t *testing.T) {
+	ctx := context.Background()
+	dir, got := fakeCtlSock(t, func(req ctlRequest) ctlAnswer { return ctlAnswer{OK: true, Message: "restarting: run stops"} })
+	defer func() { terminal = isTerminal }()
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	if err := restartIn(ctx, r, w, dir); !errors.Is(err, errRestartNotTerminal) || len(*got) != 0 {
+		t.Errorf("off a terminal: %v %+v", err, *got)
+	}
+	terminal = func(*os.File) bool { return true }
+	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
+	defer out.Close()
+	if err := restartIn(ctx, r, out, dir); err != nil || len(*got) != 1 || (*got)[0].Cmd != "restart" {
+		t.Errorf("%v %+v", err, *got)
+	}
+	if b, _ := os.ReadFile(out.Name()); string(b) != "restarting: run stops\n" {
+		t.Errorf("%q", b)
+	}
+	for _, lan := range []bool{false, true} {
+		v12 := answerCtl(ctx, nil, newCtlState(&runOpts{lanMode: lan}), ctlRequest{Cmd: "restart-unknown"})
+		old, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer { return v12 })
+		if err := restartIn(ctx, r, out, old); !errors.Is(err, errOlderRestart) {
+			t.Errorf("lan %v: %v (%s)", lan, err, v12.Message)
+		}
+	}
+	if err := restartIn(ctx, r, out, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("no run: %v", err)
+	}
+}
