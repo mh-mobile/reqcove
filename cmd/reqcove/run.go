@@ -58,7 +58,7 @@ func run(ctx context.Context, args []string) error {
 	stopping := filepath.Join(o.state, stoppingFile)
 	os.Remove(stopping)
 	defer os.Remove(stopping)
-	go func() { <-ctx.Done(); os.WriteFile(stopping, nil, 0o600) }()
+	go func(done <-chan struct{}) { <-done; os.WriteFile(stopping, nil, 0o600) }(ctx.Done()) // ctx is replaced below
 	linksCmd := withState("reqcove links", o.state)
 	user := newUserLinks(os.Stderr, red, o.state, linksCmd)
 	user.lan = o.lanMode

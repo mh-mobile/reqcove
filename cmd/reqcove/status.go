@@ -187,8 +187,10 @@ var stepLinksCmd = "reqcove links"
 // nextSteps lists what the user must still do, most urgent first.
 func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo) []string {
 	var steps []string
-	if node.Backend == "" && node.Mode != "lan" {
-		steps = append(steps, "the tailnet node is starting")
+	// Before tsnet's first state, and while it connects (a few seconds after
+	// a start): not ready yet, though nothing else is asked.
+	if slices.Contains([]string{"", "NoState", "Starting"}, node.Backend) && node.Mode != "lan" {
+		steps = append(steps, "the tailnet node is starting: `reqcove status` in a few seconds says what is next")
 	}
 	steps = append(steps, lanSteps(node, devices)...)
 	if s := exitnode.FirstStepWith(node, stepLinksCmd); s != "" {

@@ -289,6 +289,10 @@
   starting" or "reqcove is stopping" (`run` leaves a `stopping` file in the
   state directory while it stops). Before: "starting, or stopping", read as
   "running or stopped". Unit tests.
+- **`reqcove status` in the seconds after a start**, while the node is still
+  connecting to Tailscale (`NoState`, `Starting`), says "the tailnet node is
+  starting" rather than "ready: turn on the exit node". Unit test; seen by
+  hand after `reqcove service restart`.
 
 ## v1.0.0 — 2026-11-15
 
