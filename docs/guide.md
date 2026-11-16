@@ -889,9 +889,14 @@ iphone (tailnet)".
   no device is your own to it). In a terminal only; agents never run it. A
   `run` older than v1.3 says to restart it with v1.3.
 - With the iPhone's Wi-Fi proxy set to the Remote Proxy, Safari sends the
-  page's requests to the proxy, which does not serve it in this version
-  (from reading the code; not tried): turn the proxy off, or use the exit
-  node, to open it.
+  page's requests to the proxy, which serves them itself, with the page's
+  own checks: who calls is the proxy's client, from its connection (a
+  forwarded header counts for nothing), and only `--device` devices reach
+  the Remote Proxy at all, so there the page works on an own device that
+  `--device` also carries. They never reach mitmproxy, so they make no
+  flow, under allow-all too. A tunnel (CONNECT) to the page's port is
+  refused, and the local proxy (`--local-proxy`) never serves the page
+  (tests; not tried in the iPhone's Safari).
 
 Who counts as your own device, and what the code guards:
 [SECURITY](SECURITY.md#tailnet-console-page).
@@ -915,7 +920,8 @@ tailnet IPv4 address, another user's `--device` device refused there, and a
 connection's remote address the peer's tailnet address), and E2E with real
 mitmproxy (the Scope panel's changes from the tailnet page, traced with the
 device's name, their answers without the state directory; discovery's names
-absent from it). Not tried: the page on an iPhone (Safari, the QR code), a
+absent from it; the page's requests through the Remote Proxy answered by
+the page and no flow, under allow-all). Not tried: the page on an iPhone (Safari, the QR code), a
 real tailnet with devices of your own, the page in any browser (its script:
 from reading the code).
 

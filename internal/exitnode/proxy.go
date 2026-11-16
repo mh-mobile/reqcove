@@ -221,6 +221,10 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rp.web.ServeHTTP(w, r) // mitmweb from a phone on the Remote Proxy, which sends it here too
 		return
 	}
+	if page := rp.toConsole(r.URL.Host); page != nil {
+		rp.console(w, r, page)
+		return
+	}
 	if rp.ui != nil && rp.policy().isSelf(r.URL.Host) {
 		if _, port, err := net.SplitHostPort(r.URL.Host); err != nil || port == "80" {
 			// A phone on the Remote Proxy sends the page's requests here too. As on port 80, a
@@ -233,6 +237,68 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rp.reverseProxy(src, dev).ServeHTTP(w, r)
+}
+
+// consoleRelay is reqcove console --tailnet's page while it is open (RelayConsole).
+var consoleRelay atomic.Pointer[relayedPage]
+
+type relayedPage struct {
+	addr netip.AddrPort // the page's listener: the node's tailnet IPv4 address, its port
+	h    http.Handler
+}
+
+// RelayConsole has the Remote Proxy serve requests to addr, the tailnet page's
+// listener (ListenConsole), with h, the page's own handler, until ctx ends: a
+// phone whose Wi-Fi proxy is the Remote Proxy sends the page's requests there.
+// In-process, never a reverse proxy: h gets the request as it came, its
+// RemoteAddr the proxy client's connection, so the page's checks run as on its
+// listener. Never through the local proxy or in LAN mode; never a tunnel; never
+// to mitmproxy, so no flow.
+func RelayConsole(ctx context.Context, addr string, h http.Handler) {
+	ap, err := netip.ParseAddrPort(addr)
+	if err != nil {
+		return
+	}
+	pg := &relayedPage{addr: netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), h: h}
+	consoleRelay.Store(pg)
+	context.AfterFunc(ctx, func() { consoleRelay.CompareAndSwap(pg, nil) })
+}
+
+// toConsole is the tailnet page's handler when hostport is its port on the
+// node (its address, or a name of the node's: the page refuses a name itself).
+func (rp *remoteProxy) toConsole(hostport string) http.Handler {
+	pg := consoleRelay.Load()
+	if pg == nil {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port != strconv.Itoa(int(pg.addr.Port())) {
+		return nil
+	}
+	if ip, err := netip.ParseAddr(host); err == nil && ip.Unmap() == pg.addr.Addr() || rp.policy().isSelf(host) {
+		return pg.h
+	}
+	return nil
+}
+
+// console hands r to the tailnet page, unchanged (no header added or read),
+// for one of this user's own devices on the Remote Proxy alone.
+func (rp *remoteProxy) console(w http.ResponseWriter, r *http.Request, page http.Handler) {
+	p := rp.policy()
+	why := ""
+	if src, err := netip.ParseAddrPort(r.RemoteAddr); rp.local || p == nil || p.lan {
+		why = "not served through the local proxy or in LAN mode"
+	} else if _, own := p.own[src.Addr().Unmap()]; err != nil || !own {
+		why = "for your own devices only (the same user as reqcove's node, neither tagged)"
+	}
+	if why != "" {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "reqcove: the console's tailnet page is "+why, http.StatusForbidden)
+		return
+	}
+	// As --ui's page through the proxy: a slow reader holds it no longer.
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pageWriteTimeout))
+	page.ServeHTTP(w, r)
 }
 
 // toWeb: hostport is the node's own mitmweb port.
@@ -252,6 +318,10 @@ func (rp *remoteProxy) connect(w http.ResponseWriter, r *http.Request, src netip
 		return
 	}
 	defer rp.releaseTunnel(src.Addr())
+	if rp.toConsole(r.Host) != nil {
+		http.Error(w, "reqcove: the console's tailnet page is never tunneled: its http:// requests go through this proxy as they are", http.StatusForbidden)
+		return
+	}
 	idle := tunnelIdle
 	var out net.Conn
 	var err error
