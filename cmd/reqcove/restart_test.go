@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -19,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -419,7 +421,7 @@ func TestHandoverTaken(t *testing.T) {
 	if h := takeHandover(); h.restarted || h.sessions != nil {
 		t.Errorf("fresh: %+v", h)
 	}
-	if st, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil); err != nil || st.page != nil {
+	if st, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil, nil); err != nil || st.page != nil {
 		t.Errorf("fresh start's page: %v %v", err, st)
 	}
 }
@@ -445,7 +447,7 @@ func TestCarriedPage(t *testing.T) {
 	carried = h
 	defer func() { carried = nil }()
 	logged := logTo(t)
-	st, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil)
+	st, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil, nil)
 	if err != nil || st.page == nil {
 		t.Fatal(err)
 	}
@@ -963,4 +965,175 @@ func quietPort(t *testing.T) int {
 	}
 	t.Fatal("no free port in 20000-29999")
 	return 0
+}
+
+// The retry carries the page's sessions as they are when the start failed:
+// none after reqcove console --end while it served (never the list handed
+// over), the same ones when nothing changed, none when it never served.
+func TestRetryCarriesSessionsNow(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		serve, end   bool
+		wantSessions int
+	}{{"ended", true, true, 0}, {"kept", true, false, 2}, {"never served", false, false, 0}} {
+		state := t.TempDir()
+		_, _, args, restart := restartable(t, "--device phone\n--state="+state+"\n")
+		snap := restart()
+		env := stubExec(t)
+		h := newProcess(t, snap, false)
+		ln, _ := net.Listen("tcp", "127.0.0.1:0")
+		f, _ := ln.(*net.TCPListener).File()
+		h.page, h.pageLn = f, ln
+		h.sessions = []carriedSession{{hash: sha("a"), idle: time.Second}, {hash: sha("b"), idle: time.Second}}
+		if c.serve {
+			carried = h
+			st, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil, nil)
+			carried = nil
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.end {
+				endPage(st)
+			}
+		}
+		h.failed(args, errors.New("boom"))
+		var got []string
+		for _, kv := range *env {
+			if v, ok := strings.CutPrefix(kv, envSessions+"="); ok {
+				got = strings.Split(v, ",")
+			}
+		}
+		if len(got) != c.wantSessions {
+			t.Errorf("%s: the retry carries %q", c.name, got)
+		}
+		ln.Close()
+		f.Close()
+	}
+}
+
+// oneConn is a listener that hands out conns, then waits until closed.
+type oneConn struct {
+	conns chan net.Conn
+	done  chan struct{}
+	once  sync.Once
+}
+
+func (l *oneConn) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+func (l *oneConn) Close() error   { l.once.Do(func() { close(l.done) }); return nil }
+func (l *oneConn) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1} }
+
+// A request already queued on the carried port when the page starts
+// serving (the page's poll during the restart) finds its session there:
+// the sessions are in place, under the page's lock, before it serves.
+func TestCarriedPageSessionsBeforeServing(t *testing.T) {
+	token := secret(32)
+	srvEnd, cliEnd := net.Pipe()
+	ln := &oneConn{conns: make(chan net.Conn, 1), done: make(chan struct{})}
+	ln.conns <- srvEnd
+	code := make(chan int, 1)
+	go func() {
+		fmt.Fprintf(cliEnd, "GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:1\r\n%s: %s\r\nConnection: close\r\n\r\n", sessionHeader, token)
+		res, err := http.ReadResponse(bufio.NewReader(cliEnd), nil)
+		if err != nil {
+			code <- 0
+			return
+		}
+		code <- res.StatusCode
+	}()
+	carried = &handover{pageLn: ln, sessions: []carriedSession{{hash: sha(token), idle: time.Second}}}
+	defer func() { carried = nil }()
+	if _, err := serveCtl(t.Context(), shortDir(t), nil, &runOpts{}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c := <-code; c != http.StatusOK {
+		t.Errorf("the queued poll: %d", c)
+	}
+}
+
+// run's restart is in place before ctl.sock serves: a restart asked at once
+// is never refused as one this run cannot make.
+func TestCtlRestartBeforeServing(t *testing.T) {
+	state := shortDir(t)
+	if _, err := serveCtl(t.Context(), state, nil, &runOpts{}, func(string) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	a, err := askRun(t.Context(), state, ctlRequest{Cmd: "restart"})
+	if err != nil || strings.Contains(a.Message, "cannot restart itself") {
+		t.Errorf("%v %q", err, a.Message)
+	}
+}
+
+// stubRun stands in for run in runRestartable.
+func stubRun(t *testing.T, f func(ctx context.Context) error) {
+	t.Helper()
+	runStart = func(ctx context.Context, _ []string) error { return f(ctx) }
+	t.Cleanup(func() { runStart = run })
+}
+
+// A stop (Ctrl-C, a service's SIGTERM) is never undone by a restart: asked
+// while run stops for one, no exec and the new snapshot removed; ending the
+// start after one, no failed start (no config put back, no exec), the
+// snapshot removed.
+func TestRestartStopSignal(t *testing.T) {
+	state := t.TempDir()
+	start := "--device phone\n--state=" + state + "\n"
+	_, config, args, restart := restartable(t, start)
+	env := stubExec(t)
+	*env = []string{"none"}
+	stopped, stop := context.WithCancel(t.Context())
+	stop()
+
+	snap := restart()
+	stubRun(t, func(context.Context) error { return &restartExec{snapshot: snap} })
+	if err := runRestartable(stopped, args); err != nil || !slices.Equal(*env, []string{"none"}) || exists(snap) {
+		t.Errorf("stopped while restarting: %v, exec'd %v, snapshot there %v", err, !slices.Equal(*env, []string{"none"}), exists(snap))
+	}
+
+	snap = restart()
+	os.WriteFile(config, []byte(start+"--verbose\n"), 0o600)
+	t.Setenv(envSnapshot, snap)
+	stubRun(t, func(ctx context.Context) error { return fmt.Errorf("mitmproxy: %w", ctx.Err()) })
+	if err := runRestartable(stopped, args); err == nil || !slices.Equal(*env, []string{"none"}) || exists(snap) || exists(config+".failed") || read(t, config) == start {
+		t.Errorf("stopped while starting: %v, exec'd %v, snapshot there %v, config put back %v", err, !slices.Equal(*env, []string{"none"}), exists(snap), read(t, config) == start)
+	}
+}
+
+// A start after a restart that has served restartGrace counts as good, ready
+// or not (a node waiting for a login): a failure later neither puts the
+// config back nor execs; the snapshot is gone.
+func TestRestartGrace(t *testing.T) {
+	state := t.TempDir()
+	start := "--device phone\n--state=" + state + "\n"
+	_, config, args, restart := restartable(t, start)
+	env := stubExec(t)
+	*env = []string{"none"}
+	restartGrace = 20 * time.Millisecond
+	t.Cleanup(func() { restartGrace = 2 * time.Minute })
+	snap := restart()
+	os.WriteFile(config, []byte(start+"--verbose\n"), 0o600)
+	t.Setenv(envSnapshot, snap)
+	stubRun(t, func(context.Context) error {
+		carried.serving()
+		for exists(snap) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		return errors.New("hours later")
+	})
+	done := make(chan error, 1)
+	go func() { done <- runRestartable(t.Context(), args) }()
+	select {
+	case err := <-done:
+		if err == nil || !slices.Equal(*env, []string{"none"}) || read(t, config) == start {
+			t.Errorf("%v, exec'd %v, config put back %v", err, !slices.Equal(*env, []string{"none"}), read(t, config) == start)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the snapshot stays: the start never counted as good")
+	}
 }

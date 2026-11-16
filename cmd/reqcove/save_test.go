@@ -197,7 +197,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	c, o := start("--allow-hosts", "cli.example.com")
 	logged := logTo(t)
 	sctx, stopCtl := context.WithCancel(ctx)
-	if _, err := serveCtl(sctx, state, c, o, nil); err != nil {
+	if _, err := serveCtl(sctx, state, c, o, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	change := func(req ctlRequest) string {
@@ -266,7 +266,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	defer c.Stop()
 	sctx, stopCtl = context.WithCancel(ctx)
 	defer stopCtl()
-	if _, err := serveCtl(sctx, o.state, c, o, nil); err != nil {
+	if _, err := serveCtl(sctx, o.state, c, o, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.1"}})
@@ -511,5 +511,47 @@ func TestSaveAsks(t *testing.T) {
 	}
 	if s := out.String(); !strings.Contains(s, "Go on? [y/N] added to "+config+": --allow-hosts=@"+filepath.Join(dir, "hosts")+"; saved to") {
 		t.Errorf("y:\n%s", s)
+	}
+}
+
+// Save's confirmation is of the files read too, not only of what it writes:
+// a host added to the hosts file after the page showed the change (which the
+// save would drop: the same text written) refuses it, the file kept; so does
+// an edit to the config. Just before the rename, the file must still be the
+// one read.
+func TestSaveConfirmFilesRead(t *testing.T) {
+	dir := t.TempDir()
+	hostsFile, config := saveFiles(t, dir, "a.com\n", "")
+	args := []string{"--config", config, "--device", "x", "--state", filepath.Join(dir, "s")}
+	origin := hostsOrigin{files: []string{hostsFile}, inFiles: map[string]bool{"a.com": true}}
+	base, _ := capture.ParseAllowHosts([]string{"a.com"})
+	st := &ctlState{o: &runOpts{config: config, args: args}, origin: origin}
+	sp, no := planSave(base, st)
+	if no != "" {
+		t.Fatal(no)
+	}
+	os.WriteFile(hostsFile, []byte("a.com\nb.com\n"), 0o644)
+	if sp2, _ := planSave(base, st); sp2.saves[0].text != sp.saves[0].text {
+		t.Fatalf("the edit changes what is written: the test shows nothing (%q)", sp2.saves[0].text)
+	}
+	if a, saved := saveScope(base, st, sp.token); saved || a.OK || !strings.Contains(a.Message, "changed since the change was shown") {
+		t.Errorf("hosts file edited: %+v", a)
+	}
+	if got := read(t, hostsFile); got != "a.com\nb.com\n" {
+		t.Errorf("hosts file: %q", got)
+	}
+	sp, _ = planSave(base, st)
+	os.WriteFile(config, []byte(read(t, config)+"--verbose\n"), 0o600)
+	if a, saved := saveScope(base, st, sp.token); saved || a.OK {
+		t.Errorf("config edited: %+v", a)
+	}
+
+	text, rev, err := hostsText(hostsFile, []string{"a.com"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(hostsFile, []byte("a.com\nc.com\n"), 0o644)
+	if err := writeHostsText(hostsFile, text, []string{"a.com"}, rev); err == nil || read(t, hostsFile) != "a.com\nc.com\n" {
+		t.Errorf("written over an edit: %v", err)
 	}
 }

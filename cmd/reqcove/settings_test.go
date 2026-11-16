@@ -43,7 +43,7 @@ func settingsRun(t *testing.T, text string, extra ...string) (base, token string
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cap := &capture.Capture{Store: capture.NewStore(10, 1<<20)}
-	st, err = serveCtl(ctx, dir, cap, o, func() mcpserver.StatusOut {
+	st, err = serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Node: exitnode.Status{Devices: map[string]string{"nOTHER": "colleague-phone"}, Own: map[string]string{"nOWN": "my-iphone"}}}
 	})
 	if err != nil {
@@ -316,21 +316,25 @@ func TestPageSettingsMaskValues(t *testing.T) {
 }
 
 // The restart's list: every flag the config on disk has otherwise than run
-// started with, an edit by hand of a terminal-only flag among them, and
-// what a file the config reads changed; a stale page refused.
+// started with, an edit by hand of a terminal-only flag among them, that a
+// masking file the config reads changed, and the hosts a hosts file gives
+// now; a stale page refused, after an edit to the config or to a file it reads.
 func TestPageRestartDiff(t *testing.T) {
-	names := filepath.Join(t.TempDir(), "names")
+	names, hosts := filepath.Join(t.TempDir(), "names"), filepath.Join(t.TempDir(), "hosts")
 	os.WriteFile(names, []byte("x-a\n"), 0o600)
-	base, token, _, config, restarted := settingsRun(t, "--device=phone\n--mask-names=@"+names)
+	os.WriteFile(hosts, []byte("a.com\n"), 0o600)
+	base, token, _, config, restarted := settingsRun(t, "--device=phone\n--mask-names=@"+names+"\n--allow-hosts=@"+hosts)
 	if _, ok, msg := postSetting(t, base, token, map[string]any{"flag": "keep-awake", "values": []string{"ac"}}); !ok {
 		t.Fatal(msg)
 	}
 	os.WriteFile(config, []byte(read(t, config)+"--uvx=/opt/other/uvx\n--python=3.14\n"), 0o600)
 	os.WriteFile(names, []byte("x-a\nx-b\n"), 0o600)
+	os.WriteFile(hosts, []byte("b.com\na.com\n"), 0o600)
 	_, b := call(t, base, "GET", "/api/restart", "", map[string]string{sessionHeader: token})
 	var r pageRestart
 	json.Unmarshal([]byte(b), &r)
-	want := []pageDiff{{Flag: "keep-awake", Now: []string{"ac"}}, {Flag: "python", Now: []string{"3.14"}}, {Flag: "uvx", Now: []string{"/opt/other/uvx"}}, {Flag: "mask-names", Changed: true}}
+	want := []pageDiff{{Flag: "keep-awake", Now: []string{"ac"}}, {Flag: "python", Now: []string{"3.14"}}, {Flag: "uvx", Now: []string{"/opt/other/uvx"}}, {Flag: "mask-names", Changed: true},
+		{Flag: "allow-hosts=@FILE (its hosts)", Was: []string{"a.com"}, Now: []string{"a.com", "b.com"}}}
 	if len(r.Diff) != len(want) || r.Message != "" || r.Rev == "" || !strings.Contains(r.Warning, "start empty") {
 		t.Fatalf("restart: %s", b)
 	}
@@ -339,11 +343,20 @@ func TestPageRestartDiff(t *testing.T) {
 			t.Errorf("diff %d: %+v, want %+v", i, d, want[i])
 		}
 	}
-	// Edited again after the page listed it: refused, nothing stopped.
-	os.WriteFile(config, []byte(read(t, config)+"--verbose\n"), 0o600)
-	_, b = call(t, base, "POST", "/api/restart", `{"rev":"`+r.Rev+`"}`, map[string]string{sessionHeader: token})
-	if !strings.Contains(b, "the config changed since the page listed") || !strings.Contains(b, "nothing stopped") || len(restarted) != 0 {
-		t.Errorf("stale restart: %s", b)
+	// Edited again after the page listed it, the config or a file it reads:
+	// refused, nothing stopped.
+	for _, edit := range []func(){
+		func() { os.WriteFile(config, []byte(read(t, config)+"--verbose\n"), 0o600) },
+		func() { os.WriteFile(hosts, []byte("b.com\na.com\nc.com\n"), 0o600) },
+		func() { os.WriteFile(names, []byte("x-a\nx-c\n"), 0o600) },
+	} {
+		_, b = call(t, base, "GET", "/api/restart", "", map[string]string{sessionHeader: token})
+		json.Unmarshal([]byte(b), &r)
+		edit()
+		_, b = call(t, base, "POST", "/api/restart", `{"rev":"`+r.Rev+`"}`, map[string]string{sessionHeader: token})
+		if !strings.Contains(b, "changed since the page listed") || !strings.Contains(b, "nothing stopped") || len(restarted) != 0 {
+			t.Fatalf("stale restart: %s", b) // run asked to restart: the page is gone
+		}
 	}
 	// As listed: run restarts, once the answer is out.
 	_, b = call(t, base, "GET", "/api/restart", "", map[string]string{sessionHeader: token})
@@ -475,7 +488,8 @@ func TestCheckConfigMode(t *testing.T) {
 
 // A restart asks the binary it would exec first: refused there, nothing is
 // stopped (no snapshot, run not asked); a binary older than the check mode
-// leaves the check to this run, and the answer says so.
+// (older than v1.3: it could not take on the state's lock, nor retry) is
+// refused too, nothing stopped.
 func TestRestartBinaryCheck(t *testing.T) {
 	state := t.TempDir()
 	st, _, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
@@ -500,11 +514,14 @@ func TestRestartBinaryCheck(t *testing.T) {
 	}
 	startBinary = script(`echo "flag provided but not defined: -check-config" >&2; echo "Usage: reqcove run [flags]" >&2; exit 2`)
 	a = restartOp(t.Context(), st, 0)
-	if !a.OK || !strings.Contains(a.Message, "has no check of its own") || strings.Contains(a.Message, "Usage") {
+	if a.OK || a.after != nil || !strings.Contains(a.Message, "is older than v1.3") || !strings.Contains(a.Message, "stop run and start it again yourself") || !strings.HasSuffix(a.Message, "; nothing stopped") || strings.Contains(a.Message, "Usage") {
 		t.Errorf("an older binary: %q", a.Message)
 	}
+	if m, _ := filepath.Glob(filepath.Join(state, "restart-*")); len(m) != 0 || asked {
+		t.Errorf("an older binary: stopped: %v %v", m, asked)
+	}
 	startBinary = script(`exit 0`)
-	if a := restartOp(t.Context(), st, 0); !a.OK || strings.Contains(a.Message, "no check of its own") {
+	if a := restartOp(t.Context(), st, 0); !a.OK {
 		t.Errorf("checked: %q", a.Message)
 	}
 }

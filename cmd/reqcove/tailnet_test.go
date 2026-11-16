@@ -54,12 +54,13 @@ func tailnetRun(t *testing.T, o *runOpts) (string, *ctlState, *atomic.Pointer[ex
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cap := &capture.Capture{Store: capture.NewStore(10, 1<<20)}
-	st, err := serveCtl(ctx, dir, cap, o, func() mcpserver.StatusOut {
+	st, err := serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Version: "v1.3.0", Executable: "/opt/homebrew/bin/reqcove", Service: "com.example", Manager: "launchd",
 			ConfigFile: home + "/.config/reqcove/config", ConfigUnused: dir + "/config", HostsFiles: []string{dir + "/hosts"}, KeepAwake: "ac", Recording: "on",
 			BaseAllowHosts: []string{"a.example.com"},
 			NextSteps: []string{"approve the exit node", "to end it now, in your terminal: " + withState("reqcove capture discover --end", dir),
-				"/Library/LaunchAgents/com.example.plist runs /opt/old/reqcove, which is gone", "see ~/Library/Logs/reqcove.log."},
+				"/Library/LaunchAgents/com.example.plist runs /opt/old/reqcove, which is gone", "see ~/Library/Logs/reqcove.log.",
+				otherOnPathPrefix + "/Users/x/My Tools/bin/reqcove (your shell runs the first one; `type reqcove`)"},
 			Node:            exitnode.Status{Node: "reqcove.ts.net", IPs: []string{"100.64.0.1"}, Devices: map[string]string{"n1": "iphone"}},
 			OutOfScopeHosts: []mcpserver.OutHost{{Host: "seen.example.com", Count: 3, Add: "reqcove capture add seen.example.com"}}, OutOfScopeHostsKept: 7}
 	})
@@ -317,14 +318,14 @@ func TestTailnetPageServes(t *testing.T) {
 	}
 	_, b := call(t, base, "POST", "/api/marker", `{"text":"x"}`, map[string]string{sessionHeader: tok})
 	all.WriteString(b)
-	for _, bad := range []string{state, home, "/opt/", "/Library", "~/", "seen.example.com", "config"} {
+	for _, bad := range []string{state, home, "/opt/", "/Library", "~/", "seen.example.com", "config", "Tools/bin"} {
 		if strings.Contains(all.String(), bad) {
 			t.Errorf("%q in the tailnet page's answers: %s", bad, all.String())
 		}
 	}
 	_, s = pageStateOf(t, base, tok)
 	if !s.Tailnet || len(s.Discovered) != 0 || s.DiscoveredKept != 7 || s.Executable != "" || s.ConfigFile != "" || len(s.HostsFiles) != 0 || len(s.ServiceCmds) != 0 ||
-		s.Service != "com.example" || s.KeepAwake == "" || len(s.NextSteps) != 4 || !strings.Contains(s.NextSteps[1], "reqcove capture discover --end --state "+pathHidden) ||
+		s.Service != "com.example" || s.KeepAwake == "" || len(s.NextSteps) != 2 || !strings.Contains(s.NextSteps[1], "reqcove capture discover --end --state "+pathHidden) ||
 		s.FlowsURL != "" {
 		t.Errorf("state: %+v", s)
 	}

@@ -227,7 +227,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 		if hosts != "" {
 			hs = strings.Split(hosts, ",")
 		}
-		htext, err := hostsText(hostsFile, hs, hostsHead)
+		htext, hrev, err := hostsText(hostsFile, hs, hostsHead)
 		if err != nil {
 			return fmt.Errorf("%w (nothing written)", err)
 		}
@@ -254,7 +254,7 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 			}
 			fmt.Fprintf(out, "   the old hosts: %s\n", shellWord(hostsFile+".old"))
 		}
-		if err := writeHostsText(hostsFile, htext, hs); err != nil {
+		if err := writeHostsText(hostsFile, htext, hs, hrev); err != nil {
 			return fmt.Errorf("%w (nothing replaced)", err)
 		}
 		if err := writeSetupConfig(config, ctext, want); err != nil {

@@ -178,7 +178,7 @@ func TestReloadE2E(t *testing.T) {
 	}
 	defer c.Stop()
 	logged := logTo(t)
-	if _, err := serveCtl(ctx, state, c, o, nil); err != nil {
+	if _, err := serveCtl(ctx, state, c, o, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	socks, _ := proxy.SOCKS5("tcp", c.SocksAddr, &proxy.Auth{User: "dev", Password: c.SocksSecret}, proxy.Direct)

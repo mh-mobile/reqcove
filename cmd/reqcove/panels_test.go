@@ -460,7 +460,7 @@ modify_headers:
 	}
 	defer c.Stop()
 	logged := logTo(t)
-	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	base, code := openUI(t, state)
