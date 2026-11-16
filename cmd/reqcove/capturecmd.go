@@ -40,7 +40,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload) or console (reqcove console)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload), console (reqcove console) or console-end (its --end, since v1.3)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -59,6 +59,7 @@ type ctlAnswer struct {
 	New      bool                       `json:"new,omitempty"`      // request: made now, not pending already
 	Port     int                        `json:"port,omitempty"`     // console: the page's, on 127.0.0.1 (since v1.2)
 	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
+	File     string                     `json:"file,omitempty"`     // console: the code file's name, in the state directory (since v1.3)
 }
 
 const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end | capture requests | capture approve ID | capture deny ID  [--state DIR]"
@@ -81,7 +82,7 @@ func captureCmd(ctx context.Context, args []string) error {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
 	switch req.Cmd {
-	case "request", "console": // the agents' op, through reqcove mcp; reqcove console's
+	case "request", "console", "console-end": // the agents' op, through reqcove mcp; reqcove console's
 		return errors.New("usage: " + captureUse)
 	case "approve", "deny":
 		if len(req.Hosts) != 1 {
@@ -136,7 +137,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start", "save", "console":
+	case "stop", "start", "save", "console", "console-end":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -279,7 +280,10 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
 	if err != nil {
 		need := "v1.1"
-		if requestOps[req.Cmd] || req.Cmd == "console" {
+		switch {
+		case req.Cmd == "console-end":
+			need = "v1.3"
+		case requestOps[req.Cmd] || req.Cmd == "console":
 			need = "v1.2"
 		}
 		return ctlAnswer{}, noCtl(ctx, state, need)
@@ -296,6 +300,9 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 			return a, fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): whether it took the change, `%s` says", state, ctlWait, withState("reqcove status", state))
 		}
 		return a, fmt.Errorf("the running reqcove did not answer: %w", err)
+	}
+	if req.Cmd == "console-end" && !a.OK && (strings.HasPrefix(a.Message, v11Usage) || strings.HasPrefix(a.Message, lanRefusal)) {
+		return a, errOlderEnd
 	}
 	if !a.OK && strings.HasPrefix(a.Message, v11Usage) {
 		switch {
@@ -345,6 +352,7 @@ type ctlState struct {
 	ctx    context.Context
 	status func() mcpserver.StatusOut
 	page   *page
+	dir    string // the state directory: the code files'
 }
 
 func newCtlState(o *runOpts) *ctlState {
@@ -355,7 +363,7 @@ func newCtlState(o *runOpts) *ctlState {
 // returns the state it answers from; status is what reqcove console's page shows.
 func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
-	st.ctx, st.status = ctx, status
+	st.ctx, st.status, st.dir = ctx, status, state
 	if cap != nil { // nil: tests of LAN mode
 		st.reqs.redacting = cap.Store.Redacting
 	}
@@ -407,12 +415,18 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		}
 		return openPage(cap, st)
 	}
+	if req.Cmd == "console-end" { // in LAN mode too, as console
+		if _, err := req.normalized(); err != nil {
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+		}
+		return endPage(st)
+	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
 		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"}
 	}
 	if lan {
-		return ctlAnswer{Message: "refused: in LAN mode what is recorded cannot change while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
+		return ctlAnswer{Message: lanRefusal + " while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
 	}
 	req, err := req.normalized()
 	if err != nil {

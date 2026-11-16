@@ -299,11 +299,16 @@ func approve(q *captureRequests, req ctlRequest, apply func(why string, hosts []
 	return q.finish(r, apply(requestWhy(r.hosts, req.Via), r.hosts))
 }
 
-// errOlderRun: a v1.1 run, which has no requests; errOlderUI: nor reqcove console's page.
+// errOlderRun: a v1.1 run, which has no requests; errOlderUI: nor reqcove
+// console's page; errOlderEnd: one older than v1.3, its --end.
 var (
 	errOlderRun = errors.New("this run is v1.1, which has no agents' requests: restart it with v1.2 or later (a restart empties the records); nothing changed")
 	errOlderUI  = errors.New("this run is v1.1, which has no page: restart it with v1.2 or later (a restart empties the records); nothing opened")
+	errOlderEnd = errors.New("this run is older than v1.3, which has no reqcove console --end: restart it with v1.3 or later (a restart empties the records, and ends every page and link); nothing ended")
 )
+
+// lanRefusal starts a v1.2 run's answer in LAN mode to an op it does not know.
+const lanRefusal = "refused: in LAN mode what is recorded cannot change"
 
 // v11Usage starts a v1.1 run's answer to an op it does not know.
 const v11Usage = "refused: usage: reqcove capture add"

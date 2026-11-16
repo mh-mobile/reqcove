@@ -68,6 +68,8 @@ func run(ctx context.Context, args []string) error {
 		os.Remove(p)
 		defer os.Remove(p)
 	}
+	sweepCodeFiles(o.state) // reqcove console's: a killed run's, and this one's at the end
+	defer sweepCodeFiles(o.state)
 	if err := keepNodeName(o.state, o.hostname); err != nil {
 		return err
 	}

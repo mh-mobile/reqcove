@@ -407,11 +407,19 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
 - **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
   code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
-  prints and opens `http://127.0.0.1:PORT/#c=CODE`. The code is after `#`,
+  prints `http://127.0.0.1:PORT/#c=CODE`. Since v1.3 the browser gets the
+  link from a file `run` writes in the state directory (0600, created anew,
+  never through a symlink, a random name; tests), which sends it on, and
+  `open` or `xdg-open` is given that file's path, never the link (a test
+  checks their arguments). `run` removes the file after 60 seconds, at
+  `reqcove console --end`, when it ends, and when it starts (one a killed
+  `run` left) (tests). The code is after `#`,
   which the browser does not send; the page trades it once for a session
   token, kept in that tab's sessionStorage and sent in a header, never a
   cookie, and takes the code out of the address bar. A code traded a second
-  time ends every session and the page says so. At most 4 sessions, in
+  time ends every session and the page says so; so does
+  `reqcove console --end`, which also ends every code not traded yet (tests).
+  At most 4 sessions, in
   `run`'s memory only, each ending after 12 hours unused and all at `run`'s
   end. The code and tokens are never logged and never in an answer but the
   trade's own (tests); `run` keeps them as hashes (from the code).
@@ -433,11 +441,14 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
 - **What it does not guard against:** an agent that can run commands as your
   user: it can run `reqcove console` itself through a pseudo terminal and trade the
   code before you, or write to `ctl.sock` directly, as above (if you then open
-  the link, it was used: every session ends and the page says so). While
-  `open` or `xdg-open` runs, the link with its code is in their process
-  arguments, which `ps` shows to the other users of this computer (not
-  tried here), for a moment; a code traded by someone else first shows as
-  above. In the moment before your tab's trade fails and ends every session,
+  the link, it was used: every session ends and the page says so). The file
+  that holds the link is 0600 in the 0700 state directory: root and your
+  user can read it, for up to 60 seconds (a `run` killed meanwhile leaves it
+  until its next start, its code expired long before). v1.2's `reqcove
+  console`, against any `run`, still gives the link in the opener's
+  arguments, which `ps` shows other users for a moment; v1.3's, against a
+  v1.2 `run` (no file), opens nothing and prints the link alone (a test). A
+  code traded by someone else first shows as above. In the moment before your tab's trade fails and ends every session,
   that other session can approve a pending request: `reqcove capture
   requests` then shows it approved in the console (read from the code; that a
   second trade ends every session is tested). What it shows is not secret beyond `reqcove status`: never the flows'
