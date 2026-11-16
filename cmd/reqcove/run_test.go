@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/proxy"
 
@@ -253,5 +254,18 @@ func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("run did not stop after mitmproxy failed for good")
+	}
+}
+
+// A long host name (CI's Macs have them) is cut short: mitmproxy refuses a CA
+// whose name is over 64 characters, and run would not start.
+func TestCANameFits(t *testing.T) {
+	day := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	if got := caNameFor("macbook-2.local", day); got != "Reqcove CA (macbook-2, 2026-11-16)" {
+		t.Errorf("short: %q", got)
+	}
+	got := caNameFor(strings.Repeat("ホ", 100)+".local", day)
+	if n := utf8.RuneCountInString(got); n != 64 || !strings.HasSuffix(got, ", 2026-11-16)") {
+		t.Errorf("long: %d characters: %q", n, got)
 	}
 }

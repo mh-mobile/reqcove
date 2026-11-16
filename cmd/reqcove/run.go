@@ -248,8 +248,17 @@ var restartDelay time.Duration
 // CAs from several machines can tell their profiles apart.
 func caName() string {
 	host, _ := os.Hostname()
+	return caNameFor(host, time.Now())
+}
+
+// caNameFor cuts a long host name short: X.509 caps a common name at 64
+// characters, and mitmproxy refuses to make a CA with a longer one.
+func caNameFor(host string, now time.Time) string {
 	host = strings.TrimSuffix(host, ".local")
-	return fmt.Sprintf("Reqcove CA (%s, %s)", host, time.Now().Format("2006-01-02"))
+	if r := []rune(host); len(r) > 39 { // 64 less "Reqcove CA (" and ", 2006-01-02)"
+		host = string(r[:39])
+	}
+	return fmt.Sprintf("Reqcove CA (%s, %s)", host, now.Format("2006-01-02"))
 }
 
 // shareCA copies the default state's CA into a new --state's.

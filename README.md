@@ -108,7 +108,8 @@ the agent.
    does `reqcove run` started in a terminal. (Or open `http://mitm.it` in
    Safari, typing the `http://`.) Install the profile (Settings › Profile
    Downloaded), and trust it in Settings › General › About › Certificate
-   Trust Settings. It is named `Reqcove CA (<computer>, <date>)`.
+   Trust Settings. It is named `Reqcove CA (<computer>, <date>)`, the
+   computer's name cut to 39 characters.
 4. **Give your agent the tools**, and the skill that teaches it how to use
    them. For Claude Code:
 

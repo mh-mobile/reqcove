@@ -77,6 +77,16 @@
   nothing and prints the link alone. Unit tests; the link's `#c=` kept
   through the file in headless Chromium and Firefox (not tried: Safari).
 
+### Fixed
+
+- **A computer whose name is long** (over 39 characters, GitHub's macOS
+  runners among them) could not start a `run` that makes its own CA: the
+  CA's name (`Reqcove CA (<computer>, <date>)`) went over X.509's 64
+  characters and mitmproxy refused it ("making the CA: exit status 1"; a
+  GitHub macOS runner's name made it 86 characters).
+  The computer's name in it is cut to 39 characters. Unit test; the E2E
+  test of `reqcove restart` on CI's macOS.
+
 ## v1.2.0 — 2026-11-16
 
 ### Added
