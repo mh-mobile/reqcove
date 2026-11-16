@@ -587,7 +587,7 @@ func TestCaptureRequestE2E(t *testing.T) {
 		t.Errorf("markers: %+v", m)
 	}
 
-	// reqcove ui's page approves it the same way.
+	// reqcove console's page approves it the same way.
 	req = tool("request_capture_add", map[string]any{"hosts": []string{"page.example"}})
 	base, code := openUI(t, state)
 	token := trade(t, base, code)
@@ -598,12 +598,12 @@ func TestCaptureRequestE2E(t *testing.T) {
 	if r.StatusCode != 200 || !strings.Contains(b, `"ok":true`) || !strings.Contains(b, "page.example added") {
 		t.Errorf("approve in the page: %d %s", r.StatusCode, b)
 	}
-	why = "capture add page.example (asked by an agent, approved in the page)"
+	why = "capture add page.example (asked by an agent, approved in the console)"
 	if m := c.Store.Markers(0); len(m) != 4 || m[3].Source != "mcp" || m[3].Text != why || !slices.Contains(c.Base().Hosts, "page.example") {
 		t.Errorf("markers: %+v; base %q", m, c.Base().Hosts)
 	}
 	waitLog(t, logged, why+": applied: page.example added", 1)
-	if got := tool("get_capture_request", map[string]any{"id": req.ID}); got.State != "applied" || got.ApprovedIn != "page" {
+	if got := tool("get_capture_request", map[string]any{"id": req.ID}); got.State != "applied" || got.ApprovedIn != "console" {
 		t.Errorf("get: %+v", got)
 	}
 	if strings.Contains(logged.String(), code) || strings.Contains(logged.String(), token) {

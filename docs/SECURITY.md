@@ -392,15 +392,15 @@ through `reqcove mcp`).
   (an E2E test). Requests live in memory only, and a restart of `run` drops
   them.
 
-Since v1.2 **`reqcove ui`** opens a page of `run`'s state and of these
+Since v1.2 **`reqcove console`** opens a page of `run`'s state and of these
 requests, with Approve and Deny, in this computer's browser
-([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-ui)). It changes nothing but
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). It changes nothing but
 that: an approval goes as `reqcove capture approve` does, for the hosts the
-request holds, traced "approved in the page"; a denial as `capture deny`.
+request holds, traced "approved in the console"; a denial as `capture deny`.
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
-  from the first `reqcove ui` until it ends; never on the tailnet node, the
+  from the first `reqcove console` until it ends; never on the tailnet node, the
   LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
-- **The way in:** `reqcove ui` (a terminal only, as `capture`) gets a one-use
+- **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
   code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
   prints and opens `http://127.0.0.1:PORT/#c=CODE`. The code is after `#`,
   which the browser does not send; the page trades it once for a session
@@ -423,7 +423,7 @@ request holds, traced "approved in the page"; a denial as `capture deny`.
   without a session; another user was not tried); a tailnet device or the
   LAN does not reach 127.0.0.1. The page was not tried in a real browser.
 - **What it does not guard against:** an agent that can run commands as your
-  user: it can run `reqcove ui` itself through a pseudo terminal and trade the
+  user: it can run `reqcove console` itself through a pseudo terminal and trade the
   code before you, or write to `ctl.sock` directly, as above (if you then open
   the link, it was used: every session ends and the page says so). While
   `open` or `xdg-open` runs, the link with its code is in their process

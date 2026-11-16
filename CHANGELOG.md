@@ -20,7 +20,7 @@
   gives `capture_requests`, `reqcove status` "asked:". Traced in `run`'s log,
   and on approval as a marker with source `mcp` and `scope_change`. Unit and
   E2E tests; a real client's dialog not tried.
-- **`reqcove ui`: the state and the agents' requests in a page.** In a
+- **`reqcove console`: the state and the agents' requests in a page.** In a
   terminal only, it asks `run` (a new `ctl.sock` op) for a page on 127.0.0.1
   alone (a port the system picks, kept until `run` ends) and a one-use code
   good for 60 seconds, prints `http://127.0.0.1:PORT/#c=CODE` and opens it
@@ -29,7 +29,7 @@
   `run`'s end; a code used twice ends them all) and shows what
   `reqcove status` shows, refreshed every 5 seconds, and the requests
   waiting with Approve (as `capture approve`, for the hosts asked only;
-  traced "approved in the page", `approved_in: page`) and Deny. Never the
+  traced "approved in the console", `approved_in: console`) and Deny. Never the
   flows, a token or link, or an agent's text. Exact Host, same Origin, JSON
   POSTs, no CORS, CSP `default-src 'self'` and `frame-ancestors 'none'`,
   `no-store`. A `run` older than v1.2 says to restart it. Unit and E2E

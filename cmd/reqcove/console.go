@@ -27,10 +27,10 @@ import (
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
 )
 
-// `reqcove ui` (since v1.2) opens a page of run's state and the agents'
+// `reqcove console` (since v1.2) opens a page of run's state and the agents'
 // requests, with Approve and Deny, in this computer's browser. run serves it
 // on 127.0.0.1 alone (a port the OS picks), never the tailnet node, the LAN or
-// --ui's page, from the first `reqcove ui` until run ends. The link carries a
+// --ui's page, from the first `reqcove console` until run ends. The link carries a
 // one-use code (60 s) in its fragment, which the page trades for a session
 // token it keeps in sessionStorage and sends as a header: no cookie, so a page
 // of another site open in the browser sends nothing that counts. Only in a
@@ -61,8 +61,8 @@ var openBrowser = func(ctx context.Context, url string) error {
 	return exec.CommandContext(ctx, name, url).Run()
 }
 
-func uiCmd(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+func consoleCmd(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("console", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -72,9 +72,9 @@ func uiCmd(ctx context.Context, args []string) error {
 
 func uiIn(ctx context.Context, in, out *os.File, state string) error {
 	if !terminal(in) || !terminal(out) {
-		return errors.New("reqcove ui runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
+		return errors.New("reqcove console runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
 	}
-	a, err := askRun(ctx, state, ctlRequest{Cmd: "ui"})
+	a, err := askRun(ctx, state, ctlRequest{Cmd: "console"})
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func uiIn(ctx context.Context, in, out *os.File, state string) error {
 	return nil
 }
 
-// page is reqcove ui's server. Codes and sessions are kept by their hash:
+// page is reqcove console's server. Codes and sessions are kept by their hash:
 // a lookup times nothing of the value.
 type page struct {
 	st   *ctlState
@@ -116,15 +116,15 @@ func openPage(cap *capture.Capture, st *ctlState) ctlAnswer {
 			return ctlAnswer{Message: "refused: the page: " + err.Error()}
 		}
 		st.page = p
-		log.Printf("reqcove ui: the page listens on http://%s (this computer only) until run ends", p.host)
+		log.Printf("reqcove console: the page listens on http://%s (this computer only) until run ends", p.host)
 	}
 	code := st.page.mint()
 	_, port, _ := net.SplitHostPort(st.page.host)
 	n := 0
 	fmt.Sscan(port, &n)
-	log.Print("reqcove ui: a one-use code given to the terminal (60 s)") // never the code
+	log.Print("reqcove console: a one-use code given to the terminal (60 s)") // never the code
 	return ctlAnswer{OK: true, Port: n, Code: code,
-		Message: "the page of this run, on this computer only (until run ends): open the link within 60 s; it works once (run reqcove ui again for another)"}
+		Message: "the page of this run, on this computer only (until run ends): open the link within 60 s; it works once (run reqcove console again for another)"}
 }
 
 // servePage listens on 127.0.0.1 alone until ctx ends.
@@ -229,15 +229,15 @@ func (p *page) trade(w http.ResponseWriter, r *http.Request) {
 	c := p.codes[sha256.Sum256([]byte(in.Code))]
 	switch {
 	case c == nil:
-		answer(w, http.StatusForbidden, map[string]any{"error": "this link's code is not one this run gave (run restarted?): run reqcove ui again in your terminal"})
+		answer(w, http.StatusForbidden, map[string]any{"error": "this link's code is not one this run gave (run restarted?): run reqcove console again in your terminal"})
 		return
 	case c.used:
 		clear(p.sessions)
-		log.Print("reqcove ui: a code was used twice: every session of the page ended (someone else opened the link?)")
-		answer(w, http.StatusForbidden, map[string]any{"error": "this link was opened already: every page of reqcove ui is closed now, as someone else may have it; run reqcove ui again in your terminal"})
+		log.Print("reqcove console: a code was used twice: every session of the page ended (someone else opened the link?)")
+		answer(w, http.StatusForbidden, map[string]any{"error": "this link was opened already: every page of reqcove console is closed now, as someone else may have it; run reqcove console again in your terminal"})
 		return
 	case due(c.expires, mono, wall):
-		answer(w, http.StatusForbidden, map[string]any{"error": "this link expired (it lasts 60 s): run reqcove ui again in your terminal"})
+		answer(w, http.StatusForbidden, map[string]any{"error": "this link expired (it lasts 60 s): run reqcove console again in your terminal"})
 		return
 	}
 	c.used = true
@@ -254,7 +254,7 @@ func (p *page) trade(w http.ResponseWriter, r *http.Request) {
 func (p *page) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !p.live(r.Header.Get(sessionHeader)) {
-			answer(w, http.StatusUnauthorized, map[string]any{"error": "no session (ended, or run restarted): run reqcove ui again in your terminal"})
+			answer(w, http.StatusUnauthorized, map[string]any{"error": "no session (ended, or run restarted): run reqcove console again in your terminal"})
 			return
 		}
 		next(w, r)
@@ -340,12 +340,12 @@ func (p *page) approve(w http.ResponseWriter, r *http.Request) {
 		ID    string
 		Hosts []string
 	}
-	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "approve", ID: in.ID, Hosts: in.Hosts, Via: "page"} })
+	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "approve", ID: in.ID, Hosts: in.Hosts, Via: "console"} })
 }
 
 func (p *page) deny(w http.ResponseWriter, r *http.Request) {
 	var in struct{ ID string }
-	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "deny", ID: in.ID, Via: "page"} })
+	p.change(w, r, &in, func() ctlRequest { return ctlRequest{Cmd: "deny", ID: in.ID, Via: "console"} })
 }
 
 func (p *page) change(w http.ResponseWriter, r *http.Request, in any, req func() ctlRequest) {

@@ -302,7 +302,7 @@ func approve(q *captureRequests, req ctlRequest, apply func(why string, hosts []
 	return q.finish(r, apply(requestWhy(r.hosts, req.Via), r.hosts))
 }
 
-// errOlderRun: a v1.1 run, which has no requests; errOlderUI: nor reqcove ui's page.
+// errOlderRun: a v1.1 run, which has no requests; errOlderUI: nor reqcove console's page.
 var (
 	errOlderRun = errors.New("this run is v1.1, which has no agents' requests: restart it with v1.2 or later (a restart empties the records); nothing changed")
 	errOlderUI  = errors.New("this run is v1.1, which has no page: restart it with v1.2 or later (a restart empties the records); nothing opened")

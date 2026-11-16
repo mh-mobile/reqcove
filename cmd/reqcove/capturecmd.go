@@ -40,7 +40,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload) or ui (reqcove ui)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload) or console (reqcove console)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -81,7 +81,7 @@ func captureCmd(ctx context.Context, args []string) error {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
 	switch req.Cmd {
-	case "request", "ui": // the agents' op, through reqcove mcp; reqcove ui's
+	case "request", "console": // the agents' op, through reqcove mcp; reqcove console's
 		return errors.New("usage: " + captureUse)
 	case "approve", "deny":
 		if len(req.Hosts) != 1 {
@@ -136,7 +136,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start", "save", "ui":
+	case "stop", "start", "save", "console":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -175,9 +175,9 @@ func (r ctlRequest) request() (ctlRequest, error) {
 	case "request":
 		bad = bad || r.ID != "" || r.Via != ""
 	case "approve":
-		bad = bad || r.ID == "" || r.Via != "terminal" && r.Via != "dialog" && r.Via != "page"
+		bad = bad || r.ID == "" || r.Via != "terminal" && r.Via != "dialog" && r.Via != "console"
 	case "deny":
-		bad = bad || r.ID == "" || r.Via != "" && r.Via != "page" || len(r.Hosts) > 0
+		bad = bad || r.ID == "" || r.Via != "" && r.Via != "console" || len(r.Hosts) > 0
 	case "requests":
 		bad = bad || r.Via != "" || len(r.Hosts) > 0
 	}
@@ -279,7 +279,7 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
 	if err != nil {
 		need := "v1.1"
-		if requestOps[req.Cmd] || req.Cmd == "ui" {
+		if requestOps[req.Cmd] || req.Cmd == "console" {
 			need = "v1.2"
 		}
 		return ctlAnswer{}, noCtl(ctx, state, need)
@@ -299,7 +299,7 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	}
 	if !a.OK && strings.HasPrefix(a.Message, v11Usage) {
 		switch {
-		case req.Cmd == "ui":
+		case req.Cmd == "console":
 			return a, errOlderUI
 		case requestOps[req.Cmd]:
 			return a, errOlderRun
@@ -339,7 +339,7 @@ type ctlState struct {
 	origin hostsOrigin
 	loaded capture.HostRules
 	reqs   *captureRequests // the agents' requests (its own lock)
-	// For reqcove ui: run's context, which the page lives as long as; its
+	// For reqcove console: run's context, which the page lives as long as; its
 	// status (as this computer's status tool gives it; nil: none); the page,
 	// once opened (guarded by mu).
 	ctx    context.Context
@@ -352,7 +352,7 @@ func newCtlState(o *runOpts) *ctlState {
 }
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
-// returns the state it answers from; status is what reqcove ui's page shows.
+// returns the state it answers from; status is what reqcove console's page shows.
 func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
 	st.ctx, st.status = ctx, status
@@ -398,7 +398,7 @@ var errUnchanged = errors.New("unchanged")
 func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlRequest) ctlAnswer {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if req.Cmd == "ui" { // in LAN mode too: the page shows the state (what LAN mode refuses, it refuses there too)
+	if req.Cmd == "console" { // in LAN mode too: the page shows the state (what LAN mode refuses, it refuses there too)
 		if _, err := req.normalized(); err != nil {
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 		}

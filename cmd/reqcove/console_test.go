@@ -49,7 +49,7 @@ func pageRun(t *testing.T, o *runOpts) (string, *ctlState) {
 // openUI is the ui op: the page's base URL and a code.
 func openUI(t *testing.T, state string) (string, string) {
 	t.Helper()
-	a, err := askRun(context.Background(), state, ctlRequest{Cmd: "ui"})
+	a, err := askRun(context.Background(), state, ctlRequest{Cmd: "console"})
 	if err != nil || !a.OK || a.Port == 0 || len(a.Code) != 32 {
 		t.Fatalf("ui: %v %+v", err, a)
 	}
@@ -132,7 +132,7 @@ func TestPageListener(t *testing.T) {
 			t.Errorf("logged: %s", logged.String())
 		}
 	}
-	if !strings.Contains(logged.String(), "reqcove ui: the page listens on "+base+" (this computer only)") {
+	if !strings.Contains(logged.String(), "reqcove console: the page listens on "+base+" (this computer only)") {
 		t.Errorf("log: %s", logged.String())
 	}
 }
@@ -266,7 +266,7 @@ func TestPageCode(t *testing.T) {
 		t.Errorf("an unknown code ended a session: %d", n)
 	}
 	r, b = call(t, base, "POST", "/api/session", `{"code":"`+code1+`"}`, nil)
-	if r.StatusCode != 403 || !strings.Contains(b, "opened already: every page of reqcove ui is closed now") || strings.Contains(b, "token") {
+	if r.StatusCode != 403 || !strings.Contains(b, "opened already: every page of reqcove console is closed now") || strings.Contains(b, "token") {
 		t.Errorf("twice: %d %s", r.StatusCode, b)
 	}
 	for _, s := range []string{s1, s2} {
@@ -374,14 +374,14 @@ func TestPageApprove(t *testing.T) {
 		t.Errorf("a mismatch changed it: %+v", p)
 	}
 	post("/api/approve", `{"id":"`+a.ID+`","hosts":["c.example.com","b.example.com"]}`) // no mitmproxy here: it fails, approved
-	waitLog(t, logged, "capture request "+a.ID+" (b.example.com c.example.com): approved in the page", 1)
-	if got := st.reqs.list(a.ID).Requests[0]; got.ApprovedIn != "page" || got.State != "failed" {
+	waitLog(t, logged, "capture request "+a.ID+" (b.example.com c.example.com): approved in the console", 1)
+	if got := st.reqs.list(a.ID).Requests[0]; got.ApprovedIn != "console" || got.State != "failed" {
 		t.Errorf("approved: %+v", got)
 	}
 	if ok, msg := post("/api/deny", `{"id":"`+d.ID+`"}`); !ok || !strings.HasPrefix(msg, "denied: d.example.com") {
 		t.Errorf("deny: %v %s", ok, msg)
 	}
-	waitLog(t, logged, "capture request "+d.ID+" (d.example.com): denied in the page", 1)
+	waitLog(t, logged, "capture request "+d.ID+" (d.example.com): denied in the console", 1)
 	if strings.Contains(logged.String(), token) || strings.Contains(logged.String(), code) {
 		t.Errorf("logged: %s", logged.String())
 	}
@@ -398,9 +398,9 @@ func TestPageLAN(t *testing.T) {
 	}
 }
 
-// reqcove ui: in a terminal only; prints the link and opens it; a v1.1 run
+// reqcove console: in a terminal only; prints the link and opens it; a v1.1 run
 // says to restart it with v1.2.
-func TestUICmd(t *testing.T) {
+func TestConsoleCmd(t *testing.T) {
 	ctx := context.Background()
 	dir, got := fakeCtlSock(t, func(req ctlRequest) ctlAnswer {
 		return ctlAnswer{OK: true, Message: "the page", Port: 4242, Code: strings.Repeat("ab", 16)}
@@ -423,7 +423,7 @@ func TestUICmd(t *testing.T) {
 	}
 	link := "http://127.0.0.1:4242/#c=" + strings.Repeat("ab", 16)
 	b, _ := os.ReadFile(out.Name())
-	if !strings.Contains(string(b), "the page\n  "+link+"\n") || len(opened) != 1 || opened[0] != link || (*got)[0].Cmd != "ui" {
+	if !strings.Contains(string(b), "the page\n  "+link+"\n") || len(opened) != 1 || opened[0] != link || (*got)[0].Cmd != "console" {
 		t.Errorf("%q %q %+v", b, opened, *got)
 	}
 	openBrowser = func(context.Context, string) error { return errors.New("no browser") }
@@ -440,10 +440,10 @@ func TestUICmd(t *testing.T) {
 	if err := uiIn(ctx, r, out, old); !errors.Is(err, errOlderUI) || !strings.Contains(err.Error(), "restart it with v1.2") {
 		t.Errorf("v1.1: %v", err)
 	}
-	if err := captureCmd(ctx, []string{"ui", "--state", dir}); err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("capture ui: %v", err)
+	if err := captureCmd(ctx, []string{"console", "--state", dir}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("capture console: %v", err)
 	}
-	if _, err := (ctlRequest{Cmd: "ui", Hosts: []string{"a.com"}}).normalized(); err == nil {
+	if _, err := (ctlRequest{Cmd: "console", Hosts: []string{"a.com"}}).normalized(); err == nil {
 		t.Error("ui with hosts")
 	}
 }
