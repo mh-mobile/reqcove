@@ -285,9 +285,10 @@
   with `service install`).
 - **`reqcove status` waits a moment** (at most 5 s) when a run holds the state
   but its tools do not answer yet (just started, or stopping), then says
-  running or not running; still neither, it says "reqcove is starting up or
-  shutting down" (before: "starting, or stopping", read as "running or
-  stopped"). Unit test.
+  running or not running; still neither, it says which: "reqcove is
+  starting" or "reqcove is stopping" (`run` leaves a `stopping` file in the
+  state directory while it stops). Before: "starting, or stopping", read as
+  "running or stopped". Unit tests.
 
 ## v1.0.0 — 2026-11-15
 

@@ -68,8 +68,15 @@ func sendMark(ctx context.Context, w io.Writer, state, text string) error {
 
 var (
 	errNotRunning = errors.New("reqcove is not running")
-	errStarting   = errors.New("reqcove is starting up or shutting down")
+	errStarting   = errors.New("reqcove is starting") // or stopping: the error says which
 )
+
+// stoppingError is errStarting's case for a run that is stopping: its
+// callers treat both alike (no tools to ask), the user is told which.
+type stoppingError string
+
+func (e stoppingError) Error() string      { return string(e) }
+func (stoppingError) Is(target error) bool { return target == errStarting }
 
 // dialRun connects to the running reqcove's MCP socket as client, the
 // handshake bounded as reqcove mcp bounds it: a run stopped with Ctrl-Z takes
@@ -83,7 +90,10 @@ func dialRun(ctx context.Context, state, client string) (*mcp.ClientSession, err
 	conn, err := d.DialContext(hctx, "unix", filepath.Join(state, "mcp.sock"))
 	if err != nil {
 		if stateHeld(state) {
-			return nil, fmt.Errorf("%w (%s): a run holds its state, but its tools do not answer yet (mitmproxy starts first, and the first start downloads it): try again in a moment", errStarting, state)
+			if _, err := os.Stat(filepath.Join(state, stoppingFile)); err == nil {
+				return nil, stoppingError(fmt.Sprintf("reqcove is stopping (%s): its tools are closed; %s in a moment says when it has stopped", state, withState("reqcove status", state)))
+			}
+			return nil, fmt.Errorf("%w (%s): its tools are not up yet (mitmproxy starts first, and the first start downloads it): try again in a moment", errStarting, state)
 		}
 		return nil, errNotRunning
 	}

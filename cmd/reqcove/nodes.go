@@ -293,6 +293,10 @@ var stateFreeWait = 10 * time.Second
 // one still does.
 func waitStateFree(dir string, d time.Duration) bool { return waitState(dir, d, false) }
 
+// stoppingFile, in the state directory, says the run that holds it is
+// stopping.
+const stoppingFile = "stopping"
+
 // startWait bounds how long service install and restart wait for the run
 // they started to take its state's lock, and status for a run that holds it
 // to answer or let go (a var for tests).

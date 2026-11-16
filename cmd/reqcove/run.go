@@ -52,6 +52,13 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
+	// While it holds the state but its tools do not answer, status says
+	// starting, or with this file stopping (left by a run killed while it
+	// stopped: removed here).
+	stopping := filepath.Join(o.state, stoppingFile)
+	os.Remove(stopping)
+	defer os.Remove(stopping)
+	go func() { <-ctx.Done(); os.WriteFile(stopping, nil, 0o600) }()
 	linksCmd := withState("reqcove links", o.state)
 	user := newUserLinks(os.Stderr, red, o.state, linksCmd)
 	user.lan = o.lanMode
