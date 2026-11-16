@@ -69,7 +69,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 		return ctlAnswer{Message: msg}
 	}
 	lost := undone(st.loaded, cur, n.allow)
-	st.origin, st.loaded = n.origin, n.allow
+	st.setOrigin(n.origin, n.allow)
 	hosts := changes(cur, n.allow)
 	if hosts == "" {
 		hosts = "the hosts as they were"
@@ -101,7 +101,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 			msg += "; new connections only: reopen the app to see it now"
 		}
 	}
-	return traced(cap, why, msg+otherLine)
+	return traced(cap, why, "", msg+otherLine)
 }
 
 // undone is what next undoes of the changes made since loaded (to cur): the

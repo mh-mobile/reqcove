@@ -166,7 +166,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - Reqcove が動かす mitmproxy と Python のロック（`internal/capture/mitm.py.lock`）：セキュリティ修正のため、どのリリースでも更新します。どのリリースがどのバージョンの mitmproxy を動かすかは約束しません。
 - `--uvx`、`--python`、`--mitmproxy-spec`（`run` のもの。`--uvx` は `status` と `mock add` のものも）とその既定値：mitmproxy をどう動かすか（uv、Python、mitmproxy のバージョン）を選ぶもので、mitmproxy と uv に従います。
 - 上に挙げていない `capture_stats` のフィールド：`held_bytes`、`restarts`、`state_detail`、`tls_failures`、`passed_through_open`、`addon_dropped_bodies`、`addon_dropped_events`、`bad_lines`、`masking_failed`、`unknown_version`、`orphan_updates`、`all_hosts`、`brotli`、`brotli_decode`、`zstd_decode`、`rules`、`rules_error`、`resolve`、`upstream`。マイナーリリースで変わったりなくなったりします。
-- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え。
+- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change` と `/api/save` も）。
 - `reqcove restart` が新しいプロセスに渡すもの（`REQCOVE_RESTART_*` の変数、fd）と、状態ディレクトリと config の隣に残すファイル（`restart-*.config`、`restart-note`、`config.failed`）。
 - `poc/` フォルダ：メンテナーのメモで、リポジトリには入っていません。
 - そのほか、このページで変わらないとしていないもの。

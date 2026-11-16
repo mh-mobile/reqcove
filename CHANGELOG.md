@@ -17,6 +17,27 @@
   session of the page and every link not opened yet; the pages say so, the
   links say they were ended. A new ctl op, `console-end`, in LAN mode too; a
   `run` older than v1.3 says to restart it with v1.3. Unit tests.
+- **The `reqcove console` page changes the hosts** (its Scope panel, on
+  127.0.0.1 alone): add and remove (with "pass undecrypted"), stop and
+  start, allow-all and discovery for 30 minutes to 24 hours with End and
+  the time left, discovery's names (host names alone, at most 30) each with
+  Add, and Save, as `reqcove capture` makes them (`run` checks each again;
+  LAN mode refuses them). Never `capture set`, `reload` or `restart`: the
+  page's endpoint takes its own changes alone. Stop, remove and allow-all
+  first show `reqcove capture`'s own warning, then ask. Save first shows
+  what it would write (each hosts file now and once saved, the pinned hosts,
+  and on a config without `--allow-hosts=@FILE` the file it creates and the
+  line it adds) and writes only that; hosts not saved yet are marked
+  "unsaved". A change made on a page that read the hosts before another
+  change (another tab, the CLI) is refused. Changes are traced "(from the
+  console on this computer)" (the log, a `cli` marker, `scope_change`). The
+  page keeps v1.2's guards on its new endpoints. Unit tests and an E2E test
+  with real mitmproxy; the panel was not tried in a browser.
+- **After a first `capture save`** (or a page's Save) that creates the hosts
+  file, `reqcove status` and the page name it at once (before: after a
+  restart); a `reqcove reload` that changes the hosts files, too (from the
+  code, not tried). An E2E
+  test (Save from the page).
 - **`reqcove restart`** (in a terminal only) restarts the running `run` in
   the same process (an exec: launchd, systemd and brew services see the
   same process; from the code, not tried): it checks the config on disk and the command line as the

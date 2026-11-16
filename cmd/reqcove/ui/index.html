@@ -12,7 +12,21 @@
 <header><h1>Reqcove</h1><p id="line">Opening…</p></header>
 <main id="main" hidden>
 <section><h2>Asked by agents</h2><div id="requests"></div><p id="result" role="status"></p></section>
-<section><h2>Recorded</h2><dl id="recorded"></dl></section>
+<section><h2>Recorded</h2><dl id="recorded"></dl>
+<div id="scope">
+<h3>Hosts recorded</h3><ul id="hosts" class="list"></ul>
+<h3>Passed undecrypted</h3><ul id="pass" class="list"></ul>
+<p id="removed" class="muted"></p>
+<form id="add"><input id="add-host" type="text" placeholder="api.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="host to add">
+<label><input id="add-pass" type="checkbox"> pass undecrypted</label> <button>Add</button></form>
+<p><button id="stop" type="button">Stop recording</button><button id="start" type="button">Start recording</button><button id="save" type="button">Save…</button></p>
+<p>Every host for <select id="all-for"></select> <button id="all-on" type="button">Allow all</button><span id="all-left" class="left"></span><button id="all-end" type="button">End</button></p>
+<p>Discover hosts for <select id="disc-for"></select> <button id="disc-on" type="button">Discover</button><span id="disc-left" class="left"></span><button id="disc-end" type="button">End</button></p>
+<h3>Discovered (outside the hosts recorded)</h3><ul id="seen" class="list"></ul>
+<p id="scope-result" role="status"></p>
+</div>
+<p id="scope-lan" class="muted" hidden>In LAN mode the hosts recorded are the ones run started with: nothing here changes them.</p>
+</section>
 <section><h2>Next steps</h2><ol id="steps"></ol></section>
 <section><h2>This run</h2><dl id="run"></dl></section>
 </main>

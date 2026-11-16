@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const leak = "SECRET-not-for-the-page"
@@ -38,7 +40,8 @@ func pageRun(t *testing.T, o *runOpts) (string, *ctlState) {
 			Node: exitnode.Status{Node: "reqcove.ts.net", IPs: []string{"100.64.0.1"}, AuthURL: "https://login.example/" + leak, NodeKey: leak,
 				Devices: map[string]string{"n1": "Taro's iPhone"}, Problems: []string{leak}, Health: []string{leak}},
 			Capture: map[string]any{"upstream": "http://u:" + leak + "@proxy"}, ScopeChange: leak, ActivePresets: []mcpserver.PresetOut{{Name: leak}},
-			OutOfScopeHosts: []mcpserver.OutHost{{Host: leak}}, ConfigUnused: ""}
+			OutOfScopeHosts:     []mcpserver.OutHost{{Host: leak}, {Host: "seen.example.com", Count: 3, Add: "reqcove capture add seen.example.com"}, {Host: "<img src=x>.example.com"}, {Host: "a b.example.com"}},
+			OutOfScopeHostsKept: 4, DiscoverUntil: "2026-11-17T10:00:00Z", ConfigUnused: ""}
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -392,9 +395,153 @@ func TestPageLAN(t *testing.T) {
 	state, _ := pageRun(t, &runOpts{lanMode: true})
 	base, code := openUI(t, state)
 	token := trade(t, base, code)
-	_, b := call(t, base, "POST", "/api/deny", `{"id":"0a1b2c3d"}`, map[string]string{sessionHeader: token})
-	if !strings.Contains(b, "LAN mode") {
-		t.Errorf("%s", b)
+	_, s := pageStateOf(t, base, token)
+	for _, c := range [][3]string{
+		{"POST", "/api/deny", `{"id":"0a1b2c3d"}`},
+		{"POST", "/api/change", `{"cmd":"add","hosts":["b.example.com"],"rev":"` + s.Rev + `"}`},
+		{"GET", "/api/save", ""},
+	} {
+		if _, b := call(t, base, c[0], c[1], c[2], map[string]string{sessionHeader: token}); !strings.Contains(b, "LAN mode") {
+			t.Errorf("%s: %s", c[1], b)
+		}
+	}
+}
+
+// POST /api/change and GET /api/save: every check of v1.2's; the page's ops
+// alone (never set, reload, restart, console nor the request ops), with the
+// scope revision it read; nothing refused reaches run's change. A change on
+// an older revision (another tab, the CLI) is refused; ctl.sock sets no
+// revision nor the console's trace. The discovered names: hosts alone, as
+// data. The warnings: run's, its flags' included.
+func TestPageChange(t *testing.T) {
+	state, st := pageRun(t, &runOpts{})
+	base, code := openUI(t, state)
+	port := strings.TrimPrefix(base, "http://127.0.0.1")
+	token := trade(t, base, code)
+	_, s := pageStateOf(t, base, token)
+	if s.Rev == "" || s.Rev != st.revision() {
+		t.Fatalf("rev %q, run's %q", s.Rev, st.revision())
+	}
+	gen, markers := st.gen.Load(), len(st.page.cap.Store.Markers(0))
+	add := `{"cmd":"add","hosts":["b.example.com"],"rev":"` + s.Rev + `"}`
+	auth := map[string]string{sessionHeader: token}
+	with := func(kv ...string) map[string]string {
+		m := map[string]string{sessionHeader: token}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
+		}
+		return m
+	}
+	for _, c := range []struct {
+		why, method, path, body string
+		hdr                     map[string]string
+		want                    int
+	}{
+		{"no session", "POST", "/api/change", add, nil, http.StatusUnauthorized},
+		{"a wrong session", "POST", "/api/change", add, map[string]string{sessionHeader: token[:63] + "x"}, http.StatusUnauthorized},
+		{"a cookie", "POST", "/api/change", add, map[string]string{"Cookie": sessionHeader + "=" + token}, http.StatusUnauthorized},
+		{"cross Origin", "POST", "/api/change", add, with("Origin", "http://evil.example"), http.StatusForbidden},
+		{"no Origin", "POST", "/api/change", add, with("Origin", ""), http.StatusForbidden},
+		{"another Host", "POST", "/api/change", add, with("Host", "localhost"+port), http.StatusMisdirectedRequest},
+		{"a form", "POST", "/api/change", add, with("Content-Type", "application/x-www-form-urlencoded"), http.StatusUnsupportedMediaType},
+		{"text", "POST", "/api/change", add, with("Content-Type", "text/plain"), http.StatusUnsupportedMediaType},
+		{"GET", "GET", "/api/change?cmd=add&hosts=b.example.com", "", auth, http.StatusMethodNotAllowed},
+		{"OPTIONS", "OPTIONS", "/api/change", "", map[string]string{"Origin": "http://evil.example", "Access-Control-Request-Method": "POST"}, http.StatusMethodNotAllowed},
+		{"not JSON", "POST", "/api/change", "cmd=add", auth, http.StatusBadRequest},
+		{"another field", "POST", "/api/change", `{"cmd":"set","allow_hosts":["b.example.com"],"rev":"` + s.Rev + `"}`, auth, http.StatusBadRequest},
+		{"an id", "POST", "/api/change", `{"cmd":"add","hosts":["b.example.com"],"id":"0a1b2c3d","rev":"` + s.Rev + `"}`, auth, http.StatusBadRequest},
+		{"no rev", "POST", "/api/change", `{"cmd":"add","hosts":["b.example.com"]}`, auth, http.StatusBadRequest},
+		{"a big body", "POST", "/api/change", `{"cmd":"add","hosts":["` + strings.Repeat("a", maxPageBody) + `"],"rev":"` + s.Rev + `"}`, auth, http.StatusBadRequest},
+		{"save, no session", "GET", "/api/save", "", nil, http.StatusUnauthorized},
+		{"save, another Host", "GET", "/api/save", "", with("Host", "evil.example"+port), http.StatusMisdirectedRequest},
+		{"save, POST", "POST", "/api/save", "{}", auth, http.StatusMethodNotAllowed},
+	} {
+		r, b := call(t, base, c.method, c.path, c.body, c.hdr)
+		if r.StatusCode != c.want {
+			t.Errorf("%s: %d %s, want %d", c.why, r.StatusCode, b, c.want)
+		}
+		if h := r.Header; h.Get("Cache-Control") != "no-store" || !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'self'") {
+			t.Errorf("%s: headers %v", c.why, h)
+		}
+		for k := range r.Header {
+			if strings.HasPrefix(k, "Access-Control-") {
+				t.Errorf("%s: %s", c.why, k)
+			}
+		}
+	}
+	for _, cmd := range []string{"set", "reload", "restart", "console", "console-end", "request", "requests", "approve", "deny", "", "ADD"} {
+		r, b := call(t, base, "POST", "/api/change", `{"cmd":"`+cmd+`","rev":"`+s.Rev+`"}`, auth)
+		if r.StatusCode != http.StatusBadRequest || !strings.Contains(b, "capture set, reload and restart are your terminal's") {
+			t.Errorf("%q: %d %s", cmd, r.StatusCode, b)
+		}
+	}
+	// A path, as --allow-hosts=@FILE takes it: refused by run, as capture add refuses it.
+	for _, h := range []string{"@/etc/hosts", "@~/hosts"} {
+		if _, b := call(t, base, "POST", "/api/change", `{"cmd":"add","hosts":["`+h+`"],"rev":"`+s.Rev+`"}`, auth); !strings.Contains(b, `"ok":false`) || !strings.Contains(b, "nothing changed") {
+			t.Errorf("%s: %s", h, b)
+		}
+	}
+	if g, m := st.gen.Load(), len(st.page.cap.Store.Markers(0)); g != gen || m != markers {
+		t.Errorf("a refused request reached run: gen %d -> %d, markers %d -> %d", gen, g, markers, m)
+	}
+
+	// Another change made since (the CLI, another tab): refused; on the
+	// revision read again, it goes on (no mitmproxy here: it fails there).
+	if _, err := askRun(context.Background(), state, ctlRequest{Cmd: "add", Hosts: []string{"c.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	stale := "refused: the hosts changed since this page read them"
+	if _, b := call(t, base, "POST", "/api/change", add, auth); !strings.Contains(b, stale) {
+		t.Errorf("an older revision: %s", b)
+	}
+	_, s2 := pageStateOf(t, base, token)
+	if s2.Rev == s.Rev {
+		t.Errorf("the revision stayed %q", s.Rev)
+	}
+	if _, b := call(t, base, "POST", "/api/change", `{"cmd":"add","hosts":["b.example.com"],"rev":"`+s2.Rev+`"}`, auth); strings.Contains(b, stale) || !strings.Contains(b, `"message"`) {
+		t.Errorf("the revision read again: %s", b)
+	}
+	// ctl.sock: a rev and from in its JSON are not read.
+	conn, err := net.Dial("unix", filepath.Join(state, ctlSock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.WriteString(conn, `{"cmd":"add","hosts":["d.example.com"],"rev":"x.0","from":"console"}`+"\n")
+	b, _ := io.ReadAll(conn)
+	conn.Close()
+	if strings.Contains(string(b), stale) {
+		t.Errorf("ctl.sock took a revision: %s", b)
+	}
+
+	// The discovered names: hosts alone, no command; as data.
+	if want := []pageHost{{Host: "seen.example.com", Count: 3}}; !slices.Equal(s.Discovered, want) || s.DiscoveredKept != 4 || s.DiscoverUntil == "" {
+		t.Errorf("discovered: %+v (%d), until %q", s.Discovered, s.DiscoveredKept, s.DiscoverUntil)
+	}
+	_, raw := call(t, base, "GET", "/api/state", "", auth)
+	for _, no := range []string{"img", "a b.example", "reqcove capture add"} {
+		if strings.Contains(raw, no) {
+			t.Errorf("the state has %q: %s", no, raw)
+		}
+	}
+	js, _ := pageFiles.ReadFile("ui/app.js")
+	page, _ := pageFiles.ReadFile("ui/index.html")
+	for _, m := range regexp.MustCompile(`\$\("([a-z-]+)"\)`).FindAllStringSubmatch(string(js), -1) { // a missing one stops the whole page
+		if !strings.Contains(string(page), `id="`+m[1]+`"`) {
+			t.Errorf("app.js uses #%s, not in index.html", m[1])
+		}
+	}
+	for _, no := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"} {
+		if strings.Contains(string(js), no) {
+			t.Errorf("app.js puts in markup: %s", no)
+		}
+	}
+
+	// The warnings: run's, its other flags' too (set at its start).
+	defer func(n []string, o string) { allowAllNotes, openNote = n, o }(allowAllNotes, openNote)
+	allowAllNotes, openNote = []string{"--web: mitmweb shows every one of them too, unmasked"}, webOpenNote
+	_, s = pageStateOf(t, base, token)
+	if w := s.Warnings; w.Stop != stopWarning || !strings.HasSuffix(w.Remove, webOpenNote) || !strings.HasSuffix(w.AllowAll, "; --web: mitmweb shows every one of them too, unmasked") || !strings.HasPrefix(w.AllowAll, "WARNING: every app's and site's traffic") {
+		t.Errorf("warnings: %+v", w)
 	}
 }
 
@@ -666,5 +813,221 @@ func TestPageFiles(t *testing.T) {
 		if m := regexp.MustCompile(`https?://|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|<script>|<style|style=|\son[a-z]+=|reqcove ui\b`).Find(b); m != nil {
 			t.Errorf("%s: %s", f, m)
 		}
+	}
+}
+
+// TestPageScopeE2E (REQCOVE_E2E=1, real mitmproxy): each change the page
+// makes answers as reqcove capture's does (the times aside), traced as the
+// console's; stop's, remove's and allow-all's warnings, shown before the
+// page's confirm, are their answers' own words; a page on an older scope is
+// refused. Save on a config without the hosts file's line: its diff first
+// (the file created, the host pinned, the line added), nothing written until
+// confirmed with that diff's token; then status (as reqcove status reads it)
+// and the page list the new file at once, and a second Save writes it, as
+// capture save does.
+func TestPageScopeE2E(t *testing.T) {
+	if os.Getenv("REQCOVE_E2E") == "" {
+		t.Skip("set REQCOVE_E2E=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvp-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	conf := filepath.Join(dir, "c")
+	os.Mkdir(conf, 0o700)
+	config, hostsFile := filepath.Join(conf, "config"), filepath.Join(conf, "hosts")
+	if err := os.WriteFile(config, []byte("--allow-hosts=localhost\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "s")
+	o, err := parseRunFlags([]string{"--device", "x", "--config", config, "--state", state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := capture.Start(ctx, capture.Config{Dir: o.state, Confdir: filepath.Join(dir, "m"),
+		Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec,
+		BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
+		Log: os.Stderr, ReadyTimeout: 2 * time.Minute, AllowHosts: o.allow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Stop()
+	logged := logTo(t)
+	var node nodeState
+	node.set(exitnode.Status{Backend: "Running"})
+	st, err := serveCtl(ctx, state, c, o, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serveMCP(ctx, o, c, &node, st, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	base, code := openUI(t, state)
+	token := trade(t, base, code)
+	auth := map[string]string{sessionHeader: token}
+	stateNow := func() pageState {
+		t.Helper()
+		n, s := pageStateOf(t, base, token)
+		if n != 200 {
+			t.Fatalf("state: %d", n)
+		}
+		return s
+	}
+	post := func(body map[string]any) (bool, string) {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		r, out := call(t, base, "POST", "/api/change", string(b), auth)
+		var a struct {
+			OK      bool
+			Message string
+		}
+		if json.Unmarshal([]byte(out), &a) != nil || r.StatusCode != 200 {
+			t.Fatalf("%s: %d %s", b, r.StatusCode, out)
+		}
+		return a.OK, a.Message
+	}
+	page := func(body map[string]any) (bool, string) {
+		t.Helper()
+		body["rev"] = stateNow().Rev
+		return post(body)
+	}
+	sock := func(req ctlRequest) (bool, string) {
+		t.Helper()
+		a, err := askRun(ctx, state, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.OK, a.Message
+	}
+	times := regexp.MustCompile(` \d\d:\d\d:\d\d \(in [0-9hms.]+\)`)
+	warn := stateNow().Warnings
+	one := []string{"127.0.0.1"}
+	for _, tc := range []struct {
+		body       map[string]any
+		req, undo  ctlRequest
+		warned     string
+		traceStart string
+	}{
+		{map[string]any{"cmd": "add", "hosts": one}, ctlRequest{Cmd: "add", Hosts: one}, ctlRequest{Cmd: "remove", Hosts: one}, "", "capture add 127.0.0.1"},
+		{map[string]any{"cmd": "add", "hosts": one, "pass": true}, ctlRequest{Cmd: "add", Hosts: one, Pass: true}, ctlRequest{Cmd: "remove", Hosts: one, Pass: true}, "", "capture add --pass 127.0.0.1"},
+		{map[string]any{"cmd": "remove", "hosts": one, "pass": true}, ctlRequest{Cmd: "remove", Hosts: one, Pass: true}, ctlRequest{Cmd: "add", Hosts: one, Pass: true}, "", "capture remove --pass 127.0.0.1"},
+		{map[string]any{"cmd": "remove", "hosts": one}, ctlRequest{Cmd: "remove", Hosts: one}, ctlRequest{Cmd: "add", Hosts: one}, warn.Remove, "capture remove 127.0.0.1"},
+		{map[string]any{"cmd": "stop"}, ctlRequest{Cmd: "stop"}, ctlRequest{Cmd: "start"}, warn.Stop, "capture stop"},
+		{map[string]any{"cmd": "start"}, ctlRequest{Cmd: "start"}, ctlRequest{Cmd: "stop"}, "", "capture start"},
+		{map[string]any{"cmd": "allow-all", "for": "30m"}, ctlRequest{Cmd: "allow-all", For: "30m"}, ctlRequest{Cmd: "allow-all", End: true}, warn.AllowAll, "capture allow-all --for 30m"},
+		{map[string]any{"cmd": "allow-all", "end": true}, ctlRequest{Cmd: "allow-all", End: true}, ctlRequest{Cmd: "allow-all", For: "30m"}, "", "capture allow-all --end"},
+		{map[string]any{"cmd": "discover", "for": "1h"}, ctlRequest{Cmd: "discover", For: "1h"}, ctlRequest{Cmd: "discover", End: true}, "", "capture discover --for 1h"},
+		{map[string]any{"cmd": "discover", "end": true}, ctlRequest{Cmd: "discover", End: true}, ctlRequest{Cmd: "discover", For: "1h"}, "", "capture discover --end"},
+	} {
+		pok, pmsg := page(tc.body)
+		why := tc.traceStart + fromConsole
+		waitLog(t, logged, why+": "+pmsg, 1)
+		if s := liveStatus(node.get(), c); s.ScopeChange != why {
+			t.Errorf("%s: status's change %q", why, s.ScopeChange)
+		}
+		if ms := c.Store.Markers(0); len(ms) == 0 || ms[len(ms)-1].Text != why || ms[len(ms)-1].Source != "cli" {
+			t.Errorf("%s: markers %+v", why, ms)
+		}
+		sock(tc.undo)
+		sok, smsg := sock(tc.req)
+		if pok != sok || !pok || times.ReplaceAllString(pmsg, " T") != times.ReplaceAllString(smsg, " T") {
+			t.Errorf("%s: the page's answer\n  %v %s\nctl.sock's\n  %v %s", tc.req, pok, pmsg, sok, smsg)
+		}
+		if tc.warned != "" && (!strings.Contains(pmsg, tc.warned) || !strings.Contains(smsg, tc.warned)) {
+			t.Errorf("%s: the warning shown before is not the answer's:\n  %s\n  %s", tc.req, tc.warned, smsg)
+		}
+	}
+	if strings.Contains(logged.String(), fromConsole+" (reqcove capture, from a terminal)") {
+		t.Errorf("logged as a terminal's:\n%s", logged.String())
+	}
+
+	// Another change since the page read the scope: refused, nothing changed.
+	old := stateNow().Rev
+	sock(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.3"}})
+	if ok, msg := post(map[string]any{"cmd": "add", "hosts": []string{"127.0.0.4"}, "rev": old}); ok || !strings.HasPrefix(msg, "refused: the hosts changed since this page read them") || slices.Contains(c.Base().Hosts, "127.0.0.4") {
+		t.Errorf("an older scope: %v %s; %q", ok, msg, c.Base().Hosts)
+	}
+	sock(ctlRequest{Cmd: "remove", Hosts: []string{"127.0.0.3"}})
+
+	// Save: the diff first, then what it showed.
+	page(map[string]any{"cmd": "add", "hosts": one})
+	if s := stateNow(); !slices.Equal(s.Pinned, []string{"localhost"}) || len(s.Saved) != 0 || len(s.HostsFiles) != 0 {
+		t.Errorf("before the save: pinned %q, saved %q, files %q", s.Pinned, s.Saved, s.HostsFiles)
+	}
+	diff := func() pageSave {
+		t.Helper()
+		_, b := call(t, base, "GET", "/api/save", "", auth)
+		var d pageSave
+		json.Unmarshal([]byte(b), &d)
+		return d
+	}
+	d := diff()
+	if len(d.Files) != 1 || d.Files[0].Path != hostsFile || !d.Files[0].Created || len(d.Files[0].Now) != 0 || !slices.Equal(d.Files[0].Write, one) ||
+		!slices.Equal(d.Pinned, []string{"localhost"}) || d.Config != config || !slices.Equal(d.Add, []string{"--allow-hosts=@" + hostsFile}) || d.Confirm == "" || d.Message != "" {
+		t.Fatalf("the diff: %+v", d)
+	}
+	unwritten := func(why string) {
+		t.Helper()
+		if b, _ := os.ReadFile(config); string(b) != "--allow-hosts=localhost\n" {
+			t.Errorf("%s: config\n%s", why, b)
+		}
+		if _, err := os.Lstat(hostsFile); err == nil {
+			t.Errorf("%s: %s made", why, hostsFile)
+		}
+	}
+	unwritten("shown")
+	if ok, msg := page(map[string]any{"cmd": "save"}); ok || !strings.HasPrefix(msg, "The config names no hosts file to save these to") {
+		t.Errorf("no token: %v %s", ok, msg)
+	}
+	if ok, msg := page(map[string]any{"cmd": "save", "confirm": "0123"}); ok || !strings.Contains(msg, "changed since the change was shown") {
+		t.Errorf("another token: %v %s", ok, msg)
+	}
+	unwritten("another token")
+	if ok, msg := page(map[string]any{"cmd": "save", "confirm": d.Confirm}); !ok || !strings.HasPrefix(msg, "added to "+config+": --allow-hosts=@"+hostsFile+"; saved to "+hostsFile+": 127.0.0.1") {
+		t.Fatalf("saved: %v %s", ok, msg)
+	}
+	if b, _ := os.ReadFile(config); string(b) != "--allow-hosts=localhost\n--allow-hosts=@"+hostsFile+"\n" {
+		t.Errorf("config:\n%s", b)
+	}
+	waitLog(t, logged, "capture save"+fromConsole+": added to "+config, 1)
+	// At once: the page and status (as reqcove status reads it) name the file.
+	local, err := dialRun(ctx, state, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	res, err := local.CallTool(ctx, &mcp.CallToolParams{Name: "status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status mcpserver.StatusOut
+	b, _ := json.Marshal(res.StructuredContent)
+	json.Unmarshal(b, &status)
+	if s := stateNow(); !slices.Equal(status.HostsFiles, []string{hostsFile}) || !slices.Equal(s.HostsFiles, []string{hostsFile}) || !slices.Equal(s.Saved, one) {
+		t.Errorf("after the first save: status %q, the page %q, saved %q", status.HostsFiles, s.HostsFiles, s.Saved)
+	}
+
+	// A second Save writes the file, nothing to add; as capture save's.
+	page(map[string]any{"cmd": "add", "hosts": []string{"127.0.0.2"}})
+	if s := stateNow(); !slices.Equal(s.Saved, one) || !slices.Contains(s.Hosts, "127.0.0.2") {
+		t.Errorf("unsaved: %+v", s)
+	}
+	d = diff()
+	if len(d.Files) != 1 || d.Files[0].Created || !slices.Equal(d.Files[0].Now, one) || !slices.Equal(d.Files[0].Write, []string{"127.0.0.1", "127.0.0.2"}) || len(d.Add) != 0 {
+		t.Errorf("the second diff: %+v", d)
+	}
+	if ok, msg := page(map[string]any{"cmd": "save", "confirm": "0123"}); ok || !strings.Contains(msg, "changed since the change was shown") {
+		t.Errorf("the second save, another token: %v %s", ok, msg)
+	}
+	if b, _ := os.ReadFile(hostsFile); strings.Contains(string(b), "127.0.0.2") {
+		t.Errorf("written on another token:\n%s", b)
+	}
+	pok, pmsg := page(map[string]any{"cmd": "save", "confirm": d.Confirm})
+	sok, smsg := sock(ctlRequest{Cmd: "save"})
+	if !pok || !sok || pmsg != smsg || !strings.HasPrefix(pmsg, "saved to "+hostsFile+": 127.0.0.1, 127.0.0.2; not written, as given on the --config file") {
+		t.Errorf("the second save: %s\nctl.sock's: %s", pmsg, smsg)
 	}
 }
