@@ -38,7 +38,7 @@ v1.0.0 から、バージョンは `major.minor.patch`（[セマンティック 
 
 `status`、`list_flows`、`wait_for_flows`、`search_flows`、`summarize`、`get_flow`、`list_ws_messages`、`diff_flows`、`list_devices`、`list_tls_failures`、`list_passthrough`、`capture_stats`、`list_presets`、`activate_preset`、`deactivate_preset`、`list_rules`、`explain_rules`、`add_marker`、`list_markers`
 
-v1.2 から、`reqcove mcp` だけに `request_capture_add`（`hosts`：ホスト名 1〜5 個）と `get_capture_request`（`id`）もあり、そこでは 21 個です。`run` のソケット自身の一覧にはなく、`--mcp-http` にもありません。どちらも頼みを返します：`id`、`hosts`、`state`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`。値は増えることがあります）、`created_at` と `expires_at`（RFC 3339）、`approved_in`（`terminal` か `dialog`。`reqcove console` からは `page` も）、`result`（人が読むための文）、`approve`（保留の間、ユーザーが実行するコマンド）、`unmasked`（`run` が何もマスクしないとき、`--no-redact` で true）、`note`。
+v1.2 から、`reqcove mcp` だけに `request_capture_add`（`hosts`：ホスト名 1〜5 個）と `get_capture_request`（`id`）もあり、そこでは 21 個です。`run` のソケット自身の一覧にはなく、`--mcp-http` にもありません。どちらも頼みを返します：`id`、`hosts`、`state`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`。値は増えることがあります）、`created_at` と `expires_at`（RFC 3339）、`approved_in`（`terminal` か `dialog`。`reqcove console` からは `console` も）、`result`（人が読むための文）、`approve`（保留の間、ユーザーが実行するコマンド）、`unmasked`（`run` が何もマスクしないとき、`--no-redact` で true）、`note`。
 
 `--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。そのサーバーは `/mcp` で答えます。ポートはノードの 8090 番です。認証は `Authorization: Bearer` で、トークンは `mcp-token`（下の状態ディレクトリ）にあります。
 
@@ -123,7 +123,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 `--uvx`、`--python`、`--mitmproxy-spec` は変わりうるので、この一覧に入れていません（[下記](#変わりうるもの)）。
 
-`reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `ui` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。
+`reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `console` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。
 
 ### `--config` のファイル
 

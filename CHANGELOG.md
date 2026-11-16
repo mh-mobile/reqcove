@@ -10,12 +10,16 @@
   request (an id, the hosts fixed, 10 minutes by either clock, dropped at a
   restart; 3 pending, 10 made in 10 minutes; the same hosts asked again give
   the same request; refused when all are recorded already, passed
-  undecrypted, denied in the last 10 minutes, or in LAN mode). **`reqcove capture requests`, `capture
+  undecrypted, or in LAN mode, and when any host in it was denied in the last
+  10 minutes, alone or with others). **`reqcove capture requests`, `capture
   approve ID`** (shows the hosts, asks y/N) **and `capture deny ID`**, in a
   terminal only; an approval adds exactly those hosts as `capture add` does
   (not saved, never starts a stopped recording). A client that declares MCP
-  elicitation also gets a dialog with Reqcove's text alone (accept approves;
-  decline, close or 2 minutes without an answer leave it pending).
+  form elicitation also gets a dialog with Reqcove's text alone (accept
+  approves; decline, close or 2 minutes without an answer leave it pending;
+  over MCP's newest protocol its answer counts only for a dialog shown on
+  that connection, once, within 2 minutes by either clock).
+  Every view of a request says `unmasked` under `--no-redact`.
   `get_capture_request` says what came of it; `status` (on this computer)
   gives `capture_requests`, `reqcove status` "asked:". Traced in `run`'s log,
   and on approval as a marker with source `mcp` and `scope_change`. Unit and

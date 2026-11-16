@@ -1,10 +1,13 @@
 package mcpserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -264,5 +267,215 @@ func TestRequestToolsProxyOnly(t *testing.T) {
 		if strings.Contains(tool.Name, "capture_request") {
 			t.Errorf("a proxy without reqs has %s", tool.Name)
 		}
+	}
+}
+
+// retrier is a client of the newest protocol that answers dialogs by hand
+// (multi round-trip off), on sessions of one server with reqs' tools.
+func retriers(t *testing.T, reqs Requests, n int) []*mcp.ClientSession {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s := mcp.NewServer(&mcp.Implementation{Name: "reqcove", Version: Version}, nil)
+	addRequestTools(s, reqs)
+	var out []*mcp.ClientSession
+	for range n {
+		ct, st := mcp.NewInMemoryTransports()
+		if _, err := s.Connect(ctx, st, nil); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "0"}, &mcp.ClientOptions{
+			MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
+			ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+				return nil, errors.New("not here")
+			},
+		}).Connect(ctx, ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cs.Close() })
+		out = append(out, cs)
+	}
+	return out
+}
+
+func retry(t *testing.T, cs *mcp.ClientSession, state string) *mcp.CallToolResult {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "request_capture_add", Arguments: map[string]any{"hosts": []string{"a.com"}},
+		RequestState: state, InputResponses: mcp.InputResponseMap{"approve": &mcp.ElicitResult{Action: "accept"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func dialogState(t *testing.T, cs *mcp.ClientSession) string {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "request_capture_add", Arguments: map[string]any{"hosts": []string{"a.com"}}})
+	if err != nil || res.InputRequests == nil || res.RequestState == "" || strings.Contains(res.RequestState, "0a1b2c3d") {
+		t.Fatalf("no dialog, or its state names the id: %v %+v", err, res)
+	}
+	return res.RequestState
+}
+
+func resText(res *mcp.CallToolResult) string {
+	if len(res.Content) == 0 {
+		return ""
+	}
+	return res.Content[0].(*mcp.TextContent).Text
+}
+
+// A dialog's answer approves only for a dialog this proxy showed on the same
+// session, once, within dialogWait by both clocks: an answer made up (any
+// id, any time), replayed, from another session, late, or for other hosts
+// leaves the request pending.
+func TestDialogAnswerBound(t *testing.T) {
+	reqs := &fakeRequests{r: pendingReq()}
+	cs := retriers(t, reqs, 2)
+	made := "0a1b2c3d " + strconv.FormatInt(time.Now().UnixMilli(), 10)
+	if res := retry(t, cs[0], made); !res.IsError || !strings.Contains(resText(res), "nothing approved") {
+		t.Errorf("made up: %+v", res)
+	}
+	other := dialogState(t, cs[0])
+	if res := retry(t, cs[1], other); !res.IsError {
+		t.Errorf("another session's dialog: %+v", res)
+	}
+	if res := retry(t, cs[0], other); !res.IsError { // tried once already: gone
+		t.Errorf("after another session tried it: %+v", res)
+	}
+	for _, c := range []struct {
+		name       string
+		mono, wall time.Duration
+	}{{"late by the monotonic clock", 3 * time.Minute, 0}, {"late by the wall clock", 0, 3 * time.Minute}} {
+		n := dialogState(t, cs[0])
+		dialogClock = func() (time.Time, time.Time) { t := time.Now(); return t.Add(c.mono), t.Add(c.wall) }
+		res := retry(t, cs[0], n)
+		dialogClock = func() (time.Time, time.Time) { t := time.Now(); return t, t }
+		if res.IsError || !strings.Contains(resText(res), "not accepted") {
+			t.Errorf("%s: %+v", c.name, res)
+		}
+	}
+	n := dialogState(t, cs[0])
+	reqs.r.Hosts = []string{"b.com"} // not the hosts the dialog showed
+	if res := retry(t, cs[0], n); res.IsError || !strings.Contains(resText(res), "not accepted") {
+		t.Errorf("other hosts: %+v", res)
+	}
+	reqs.r = pendingReq()
+	if len(reqs.approved) != 0 {
+		t.Fatalf("approved: %q", reqs.approved)
+	}
+	n = dialogState(t, cs[0])
+	if res := retry(t, cs[0], n); res.IsError || !strings.Contains(resText(res), `"state":"applied"`) {
+		t.Errorf("its own dialog, in time: %+v", res)
+	}
+	reqs.r = pendingReq()
+	if res := retry(t, cs[0], n); !res.IsError {
+		t.Errorf("replayed: %+v", res)
+	}
+	if len(reqs.approved) != 1 || reqs.approved[0] != "0a1b2c3d: a.com" {
+		t.Errorf("approved: %q", reqs.approved)
+	}
+}
+
+// rawSession speaks JSON-RPC to `reqcove mcp` line by line, as a client
+// outside the SDK would.
+type rawSession struct {
+	w  io.Writer
+	rd *bufio.Scanner
+}
+
+func (s rawSession) send(t *testing.T, msg string) {
+	t.Helper()
+	if _, err := io.WriteString(s.w, msg+"\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s rawSession) read(t *testing.T) map[string]any {
+	t.Helper()
+	if !s.rd.Scan() {
+		t.Fatalf("no answer: %v", s.rd.Err())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(s.rd.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// The path follows the SDK's own rule, the version the client asked for in
+// initialize: asking 2026-07-28 there is answered 2025-11-25 (the SDK caps a
+// legacy initialize), yet the SDK refuses a request to the client during the
+// call, so the dialog goes in the answer (multi round-trip); asking
+// 2025-11-25, it comes during the call.
+func TestDialogPathByAskedVersion(t *testing.T) {
+	for _, c := range []struct{ asked, negotiated string }{{"2026-07-28", "2025-11-25"}, {"2025-11-25", "2025-11-25"}} {
+		t.Run(c.asked, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			cr, sw := io.Pipe()
+			sr, cw := io.Pipe()
+			t.Cleanup(func() { cw.Close(); sw.Close() })
+			go Proxy(ctx, sockPath(t), "not running", &fakeRequests{r: pendingReq()}, &mcp.IOTransport{Reader: sr, Writer: sw})
+			s := rawSession{cw, bufio.NewScanner(cr)}
+			s.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"`+c.asked+`","capabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"raw","version":"0"}}}`)
+			if got := s.read(t)["result"].(map[string]any)["protocolVersion"]; got != c.negotiated {
+				t.Fatalf("negotiated %v", got)
+			}
+			s.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+			s.send(t, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"request_capture_add","arguments":{"hosts":["a.com"]}}}`)
+			inCall := false
+			for {
+				m := s.read(t)
+				if m["method"] == "elicitation/create" {
+					inCall = true
+					id, _ := json.Marshal(m["id"])
+					s.send(t, `{"jsonrpc":"2.0","id":`+string(id)+`,"result":{"action":"decline"}}`)
+					continue
+				}
+				if m["id"] != 2.0 {
+					continue
+				}
+				res, _ := m["result"].(map[string]any)
+				_, inAnswer := res["inputRequests"].(map[string]any)
+				if want := c.asked >= "2026-07-28"; inAnswer != want || inCall == want || want && res["resultType"] != "input_required" {
+					t.Errorf("multi round-trip %v: dialog in the answer %v, during the call %v: %v", want, inAnswer, inCall, m)
+				}
+				if st, _ := res["requestState"].(string); strings.Contains(st, "0a1b2c3d") {
+					t.Errorf("the state names the id: %q", st)
+				}
+				return
+			}
+		})
+	}
+}
+
+// A client that can show only a url (no form) gets no dialog, on either
+// path: the request is pending with its command, no error.
+func TestNoDialogForURLOnly(t *testing.T) {
+	for _, version := range []string{"", "2025-11-25"} {
+		t.Run(version, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			ct, st := mcp.NewInMemoryTransports()
+			reqs := &fakeRequests{r: pendingReq()}
+			go Proxy(ctx, sockPath(t), "not running", reqs, st)
+			shown := false
+			cs, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "0"}, &mcp.ClientOptions{
+				Capabilities: &mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{URL: &mcp.URLElicitationCapabilities{}}},
+				ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+					shown = true
+					return &mcp.ElicitResult{Action: "accept"}, nil
+				},
+			}).Connect(ctx, ct, &mcp.ClientSessionOptions{ProtocolVersion: version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { cs.Close() })
+			out, errText := callReq(t, cs, "request_capture_add", map[string]any{"hosts": []string{"a.com"}})
+			if errText != "" || shown || out.State != "pending" || strings.Contains(out.Note, "dialog") || len(reqs.approved) != 0 {
+				t.Errorf("%q shown %v %+v", errText, shown, out)
+			}
+		})
 	}
 }

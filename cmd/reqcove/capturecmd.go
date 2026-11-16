@@ -48,7 +48,7 @@ type ctlRequest struct {
 	For        string   `json:"for,omitempty"`         // allow-all, discover: how long, as 30m or 2h
 	End        bool     `json:"end,omitempty"`         // allow-all, discover: end it now
 	ID         string   `json:"id,omitempty"`          // requests (one), approve, deny: an agent's request (since v1.2)
-	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or page; deny: page (or none: terminal)
+	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or console; deny: console (or none: terminal)
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -57,7 +57,7 @@ type ctlAnswer struct {
 	Message  string                     `json:"message"`
 	Requests []mcpserver.CaptureRequest `json:"requests,omitempty"` // the request ops' (since v1.2)
 	New      bool                       `json:"new,omitempty"`      // request: made now, not pending already
-	Port     int                        `json:"port,omitempty"`     // ui: the page's, on 127.0.0.1 (since v1.2)
+	Port     int                        `json:"port,omitempty"`     // console: the page's, on 127.0.0.1 (since v1.2)
 	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
 }
 
@@ -356,6 +356,9 @@ func newCtlState(o *runOpts) *ctlState {
 func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
 	st.ctx, st.status = ctx, status
+	if cap != nil { // nil: tests of LAN mode
+		st.reqs.redacting = cap.Store.Redacting
+	}
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
 	ln, err := net.Listen("unix", path)
@@ -428,9 +431,9 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 	case "reload":
 		return reload(ctx, cap, st, why)
 	case "request":
-		return unmasked(cap, st.reqs.ask(cap.Base(), req.Hosts))
+		return st.reqs.ask(cap.Base(), req.Hosts)
 	case "requests":
-		return unmasked(cap, st.reqs.list(req.ID))
+		return st.reqs.list(req.ID)
 	case "deny":
 		return st.reqs.deny(req.ID, cmp.Or(req.Via, "terminal"))
 	case "approve":

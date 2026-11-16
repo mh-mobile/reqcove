@@ -108,7 +108,7 @@ type pageCode struct {
 	used          bool
 }
 
-// openPage is the ui op (st.mu held): the page, opened once, and a new code.
+// openPage is the console op (st.mu held): the page, opened once, and a new code.
 func openPage(cap *capture.Capture, st *ctlState) ctlAnswer {
 	if st.page == nil {
 		p, err := servePage(st.ctx, cap, st)
@@ -327,7 +327,7 @@ func (p *page) state(w http.ResponseWriter, _ *http.Request) {
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
 	}
-	for _, r := range unmasked(p.cap, ctlAnswer{Requests: p.st.reqs.pending()}).Requests {
+	for _, r := range p.st.reqs.pending() {
 		out.Requests = append(out.Requests, pageRequest{ID: r.ID, Hosts: r.Hosts, ExpiresAt: r.ExpiresAt, Masked: mcpserver.Masked(r)})
 	}
 	answer(w, http.StatusOK, out)
@@ -355,6 +355,6 @@ func (p *page) change(w http.ResponseWriter, r *http.Request, in any, req func()
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)
 	defer cancel()
-	a := answerCtl(ctx, p.cap, p.st, req()) // never under p.mu: the ui op takes st.mu, then p.mu
+	a := answerCtl(ctx, p.cap, p.st, req()) // never under p.mu: the console op takes st.mu, then p.mu
 	answer(w, http.StatusOK, map[string]any{"ok": a.OK, "message": a.Message})
 }

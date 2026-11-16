@@ -63,7 +63,7 @@ to 5 host names) and `get_capture_request` (`id`), 21 tools there: never on
 `run`'s socket's own list, never over `--mcp-http`. Both answer a request:
 `id`, `hosts`, `state` (`pending`, `approved`, `applied`, `failed`,
 `denied`, `expired`; more values may come), `created_at` and `expires_at`
-(RFC 3339), `approved_in` (`terminal` or `dialog`; `page` since `reqcove console`), `result` (text for
+(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`), `result` (text for
 people), `approve` (while pending, the command the user runs), `unmasked`
 (true while `run` masks nothing, `--no-redact`) and `note`.
 
@@ -244,7 +244,7 @@ The commands and their flags, from each command's flag set:
 `--uvx`, `--python` and `--mitmproxy-spec` are not in this list: they are not
 stable ([below](#not-stable)).
 
-`reqcove console` (since v1.2) asks `run` over `ctl.sock` with a new op, `ui`: a
+`reqcove console` (since v1.2) asks `run` over `ctl.sock` with a new op, `console`: a
 `run` older than v1.2 answers it with its usage, and `reqcove console` then says
 to restart `run` with v1.2 or later (a unit test with a v1.1 answer). The
 page's link (`http://127.0.0.1:PORT/#c=CODE`) and what it shows are not

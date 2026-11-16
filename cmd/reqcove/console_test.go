@@ -46,7 +46,7 @@ func pageRun(t *testing.T, o *runOpts) (string, *ctlState) {
 	return dir, st
 }
 
-// openUI is the ui op: the page's base URL and a code.
+// openUI is the console op: the page's base URL and a code.
 func openUI(t *testing.T, state string) (string, string) {
 	t.Helper()
 	a, err := askRun(context.Background(), state, ctlRequest{Cmd: "console"})
@@ -109,7 +109,7 @@ func setClock(p *page, c *clock) {
 	p.mu.Unlock()
 }
 
-// The listener is 127.0.0.1's alone, opened once; each ui op a new code;
+// The listener is 127.0.0.1's alone, opened once; each console op a new code;
 // neither the code nor a token is logged.
 func TestPageListener(t *testing.T) {
 	logged := logTo(t)
@@ -455,7 +455,7 @@ func TestPageFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m := regexp.MustCompile(`https?://|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|<script>|<style|style=|\son[a-z]+=`).Find(b); m != nil {
+		if m := regexp.MustCompile(`https?://|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|<script>|<style|style=|\son[a-z]+=|reqcove ui\b`).Find(b); m != nil {
 			t.Errorf("%s: %s", f, m)
 		}
 	}

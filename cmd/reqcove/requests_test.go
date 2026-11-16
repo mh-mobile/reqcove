@@ -251,8 +251,11 @@ func TestCaptureRequestsApprove(t *testing.T) {
 		t.Errorf("deny twice: %+v", a)
 	}
 	c.move(requestTTL-time.Second, 0)
-	if _, a := asked(t, q, capture.HostRules{}, "d.com"); a.OK || !strings.Contains(a.Message, "denied these hosts") {
+	if _, a := asked(t, q, capture.HostRules{}, "d.com"); a.OK || !strings.Contains(a.Message, "the user denied d.com at") {
 		t.Errorf("denied recently: %+v", a)
+	}
+	if _, a := asked(t, q, capture.HostRules{}, "d.com", "e.com"); a.OK || !strings.Contains(a.Message, "the user denied d.com at") {
+		t.Errorf("a denied host with another: %+v", a)
 	}
 	c.move(0, requestTTL) // by the wall clock, 10 minutes after
 	if _, a := asked(t, q, capture.HostRules{}, "d.com"); !a.OK {
@@ -427,6 +430,41 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer tok")
 	return b.rt.RoundTrip(r)
+}
+
+// Under --no-redact every view of a request says unmasked: the request op's,
+// status's (pending), an approval's and a denial's.
+func TestCaptureRequestsUnmasked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir, err := os.MkdirTemp("/tmp", "rcvu-") // short: macOS caps socket paths at 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	store := capture.NewStore(1, 1)
+	store.SetScope(capture.HostRules{}, false) // --no-redact
+	st, err := serveCtl(ctx, dir, &capture.Capture{Store: store}, &runOpts{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := asked(t, st.reqs, capture.HostRules{}, "a.com")
+	d, _ := asked(t, st.reqs, capture.HostRules{}, "d.com")
+	views := map[string]mcpserver.CaptureRequest{"request": a}
+	for _, p := range st.reqs.pending() {
+		views["status "+p.ID] = p
+	}
+	views["approve"] = approve(st.reqs, ctlRequest{Cmd: "approve", ID: a.ID, Via: "terminal", Hosts: a.Hosts}, func(string, []string) ctlAnswer { return ctlAnswer{OK: true} }).Requests[0]
+	views["deny"] = st.reqs.deny(d.ID, "terminal").Requests[0]
+	views["requests"] = st.reqs.list(a.ID).Requests[0]
+	if len(views) != 6 {
+		t.Errorf("%d views", len(views))
+	}
+	for name, v := range views {
+		if !v.Unmasked {
+			t.Errorf("%s: %+v", name, v)
+		}
+	}
 }
 
 // TestCaptureRequestE2E (REQCOVE_E2E=1, real mitmproxy): an agent asks
