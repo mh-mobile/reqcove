@@ -79,6 +79,10 @@ var configFlags = map[string]func(string) error{
 	},
 }
 
+// clearOnly are flags the writer only takes out (their lines removed),
+// never writes: --upstream-ca names a CA to trust.
+var clearOnly = map[string]bool{"upstream-ca": true}
+
 func boolValue(v string) error {
 	if v != "true" && v != "false" {
 		return errors.New("true or false")
@@ -227,6 +231,9 @@ func planConfig(path string, args []string, files map[string]string, edits ...co
 			continue
 		}
 		check, ok := configFlags[e.Flag]
+		if !ok && clearOnly[e.Flag] && len(e.Values) == 0 && !e.Add {
+			check, ok = boolValue, true // no value to check: its lines removed
+		}
 		if !ok {
 			return nil, fmt.Errorf("--%s is not written by reqcove: change it in the file yourself, in your terminal", e.Flag)
 		}

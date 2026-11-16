@@ -25,10 +25,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// `reqcove restart` (since v1.3; the console's local page will ask the same
-// op): run checks the config on disk and its command line as the next start
-// would take them (checkFlags, nothing changed) and that the binary it was
-// started from is still there; then it stops as at Ctrl-C (the system proxy
+// `reqcove restart` (since v1.3; the console's local page asks the same op):
+// run checks the config on disk and its command line as the next start would
+// take them (checkFlags, nothing changed), that the binary it was started
+// from is still there, and that this binary takes them too (its hidden
+// `run --check-config` mode: a newer binary may check more); then it stops as at Ctrl-C (the system proxy
 // put back, mitmproxy, the node and caffeinate stopped: run returns, its
 // defers run) and execs that binary again, with the same arguments and pid,
 // so launchd, systemd and brew services see the same process. Across the
@@ -60,11 +61,73 @@ var snapshotName = regexp.MustCompile(`^restart-[0-9a-f]{32}\.config$`)
 const restartNote = "restart-note"
 
 // startBinary is what a restart execs, recorded at run's start (binaryPath);
-// startBinaryErr why it is not known.
+// startBinaryErr why it is not known; startArgs run's arguments as given (the
+// exec's, and the check's).
 var (
 	startBinary    string
 	startBinaryErr error
+	startArgs      []string
 )
+
+// checkConfigArg, first after run, makes run a check of its flags alone:
+// the config and the command line after it, read as a start would read them
+// (checkFlags: no lock, no file written, nothing started, nothing logged);
+// exit 0, or 1 with the reason. Hidden: not one of run's flags,
+// for a restart to ask the binary it would exec (binaryCheck).
+const checkConfigArg = "--check-config"
+
+// checkPrefix starts the check mode's reason, for binaryCheck to find.
+const checkPrefix = "check-config: "
+
+// checkConfigMode is run --check-config ARGS: a bare run's file when ARGS is
+// empty, as run reads it.
+func checkConfigMode(args []string) error {
+	if len(args) == 0 {
+		if p, _ := bareConfig(); p != "" {
+			args = []string{"--config", p}
+		}
+	}
+	if _, err := checkFlags(args, nil, nil); err != nil {
+		return errors.New(checkPrefix + err.Error())
+	}
+	return nil
+}
+
+// checkTimeout is how long binaryCheck waits (under ctlWait: the answer
+// goes out first).
+var checkTimeout = 8 * time.Second
+
+// binaryCheck runs startBinary's check mode with run's arguments. old: the
+// binary has no such mode (older than it): the in-process check stands alone.
+func binaryCheck(ctx context.Context) (old bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, startBinary, append([]string{"run", checkConfigArg}, startArgs...)...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	s := string(out)
+	if strings.Contains(s, "flag provided but not defined: -check-config") {
+		return true, nil
+	}
+	if i := strings.LastIndex(s, checkPrefix); i >= 0 {
+		why, _, _ := strings.Cut(s[i+len(checkPrefix):], "\n")
+		return false, errors.New(why)
+	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("it did not answer within %v", checkTimeout)
+	}
+	last := strings.TrimSpace(s)
+	if i := strings.LastIndexByte(last, '\n'); i >= 0 {
+		last = last[i+1:]
+	}
+	if len(last) > 300 {
+		last = last[:300]
+	}
+	return false, fmt.Errorf("%v: %s", err, last)
+}
 
 // binaryPath is argv0 when absolute (launchd, systemd and brew services start
 // run so), else the one PATH lookup, made absolute; never os.Executable (on
@@ -411,7 +474,11 @@ func (*restartExec) Error() string { return "restart" }
 // runRestartable is `reqcove run`: run, and the exec when it returns for a
 // restart; after a restart, the retry of a failed start.
 func runRestartable(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == checkConfigArg {
+		return checkConfigMode(args[1:])
+	}
 	startBinary, startBinaryErr = binaryPath(os.Args[0])
+	startArgs = args
 	h := takeHandover()
 	carried = h
 	defer func() { carried = nil }()
@@ -529,9 +596,10 @@ func execRestart(r *restartExec) error {
 
 // restartOp is the restart op (st.mu held): refused, with nothing stopped,
 // unless the binary run started from is there and the config on disk and
-// run's command line would start; else the start config's snapshot written,
-// and the restart starts once the answer is sent (ctlAnswer.after).
-func restartOp(st *ctlState, records any) ctlAnswer {
+// run's command line would start, as this run checks them and as that binary
+// does (binaryCheck); else the start config's snapshot written, and the
+// restart starts once the answer is sent (ctlAnswer.after).
+func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 	refuse := func(why string) ctlAnswer { return ctlAnswer{Message: "refused: " + why + "; nothing stopped"} }
 	if st.restart == nil {
 		return refuse("this run cannot restart itself")
@@ -546,6 +614,10 @@ func restartOp(st *ctlState, records any) ctlAnswer {
 	if err != nil {
 		return refuse("the next start would refuse the settings (the --config file on disk and run's command line): " + err.Error())
 	}
+	old, err := binaryCheck(ctx)
+	if err != nil {
+		return refuse(startBinary + ", which a restart starts, refuses the settings (the --config file on disk and run's command line): " + err.Error())
+	}
 	snap := ""
 	if st.o.config != "" {
 		if snap, err = writeSnapshot(st.o.state, st.startConfig); err != nil {
@@ -553,7 +625,10 @@ func restartOp(st *ctlState, records any) ctlAnswer {
 		}
 	}
 	os.Remove(filepath.Join(st.o.state, restartNote))
-	msg := fmt.Sprintf("restarting: run stops (the system proxy put back, mitmproxy and the node stopped) and %s starts again with the config on disk and the same command line; the records (%v now) start empty, and devices lose the internet until it is up", startBinary, records)
+	msg := fmt.Sprintf("restarting: run stops (the system proxy put back, mitmproxy and the node stopped) and %s starts again with the config on disk and the same command line; %s", startBinary, restartEmpties(records))
+	if old {
+		msg += "; " + startBinary + " has no check of its own (older than this run): checked by this run alone"
+	}
 	if absPath(n.state) != absPath(st.o.state) {
 		msg += "; the config names another --state now: " + n.state
 	}
@@ -563,6 +638,11 @@ func restartOp(st *ctlState, records any) ctlAnswer {
 	msg += ". If the new start fails, run puts back the config it had started from and starts once more; " + withState("reqcove status", n.state) + " says how it went"
 	log.Print("restart: asked; " + strings.TrimPrefix(msg, "restarting: "))
 	return ctlAnswer{OK: true, Message: msg, after: func() { st.restart(snap) }}
+}
+
+// restartEmpties is what a restart loses, for its answer and the page's confirm.
+func restartEmpties(records any) string {
+	return fmt.Sprintf("the records (%v now) start empty, and devices lose the internet until it is up", records)
 }
 
 // restartCommand is `reqcove restart`, in a terminal only.

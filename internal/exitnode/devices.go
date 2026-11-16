@@ -94,3 +94,12 @@ func ownDevices(self *ipnstate.PeerStatus, peers []*ipnstate.PeerStatus) map[net
 	}
 	return out
 }
+
+// ownList is own (ownDevices) by StableID: the machine names.
+func ownList(own map[netip.Addr]Device) map[string]string {
+	out := map[string]string{}
+	for _, d := range own {
+		out[d.ID] = d.Name
+	}
+	return out
+}

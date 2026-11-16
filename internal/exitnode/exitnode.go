@@ -115,6 +115,10 @@ type Status struct {
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
 	// a login URL only while starting, so only a restart brings one.
 	WasRunning bool `json:"-"`
+	// Own are the user's own devices (ownDevices: untagged, of reqcove's
+	// user; none when reqcove's node is tagged): StableID -> machine name.
+	// Never in an answer: the console's local page alone lists them.
+	Own map[string]string `json:"-"`
 }
 
 var current atomic.Pointer[policy]
@@ -351,6 +355,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.Own = ownList(p.own)
 			status.DeviceOS = map[string]string{}
 			for _, p := range peers {
 				if names[string(p.ID)] != "" && p.OS != "" {

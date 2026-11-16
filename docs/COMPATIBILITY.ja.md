@@ -126,7 +126,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 `reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `console` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。v1.3 から、`run` の `console` への答えは、ページを開く状態ディレクトリのファイルも示します（`file`。v1.2 の `reqcove console` はこれを使わず、これまでどおりリンクを引数にして開きます。v1.2 の `run` に対する v1.3 の `reqcove console` は何も開かず、リンクを表示します）。`reqcove console --end` は、もう 1 つの新しい op `console-end` で頼みます。v1.2 の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove console --end` は `run` を v1.3 以降で起動し直すよう伝えます（どちらの答えも単体テストで確認）。
 
-`reqcove restart`（v1.3 から）は、`ctl.sock` の新しい op `restart` で `run` に頼みます（ほかのフィールドはなく、LAN モードでも使えます）。`run` は `ok` と答え、答えを送ってから再起動を始めるか、何も止めずに拒否します。v1.2 以前の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove restart` は `run` を止めて起動し直すよう伝えます（どちらの答えも単体テストで確認）。再起動が新しいプロセスに渡す変数 `REQCOVE_RESTART_*`、状態ディレクトリに置く config の写し（`restart-*.config`）、`config.failed`、`reqcove status` が読む `restart-note` は変わりうるものです（[下記](#変わりうるもの)）。
+`reqcove restart`（v1.3 から）は、`ctl.sock` の新しい op `restart` で `run` に頼みます（ほかのフィールドはなく、LAN モードでも使えます）。`run` は `ok` と答え、答えを送ってから再起動を始めるか、何も止めずに拒否します。v1.2 以前の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove restart` は `run` を止めて起動し直すよう伝えます（どちらの答えも単体テストで確認）。再起動が新しいプロセスに渡す変数 `REQCOVE_RESTART_*`、状態ディレクトリに置く config の写し（`restart-*.config`）、`config.failed`、`reqcove status` が読む `restart-note` は変わりうるものです（[下記](#変わりうるもの)）。v1.3 の `run` は止まる前に、exec するバイナリを `run --check-config` と自分の引数で実行します（隠れたモードで、`run -h` には出ず、変わりうるものです。再起動のためだけのものです）。終了コードは 0 か、理由とともに 1 です。そのモードのないバイナリは使い方の説明で答え（知らないフラグとして）、再起動は `run` だけで確かめ、そう伝えます（単体テストで確認）。
 
 ### `--config` のファイル
 
@@ -166,7 +166,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - Reqcove が動かす mitmproxy と Python のロック（`internal/capture/mitm.py.lock`）：セキュリティ修正のため、どのリリースでも更新します。どのリリースがどのバージョンの mitmproxy を動かすかは約束しません。
 - `--uvx`、`--python`、`--mitmproxy-spec`（`run` のもの。`--uvx` は `status` と `mock add` のものも）とその既定値：mitmproxy をどう動かすか（uv、Python、mitmproxy のバージョン）を選ぶもので、mitmproxy と uv に従います。
 - 上に挙げていない `capture_stats` のフィールド：`held_bytes`、`restarts`、`state_detail`、`tls_failures`、`passed_through_open`、`addon_dropped_bodies`、`addon_dropped_events`、`bad_lines`、`masking_failed`、`unknown_version`、`orphan_updates`、`all_hosts`、`brotli`、`brotli_decode`、`zstd_decode`、`rules`、`rules_error`、`resolve`、`upstream`。マイナーリリースで変わったりなくなったりします。
-- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change` と `/api/save` も）。
+- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change`、`/api/save`、`/api/settings`、`/api/restart` も）。
+- `run --check-config`：再起動が、exec するバイナリに頼む隠れた確認のモード。
 - `reqcove restart` が新しいプロセスに渡すもの（`REQCOVE_RESTART_*` の変数、fd）と、状態ディレクトリと config の隣に残すファイル（`restart-*.config`、`restart-note`、`config.failed`）。
 - `poc/` フォルダ：メンテナーのメモで、リポジトリには入っていません。
 - そのほか、このページで変わらないとしていないもの。

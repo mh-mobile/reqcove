@@ -412,13 +412,36 @@ add and remove (recorded or passed undecrypted), stop and start, allow-all
 and discovery for 30 minutes to 24 hours and their end, and save, which
 writes the hosts files and, on a config without `--allow-hosts=@FILE`,
 creates the hosts file beside it and adds that line, after showing it. Its
-endpoint takes those changes alone: never `capture set`, `reload`,
-`restart`, a rule, a setting, a path, or a field other than the change's
-(tests: each refused before it reaches `run`). Stop, remove and allow-all
+endpoint for the hosts takes those changes alone: never `capture set`,
+`reload`, a restart, a rule, a setting, a path, or a field other than the
+change's (tests: each refused before it reaches `run`); the settings and the
+restart have endpoints of their own (below). Stop, remove and allow-all
 show `run`'s own warnings before a confirm. A change made on a page that read
 the hosts before another change (another tab, the CLI) is refused (tests).
 Each is traced "(from the console on this computer)": `run`'s log, a `cli`
 marker and `scope_change` (an E2E test).
+
+Since v1.3 the page also writes some of `run`'s settings to the `--config`
+file, for the next start, and restarts `run`
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)):
+`--device` (the own untagged devices `run`'s node sees; another device is
+refused), `--keep-awake`, `--proxy-port`, `--hostname`, `--verbose`, and,
+after showing `run -h`'s words for the flag and asking, `--ui`,
+`--mcp-http`, `--local-proxy`, `--dns`, `--upstream-proxy` (a URL without
+user or password), a `--device` added and `--mask-names`; `--upstream-ca`
+may be taken out. It goes through the config writer alone, which writes
+those flags only, refuses a line break, a control character or a leading
+`@` in a value, keeps the other lines, keeps the file before as
+`config.prev`, checks the whole config as the next start would, and refuses
+a page that read the config before another change (tests). It never writes
+the flags that stay on the command line, the ones naming code or a file to
+read or trust (`--rules`, `--proto`, `--upstream-ca`, `--uvx`, `--state`,
+…) or `--mask-values`, nor a setting given on `run`'s command line (tests).
+It shows `--mask-values` as "set" and a count, never a pattern, and an
+`@FILE` by its path, never what it holds (a test: no pattern in any answer
+or log line). A restart from the page lists first every setting that
+differs from the ones `run` started with and asks; it is the op of
+`reqcove restart`, with its checks (below).
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
   from the first `reqcove console` until it ends (`reqcove restart` keeps it,
   below); never on the tailnet node, the
@@ -473,14 +496,30 @@ marker and `scope_change` (an E2E test).
   change the hosts too, as `reqcove capture` can: such a session (yours, or
   one traded first by someone else) can turn on allow-all for up to 24 hours,
   recording every app's traffic for agents to read, or stop recording; the
-  log and the markers show it "(from the console on this computer)". What it
-  shows is not secret beyond `reqcove status`: never the flows' contents, a
-  token, a link or a login URL, or text from an agent or an MCP client.
+  log and the markers show it "(from the console on this computer)". Since
+  v1.3 such a session can also write the settings above for the next start
+  and restart `run`: send the decrypted requests on to a proxy it names
+  (`--upstream-proxy`, unmasked there), serve the records to your devices on
+  the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
+  name out of `--mask-names`, and restart, which empties the records; the
+  log names each flag written "(from the console on this computer)", and
+  `config.prev` holds the file before. What it shows is not secret beyond
+  `reqcove status` and the config, but for the list of your own devices on
+  the tailnet (their machine names), to pick from: never the flows' contents, a token, a
+  link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, an
+  `--upstream-proxy` value `run` would refuse (a password written in by
+  hand: a test), or text from an agent or an MCP client.
 
 Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
 with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does
 and exec the binary it was started from, in the same process
-([guide](guide.md#restart-in-place-reqcove-restart)). What crosses the exec:
+([guide](guide.md#restart-in-place-reqcove-restart)). Before it stops, it
+checks the config and the command line itself, then asks the binary it would
+exec to check them (a hidden check mode of `run`'s, with the same
+arguments: it reads them as a start would, and starts nothing, takes no
+lock, creates no state directory and writes no file; tests). Refused by
+either, nothing stops (a test); a binary without the mode (built before it)
+leaves the check to `run`, which says so. What crosses the exec:
 - **The state's lock and the page's port**, as open files: no other `run`
   takes the state, and no other process the port, in between (an E2E test
   tries the lock throughout; that no one else bound the port was not tried

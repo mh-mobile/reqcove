@@ -42,11 +42,11 @@ func restartable(t *testing.T, text string) (st *ctlState, config string, args [
 	st = newCtlState(o)
 	var asked string
 	st.restart = func(s string) { asked = s }
-	startBinary, startBinaryErr = os.Args[0], nil
-	t.Cleanup(func() { startBinary = "" })
+	startBinary, startBinaryErr, startArgs = os.Args[0], nil, args
+	t.Cleanup(func() { startBinary, startArgs = "", nil })
 	return st, config, args, func() string {
 		t.Helper()
-		a := restartOp(st, 0)
+		a := restartOp(t.Context(), st, 0)
 		if !a.OK || a.after == nil {
 			t.Fatalf("restart refused: %q", a.Message)
 		}
@@ -253,7 +253,7 @@ func TestRestartStateEdited(t *testing.T) {
 	start := "--device phone\n--state=" + stateA + "\n"
 	st, config, args, restart := restartable(t, start)
 	os.WriteFile(config, []byte("--device phone\n--state="+stateB+"\n"), 0o600)
-	a := restartOp(st, 0)
+	a := restartOp(t.Context(), st, 0)
 	if !strings.Contains(a.Message, "the config names another --state now: "+stateB) {
 		t.Errorf("answer: %q", a.Message)
 	}
@@ -476,12 +476,12 @@ func TestRestartRefused(t *testing.T) {
 	st, config, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
 	snaps := func() int { m, _ := filepath.Glob(filepath.Join(state, "restart-*")); return len(m) }
 	startBinary = filepath.Join(t.TempDir(), "gone")
-	if a := restartOp(st, 0); a.OK || a.after != nil || !strings.Contains(a.Message, "is not there to start again") || !strings.HasSuffix(a.Message, "; nothing stopped") {
+	if a := restartOp(t.Context(), st, 0); a.OK || a.after != nil || !strings.Contains(a.Message, "is not there to start again") || !strings.HasSuffix(a.Message, "; nothing stopped") {
 		t.Errorf("binary gone: %q", a.Message)
 	}
 	startBinary = os.Args[0]
 	os.WriteFile(config, []byte("--device phone\n--state="+state+"\n--web\n"), 0o600)
-	if a := restartOp(st, 0); a.OK || !strings.Contains(a.Message, "the next start would refuse the settings") || !strings.Contains(a.Message, "--web only on the command line") {
+	if a := restartOp(t.Context(), st, 0); a.OK || !strings.Contains(a.Message, "the next start would refuse the settings") || !strings.Contains(a.Message, "--web only on the command line") {
 		t.Errorf("config refused: %q", a.Message)
 	}
 	if snaps() != 0 {

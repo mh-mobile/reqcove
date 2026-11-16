@@ -294,6 +294,10 @@ func newPage(cap *capture.Capture, st *ctlState, host string) *page {
 	p.mux.HandleFunc("POST /api/deny", p.authed(p.deny))
 	p.mux.HandleFunc("POST /api/change", p.authed(p.scope))
 	p.mux.HandleFunc("GET /api/save", p.authed(p.saveDiff))
+	p.mux.HandleFunc("GET /api/settings", p.authed(p.settings))
+	p.mux.HandleFunc("POST /api/settings", p.authed(p.setSetting))
+	p.mux.HandleFunc("GET /api/restart", p.authed(p.restartDiff))
+	p.mux.HandleFunc("POST /api/restart", p.authed(p.restartNow))
 	return p
 }
 
@@ -558,7 +562,7 @@ func (p *page) scope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !pageOps[in.Cmd] || in.Rev == "" {
-		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: the page changes the hosts with add, remove, stop, start, save, allow-all and discover alone, and the scope it read (capture set, reload and restart are your terminal's); nothing changed"})
+		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: the page changes the hosts with add, remove, stop, start, save, allow-all and discover alone, and the scope it read (capture set and reload are your terminal's; a restart is the Restart button's); nothing changed"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)

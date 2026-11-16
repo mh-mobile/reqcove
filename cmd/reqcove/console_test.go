@@ -471,7 +471,7 @@ func TestPageChange(t *testing.T) {
 	}
 	for _, cmd := range []string{"set", "reload", "restart", "console", "console-end", "request", "requests", "approve", "deny", "", "ADD"} {
 		r, b := call(t, base, "POST", "/api/change", `{"cmd":"`+cmd+`","rev":"`+s.Rev+`"}`, auth)
-		if r.StatusCode != http.StatusBadRequest || !strings.Contains(b, "capture set, reload and restart are your terminal's") {
+		if r.StatusCode != http.StatusBadRequest || !strings.Contains(b, "capture set and reload are your terminal's") {
 			t.Errorf("%q: %d %s", cmd, r.StatusCode, b)
 		}
 	}

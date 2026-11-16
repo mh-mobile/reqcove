@@ -267,6 +267,11 @@ with both answers). The variables `REQCOVE_RESTART_*` that a restart sets
 for the new process, the copy of the config it keeps in the state
 directory (`restart-*.config`), `config.failed` and the `restart-note`
 file that `reqcove status` reads are not stable ([below](#not-stable)).
+Before it stops, a v1.3 `run` runs the binary it would exec as
+`run --check-config` followed by its own arguments (a hidden mode, not in
+`run -h`, not stable: for the restart alone), which exits 0, or 1 with the
+reason; a binary without the mode answers with its usage (an unknown flag),
+and the restart then checks in `run` alone and says so (unit tests).
 
 ### The `--config` file
 
@@ -357,7 +362,10 @@ These may change in any release, a patch release included:
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
-  answers (v1.3's `/api/change` and `/api/save` among them).
+  answers (v1.3's `/api/change`, `/api/save`, `/api/settings` and
+  `/api/restart` among them).
+- `run --check-config`, the hidden check mode a restart asks of the binary
+  it would exec.
 - What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`
   variables, the fds) and the files it leaves in the state directory and
   beside the config (`restart-*.config`, `restart-note`, `config.failed`).
