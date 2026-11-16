@@ -504,9 +504,11 @@ differs from the ones `run` started with and asks; it is the op of
   name out of `--mask-names`, and restart, which empties the records; the
   log names each flag written "(from the console on this computer)", and
   `config.prev` holds the file before. What it shows is not secret beyond
-  `reqcove status` and the config: never the flows' contents, a token, a
-  link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, or
-  text from an agent or an MCP client.
+  `reqcove status` and the config, but for the list of your own devices on
+  the tailnet (their machine names), to pick from: never the flows' contents, a token, a
+  link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, an
+  `--upstream-proxy` value `run` would refuse (a password written in by
+  hand: a test), or text from an agent or an MCP client.
 
 Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
 with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,6 +84,17 @@ func values(uses []flagUse, flag string) []string {
 	return out
 }
 
+// shown are a flag's values as the page shows them: an --upstream-proxy run
+// would refuse (a user and password in it, say, edited in by hand) never.
+func shown(flag string, vs []string) []string {
+	for i, v := range vs {
+		if _, err := upstreamAddr(v, ""); flag == "upstream-proxy" && err != nil {
+			vs[i] = "(set, not shown: not a URL run takes)"
+		}
+	}
+	return vs
+}
+
 // ownDevices are the user's own untagged devices from run's netmap.
 func (p *page) ownDevices() map[string]string {
 	if p.st.status == nil {
@@ -109,9 +121,9 @@ func (p *page) settings(w http.ResponseWriter, _ *http.Request) {
 		out.Rev = configRev(b)
 	}
 	show := func(flag string) pageSetting {
-		s := pageSetting{Flag: flag, Values: values(file, flag), Default: fs.Lookup(flag).DefValue}
+		s := pageSetting{Flag: flag, Values: shown(flag, values(file, flag)), Default: fs.Lookup(flag).DefValue}
 		if pinned := values(cmd, flag); len(pinned) > 0 {
-			s.Pinned = pinned
+			s.Pinned = shown(flag, pinned)
 		}
 		return s
 	}
@@ -228,7 +240,11 @@ func (p *page) setSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("reqcove console: --%s written to %s%s; run takes it at its next restart", in.Flag, config, fromConsole) // never its values
-	answer(w, http.StatusOK, map[string]any{"ok": true, "message": fmt.Sprintf("written to %s (the file before kept as %s.prev):\n%srun takes it at its next restart", config, config, plan.diff())})
+	diff := plan.diff()
+	if in.Flag == "upstream-proxy" { // the line taken out may hold what shown hides
+		diff = "--upstream-proxy\n"
+	}
+	answer(w, http.StatusOK, map[string]any{"ok": true, "message": fmt.Sprintf("written to %s (the file before kept as %s.prev):\n%srun takes it at its next restart", config, config, diff)})
 }
 
 // pageRestart is GET /api/restart: what a restart would change, before the
@@ -344,7 +360,12 @@ func (p *page) restartNow(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)
 	defer cancel()
 	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: "restart", rev: in.Rev, from: "console"})
-	answer(w, http.StatusOK, map[string]any{"ok": a.OK, "message": a.Message})
+	// Whole, with its length, before the restart closes the server's
+	// connections: not chunked, whose last chunk waits for the handler's end.
+	b, _ := json.Marshal(map[string]any{"ok": a.OK, "message": a.Message})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.Write(b)
 	http.NewResponseController(w).Flush()
 	if a.after != nil {
 		a.after()

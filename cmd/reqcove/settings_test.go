@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
@@ -47,7 +50,12 @@ func settingsRun(t *testing.T, text string, extra ...string) (base, token string
 		t.Fatal(err)
 	}
 	restarted = new(string)
-	st.restart = func(s string) { *restarted = "asked:" + s }
+	st.restart = func(s string) { // as run's: the page's server closes, before the handler returns
+		*restarted = "asked:" + s
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	startBinary, startBinaryErr, startArgs = os.Args[0], nil, args
 	t.Cleanup(func() { startBinary, startArgs = "", nil })
 	base, code := openUI(t, dir)
@@ -264,10 +272,11 @@ func TestPageSettingsConfirm(t *testing.T) {
 }
 
 // --mask-values is never in an answer: not the file's, not the command
-// line's, not in the restart's list (changed, alone), not in a message.
+// line's, not in the restart's list (changed, alone), not in a message. Nor
+// an --upstream-proxy run would refuse (a password, edited in by hand).
 func TestPageSettingsMaskValues(t *testing.T) {
 	logged := logTo(t)
-	base, token, _, config, _ := settingsRun(t, "--device=phone\n--mask-values=k-SECRETFILE1", "--mask-values=k-SECRETCMD2")
+	base, token, _, config, _ := settingsRun(t, "--device=phone\n--allow-hosts=a.example\n--mask-values=k-SECRETFILE1", "--mask-values=k-SECRETCMD2")
 	var bodies []string
 	get := func(path string) {
 		_, b := call(t, base, "GET", path, "", map[string]string{sessionHeader: token})
@@ -281,10 +290,21 @@ func TestPageSettingsMaskValues(t *testing.T) {
 	bodies = append(bodies, msg)
 	os.WriteFile(config, []byte(strings.Replace(read(t, config), "SECRETFILE1", "SECRETFILE3", 1)), 0o600)
 	get("/api/restart")
+	restartBody := bodies[len(bodies)-1]
 	_, _, msg = postSetting(t, base, token, map[string]any{"flag": "mask-values", "values": []string{"k-SECRETFILE4"}})
 	bodies = append(bodies, msg)
+	os.WriteFile(config, []byte(read(t, config)+"--upstream-proxy=http://u:SECRETPW@127.0.0.1:1\n"), 0o600)
+	if u := settingOf(t, getSettings(t, base, token), "upstream-proxy"); len(u.Values) != 1 || !strings.Contains(u.Values[0], "not shown") {
+		t.Errorf("upstream-proxy: %+v", u)
+	}
+	get("/api/settings")
+	_, ok, msg := postSetting(t, base, token, map[string]any{"flag": "upstream-proxy", "values": []string{"http://127.0.0.1:8081"}, "confirmed": true})
+	bodies = append(bodies, msg)
+	if !ok {
+		t.Errorf("upstream-proxy: %q", msg)
+	}
 	var r pageRestart
-	json.Unmarshal([]byte(bodies[len(bodies)-2]), &r)
+	json.Unmarshal([]byte(restartBody), &r)
 	if !slices.ContainsFunc(r.Diff, func(d pageDiff) bool { return d.Flag == "mask-values" && d.Changed && d.Was == nil && d.Now == nil }) {
 		t.Errorf("restart diff: %+v", r)
 	}
@@ -328,13 +348,32 @@ func TestPageRestartDiff(t *testing.T) {
 	// As listed: run restarts, once the answer is out.
 	_, b = call(t, base, "GET", "/api/restart", "", map[string]string{sessionHeader: token})
 	json.Unmarshal([]byte(b), &r)
-	_, b = call(t, base, "POST", "/api/restart", `{"rev":"`+r.Rev+`"}`, map[string]string{sessionHeader: token})
-	if !strings.Contains(b, `"ok":true`) || !strings.Contains(b, "restarting: ") || !strings.HasPrefix(*restarted, "asked:") {
-		t.Errorf("restart: %s %q", b, *restarted)
-	}
 	r2, _ := call(t, base, "POST", "/api/restart", `{"rev":"x","cmd":"set"}`, map[string]string{sessionHeader: token})
 	if r2.StatusCode != 400 {
 		t.Errorf("a field added: %d", r2.StatusCode)
+	}
+	// The answer whole (a browser's fetch fails on one cut short), though
+	// run closes the page's server right after.
+	req, _ := http.NewRequest("POST", base+"/api/restart", strings.NewReader(`{"rev":"`+r.Rev+`"}`))
+	req.Header.Set("Origin", base)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(sessionHeader, token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Errorf("the answer cut short: %v", err)
+	}
+	b = string(body)
+	var a struct {
+		OK      bool
+		Message string
+	}
+	if json.Unmarshal([]byte(b), &a) != nil || !a.OK || !strings.HasPrefix(a.Message, "restarting: ") || !strings.HasPrefix(*restarted, "asked:") {
+		t.Errorf("restart: %s %q", b, *restarted)
 	}
 }
 
