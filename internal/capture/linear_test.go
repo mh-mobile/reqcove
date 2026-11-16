@@ -368,7 +368,14 @@ func TestMaskingLinear(t *testing.T) {
 				loops *= 10 // a quick input measured again over 10 times as long: CI's machines jitter at a millisecond
 				continue
 			}
-			if try == 2 || clear {
+			// The time alone (allocation linear): measured again, both sizes
+			// back to back, up to 4 times. A loaded CI runner has made a linear
+			// input look x78 when its load changed between the two sizes; a
+			// quadratic one is about x64 every time.
+			if !copies && !clear && try < 4 {
+				continue
+			}
+			if try >= 2 || clear {
 				t.Errorf("%s: %d KiB took %v and allocated %d KiB, %d KiB %v and %d KiB: grows faster than the size",
 					c.name, len(small)/kb, ts/time.Duration(loops), as/uint64(loops)/kb, len(large)/kb, tl/time.Duration(loops), al/uint64(loops)/kb)
 				break
