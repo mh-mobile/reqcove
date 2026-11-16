@@ -302,6 +302,11 @@ const stoppingFile = "stopping"
 // to answer or let go (a var for tests).
 var startWait = 5 * time.Second
 
+// serviceStartWait bounds how long status waits, with a service installed
+// for its state and no run holding it, for one to start: brew services start
+// returns before it does (a var for tests).
+var serviceStartWait = 3 * time.Second
+
 // waitState waits, at most d, until a run holds dir's lock (held) or none
 // does; false on the deadline.
 func waitState(dir string, d time.Duration, held bool) bool {

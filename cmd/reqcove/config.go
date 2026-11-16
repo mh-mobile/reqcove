@@ -68,6 +68,9 @@ func readConfig(path string) (words []string, lines []int, err error) {
 	// Opened once, checked and read through the same descriptor: no swap
 	// between the check and the read; O_NONBLOCK so a FIFO cannot hang it.
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) { // a service started before setup wrote it
+		return nil, nil, fmt.Errorf("--config: %w: reqcove setup writes it (in your terminal)", err)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("--config: %w", err)
 	}

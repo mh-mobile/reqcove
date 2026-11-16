@@ -220,3 +220,10 @@ func TestStatusService(t *testing.T) {
 		t.Errorf("from a terminal: %q", s)
 	}
 }
+
+// A service started before setup: its log says what writes the file.
+func TestReadConfigMissing(t *testing.T) {
+	if _, _, err := readConfig(filepath.Join(t.TempDir(), "config")); err == nil || !strings.Contains(err.Error(), "reqcove setup writes it") {
+		t.Errorf("missing: %v", err)
+	}
+}

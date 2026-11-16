@@ -293,6 +293,12 @@
   connecting to Tailscale (`NoState`, `Starting`), says "the tailnet node is
   starting" rather than "ready: turn on the exit node". Unit test; seen by
   hand after `reqcove service restart`.
+- **`reqcove status` right after `brew services start`** (or a login): with a
+  service installed for that state and no run holding it yet, it waits (at
+  most 3 s) for one, rather than "not running: start it with brew services
+  restart reqcove". Unit test; seen by hand.
+- **A `--config` file that is not there** (a service started before `reqcove
+  setup`): the error says `reqcove setup` writes it. Unit test.
 
 ## v1.0.0 — 2026-11-15
 

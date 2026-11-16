@@ -560,6 +560,17 @@ func serviceWarnings(goos string, svcs []installedService, self string) []string
 	return out
 }
 
+// servicesFor are the services installed whose run uses state.
+func servicesFor(state string) []installedService {
+	var out []installedService
+	for _, s := range installedServices(runtime.GOOS) {
+		if serviceState(runtime.GOOS, s.file) == state {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // serviceState is the state directory a service file's run uses: its
 // --state, else the default.
 func serviceState(goos, file string) string {
