@@ -355,7 +355,7 @@ func TestPageRestartDiff(t *testing.T) {
 		edit()
 		_, b = call(t, base, "POST", "/api/restart", `{"rev":"`+r.Rev+`"}`, map[string]string{sessionHeader: token})
 		if !strings.Contains(b, "changed since the page listed") || !strings.Contains(b, "nothing stopped") || len(restarted) != 0 {
-			t.Errorf("stale restart: %s", b)
+			t.Fatalf("stale restart: %s", b) // run asked to restart: the page is gone
 		}
 	}
 	// As listed: run restarts, once the answer is out.

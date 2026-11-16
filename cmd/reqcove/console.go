@@ -758,6 +758,7 @@ func (p *page) state(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.tailnet { // this computer's paths and files stay on its page (noPaths takes those in the words)
 		out.Tailnet, out.Executable, out.ConfigFile, out.ConfigUnused, out.HostsFiles, out.ServiceCmds = true, "", "", "", nil, nil
+		out.NextSteps = tailnetSteps(out.NextSteps, p.st.dir)
 		out.DiscoveredKept = s.OutOfScopeHostsKept
 	}
 	answer(w, http.StatusOK, out)
@@ -944,16 +945,29 @@ var localPath = regexp.MustCompile(`(^|[\s'"(=])~?/[^\s'",;)]*[^\s'",;).]`)
 
 const pathHidden = "(a path on this computer)"
 
+// withoutDir is x with the state directory dir taken out, whole (spaces and all).
+func withoutDir(x, dir string) string {
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			x = strings.ReplaceAll(x, shellWord(abs), pathHidden)
+			x = strings.ReplaceAll(x, abs, pathHidden)
+		}
+	}
+	return x
+}
+
+// tailnetSteps are the next steps for the tailnet page: those naming a path
+// on this computer other than the state directory left out, as localPath
+// would cut a path with a space short (other reqcove on PATH: /Users/x/My
+// Tools/bin/reqcove), leaving its tail.
+func tailnetSteps(steps []string, dir string) []string {
+	return slices.DeleteFunc(slices.Clone(steps), func(s string) bool { return localPath.MatchString(withoutDir(s, dir)) })
+}
+
 func withoutPaths(v any, dir string) any {
 	switch x := v.(type) {
 	case string:
-		if dir != "" {
-			if abs, err := filepath.Abs(dir); err == nil {
-				x = strings.ReplaceAll(x, shellWord(abs), pathHidden)
-				x = strings.ReplaceAll(x, abs, pathHidden)
-			}
-		}
-		return localPath.ReplaceAllString(x, "${1}"+pathHidden)
+		return localPath.ReplaceAllString(withoutDir(x, dir), "${1}"+pathHidden)
 	case []any:
 		for i := range x {
 			x[i] = withoutPaths(x[i], dir)
