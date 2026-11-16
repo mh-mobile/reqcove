@@ -373,9 +373,12 @@ through `reqcove mcp`).
   Reqcove's text and host names checked as such (letters, digits, `-`, `.`;
   no wildcard, no IP address; at most 5), never the agent's words. The id is
   bound to the hosts it was made with: an approval for others is refused.
-  Requests are bounded (3 pending, 10 made in 10 minutes, the same hosts not
-  asked again for 10 minutes after you deny them) and expire in 10 minutes by
-  either clock (unit tests).
+  Requests are bounded (3 pending, 10 made in 10 minutes, no host you denied
+  asked again for 10 minutes, alone or with others) and expire in 10 minutes
+  by either clock (unit tests). Over MCP's newest protocol the dialog's answer
+  comes back in a second call: it counts only for a dialog `reqcove mcp`
+  showed on that connection, once, within 2 minutes by either clock; one made
+  up, replayed or late approves nothing (unit tests).
 - **What a steering page can still do:** make the agent ask for hosts it
   names, again and again within those bounds, and word its chat to you so
   that you approve. Read the hosts before you type `y`.
@@ -429,7 +432,10 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   `open` or `xdg-open` runs, the link with its code is in their process
   arguments, which `ps` shows to the other users of this computer (not
   tried here), for a moment; a code traded by someone else first shows as
-  above. What it shows is not secret beyond `reqcove status`: never the flows'
+  above. In the moment before your tab's trade fails and ends every session,
+  that other session can approve a pending request: `reqcove capture
+  requests` then shows it approved in the console (read from the code; that a
+  second trade ends every session is tested). What it shows is not secret beyond `reqcove status`: never the flows'
   contents, a token, a link or a login URL, or text from an agent or an MCP
   client.
 

@@ -23,7 +23,7 @@ import (
 // Since v1.2 an agent may ask to record more hosts (request_capture_add, a
 // tool of `reqcove mcp` alone): run keeps the request, its hosts fixed, until
 // the user approves it (`reqcove capture approve ID` in a terminal, or the
-// client's dialog), denies it, or it expires. Approved, its hosts are added
+// client's dialog, or reqcove console's page), denies it, or it expires. Approved, its hosts are added
 // as `reqcove capture add` adds them. In memory only: a restart drops them.
 
 const (
@@ -52,6 +52,9 @@ type captureRequests struct {
 	reqs       []*capReq   // pending and finished, oldest first
 	asked      []time.Time // when each was made, for maxAsked
 	approveCmd string      // reqcove capture approve, with run's --state
+	// redacting says whether run masks (false: --no-redact); nil: it does.
+	// Every view of a request says so (unmasked), for the user.
+	redacting func() bool
 }
 
 func newCaptureRequests(state string) *captureRequests {
@@ -82,7 +85,8 @@ func (q *captureRequests) sweepLocked() {
 
 func (q *captureRequests) view(r *capReq) mcpserver.CaptureRequest {
 	v := mcpserver.CaptureRequest{ID: r.id, Hosts: r.hosts, State: r.state, ApprovedIn: r.via, Result: r.result,
-		CreatedAt: r.made.Round(0).Format(time.RFC3339), ExpiresAt: r.expires.Round(0).Format(time.RFC3339)}
+		CreatedAt: r.made.Round(0).Format(time.RFC3339), ExpiresAt: r.expires.Round(0).Format(time.RFC3339),
+		Unmasked: q.redacting != nil && !q.redacting()}
 	if r.state == "pending" {
 		v.Approve = q.approveCmd + " " + r.id
 	}
@@ -118,10 +122,11 @@ func (q *captureRequests) ask(base capture.HostRules, hosts []string) ctlAnswer 
 	}
 	for _, r := range q.reqs {
 		switch {
-		case !slices.Equal(r.hosts, hosts):
-		case r.state == "denied":
-			return ctlAnswer{Message: "refused: the user denied these hosts at " + r.ended.Round(0).Local().Format("15:04:05") + ": not asked again within 10 minutes of that; nothing asked"}
-		case r.state == "pending":
+		case r.state == "denied" && slices.ContainsFunc(hosts, func(h string) bool { return slices.Contains(r.hosts, h) }):
+			// any of them: another set with a denied host in it is refused too
+			denied := slices.DeleteFunc(slices.Clone(hosts), func(h string) bool { return !slices.Contains(r.hosts, h) })
+			return ctlAnswer{Message: "refused: the user denied " + strings.Join(denied, ", ") + " at " + r.ended.Round(0).Local().Format("15:04:05") + ": not asked again within 10 minutes of that, alone or with other hosts; nothing asked"}
+		case r.state == "pending" && slices.Equal(r.hosts, hosts):
 			return ctlAnswer{OK: true, Message: "pending already", Requests: []mcpserver.CaptureRequest{q.view(r)}}
 		}
 	}
@@ -195,7 +200,8 @@ func (q *captureRequests) pendingLocked(id string) (*capReq, ctlAnswer) {
 	return r, ctlAnswer{}
 }
 
-// deny is the deny op: the same hosts are refused for 10 minutes.
+// deny is the deny op: a request with any of its hosts is refused for 10
+// minutes.
 func (q *captureRequests) deny(id, via string) ctlAnswer {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -237,15 +243,6 @@ func (q *captureRequests) finish(r *capReq, a ctlAnswer) ctlAnswer {
 		log.Printf("capture request %s (%s): approved, but %s", r.id, strings.Join(r.hosts, " "), a.Message)
 	}
 	a.Requests = []mcpserver.CaptureRequest{q.view(r)}
-	return a
-}
-
-// unmasked marks a's requests while run does not mask (--no-redact): what
-// the user is shown before approving says so.
-func unmasked(cap *capture.Capture, a ctlAnswer) ctlAnswer {
-	for i := range a.Requests {
-		a.Requests[i].Unmasked = !cap.Store.Redacting()
-	}
 	return a
 }
 

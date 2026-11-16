@@ -480,13 +480,19 @@ and the agent's answer gives you the command to run, such as
   (MCP elicitation), `reqcove mcp` also shows one for a new request. Its text
   is Reqcove's: the hosts (run's, checked as host names), that agents will
   read their traffic, masked (unmasked, it says, under `--no-redact`; so does
-  `approve`), and that it is not saved; never the agent's words. Accept approves it as `approve` does. Decline, close it, an error or
+  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. Accept approves it as `approve` does. Decline, close it, an error or
   no answer within 2 minutes leaves it pending, for the terminal. It is not
-  shown again when the agent asks again for the same hosts.
+  shown again when the agent asks again for the same hosts. A client that
+  declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
+  protocol the client shows the dialog between two calls: its answer counts
+  only for a dialog `reqcove mcp` showed on that connection, once, within 2
+  minutes by either clock; any other answer leaves the request pending. If
+  the client fails there, the agent's call ends in an error and the request
+  stays pending: asking again for the same hosts gives its id and command.
 - **What is asked:** host names only (letters, digits, `-` and `.`; no
   wildcard, no IP address), lowercased, each once, sorted. Refused: hosts all
-  recorded already, a host passed undecrypted (`--pass-hosts`), the same hosts
-  you denied in the last 10 minutes, a 4th pending request, an 11th made in
+  recorded already, a host passed undecrypted (`--pass-hosts`), any host
+  you denied in the last 10 minutes (alone or with other hosts), a 4th pending request, an 11th made in
   10 minutes, and any in LAN mode. Asking again for the same hosts while
   pending gives the same request.
 - **Time-limited:** a request expires 10 minutes after it was made, by this
@@ -506,10 +512,14 @@ and the agent's answer gives you the command to run, such as
 
 Tried by tests only: unit (the hosts taken and refused, the limits, expiry
 by either clock, the denial kept, a restart, an approval for other hosts, the
-y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check; the
+y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check, a denied
+host asked with another, `unmasked` in every view under `--no-redact`; the
 dialog with an in-memory client accepting, declining, cancelling, failing,
 not answering in time, or without the capability, over MCP's newest
-protocol and older ones; neither tool over `--mcp-http`), and E2E with real
+protocol and older ones; a client declaring URL elicitation alone; an answer
+made up, replayed, from another connection, or late by either clock; a raw
+client asking 2026-07-28 in `initialize` (answered 2025-11-25, and given the
+dialog between two calls, as the SDK treats it); neither tool over `--mcp-http`), and E2E with real
 mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
 not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
 marker and `scope_change`; approved while stopped). A real client's dialog
@@ -531,7 +541,7 @@ hosts) and a change pending, and the next steps; and the requests waiting,
 each with its hosts, until when, and **Approve** and **Deny**. Approve adds
 the hosts the page showed, as `reqcove capture approve` does (`run` refuses
 other hosts), traced "capture add HOST (asked by an agent, approved in the
-page)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
+console)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
 the hosts, stop and start, save, allow-all and discovery stay commands.
 
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system

@@ -1,4 +1,4 @@
-// reqcove ui's page. Every value goes in with textContent: none is markup.
+// reqcove console's page. Every value goes in with textContent: none is markup.
 "use strict";
 
 const KEY = "reqcove-session";
@@ -39,7 +39,7 @@ async function api(method, path, body) {
   }
   const r = await fetch(path, opts);
   const d = await r.json().catch(() => ({}));
-  if (r.status === 401) ended(d.error || "no session: run reqcove ui again in your terminal");
+  if (r.status === 401) ended(d.error || "no session: run reqcove console again in your terminal");
   return { ok: r.ok, d };
 }
 
@@ -119,13 +119,13 @@ async function start() {
     try {
       const r = await fetch("/api/session", { method: "POST", cache: "no-store", credentials: "omit", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: m[1] }) });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.token) return ended(d.error || "the link did not work: run reqcove ui again in your terminal");
+      if (!r.ok || !d.token) return ended(d.error || "the link did not work: run reqcove console again in your terminal");
       sessionStorage.setItem(KEY, d.token);
     } catch (e) {
       return ended("reqcove is not answering (run stopped?)");
     }
   }
-  if (!sessionStorage.getItem(KEY)) return ended("Open the link reqcove ui prints in your terminal.");
+  if (!sessionStorage.getItem(KEY)) return ended("Open the link reqcove console prints in your terminal.");
   refresh();
   timer = setInterval(refresh, 5000);
 }
