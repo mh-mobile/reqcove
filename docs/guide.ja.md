@@ -1170,9 +1170,9 @@ Exit Node とのほかの違いは次のとおりです。
   - `ac`：AC 電源につないでいる間だけスリープを止めます（`caffeinate -s`）。バッテリーのときは、エネルギーの設定どおりにスリープし、その間、出口ノードを使っている iPhone はインターネットにつながりません。
   - `never`：Reqcove は何も止めません。エネルギーの設定や `sudo pmset -c sleep 0`（AC 電源のときだけ）でも、Mac 全体に同じことができます。Mac を出口ノードにするとき、Tailscale もこの方法を案内しています。
 
-  Mac を起こしておくほかのアプリ（Amphetamine や、自分で動かした `caffeinate`）とは重なって効きます。Reqcove が何を止めていても、どれか 1 つが止めていれば Mac は起きたままです。誰が何を止めているかは `pmset -g assertions` で、`run` の選んだものは `reqcove status`（「keep awake:」）で確かめられます。
+  Mac を起こしておくほかのアプリ（Amphetamine や、自分で動かした `caffeinate`）とは重なって効きます。Reqcove が何を止めていても、どれか 1 つが止めていれば Mac は起きたままです。誰が何を止めているかは `pmset -g assertions` で、`run` の選んだものは `reqcove status`（「keep awake:」）で確かめられます。ある Mac で見たところ（2026-11-16）、Claude と ChatGPT のデスクトップアプリ（Electron）は、動いている間ずっと `NoIdleSleepAssertion` を持っていました。そのため、`--keep-awake` をどれにしてもアイドルスリープしませんでした。
 
-  確認状況：単体テスト（フラグ、設定ファイル、それぞれの caffeinate の指定、status）。`pmset -g assertions` に 2 つの `caffeinate` が並ぶことも確かめました。`ac` と `never` での実際のスリープは試していません。
+  確認状況：単体テスト（フラグ、設定ファイル、それぞれの caffeinate の指定、status）。`pmset -g assertions` に 2 つの `caffeinate` が並ぶことも確かめました。AC 電源で `run --keep-awake=ac` を動かすと、caffeinate が持つのは `PreventSystemSleep` で（`always` の `PreventUserIdleSystemSleep` ではなく）、`reqcove status` もそう表示しました。`ac` と `never` での実際のスリープは試していません。
 
 確認状況：`reqcove status` がそれぞれの場合に表示するもの（v1.0.0 の `run` と新しい CLI、それぞれのサービス、同時に 2 つのサービス、消えたバイナリや別のバイナリ）を、一時的なホームディレクトリにサービスのファイルを書いて、単体テストで確かめました。手作業では試していません：v1.1 での、この表の流れ（サービスが動いている間の `brew upgrade`、インストール済みのところへの `reqcove service install`）。
 
