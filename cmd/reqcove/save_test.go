@@ -197,7 +197,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	c, o := start("--allow-hosts", "cli.example.com")
 	logged := logTo(t)
 	sctx, stopCtl := context.WithCancel(ctx)
-	if _, err := serveCtl(sctx, state, c, o, nil); err != nil {
+	if _, err := serveCtl(sctx, state, c, o, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	change := func(req ctlRequest) string {
@@ -266,7 +266,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	defer c.Stop()
 	sctx, stopCtl = context.WithCancel(ctx)
 	defer stopCtl()
-	if _, err := serveCtl(sctx, o.state, c, o, nil); err != nil {
+	if _, err := serveCtl(sctx, o.state, c, o, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.1"}})

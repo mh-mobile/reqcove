@@ -81,7 +81,7 @@ func TestDiscoverE2E(t *testing.T) {
 	defer func() { mcpserver.CaptureAddCmd = "" }()
 	node := exitnode.Status{Backend: "Running"}
 	local := func() mcpserver.StatusOut { return withDiscovery(liveStatus(node, c), c) }
-	if _, err := serveCtl(ctx, state, c, &runOpts{}, local); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil, local); err != nil {
 		t.Fatal(err)
 	}
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))

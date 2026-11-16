@@ -153,6 +153,7 @@ type handover struct {
 	page      *os.File // the page's socket carried in, kept for the next restart
 	pageLn    net.Listener
 	sessions  []carriedSession
+	served    *page  // the page carried in, once served (carriedPage)
 	snapPath  string // the snapshot, checked and read; "" for none
 	snap      []byte
 	why       string // why there is no snapshot to retry with
@@ -538,7 +539,13 @@ func (h *handover) failed(args []string, err error) error {
 		kept = " (the one that failed kept as " + aside + ")"
 	}
 	note("the start after a restart failed (" + err.Error() + "); " + config + " is back as run had started from it" + kept + ", and run starts once more with it.")
-	return execRestart(&restartExec{lock: h.lock, page: h.page, sessions: h.sessions, snapshot: h.snapPath, retry: true})
+	// The page's sessions as they are now: --end, or a session traded, while
+	// it served; none if it never served.
+	var sessions []carriedSession
+	if h.served != nil {
+		sessions = h.served.carry()
+	}
+	return execRestart(&restartExec{lock: h.lock, page: h.page, sessions: sessions, snapshot: h.snapPath, retry: true})
 }
 
 // sysExec is syscall.Exec (a seam: tests record what would be exec'd).

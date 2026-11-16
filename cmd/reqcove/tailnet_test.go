@@ -54,7 +54,7 @@ func tailnetRun(t *testing.T, o *runOpts) (string, *ctlState, *atomic.Pointer[ex
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cap := &capture.Capture{Store: capture.NewStore(10, 1<<20)}
-	st, err := serveCtl(ctx, dir, cap, o, func() mcpserver.StatusOut {
+	st, err := serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Version: "v1.3.0", Executable: "/opt/homebrew/bin/reqcove", Service: "com.example", Manager: "launchd",
 			ConfigFile: home + "/.config/reqcove/config", ConfigUnused: dir + "/config", HostsFiles: []string{dir + "/hosts"}, KeepAwake: "ac", Recording: "on",
 			BaseAllowHosts: []string{"a.example.com"},

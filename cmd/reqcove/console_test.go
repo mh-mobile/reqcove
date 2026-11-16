@@ -33,7 +33,7 @@ func pageRun(t *testing.T, o *runOpts) (string, *ctlState) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cap := &capture.Capture{Store: capture.NewStore(10, 1<<20)}
-	st, err := serveCtl(ctx, dir, cap, o, func() mcpserver.StatusOut {
+	st, err := serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Version: "v1.2.0", Executable: "/opt/reqcove", Service: "com.example", Manager: "brew services",
 			ConfigFile: "/c/config", HostsFiles: []string{"/c/hosts"}, KeepAwake: "ac", Recording: "on", BaseAllowHosts: []string{"a.example.com"},
 			NextSteps: []string{"approve the exit node"},
@@ -858,7 +858,7 @@ func TestPageScopeE2E(t *testing.T) {
 	logged := logTo(t)
 	var node nodeState
 	node.set(exitnode.Status{Backend: "Running"})
-	st, err := serveCtl(ctx, state, c, o, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
+	st, err := serveCtl(ctx, state, c, o, nil, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
 	if err != nil {
 		t.Fatal(err)
 	}

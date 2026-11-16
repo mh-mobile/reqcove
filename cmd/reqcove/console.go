@@ -318,15 +318,22 @@ func servePage(ctx context.Context, cap *capture.Capture, st *ctlState) (*page, 
 		ln.Close()
 		return nil, err
 	}
-	return serveOn(ctx, cap, st, ln, f), nil
+	return serveOn(ctx, cap, st, ln, f, nil), nil
 }
 
-// serveOn serves the page on ln until ctx ends; f, a copy of ln's socket
-// kept open for run's life, holds the port while ln is closed, until a
-// restart carries it across its exec (restart.go).
-func serveOn(ctx context.Context, cap *capture.Capture, st *ctlState, ln net.Listener, f *os.File) *page {
+// serveOn serves the page on ln until ctx ends, with sessions (a restart's,
+// each as idle as it was) in place before the first request; f, a copy of
+// ln's socket kept open for run's life, holds the port while ln is closed,
+// until a restart carries it across its exec (restart.go).
+func serveOn(ctx context.Context, cap *capture.Capture, st *ctlState, ln net.Listener, f *os.File, sessions []carriedSession) *page {
 	p := newPage(cap, st, ln.Addr().String(), false)
 	p.sock = f
+	p.mu.Lock()
+	mono, _ := p.now()
+	for _, s := range sessions {
+		p.sessions[s.hash] = pageSession{last: mono.Add(-s.idle), made: mono.Add(-s.idle)}
+	}
+	p.mu.Unlock()
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go srv.Serve(ln)
 	go func() { <-ctx.Done(); srv.Close() }()
@@ -335,13 +342,12 @@ func serveOn(ctx context.Context, cap *capture.Capture, st *ctlState, ln net.Lis
 
 // carriedPage is the page a restart carried across its exec (h.pageLn), with
 // its sessions, each as idle as it was.
+// A retry carries this page's sessions as they are then (h.served): never
+// the list handed over, which --end or a session traded may have changed.
 func carriedPage(ctx context.Context, cap *capture.Capture, st *ctlState, h *handover) *page {
-	p := serveOn(ctx, cap, st, h.pageLn, h.page)
-	mono, _ := p.now()
-	for _, s := range h.sessions {
-		p.sessions[s.hash] = pageSession{last: mono.Add(-s.idle), made: mono.Add(-s.idle)}
-	}
-	log.Printf("reqcove console: the page carried across the restart, on http://%s (this computer only), with %d sessions", p.host, len(p.sessions))
+	p := serveOn(ctx, cap, st, h.pageLn, h.page, h.sessions)
+	h.served = p
+	log.Printf("reqcove console: the page carried across the restart, on http://%s (this computer only), with %d sessions", p.host, len(h.sessions))
 	return p
 }
 

@@ -43,7 +43,7 @@ func settingsRun(t *testing.T, text string, extra ...string) (base, token string
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cap := &capture.Capture{Store: capture.NewStore(10, 1<<20)}
-	st, err = serveCtl(ctx, dir, cap, o, func() mcpserver.StatusOut {
+	st, err = serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Node: exitnode.Status{Devices: map[string]string{"nOTHER": "colleague-phone"}, Own: map[string]string{"nOWN": "my-iphone"}}}
 	})
 	if err != nil {

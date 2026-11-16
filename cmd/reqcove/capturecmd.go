@@ -478,10 +478,11 @@ func consoleFrom(device string) string {
 }
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
-// returns the state it answers from; status is what reqcove console's page shows.
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
+// returns the state it answers from; restart is run's (nil: none), set
+// before anything is served; status is what reqcove console's page shows.
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, restart func(snapshot string), status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
-	st.ctx, st.status, st.dir = ctx, status, state
+	st.ctx, st.status, st.dir, st.restart = ctx, status, state, restart
 	if cap != nil { // nil: tests of LAN mode
 		st.reqs.redacting = cap.Store.Redacting
 	}

@@ -160,13 +160,13 @@ func run(ctx context.Context, args []string) error {
 	}
 	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
 	// and no ctl.sock for one older than v1.1.
-	ctl, err := serveCtl(ctx, o.state, cap, o, func() mcpserver.StatusOut { // reqcove console's page
+	restart := func(snapshot string) { restartTo.Store(&snapshot); cancel() }
+	ctl, err := serveCtl(ctx, o.state, cap, o, restart, func() mcpserver.StatusOut { // reqcove console's page
 		return withDiscovery(withFiles(liveStatus(node.get(), cap), o), cap)
 	})
 	if err != nil {
 		return err
 	}
-	ctl.restart = func(snapshot string) { restartTo.Store(&snapshot); cancel() }
 	if !o.lanMode {
 		mcpserver.CaptureAddCmd = withState("reqcove capture add", o.state)
 		mcpserver.CaptureStartCmd = withState("reqcove capture start", o.state)
