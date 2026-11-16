@@ -21,8 +21,8 @@ import (
 // settingsRun is a run started from a --config file of text (extra on its
 // command line; text "" for flags alone), its page open with a session, its
 // netmap holding one own device (nOWN) and carrying another user's (nOTHER);
-// restarted, the snapshot asked for.
-func settingsRun(t *testing.T, text string, extra ...string) (base, token string, st *ctlState, config string, restarted *string) {
+// restarted, the snapshot asked for, once run is asked to restart.
+func settingsRun(t *testing.T, text string, extra ...string) (base, token string, st *ctlState, config string, restarted chan string) {
 	t.Helper()
 	state := t.TempDir()
 	args := append([]string{"--state=" + state}, extra...)
@@ -49,9 +49,9 @@ func settingsRun(t *testing.T, text string, extra ...string) (base, token string
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted = new(string)
+	restarted = make(chan string, 1)
 	st.restart = func(s string) { // as run's: the page's server closes, before the handler returns
-		*restarted = "asked:" + s
+		restarted <- s
 		cancel()
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -342,7 +342,7 @@ func TestPageRestartDiff(t *testing.T) {
 	// Edited again after the page listed it: refused, nothing stopped.
 	os.WriteFile(config, []byte(read(t, config)+"--verbose\n"), 0o600)
 	_, b = call(t, base, "POST", "/api/restart", `{"rev":"`+r.Rev+`"}`, map[string]string{sessionHeader: token})
-	if !strings.Contains(b, "the config changed since the page listed") || !strings.Contains(b, "nothing stopped") || *restarted != "" {
+	if !strings.Contains(b, "the config changed since the page listed") || !strings.Contains(b, "nothing stopped") || len(restarted) != 0 {
 		t.Errorf("stale restart: %s", b)
 	}
 	// As listed: run restarts, once the answer is out.
@@ -372,8 +372,16 @@ func TestPageRestartDiff(t *testing.T) {
 		OK      bool
 		Message string
 	}
-	if json.Unmarshal([]byte(b), &a) != nil || !a.OK || !strings.HasPrefix(a.Message, "restarting: ") || !strings.HasPrefix(*restarted, "asked:") {
-		t.Errorf("restart: %s %q", b, *restarted)
+	if json.Unmarshal([]byte(b), &a) != nil || !a.OK || !strings.HasPrefix(a.Message, "restarting: ") {
+		t.Errorf("restart: %s", b)
+	}
+	select {
+	case snap := <-restarted:
+		if !snapshotName.MatchString(filepath.Base(snap)) {
+			t.Errorf("restart asked with %q", snap)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("run not asked to restart")
 	}
 }
 
