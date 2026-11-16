@@ -94,13 +94,20 @@ func TestOwnDevices(t *testing.T) {
 	tagged := peer("ci", 1, "100.101.0.3")
 	tagged.Tags = &tags
 	peers := []*ipnstate.PeerStatus{peer("macbook", 1, "100.101.0.1"), peer("colleague", 2, "100.101.0.2"), tagged}
+	shared := peer("shared", 3, "100.101.0.4") // shared in from another tailnet: its owner's user
+	shared.DNSName = "shared.other.ts.net."
+	peers = append(peers, shared)
 	got := ownDevices(self, peers)
 	if len(got) != 1 || got[netip.MustParseAddr("100.101.0.1")] != (Device{"macbook", "macbook"}) {
 		t.Errorf("own: %v", got)
 	}
+	// The console's device picker (Status.Own): the same devices, by StableID.
+	if l := ownList(got); len(l) != 1 || l["macbook"] != "macbook" {
+		t.Errorf("own list: %v", l)
+	}
 	taggedSelf := *self
 	taggedSelf.Tags = &tags
-	if got := ownDevices(&taggedSelf, peers); len(got) != 0 {
+	if got := ownDevices(&taggedSelf, peers); len(got) != 0 || len(ownList(got)) != 0 {
 		t.Errorf("reqcove tagged: %v", got)
 	}
 }

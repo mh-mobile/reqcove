@@ -26,6 +26,15 @@ func exists(path string) bool {
 }
 
 func TestMain(m *testing.M) {
+	// A restart's check of the binary it would exec (binaryCheck): this test
+	// binary stands in for reqcove, so it takes run --check-config as reqcove does.
+	if len(os.Args) > 2 && os.Args[1] == "run" && os.Args[2] == checkConfigArg {
+		if err := runRestartable(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	home, err := os.MkdirTemp("", "reqcove-home")
 	if err != nil {
 		panic(err)

@@ -110,6 +110,10 @@ type Status struct {
 	NodeKey      string            `json:"node_key,omitempty"`  // to sign under Tailnet Lock
 	Devices      map[string]string `json:"devices"`             // carried: StableID -> name
 	DeviceOS     map[string]string `json:"device_os,omitempty"` // carried: StableID -> OS, as Tailscale has it (iOS, android, macOS, ...)
+	// Own are the user's own devices (ownDevices: untagged, of reqcove's
+	// user; none when reqcove's node is tagged): StableID -> machine name.
+	// Never in an answer: the console's local page alone lists them.
+	Own map[string]string `json:"-"`
 	Problems     []string          `json:"device_problems,omitempty"`
 	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
@@ -351,6 +355,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.Own = ownList(p.own)
 			status.DeviceOS = map[string]string{}
 			for _, p := range peers {
 				if names[string(p.ID)] != "" && p.OS != "" {

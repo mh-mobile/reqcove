@@ -45,7 +45,8 @@ func TestConfigWriterRefuses(t *testing.T) {
 		{configEdit{Flag: "uvx", Values: []string{"/tmp/MARK"}}, "--uvx is not written by reqcove"},
 		{configEdit{Flag: "rules", Values: []string{"/tmp/MARK"}}, "--rules is not written"},
 		{configEdit{Flag: "mask-values", Values: []string{"MARK"}}, "--mask-values is not written"},
-		{configEdit{Flag: "upstream-ca", Values: nil}, "--upstream-ca is not written"},
+		{configEdit{Flag: "upstream-ca", Values: []string{"/tmp/MARK"}}, "--upstream-ca is not written"}, // cleared only
+		{configEdit{Flag: "upstream-ca", Values: nil, Add: true}, "--upstream-ca is not written"},
 		{configEdit{Flag: "allow-hosts", Values: []string{"MARK.com"}, Add: true}, "--allow-hosts: only the hosts file beside the config"},
 		{configEdit{Flag: "allow-hosts", Values: []string{"@/tmp/MARK"}, Add: true}, "only the hosts file beside the config"},
 		{configEdit{Flag: "pass-hosts", Values: hostsFileLine(path, true).Values}, "only the hosts file beside the config"}, // not Add: a rewrite

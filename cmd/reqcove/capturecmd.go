@@ -517,11 +517,10 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if _, err := req.normalized(); err != nil {
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing stopped"}
 		}
-		var records any = 0
-		if cap != nil {
-			records = cap.Store.Stats()["flows"]
+		if req.from == "console" && req.rev != configRevNow(st.o.config) {
+			return ctlAnswer{Message: "refused: the config changed since the page listed what a restart changes (another tab, or an edit): look again; nothing stopped"}
 		}
-		return restartOp(st, records)
+		return restartOp(ctx, st, recordCount(cap))
 	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
