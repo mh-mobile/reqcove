@@ -63,7 +63,7 @@ to 5 host names) and `get_capture_request` (`id`), 21 tools there: never on
 `run`'s socket's own list, never over `--mcp-http`. Both answer a request:
 `id`, `hosts`, `state` (`pending`, `approved`, `applied`, `failed`,
 `denied`, `expired`; more values may come), `created_at` and `expires_at`
-(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`), `result` (text for
+(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`; since v1.3 `console on NAME (tailnet)` from its tailnet page, NAME a device's machine name), `result` (text for
 people), `approve` (while pending, the command the user runs), `unmasked`
 (true while `run` masks nothing, `--no-redact`) and `note`.
 
@@ -230,7 +230,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
-| `reqcove console` (since v1.2) | `--end` (since v1.3), `--state` |
+| `reqcove console` (since v1.2) | `--end`, `--tailnet` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove restart` (since v1.3) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
@@ -256,7 +256,14 @@ arguments, as before; a v1.3 one against a v1.2 `run` opens nothing and
 prints the link), and `reqcove console --end` asks with another new op,
 `console-end`: a v1.2 `run` answers it with its usage (in LAN mode, with its
 LAN refusal), and `reqcove console --end` then says to restart `run` with
-v1.3 or later (unit tests with both answers).
+v1.3 or later (unit tests with both answers). `reqcove console --tailnet`
+asks with `console` and a new field, `tailnet: true`; a v1.3 `run` answers
+with the page's address on the tailnet (`addr`, `100.x.y.z:PORT`) and no
+`port` nor `file`. A v1.2 `run` ignores the field and opens its page on
+127.0.0.1: with no `addr` in the answer, `reqcove console --tailnet` says to
+restart `run` with v1.3 or later, and prints and opens nothing (unit tests).
+The tailnet page's address, port and link are not stable, as this
+computer's ([below](#not-stable)).
 
 `reqcove restart` (since v1.3) asks `run` over `ctl.sock` with a new op,
 `restart` (no other field; in LAN mode too): `run` answers `ok` and starts
@@ -372,7 +379,9 @@ These may change in any release, a patch release included:
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
   answers (v1.3's `/api/change`, `/api/save`, `/api/settings`,
   `/api/restart`, `/api/presets`, `/api/preset`, `/api/marker`, `/api/ca` and
-  `/api/har` among them).
+  `/api/har` among them), and so the tailnet page's (`reqcove console
+  --tailnet`: its port, which of those it serves, `status`'s
+  `console_sessions`).
 - `run --check-config`, the hidden check mode a restart asks of the binary
   it would exec.
 - What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`

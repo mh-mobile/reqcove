@@ -206,6 +206,45 @@ func TestTwoNodes(t *testing.T) {
 		}
 	}
 
+	// reqcove console --tailnet's listener: on the node's tailnet IPv4
+	// address, a port of its own; the phone, a --device device of another
+	// user, is refused there. Who calls is the connection's remote address: a
+	// tsnet listener's is the peer's tailnet address.
+	cln, err := ListenConsole()
+	if err != nil {
+		t.Fatalf("ListenConsole: %v", err)
+	}
+	defer cln.Close()
+	if ap, err := netip.ParseAddrPort(cln.Addr().String()); err != nil || ap.Addr() != rcIP || ap.Port() == 0 || ap.Port() == 80 {
+		t.Errorf("console listener on %v", cln.Addr())
+	}
+	go http.Serve(cln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "console") }))
+	if r, err := (&http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DialContext: phone.Dial}}).Get("http://" + cln.Addr().String() + "/"); err == nil {
+		r.Body.Close()
+		t.Errorf("phone reached the console: %d", r.StatusCode)
+	}
+	raw, err := node.Load().Listen("tcp", netip.AddrPortFrom(rcIP, 0).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := make(chan string, 1)
+	go func() {
+		if c, err := raw.Accept(); err == nil {
+			from <- c.RemoteAddr().String()
+			c.Close()
+		}
+	}()
+	if c, err := phone.Dial(ctx, "tcp", raw.Addr().String()); err != nil {
+		t.Errorf("phone to a tsnet listener: %v", err)
+	} else {
+		c.Close()
+		phoneIP, _ := phone.TailscaleIPs()
+		if ap, err := netip.ParseAddrPort(<-from); err != nil || ap.Addr() != phoneIP {
+			t.Errorf("RemoteAddr %v, want the phone's %v", ap, phoneIP)
+		}
+	}
+	raw.Close()
+
 	// Remote Proxy: CONNECT over the tailnet, also to SOCKS5 as the device.
 	if pc, err := phone.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err != nil {
 		t.Errorf("phone to the Remote Proxy: %v", err)

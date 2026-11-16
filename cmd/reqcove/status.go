@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"golang.org/x/net/publicsuffix"
 	"io"
+	"maps"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -433,6 +434,7 @@ func status(ctx context.Context, args []string) error {
 		SeenKept     int                        `json:"out_of_scope_hosts_kept"`
 		DiscUntil    string                     `json:"discover_until"`
 		Requests     []mcpserver.CaptureRequest `json:"capture_requests"`
+		Console      *mcpserver.ConsoleSessions `json:"console_sessions"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -485,6 +487,9 @@ func status(ctx context.Context, args []string) error {
 	}
 	if out.KeepAwake != "" {
 		fmt.Printf("  keep awake:  %s\n", keepAwakeText(out.KeepAwake))
+	}
+	if c := out.Console; c != nil {
+		fmt.Printf("  console:     %s\n", consoleText(c))
 	}
 	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), self) {
 		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
@@ -876,4 +881,18 @@ func printRestartNote(w io.Writer, state string) {
 	if b, err := os.ReadFile(filepath.Join(state, restartNote)); err == nil && len(b) > 0 {
 		fmt.Fprintln(w, "restart: "+strings.TrimSpace(string(b)))
 	}
+}
+
+// consoleText is reqcove console's sessions, for status: this computer's
+// page's, the tailnet page's by device.
+func consoleText(c *mcpserver.ConsoleSessions) string {
+	s := fmt.Sprintf("%d sessions on this computer's page", c.Local)
+	if len(c.Tailnet) == 0 {
+		return s + "; none on the tailnet page (reqcove console --end ends them all)"
+	}
+	var by []string
+	for _, name := range slices.Sorted(maps.Keys(c.Tailnet)) {
+		by = append(by, fmt.Sprintf("%s %d", name, c.Tailnet[name]))
+	}
+	return s + "; on the tailnet page: " + strings.Join(by, ", ") + " (reqcove console --end ends them all)"
 }

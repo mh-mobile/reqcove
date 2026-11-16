@@ -641,6 +641,7 @@ Codex's dialog.
 ```sh
 reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
 reqcove console --end    # ends every page open and every link not opened yet
+reqcove console --tailnet    # a QR code and a link to a page for your own devices on the tailnet (below)
 ```
 
 Since v1.2, `reqcove console` asks the running `run` for a page of its state and
@@ -756,7 +757,8 @@ Since v1.3 the page has these panels too:
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system
   picks, from the first `reqcove console` until `run` ends (`reqcove restart`
   keeps it); never on the tailnet
-  node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
+  node, the LAN, or `--ui`'s page (`reqcove console --tailnet` opens a page
+  of its own there, [below](#tailnet-page)). In LAN mode it shows the state too (the
   requests are refused there, as ever).
 - **The link works once, for 60 seconds:** it carries a one-use code after
   `#`, which the page trades for a session kept in that tab alone (the
@@ -831,6 +833,91 @@ and rules from a real file, none of its values shown; on with the
 destination, off; refused once recording stopped). Not tried: the panels in
 a browser (the QR code drawn, the HAR download, the confirms: from reading
 the code).
+
+<a id="tailnet-page"></a>
+
+#### The page on the tailnet (`reqcove console --tailnet`)
+
+```sh
+reqcove console --tailnet    # prints a QR code and http://100.x.y.z:PORT/#c=CODE
+```
+
+Since v1.3, `reqcove console --tailnet` opens a second page of `run`, for
+your own devices on the tailnet: scan its QR code with the iPhone's camera
+(the iPhone on the tailnet: the Tailscale app connected), or open the link
+it prints. It prints both in the terminal alone: it opens no browser and
+writes no file. The page has what ends with the run:
+- the state, the next steps and the warnings, without this computer's paths
+  (the binary, the config and hosts files, a `--state` in a command: "(a
+  path on this computer)");
+- the agents' requests, with **Approve** and **Deny**;
+- the Scope panel: add and remove, stop and start, allow-all and discovery
+  with **End**, with their warnings and confirms; discovery's names only as
+  how many (listed, with **Add**, on this computer's page);
+- presets on and off and the rules by kind and name, a marker, and the CA
+  panel.
+
+Save, the Settings panel, **Restart…** and the HAR file are this computer's
+page's alone: `run` refuses them on the tailnet page, which does not show
+them. Changes are traced with the device's name: "(from the console on
+iphone, over the tailnet)", and an approval "approved in the console on
+iphone (tailnet)".
+
+- **Your own devices only, and the one that opened the link:** `run` checks
+  every request from its connection (never a header): the device must be
+  one of your own (your user's, as `run`'s node is, neither tagged), as the
+  tailnet has it now (`run` reads it every 3 seconds), so a device tagged or
+  removed meanwhile is refused once `run` sees it, on a connection kept
+  alive too (the check on every request is tested, the delay not
+  measured); and the session is the device's that traded the code
+  (its StableID): the same token from another device is refused and ends.
+  Another user's device, a tagged one and one shared in from another
+  tailnet are refused, even when `--device` carries them.
+- **Its own address and port:** `run` listens on the node's tailnet IPv4
+  address, on a port of its own (not `--ui`'s 80: another origin), from the
+  first `reqcove console --tailnet` until `run` ends. A request must name
+  that address and port (the node's MagicDNS name is refused), and one
+  carrying another page's Origin is refused.
+- **The link works once, for 60 seconds,** as this computer's page's does;
+  a link opened twice ends every session of the tailnet page. A session
+  lasts 1 hour unused and 12 hours in all, at most 4 at once (from reading
+  the code), and ends with
+  `run` (`reqcove restart` does not carry them). `reqcove console --end` ends
+  them too. `reqcove status` counts each page's sessions, the tailnet page's
+  by device.
+- Refused in LAN mode and on a tagged node (a tagged node is no user's, so
+  no device is your own to it). In a terminal only; agents never run it. A
+  `run` older than v1.3 says to restart it with v1.3.
+- With the iPhone's Wi-Fi proxy set to the Remote Proxy, Safari sends the
+  page's requests to the proxy, which does not serve it in this version
+  (from reading the code; not tried): turn the proxy off, or use the exit
+  node, to open it.
+
+Who counts as your own device, and what the code guards:
+[SECURITY](SECURITY.md#tailnet-console-page).
+
+Tried: unit tests (with stand-ins for the node's listener and its
+own-device check: a device not your own refused, also on a connection kept
+alive once the check changes, which then closes; a session used from
+another of your devices refused and ended; this computer's page's codes and
+tokens refused on the tailnet page, and the reverse; a Host by name or by
+another port, and another Origin (`--ui`'s among them) refused; every route
+of this computer's page but the tailnet page's refused, Save too; no path of
+this computer in the answers, with a `--state` not the default; discovery's
+names absent, their count there; 1 hour unused and 12 hours in all; the
+counts for `status`; `--end`; LAN mode and a tagged node refused; the
+terminal check, the QR code and link printed, no opener run and no file
+written, a `run` older than v1.3), the own-device check on a netmap (a
+tagged device, another user's, one shared in and a sharee refused, though
+`--device` lets each in; one retagged refused; none on a tagged node), with
+real tsnet nodes on a local control server (the listener on the node's
+tailnet IPv4 address, another user's `--device` device refused there, and a
+connection's remote address the peer's tailnet address), and E2E with real
+mitmproxy (the Scope panel's changes from the tailnet page, traced with the
+device's name, their answers without the state directory; discovery's names
+absent from it). Not tried: the page on an iPhone (Safari, the QR code), a
+real tailnet with devices of your own, the page in any browser (its script:
+from reading the code).
 
 ### Use one CA on two computers
 

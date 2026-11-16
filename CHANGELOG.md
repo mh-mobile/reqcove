@@ -118,8 +118,40 @@
   `/api/ca`, `/api/har`), not stable, with v1.2's guards. Unit tests and an
   E2E test with real mitmproxy (presets and rules); the panels and the HAR
   download were not tried in a browser.
+- **`reqcove console --tailnet`** (in a terminal only; refused in LAN mode
+  and on a tagged node) opens a second page, for your own devices on the
+  tailnet: a QR code and `http://100.x.y.z:PORT/#c=CODE` in the terminal
+  alone (no browser opened, no file), a one-use code for 60 seconds, on the
+  node's tailnet IPv4 address and a port of its own (not `--ui`'s 80). It
+  serves what ends with the run: the state without this computer's paths,
+  Approve and Deny, the Scope changes but Save (discovery's names as a count
+  alone), presets on and off, the rules by name, a marker and the CA panel;
+  `run` refuses Save, the settings, the restart and the HAR file there. Every
+  request is checked from its connection, never a header: one of your own
+  devices (your user's, untagged; another user's, a tagged or a shared-in
+  device refused, even one `--device` carries), as the tailnet is now (a
+  device retagged is refused on a kept-alive connection), the device that
+  traded the code (its session refused from another), the exact Host (the
+  address and port; a MagicDNS name refused) and, when sent, its own Origin
+  (`--ui`'s refused). Sessions last 1 hour unused and 12 hours in all, are
+  its own (this computer's page's codes and tokens refused, and the
+  reverse), end with `run` (not carried across `reqcove restart`) and at
+  `reqcove console --end`; `reqcove status` counts them by page and device
+  (`console_sessions`, on this computer only). Changes are traced "(from the
+  console on NAME, over the tailnet)". The skill and the server's
+  instructions name `reqcove console` (`--tailnet`, `--end`) among the
+  commands agents never run. Unit tests, real tsnet nodes (the listener's
+  address, another user's device refused, a connection's address the
+  peer's) and E2E tests with real mitmproxy; not tried on an iPhone or a
+  real tailnet with devices of your own.
 
 ### Changed
+
+- **Own devices: a sharee node is left out by its own flag** too (one in
+  the netmap only because Reqcove's node is shared with its owner), not only
+  by its user, for `--ui`'s every-device view, `--mcp-http`, the console's
+  device list and its tailnet page; no change expected, as such a node is
+  another user's. A unit test.
 
 - **`reqcove setup` always writes `--allow-hosts=@FILE`** and the hosts file
   beside the config, a file of comments alone when no host is answered

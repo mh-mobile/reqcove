@@ -257,8 +257,10 @@ second user). Another user can still:
   or mitmweb's password;
 - send requests through `--local-proxy`, whose port takes any user's;
 - reach the node's ports, when this computer itself is on your tailnet as
-  you: the tokens are what keep them out of `--ui`, `--web` and `--mcp-http`
-  (from reading the code);
+  you: the tokens are what keep them out of `--ui`, `--web` and `--mcp-http`,
+  and the one-use code out of `reqcove console --tailnet`'s page (from
+  reading the code; to that page they are one of your own devices, this
+  computer);
 - read what you write outside the state directory: a HAR file gets your
   shell's file mode, usually readable by others.
 
@@ -350,8 +352,10 @@ names.
   agents (`status`, `summarize`) and, since v1.3, the `reqcove console` page
   on 127.0.0.1 (host names alone, put in as text: tests; at most 30, from
   the code), never
-  `--mcp-http` nor the `--ui` page (an E2E test: not in what `--mcp-http`
-  and `--ui` read; a unit test of the two servers). Agents read them as data,
+  `--mcp-http`, the `--ui` page nor the tailnet page of `reqcove console
+  --tailnet`, which shows how many (an E2E test: not in what `--mcp-http`,
+  `--ui` and the tailnet page read; unit tests of the two servers and of the
+  tailnet page). Agents read them as data,
   not instructions, as other names from the traffic; they are masked as
   other host fields, Apple's hosts and mitm.it are left out, and a command
   to add one is built by Reqcove only for a plain host name.
@@ -472,6 +476,8 @@ files given are logged "(from the console on this computer)".
   from the first `reqcove console` until it ends (`reqcove restart` keeps it,
   below); never on the tailnet node, the
   LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
+  `reqcove console --tailnet` opens another page on the node, with codes and
+  sessions of its own ([below](#tailnet-console-page)).
 - **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
   code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
   prints `http://127.0.0.1:PORT/#c=CODE`. Since v1.3 the browser gets the
@@ -543,6 +549,59 @@ files given are logged "(from the console on this computer)".
   link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, an
   `--upstream-proxy` value `run` would refuse (a password written in by
   hand: a test), or text from an agent or an MCP client.
+
+<a id="tailnet-console-page"></a>
+Since v1.3 **`reqcove console --tailnet`** opens a second page, for your
+own devices on the tailnet
+([guide](guide.md#tailnet-page)). It serves only what ends with the run: the
+state without this computer's paths, Approve and Deny, the Scope panel's
+changes but Save, presets on and off, a marker and the CA panel; never Save,
+a setting, a restart or the HAR file, which `run` refuses there, not only
+hides (tests: every other route of this computer's page refused, Save too).
+- **Where:** on the node's tailnet IPv4 address, on a port of its own (not
+  `--ui`'s 80: another origin), from the first `reqcove console --tailnet`
+  until `run` ends; `reqcove restart` does not carry it nor its sessions.
+  Refused in LAN mode and on a tagged node (tests).
+- **The way in:** a one-use code, 60 seconds, as for this computer's page,
+  shown in the terminal alone, as a QR code and a link: no opener is run and
+  no file written (a test). Its codes and sessions are its own: one page's
+  code or token is refused by the other (tests).
+- **Every request:** who calls is taken from the connection's address, never
+  a header, and checked against the tailnet as it is now: one of your own
+  devices (your user's, as Reqcove's node is, neither tagged, not a node
+  shared in), so another user's device, a tagged one or one shared in is
+  refused, even when `--device` carries it, and on a connection kept alive
+  too once that changes (tests, with a stand-in for the tailnet; the
+  listener and the connection's address with real tsnet nodes). A session
+  is the device's that traded the code (its StableID): used from another
+  device, it is refused and ends (a test). The Host must be the page's
+  address and port (the MagicDNS name or another port is refused), and an
+  Origin, when one is sent, the page's own (`--ui`'s is another; tests).
+  Sessions: 1 hour unused and 12 hours in all, in memory only, at most 4
+  (from reading the code); `reqcove console --end` ends them, and
+  `reqcove status` counts them by page and device (tests). The tailnet as
+  `run` sees it is read every 3 seconds: a change counts from then (the
+  delay not measured). Changes are traced with the device's machine
+  name, "(from the console on NAME, over the tailnet)" (an E2E test).
+- **Never shown there:** this computer's paths (the binary, the config and
+  hosts files, the state directory in a command's `--state`: taken out of
+  every answer; a test with a `--state` not the default), discovery's names
+  (their count alone; tests, unit and E2E), and what this computer's page
+  never shows.
+- **What it does not guard against:** the code, not the own-device check, is
+  the boundary. The check tells your user's devices from others', not one of
+  your devices from another: a device shared on your account (a family iPad
+  signed in as you), this computer's other OS users (when this computer is
+  on the tailnet as you, they reach the node from it), and a cloud or CI
+  machine signed in to the tailnet as you (an agent's) are your own devices
+  to it. Whoever trades the code first has the session, as on this
+  computer's page. An agent with a shell can run `reqcove console --tailnet`
+  itself, as `reqcove console`; one that drives the browser or the phone's
+  screen acts as you there, and nothing tells it apart. An agent with the
+  MCP tools alone gets no code nor any way to make one: no tool opens a page
+  (the skill and the server's instructions tell agents never to run
+  `reqcove console`). Not tried on an iPhone or a real tailnet with devices
+  of your own.
 
 Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
 with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does

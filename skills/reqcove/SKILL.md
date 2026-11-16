@@ -17,7 +17,10 @@ records through the reqcove MCP tools (`reqcove mcp`).
 - Never start, stop or restart `reqcove run` (`reqcove restart` included), nor run `reqcove cleanup` (it
   can put the system's proxy settings back) or `reqcove service install`,
   `service restart` or `service uninstall` (they start and stop `run`: a
-  restart or an uninstall empties the records). The commands you may run:
+  restart or an uninstall empties the records). Never run `reqcove console`
+  (`--tailnet` and `--end` included): its pages, on this computer and on the
+  user's devices over the tailnet, approve requests and change what is
+  recorded, and its one-use code is the user's. The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock
   add --print` when the user asks.
 - `activate_preset` changes what the device gets, and a

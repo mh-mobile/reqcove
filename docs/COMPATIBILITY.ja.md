@@ -38,7 +38,7 @@ v1.0.0 から、バージョンは `major.minor.patch`（[セマンティック 
 
 `status`、`list_flows`、`wait_for_flows`、`search_flows`、`summarize`、`get_flow`、`list_ws_messages`、`diff_flows`、`list_devices`、`list_tls_failures`、`list_passthrough`、`capture_stats`、`list_presets`、`activate_preset`、`deactivate_preset`、`list_rules`、`explain_rules`、`add_marker`、`list_markers`
 
-v1.2 から、`reqcove mcp` だけに `request_capture_add`（`hosts`：ホスト名 1〜5 個）と `get_capture_request`（`id`）もあり、そこでは 21 個です。`run` のソケット自身の一覧にはなく、`--mcp-http` にもありません。どちらも頼みを返します：`id`、`hosts`、`state`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`。値は増えることがあります）、`created_at` と `expires_at`（RFC 3339）、`approved_in`（`terminal` か `dialog`。`reqcove console` からは `console` も）、`result`（人が読むための文）、`approve`（保留の間、ユーザーが実行するコマンド）、`unmasked`（`run` が何もマスクしないとき、`--no-redact` で true）、`note`。
+v1.2 から、`reqcove mcp` だけに `request_capture_add`（`hosts`：ホスト名 1〜5 個）と `get_capture_request`（`id`）もあり、そこでは 21 個です。`run` のソケット自身の一覧にはなく、`--mcp-http` にもありません。どちらも頼みを返します：`id`、`hosts`、`state`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`。値は増えることがあります）、`created_at` と `expires_at`（RFC 3339）、`approved_in`（`terminal` か `dialog`。`reqcove console` からは `console` も。v1.3 からは、その tailnet のページから `console on NAME (tailnet)` も。NAME はデバイスのマシン名）、`result`（人が読むための文）、`approve`（保留の間、ユーザーが実行するコマンド）、`unmasked`（`run` が何もマスクしないとき、`--no-redact` で true）、`note`。
 
 `--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。そのサーバーは `/mcp` で答えます。ポートはノードの 8090 番です。認証は `Authorization: Bearer` で、トークンは `mcp-token`（下の状態ディレクトリ）にあります。
 
@@ -110,7 +110,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture allow-all`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove capture discover`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove capture requests`、`capture approve ID`、`capture deny ID`（v1.2 から） | `--state` |
-| `reqcove console`（v1.2 から） | `--end`（v1.3 から）、`--state` |
+| `reqcove console`（v1.2 から） | `--end`、`--tailnet`（v1.3 から）、`--state` |
 | `reqcove reload`（v1.1 から） | `--state` |
 | `reqcove restart`（v1.3 から） | `--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
@@ -124,7 +124,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 `--uvx`、`--python`、`--mitmproxy-spec` は変わりうるので、この一覧に入れていません（[下記](#変わりうるもの)）。
 
-`reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `console` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。v1.3 から、`run` の `console` への答えは、ページを開く状態ディレクトリのファイルも示します（`file`。v1.2 の `reqcove console` はこれを使わず、これまでどおりリンクを引数にして開きます。v1.2 の `run` に対する v1.3 の `reqcove console` は何も開かず、リンクを表示します）。`reqcove console --end` は、もう 1 つの新しい op `console-end` で頼みます。v1.2 の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove console --end` は `run` を v1.3 以降で起動し直すよう伝えます（どちらの答えも単体テストで確認）。
+`reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `console` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。v1.3 から、`run` の `console` への答えは、ページを開く状態ディレクトリのファイルも示します（`file`。v1.2 の `reqcove console` はこれを使わず、これまでどおりリンクを引数にして開きます。v1.2 の `run` に対する v1.3 の `reqcove console` は何も開かず、リンクを表示します）。`reqcove console --end` は、もう 1 つの新しい op `console-end` で頼みます。v1.2 の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove console --end` は `run` を v1.3 以降で起動し直すよう伝えます（どちらの答えも単体テストで確認）。`reqcove console --tailnet` は、`console` に新しいフィールド `tailnet: true` を付けて頼みます。v1.3 の `run` は、tailnet のページのアドレス（`addr`、`100.x.y.z:PORT`）で答え、`port` も `file` も返しません。v1.2 の `run` はこのフィールドを読まず、127.0.0.1 にページを開きます。答えに `addr` がないので、`reqcove console --tailnet` は `run` を v1.3 以降で起動し直すよう伝え、何も表示せず、何も開きません（単体テストで確認）。tailnet のページのアドレス、ポート、リンクは、このコンピュータのページと同じく変わりうるものです（[下記](#変わりうるもの)）。
 
 `reqcove restart`（v1.3 から）は、`ctl.sock` の新しい op `restart` で `run` に頼みます（ほかのフィールドはなく、LAN モードでも使えます）。`run` は `ok` と答え、答えを送ってから再起動を始めるか、何も止めずに拒否します。v1.2 以前の `run` はこれに使い方の説明で（LAN モードでは LAN モードの拒否で）答え、`reqcove restart` は `run` を止めて起動し直すよう伝えます（どちらの答えも単体テストで確認）。再起動が新しいプロセスに渡す変数 `REQCOVE_RESTART_*`、状態ディレクトリに置く config の写し（`restart-*.config`）、`config.failed`、`reqcove status` が読む `restart-note` は変わりうるものです（[下記](#変わりうるもの)）。v1.3 の `run` は止まる前に、exec するバイナリを `run --check-config` と自分の引数で実行します（隠れたモードで、`run -h` には出ず、変わりうるものです。再起動のためだけのものです）。終了コードは 0 か、理由とともに 1 です。そのモードのないバイナリは使い方の説明で答え（知らないフラグとして）、再起動は `run` だけで確かめ、そう伝えます（単体テストで確認）。
 
@@ -167,7 +167,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - Reqcove が動かす mitmproxy と Python のロック（`internal/capture/mitm.py.lock`）：セキュリティ修正のため、どのリリースでも更新します。どのリリースがどのバージョンの mitmproxy を動かすかは約束しません。
 - `--uvx`、`--python`、`--mitmproxy-spec`（`run` のもの。`--uvx` は `status` と `mock add` のものも）とその既定値：mitmproxy をどう動かすか（uv、Python、mitmproxy のバージョン）を選ぶもので、mitmproxy と uv に従います。
 - 上に挙げていない `capture_stats` のフィールド：`held_bytes`、`restarts`、`state_detail`、`tls_failures`、`passed_through_open`、`addon_dropped_bodies`、`addon_dropped_events`、`bad_lines`、`masking_failed`、`unknown_version`、`orphan_updates`、`all_hosts`、`brotli`、`brotli_decode`、`zstd_decode`、`rules`、`rules_error`、`resolve`、`upstream`。マイナーリリースで変わったりなくなったりします。
-- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change`、`/api/save`、`/api/settings`、`/api/restart`、`/api/presets`、`/api/preset`、`/api/marker`、`/api/ca`、`/api/har` も）。
+- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change`、`/api/save`、`/api/settings`、`/api/restart`、`/api/presets`、`/api/preset`、`/api/marker`、`/api/ca`、`/api/har` も）。tailnet のページ（`reqcove console --tailnet`）も同じです（ポート、そのうちどれを出すか、`status` の `console_sessions`）。
 - `run --check-config`：再起動が、exec するバイナリに頼む隠れた確認のモード。
 - `reqcove restart` が新しいプロセスに渡すもの（`REQCOVE_RESTART_*` の変数、fd）と、状態ディレクトリと config の隣に残すファイル（`restart-*.config`、`restart-note`、`config.failed`）。
 - `poc/` フォルダ：メンテナーのメモで、リポジトリには入っていません。
