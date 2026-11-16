@@ -323,7 +323,7 @@ func TestTailnetPageServes(t *testing.T) {
 	_, s = pageStateOf(t, base, tok)
 	if !s.Tailnet || len(s.Discovered) != 0 || s.DiscoveredKept != 7 || s.Executable != "" || s.ConfigFile != "" || len(s.HostsFiles) != 0 || len(s.ServiceCmds) != 0 ||
 		s.Service != "com.example" || s.KeepAwake == "" || len(s.NextSteps) != 4 || !strings.Contains(s.NextSteps[1], "reqcove capture discover --end --state "+pathHidden) ||
-		!strings.Contains(s.Warnings.AllowAll, "") || s.FlowsURL != "" {
+		s.FlowsURL != "" {
 		t.Errorf("state: %+v", s)
 	}
 	// This computer's page still shows them.
@@ -362,7 +362,7 @@ func TestTailnetPageRefused(t *testing.T) {
 	if a, err := askRun(context.Background(), state, ctlRequest{Cmd: "console", Tailnet: true}); err != nil || a.OK || !strings.Contains(a.Message, "LAN mode") || a.Code != "" || st.tailnet.Load() != nil {
 		t.Errorf("LAN mode: %v %+v", err, a)
 	}
-	state, st, _ = tailnetRun(t, &runOpts{})
+	state, st, who := tailnetRun(t, &runOpts{})
 	listenTailnet = func() (net.Listener, error) {
 		return nil, errors.New("reqcove's node is tagged: a tagged node is no user's")
 	}
@@ -380,6 +380,15 @@ func TestTailnetPageRefused(t *testing.T) {
 		t.Errorf("deny: %d %s", r.StatusCode, b)
 	}
 	waitLog(t, logged, "capture request "+d.ID+" (d.example.com): denied in the console on iphone (tailnet)", 1)
+	who.Store(&exitnode.Device{ID: "nNONAME"}) // a peer without a MagicDNS name: its StableID, never this computer's
+	_, code = openTailnetUI(t, state)
+	tok = trade(t, base, code)
+	d = st.reqs.ask(capture.HostRules{}, []string{"e.example.com"}).Requests[0]
+	call(t, base, "POST", "/api/deny", `{"id":"`+d.ID+`"}`, map[string]string{sessionHeader: tok})
+	waitLog(t, logged, "capture request "+d.ID+" (e.example.com): denied in the console on nNONAME (tailnet)", 1)
+	if cs := st.consoleSessions(); cs.Tailnet["nNONAME"] != 1 {
+		t.Errorf("counted: %+v", cs)
+	}
 	if got := consoleFrom("iphone"); got != " (from the console on iphone, over the tailnet)" || consoleFrom("") != fromConsole {
 		t.Errorf("trace: %q", got)
 	}

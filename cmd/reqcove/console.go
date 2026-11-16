@@ -34,7 +34,6 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 	"github.com/mh-mobile/reqcove/internal/exitnode"
 	"github.com/mh-mobile/reqcove/internal/mcpserver"
-	"github.com/skip2/go-qrcode"
 )
 
 // `reqcove console` (since v1.2) opens a page of run's state and the agents'
@@ -137,11 +136,7 @@ func tailnetIn(ctx context.Context, in, out *os.File, state string) error {
 		return errOlderTailnet
 	}
 	url := fmt.Sprintf("http://%s/#c=%s", a.Addr, a.Code)
-	q, err := qrcode.New(url, qrcode.Medium)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "%s\n%s  %s\n", a.Message, q.ToSmallString(false), url)
+	fmt.Fprintf(out, "%s\n%s  %s\n", a.Message, sideBySide([]qrItem{{caption: "the page, for the iPhone's camera", url: url}}, 0), url)
 	return nil
 }
 
@@ -475,6 +470,7 @@ func (p *page) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Who calls, from the connection alone, on every request: a kept-alive
 		// connection outlives a device retagged or removed.
 		d, ok := ownDeviceAt(r.RemoteAddr)
+		d.Name = cmp.Or(d.Name, d.ID) // a peer without a MagicDNS name: never traced as this computer's
 		if !ok {
 			h.Set("Connection", "close")
 			answer(w, http.StatusForbidden, map[string]any{"error": "refused: only your own devices on the tailnet (the same user as reqcove's node, neither tagged)"})

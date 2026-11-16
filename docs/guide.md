@@ -866,8 +866,10 @@ iphone (tailnet)".
 - **Your own devices only, and the one that opened the link:** `run` checks
   every request from its connection (never a header): the device must be
   one of your own (your user's, as `run`'s node is, neither tagged), as the
-  tailnet has it now, so a device tagged or removed meanwhile is refused at
-  its next request; and the session is the device's that traded the code
+  tailnet has it now (`run` reads it every 3 seconds), so a device tagged or
+  removed meanwhile is refused once `run` sees it, on a connection kept
+  alive too (the check on every request is tested, the delay not
+  measured); and the session is the device's that traded the code
   (its StableID): the same token from another device is refused and ends.
   Another user's device, a tagged one and one shared in from another
   tailnet are refused, even when `--device` carries them.
@@ -878,7 +880,8 @@ iphone (tailnet)".
   carrying another page's Origin is refused.
 - **The link works once, for 60 seconds,** as this computer's page's does;
   a link opened twice ends every session of the tailnet page. A session
-  lasts 1 hour unused and 12 hours in all, at most 4 at once, and ends with
+  lasts 1 hour unused and 12 hours in all, at most 4 at once (from reading
+  the code), and ends with
   `run` (`reqcove restart` does not carry them). `reqcove console --end` ends
   them too. `reqcove status` counts each page's sessions, the tailnet page's
   by device.

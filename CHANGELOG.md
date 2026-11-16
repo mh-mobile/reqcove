@@ -147,10 +147,11 @@
 
 ### Changed
 
-- **A node in the netmap only because Reqcove's node is shared with its
-  owner (a sharee node) is no longer one of your own devices**, for `--ui`'s
-  every-device view, `--mcp-http`, the console's device list and its tailnet
-  page. A unit test.
+- **Own devices: a sharee node is left out by its own flag** too (one in
+  the netmap only because Reqcove's node is shared with its owner), not only
+  by its user, for `--ui`'s every-device view, `--mcp-http`, the console's
+  device list and its tailnet page; no change expected, as such a node is
+  another user's. A unit test.
 
 - **`reqcove setup` always writes `--allow-hosts=@FILE`** and the hosts file
   beside the config, a file of comments alone when no host is answered

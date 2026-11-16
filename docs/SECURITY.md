@@ -577,9 +577,11 @@ hides (tests: every other route of this computer's page refused, Save too).
   device, it is refused and ends (a test). The Host must be the page's
   address and port (the MagicDNS name or another port is refused), and an
   Origin, when one is sent, the page's own (`--ui`'s is another; tests).
-  Sessions: at most 4, 1 hour unused and 12 hours in all, in memory only;
-  `reqcove console --end` ends them, and `reqcove status` counts them by
-  page and device (tests). Changes are traced with the device's machine
+  Sessions: 1 hour unused and 12 hours in all, in memory only, at most 4
+  (from reading the code); `reqcove console --end` ends them, and
+  `reqcove status` counts them by page and device (tests). The tailnet as
+  `run` sees it is read every 3 seconds: a change counts from then (the
+  delay not measured). Changes are traced with the device's machine
   name, "(from the console on NAME, over the tailnet)" (an E2E test).
 - **Never shown there:** this computer's paths (the binary, the config and
   hosts files, the state directory in a command's `--state`: taken out of
