@@ -78,7 +78,8 @@ the agent.
    It checks uv, asks for the iPhone's name in your tailnet (as in
    `tailscale status`) and the hosts to record, and writes them to a config
    file: `~/.config/reqcove/config`, or Homebrew's `etc/reqcove/config` for a
-   brew install (the hosts in `hosts` beside it). It adds the agent skill if you answer `y`, and prints the
+   brew install (the hosts in `hosts` beside it, written even when you name
+   none, so you can add them later). It adds the agent skill if you answer `y`, and prints the
    line that gives Claude Code the tools. It starts nothing itself
    ([what it asks and writes](docs/guide.md#first-start)).
 
@@ -93,7 +94,9 @@ the agent.
    `brew services start reqcove` for a brew install
    ([background](docs/guide.md#run-it-in-the-background)). While it runs,
    `reqcove capture add HOST` records one more host without a restart
-   ([more](docs/guide.md#change-what-is-recorded-while-it-runs)).
+   ([more](docs/guide.md#change-what-is-recorded-while-it-runs)), and
+   `reqcove console` opens a page to see and change it
+   ([below](#see-and-change-it-while-it-runs)).
 
    The first time, log in: `reqcove links` prints the login URL.
    `reqcove status` says what is left, such as approving the exit node.
@@ -141,6 +144,29 @@ reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
 The first time, it prints a login URL on its terminal (`reqcove links` prints
 it again), then what else is needed (approving the exit node, Tailnet Lock).
 `reqcove status` always says what is still missing. Steps 2 to 4 are the same.
+
+### See and change it while it runs
+
+```sh
+reqcove console             # a page on this computer
+reqcove console --tailnet   # a QR code for a page on the iPhone
+reqcove restart             # restart run in place, the config read again
+```
+
+Since v1.3, `reqcove console` opens a page of the running `run` in this
+computer's browser: what `reqcove status` says, the agents' requests to
+approve, the hosts to add, remove or Save for the next start, `run`'s
+settings written to its config file, then **Restart…**, presets and the CA.
+`reqcove console --tailnet` prints a QR code for a page on your iPhone (on
+the tailnet) with what ends with the run: approvals, the hosts, presets,
+the CA; no Save, setting or restart. `reqcove restart` restarts `run` in
+the same process, under its service too, after checking the config; the
+records empty. Each link works once, for 60 seconds; agents never run these
+commands. Tried: the page's state and approvals in a Chromium-based browser
+on macOS; its v1.3 panels and the iPhone's page not in a browser nor on an
+iPhone (tests only), `reqcove restart` not under a service. How to use them,
+and what stays in the terminal:
+[the guide](docs/guide.md#the-console-reqcove-console).
 
 ### What the agent can do
 
@@ -210,6 +236,10 @@ iPhone on a home Wi-Fi (iOS 27.3).
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.
+- `reqcove console`'s pages change what is recorded and `run`'s settings.
+  Their one-use link is the key: whoever opens it first has the page, and
+  anything running as your user (an agent with a shell, say) can ask for
+  one ([SECURITY](docs/SECURITY.md#the-reqcove-console-pages)).
 - LAN mode (`--lan`) has no password: an address you allow on this computer
   can reach the internet through it from your address (ports 80 and 443), and
   the private hosts named exactly in `--allow-hosts`.

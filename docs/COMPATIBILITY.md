@@ -43,6 +43,37 @@ tool's answer, or turn something off, even something this page lists as stable.
 It is not held back for a major release. The CHANGELOG says so under "Security",
 with what changed and what to do.
 
+### What v1.3 adds and changes
+
+Added, each in its place below: `reqcove restart` and its ctl op `restart`;
+`reqcove console --end` (op `console-end`) and `--tailnet` (the `tailnet`
+field of `console`, answered with `addr`); `console`'s answer's `file`; the
+`confirm` field of `save`; a marker's `source` `console`; `approved_in`'s
+`console on NAME (tailnet)`; a hosts file without hosts taken; the line
+`capture save` may add to a config and the hosts file it creates;
+`reqcove setup`'s hosts file always written. Not stable, so not promised:
+the `reqcove console` pages and their requests (`/api/…`), `status`'
+`console_sessions`, `run --check-config`, and what a restart hands over and
+leaves ([below](#not-stable)).
+
+What v1.0 promised that v1.3 changes:
+
+- **`--no-redact` masks one header:** the console's session header
+  (`X-Reqcove-Session`), Reqcove's own credential, is masked in every record
+  with `--no-redact` too, which otherwise masks nothing. A security fix,
+  under the clause above (CHANGELOG, "Security"); nothing to do.
+- **A hosts file without hosts is taken** (comments only, or empty), giving
+  none; v1.0 to v1.2 refused it. And `--pass-hosts`, `--rules` and
+  `--upstream-proxy` are checked against the hosts given, not the flags: a
+  set of flags v1.2 refused may now start (`--pass-hosts=@FILE` with an
+  empty file and no `--allow-hosts`, say). Nothing that started before is
+  refused now (from reading the code: a hosts file had to hold a host
+  before, so a flag present meant hosts given; the new cases have unit
+  tests).
+
+Nothing else listed here as stable changed: the tools and their fields, the
+rules file, the commands and flags, `status --json`'s fields.
+
 ## Stable within a major version
 
 Within a major version, what is listed here is not removed and does not change
@@ -279,6 +310,14 @@ Before it stops, a v1.3 `run` runs the binary it would exec as
 `run -h`, not stable: for the restart alone), which exits 0, or 1 with the
 reason; a binary without the mode answers with its usage (an unknown flag),
 and the restart then checks in `run` alone and says so (unit tests).
+
+`reqcove capture save` (since v1.3), on a config that names no hosts file,
+gets from `run` the change it would make (text for people) and a new field,
+`confirm`, a token; once you answer y, it sends `save` again with that token
+in `confirm`, and `run` writes only the change it showed (a config or hosts
+file changed since is refused). A `capture save` older than v1.3 never sends
+the token back, so nothing is written (from reading the code). The token
+and the text are not stable.
 
 ### The `--config` file
 
