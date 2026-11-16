@@ -969,13 +969,14 @@ func quietPort(t *testing.T) int {
 
 // The retry carries the page's sessions as they are when the start failed:
 // none after reqcove console --end while it served (never the list handed
-// over), the same ones when nothing changed, none when it never served.
+// over), the same ones when nothing changed, the ones handed over when it
+// never served (a start failing before the page and ctl.sock serve).
 func TestRetryCarriesSessionsNow(t *testing.T) {
 	for _, c := range []struct {
 		name         string
 		serve, end   bool
 		wantSessions int
-	}{{"ended", true, true, 0}, {"kept", true, false, 2}, {"never served", false, false, 0}} {
+	}{{"ended", true, true, 0}, {"kept", true, false, 2}, {"never served", false, false, 2}} {
 		state := t.TempDir()
 		_, _, args, restart := restartable(t, "--device phone\n--state="+state+"\n")
 		snap := restart()

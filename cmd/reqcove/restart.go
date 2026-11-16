@@ -578,8 +578,9 @@ func (h *handover) failed(args []string, err error) error {
 	}
 	note("the start after a restart failed (" + err.Error() + "); " + config + " is back as run had started from it" + kept + ", and run starts once more with it.")
 	// The page's sessions as they are now: --end, or a session traded, while
-	// it served; none if it never served.
-	var sessions []carriedSession
+	// it served. Never served: the ones handed over, unchanged (nothing could
+	// change them: ctl.sock serves only after the page).
+	sessions := h.sessions
 	if h.served != nil {
 		sessions = h.served.carry()
 	}

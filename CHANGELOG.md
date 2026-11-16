@@ -210,7 +210,7 @@ not.
 - **Found by the review before v1.3's release** (none of it was released):
   a restart's retry carried the page's sessions handed over at the restart,
   so one ended by `reqcove console --end` meanwhile came back (now the
-  page's sessions as they are, none if it never served); a page carried
+  page's sessions as they are; the ones handed over if it never served); a page carried
   across a restart served before its sessions were in place (a poll then
   got 401); a restart asked as `ctl.sock` began serving was refused; a
   binary older than v1.3 was restarted into and stayed down (now refused,
