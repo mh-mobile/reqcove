@@ -762,16 +762,17 @@ esac
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	logged := func() string { return read(t, logFile.Name()) }
+	mitmLog := func() string { b, _ := os.ReadFile(filepath.Join(state, "mitmproxy.log")); return "mitmproxy.log:\n" + string(b) }
 	waitReady := func(n int, check func()) {
 		t.Helper()
 		for deadline := time.Now().Add(3 * time.Minute); strings.Count(logged(), "reqcove is ready") < n; time.Sleep(50 * time.Millisecond) {
 			select {
 			case err := <-exited:
-				t.Fatalf("run ended: %v\n%s", err, logged())
+				t.Fatalf("run ended: %v\n%s\n%s", err, logged(), mitmLog())
 			default:
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("not ready %d times:\n%s", n, logged())
+				t.Fatalf("not ready %d times:\n%s\n%s", n, logged(), mitmLog())
 			}
 			if check != nil {
 				check()
