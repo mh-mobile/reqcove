@@ -110,15 +110,15 @@ type Status struct {
 	NodeKey      string            `json:"node_key,omitempty"`  // to sign under Tailnet Lock
 	Devices      map[string]string `json:"devices"`             // carried: StableID -> name
 	DeviceOS     map[string]string `json:"device_os,omitempty"` // carried: StableID -> OS, as Tailscale has it (iOS, android, macOS, ...)
-	// Own are the user's own devices (ownDevices: untagged, of reqcove's
-	// user; none when reqcove's node is tagged): StableID -> machine name.
-	// Never in an answer: the console's local page alone lists them.
-	Own map[string]string `json:"-"`
 	Problems     []string          `json:"device_problems,omitempty"`
 	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
 	// a login URL only while starting, so only a restart brings one.
 	WasRunning bool `json:"-"`
+	// Own are the user's own devices (ownDevices: untagged, of reqcove's
+	// user; none when reqcove's node is tagged): StableID -> machine name.
+	// Never in an answer: the console's local page alone lists them.
+	Own map[string]string `json:"-"`
 }
 
 var current atomic.Pointer[policy]

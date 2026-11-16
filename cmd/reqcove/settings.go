@@ -168,7 +168,9 @@ func (p *page) setSetting(w http.ResponseWriter, r *http.Request) {
 		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: not JSON of the page"})
 		return
 	}
-	refuse := func(msg string) { answer(w, http.StatusOK, map[string]any{"ok": false, "message": "refused: " + msg + "; nothing written"}) }
+	refuse := func(msg string) {
+		answer(w, http.StatusOK, map[string]any{"ok": false, "message": "refused: " + msg + "; nothing written"})
+	}
 	if !slices.Contains(settingFlags, in.Flag) && (in.Flag != "upstream-ca" || len(in.Values) > 0) {
 		answer(w, http.StatusBadRequest, map[string]any{"error": "refused: the page writes " + strings.Join(settingFlags, ", ") + " and clears upstream-ca alone (the others are your terminal's); nothing written"})
 		return
