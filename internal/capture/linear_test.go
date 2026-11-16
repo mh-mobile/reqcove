@@ -351,7 +351,14 @@ func TestMaskingLinear(t *testing.T) {
 			timeBound, allocBound := 24*ts+50*time.Microsecond, 24*as+64*kb // the slack: what is too small to count
 			tooSlow := slow * 2 * time.Second * time.Duration(loops)        // masking 128 KiB that long stalls recording, whatever the ratio
 			tl, al := measure(c.run, large, loops, tooSlow)
-			slowTime, copies := !allocOnly[c.name] && tl > timeBound, al > allocBound
+			copies := al > allocBound
+			if !copies {
+				// Linear allocation: the time alone can still say quadratic (8
+				// times the size takes about 64 times as long), but CI's loaded
+				// runners have pushed a linear input past 24 (x25, x26.5): 32 there.
+				timeBound = 32*ts + 50*time.Microsecond
+			}
+			slowTime := !allocOnly[c.name] && tl > timeBound
 			clear := tl > tooSlow || copies && al > 2*allocBound // no noise makes either: no retry
 			t.Logf("%-40s time x%.1f (%v), allocated x%.1f (%d KiB)", c.name, float64(tl)/float64(ts), tl/time.Duration(loops), float64(al)/float64(max(as, 1)), al/uint64(loops)/kb)
 			if !slowTime && !copies {
@@ -361,7 +368,14 @@ func TestMaskingLinear(t *testing.T) {
 				loops *= 10 // a quick input measured again over 10 times as long: CI's machines jitter at a millisecond
 				continue
 			}
-			if try == 2 || clear {
+			// The time alone (allocation linear): measured again, both sizes
+			// back to back, up to 4 times. A loaded CI runner has made a linear
+			// input look x78 when its load changed between the two sizes; a
+			// quadratic one is about x64 every time.
+			if !copies && !clear && try < 4 {
+				continue
+			}
+			if try >= 2 || clear {
 				t.Errorf("%s: %d KiB took %v and allocated %d KiB, %d KiB %v and %d KiB: grows faster than the size",
 					c.name, len(small)/kb, ts/time.Duration(loops), as/uint64(loops)/kb, len(large)/kb, tl/time.Duration(loops), al/uint64(loops)/kb)
 				break
