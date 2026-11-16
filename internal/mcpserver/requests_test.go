@@ -106,8 +106,16 @@ func callReq(t *testing.T, cs *mcp.ClientSession, tool string, args map[string]a
 	return out, ""
 }
 
+// accepted is a dialog's answer: on accept, "Record these hosts" ticked.
+func accepted(action string) *mcp.ElicitResult {
+	if action != "accept" {
+		return &mcp.ElicitResult{Action: action}
+	}
+	return &mcp.ElicitResult{Action: action, Content: map[string]any{"record": true}}
+}
+
 func reply(action string) func(context.Context) (*mcp.ElicitResult, error) {
-	return func(context.Context) (*mcp.ElicitResult, error) { return &mcp.ElicitResult{Action: action}, nil }
+	return func(context.Context) (*mcp.ElicitResult, error) { return accepted(action), nil }
 }
 
 // request_capture_add: pending with the command; the client's dialog, when it
@@ -125,6 +133,10 @@ func TestRequestTool(t *testing.T) {
 		{"no elicitation", nil, false, "pending"},
 		{"accept", reply("accept"), true, "applied"},
 		{"decline", reply("decline"), true, "pending"},
+		{"accept, the box not ticked", func(context.Context) (*mcp.ElicitResult, error) {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"record": false}}, nil
+		}, true, "pending"},
+		{"accept, no content", func(context.Context) (*mcp.ElicitResult, error) { return &mcp.ElicitResult{Action: "accept"}, nil }, true, "pending"},
 		{"cancel", reply("cancel"), true, "pending"},
 		{"error", func(context.Context) (*mcp.ElicitResult, error) { return nil, errors.New("no UI") }, true, "pending"},
 		{"no answer in time", func(ctx context.Context) (*mcp.ElicitResult, error) {
@@ -132,7 +144,7 @@ func TestRequestTool(t *testing.T) {
 			case <-ctx.Done(): // the call's own dialog: it gives up
 				return nil, ctx.Err()
 			case <-time.After(2 * dialogWait): // the client's (multi round-trip): too late
-				return &mcp.ElicitResult{Action: "accept"}, nil
+				return accepted("accept"), nil
 			}
 		}, true, "pending"},
 	} {
@@ -302,7 +314,7 @@ func retriers(t *testing.T, reqs Requests, n int) []*mcp.ClientSession {
 func retry(t *testing.T, cs *mcp.ClientSession, state string) *mcp.CallToolResult {
 	t.Helper()
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "request_capture_add", Arguments: map[string]any{"hosts": []string{"a.com"}},
-		RequestState: state, InputResponses: mcp.InputResponseMap{"approve": &mcp.ElicitResult{Action: "accept"}}})
+		RequestState: state, InputResponses: mcp.InputResponseMap{"approve": accepted("accept")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +477,7 @@ func TestNoDialogForURLOnly(t *testing.T) {
 				Capabilities: &mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{URL: &mcp.URLElicitationCapabilities{}}},
 				ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 					shown = true
-					return &mcp.ElicitResult{Action: "accept"}, nil
+					return accepted("accept"), nil
 				},
 			}).Connect(ctx, ct, &mcp.ClientSessionOptions{ProtocolVersion: version})
 			if err != nil {
