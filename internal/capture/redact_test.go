@@ -610,3 +610,23 @@ func TestV1DevReview(t *testing.T) {
 		t.Errorf("took %v", d)
 	}
 }
+
+// The console's session header (Reqcove's own credential) is masked in a
+// record, with masking on and with --no-redact too, under any case; other
+// headers under --no-redact stay as sent. The tailnet page's requests never
+// reach mitmproxy (the Remote Proxy serves them): a second guard.
+func TestConsoleSessionHeaderMasked(t *testing.T) {
+	for _, redact := range []bool{true, false} {
+		s := NewStore(100, 1<<20)
+		s.SetScope(HostRules{All: true}, redact)
+		s.Apply([]byte(`{"v":2,"ev":"request","id":"a","device":"d","method":"GET","host":"100.64.0.9:47001","url":"http://100.64.0.9:47001/api/state","headers":[["X-Reqcove-Session","S3CRET-console-1"],["x-reqcove-session","S3CRET-console-2"],["X-Other","as-sent"]]}`))
+		f, err := s.Get("a", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := fmt.Sprint(f.ReqHeaders)
+		if strings.Contains(got, "S3CRET") || strings.Count(got, "[redacted]") != 2 || !strings.Contains(got, "as-sent") {
+			t.Errorf("redact %v: %s", redact, got)
+		}
+	}
+}

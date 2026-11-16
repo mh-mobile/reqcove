@@ -65,17 +65,19 @@ const (
 	maxSessions   = 4              // a 5th ends the one used least recently
 	maxPageCodes  = 32             // codes remembered, used or not, to tell one used twice
 	maxPageBody   = 4 << 10
-	sessionHeader = "X-Reqcove-Session"
+	sessionHeader = capture.ConsoleSessionHeader
 	tailnetIdle   = time.Hour      // the tailnet page's: a session not used that long ends
 	tailnetCap    = 12 * time.Hour // and none lasts longer
 )
 
-// The tailnet page's listener (on the node's tailnet IPv4 address) and who a
-// connection's address is (one of this user's own devices); tests stand in
-// for them.
+// The tailnet page's listener (on the node's tailnet IPv4 address), who a
+// connection's address is (one of this user's own devices), and the Remote
+// Proxy's relay of the page's requests (a phone whose Wi-Fi proxy is the
+// Remote Proxy sends them there); tests stand in for them.
 var (
 	listenTailnet = exitnode.ListenConsole
 	ownDeviceAt   = exitnode.OwnDeviceAt
+	relayTailnet  = exitnode.RelayConsole
 )
 
 //go:embed ui
@@ -429,6 +431,7 @@ func openTailnet(cap *capture.Capture, st *ctlState) ctlAnswer {
 			IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0)}
 		go srv.Serve(ln)
 		go func() { <-st.ctx.Done(); srv.Close() }()
+		relayTailnet(st.ctx, p.host, p) // the page's own handler: its checks on every request, as here
 		st.tailnet.Store(p)
 		log.Printf("reqcove console --tailnet: the page listens on http://%s, for your own devices on the tailnet, until run ends", p.host)
 	}

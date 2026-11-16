@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httptrace"
 	"os"
 	"path/filepath"
@@ -440,4 +442,73 @@ func TestConsoleTailnetCmd(t *testing.T) {
 	if err := consoleCmd(ctx, []string{"--tailnet", "--end", "--state", dir}); err == nil || !strings.Contains(err.Error(), "give it alone") {
 		t.Errorf("--tailnet --end: %v", err)
 	}
+}
+
+// The Remote Proxy's relay: the tailnet page opened, run hands the Remote
+// Proxy the page's own handler (exitnode.RelayConsole), which then takes a
+// proxy's absolute-form request with its checks unchanged: the caller from
+// RemoteAddr (the proxy client's connection; a forwarded header naming an own
+// device counts for nothing), the exact Host, the Origin, the session.
+func TestTailnetPageRelayed(t *testing.T) {
+	state, st, _ := tailnetRun(t, &runOpts{})
+	var addr string
+	var h http.Handler
+	wasR, wasO := relayTailnet, ownDeviceAt
+	relayTailnet = func(_ context.Context, a string, hh http.Handler) { addr, h = a, hh }
+	ownDeviceAt = func(a string) (exitnode.Device, bool) { // by the address, as exitnode's
+		host, _, _ := net.SplitHostPort(a)
+		return iphone, host == "100.64.0.1"
+	}
+	t.Cleanup(func() { relayTailnet, ownDeviceAt = wasR, wasO })
+	base, code := openTailnetUI(t, state)
+	if p := st.tailnet.Load(); h != http.Handler(p) || "http://"+addr != base {
+		t.Fatalf("relayed %q %T, the page %s", addr, h, base)
+	}
+	serve := func(method, url, from, body string, hdr http.Header) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, url, strings.NewReader(body)) // absolute-form, as a proxy gets it
+		r.RemoteAddr = from
+		maps.Copy(r.Header, hdr)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	post := http.Header{"Origin": {base}, "Content-Type": {"application/json"}}
+	forwarded := http.Header{"X-Forwarded-For": {"100.64.0.1"}, "Forwarded": {"for=100.64.0.1"}, "X-Real-Ip": {"100.64.0.1"}}
+	if w := serve("POST", base+"/api/session", "100.64.0.2:5000", `{"code":"`+code+`"}`, merge(post, forwarded)); w.Code != 403 {
+		t.Errorf("not own, a forwarded header naming an own device: %d %s", w.Code, w.Body)
+	}
+	w := serve("POST", base+"/api/session", "100.64.0.1:5000", `{"code":"`+code+`"}`, post)
+	var d struct{ Token string }
+	json.Unmarshal(w.Body.Bytes(), &d)
+	if w.Code != 200 || len(d.Token) != 64 {
+		t.Fatalf("own, the trade: %d %s", w.Code, w.Body)
+	}
+	session := http.Header{sessionHeader: {d.Token}}
+	if w := serve("GET", base+"/api/state", "100.64.0.1:5000", "", session); w.Code != 200 || !strings.Contains(w.Body.String(), `"tailnet":true`) {
+		t.Errorf("own, the state: %d %s", w.Code, w.Body)
+	}
+	for _, c := range []struct {
+		what, url, from string
+		hdr             http.Header
+		want            int
+	}{
+		{"not own, a forwarded header naming an own device", base + "/api/state", "100.64.0.2:5000", merge(session, forwarded), 403},
+		{"by the node's name", strings.Replace(base, "127.0.0.1", "reqcove.tail.ts.net", 1) + "/api/state", "100.64.0.1:5000", session, 421},
+		{"another Origin", base + "/api/state", "100.64.0.1:5000", merge(session, http.Header{"Origin": {"http://reqcove"}}), 403},
+		{"no session", base + "/api/state", "100.64.0.1:5000", nil, 401},
+		{"a route of this computer's page", base + "/api/settings", "100.64.0.1:5000", session, 403},
+	} {
+		if w := serve("GET", c.url, c.from, "", c.hdr); w.Code != c.want {
+			t.Errorf("%s: %d %s", c.what, w.Code, w.Body)
+		}
+	}
+}
+
+func merge(hs ...http.Header) http.Header {
+	out := http.Header{}
+	for _, h := range hs {
+		maps.Copy(out, h)
+	}
+	return out
 }

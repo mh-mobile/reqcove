@@ -144,6 +144,17 @@
   address, another user's device refused, a connection's address the
   peer's) and E2E tests with real mitmproxy; not tried on an iPhone or a
   real tailnet with devices of your own.
+- **The tailnet page through the Remote Proxy:** with the iPhone's Wi-Fi
+  proxy set to the Remote Proxy, the page's requests are served by the
+  Remote Proxy itself, in-process, with the page's own handler and checks
+  (who calls: the proxy's client, from its connection; a forwarded header
+  counts for nothing), for your own devices that `--device` carries; never
+  a reverse proxy, never through mitmproxy, so no flow, under allow-all too.
+  A tunnel (CONNECT) to the page's port is refused; the local proxy and LAN
+  mode never serve it. The page's session header (`X-Reqcove-Session`) is
+  masked in any record, with `--no-redact` too (Reqcove's own credential),
+  as a second guard. Unit tests and an E2E test with real mitmproxy under
+  allow-all; not tried in an iPhone's Safari.
 
 ### Changed
 

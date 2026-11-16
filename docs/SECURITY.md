@@ -583,6 +583,19 @@ hides (tests: every other route of this computer's page refused, Save too).
   `run` sees it is read every 3 seconds: a change counts from then (the
   delay not measured). Changes are traced with the device's machine
   name, "(from the console on NAME, over the tailnet)" (an E2E test).
+- **Through the Remote Proxy** (an iPhone whose Wi-Fi proxy is the node's
+  `:8080`): a request to the page's address and port goes to the page's own
+  handler, in the same process, as it came: never a reverse proxy to its
+  listener, never a header added or read. Who calls is the proxy's client,
+  from its connection's address, and the page's checks above run unchanged
+  (the Remote Proxy itself takes `--device` devices alone, then refuses one
+  not your own; a forwarded header naming one of yours counts for nothing).
+  A tunnel (CONNECT) to the page's port is refused; the local proxy
+  (`--local-proxy`) and LAN mode never serve it. These requests never reach
+  mitmproxy, so they make no flow, under allow-all too, and the page's
+  session header (`X-Reqcove-Session`) is masked in any record, with
+  `--no-redact` too, as a second guard (unit tests; an E2E test with real
+  mitmproxy under allow-all; not tried in an iPhone's Safari).
 - **Never shown there:** this computer's paths (the binary, the config and
   hosts files, the state directory in a command's `--state`: taken out of
   every answer; a test with a `--state` not the default), discovery's names
@@ -645,7 +658,9 @@ leaves the check to `run`, which says so. What crosses the exec:
 ## Masking
 
 The secrets Reqcove recognises are masked as they arrive, so no tool can
-return them. `--no-redact` turns masking off.
+return them. `--no-redact` turns masking off, but for the console's
+session header (`X-Reqcove-Session`, Reqcove's own credential), masked
+always (a test).
 
 - **By name.** A header, query parameter or body field whose name says it is
   a secret (`token`, `password`, `apiKey`, …) has its value masked. Cookie
