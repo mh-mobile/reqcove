@@ -209,9 +209,10 @@ holds.
   `cli` (`list_markers`), and in `reqcove status` "last changed at … (capture
   add api.example.com)" (`scope_change`, `scope_changed_at` in `--json`).
 
-Tried by tests only (unit, and E2E with real mitmproxy: add, then a new
-connection is recorded; remove, then one is not; the marker and status); not
-on an iPhone. The pending answer and a `mock` rule's refusal, as `reqcove
+Tried by tests (unit, and E2E with real mitmproxy: add, then a new
+connection is recorded; remove, then one is not; the marker and status), and
+by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): add, remove and `set`, each answered and marked, a host recorded
+after `add` and `set` and not after `remove`. The pending answer and a `mock` rule's refusal, as `reqcove
 capture` gives them, are from reading the code (the change underneath, its
 pending state and the refusal, has tests of its own); the refusal while
 mitmproxy restarts, telling a pending change again, and a body under way
@@ -249,7 +250,8 @@ lines whose hosts are all kept; new hosts go at the end.
 Tried by tests only (unit: what is written and kept, each refusal; E2E with
 real mitmproxy: `run` started from a config with a hosts file and a host on
 the command line, add, remove that host, save, then a new `run` from the
-config records the host added); not on an iPhone, not with `brew services`.
+config records the host added), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): Homebrew's hosts file
+rewritten with the hosts added live, its comments kept.
 
 #### Edit the files, then `reqcove reload`
 
@@ -297,7 +299,9 @@ does not acknowledge new rules; E2E with real mitmproxy: a host and a
 mock for it added together, then answered by the mock; a broken rules file
 changing nothing, the hosts file's edit neither; the host and its mock taken
 out together; an unsaved `capture add` named as replaced; a preset off after;
-`--mcp-http` added named); not on an iPhone, not with a service.
+`--mcp-http` added named), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): the hosts file edited by hand,
+then `reload`: the host added recorded, the one taken out not, the records
+kept.
 
 #### Stop recording for a while
 
@@ -336,8 +340,8 @@ Tried by tests only (E2E with real mitmproxy: an open WebSocket records
 nothing more and does not resume after the start, a new one records; a mocked
 URL reaches the server, on a new connection and on one decrypted before the
 stop; a preset is turned off and cannot be turned on; mitmproxy killed while
-stopped comes back stopped; the CLI's answers, status, markers); not on an
-iPhone.
+stopped comes back stopped; the CLI's answers, status, markers), and
+by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): nothing recorded while stopped, recorded again after `start`.
 
 #### See what every app sends, for a while
 
@@ -393,7 +397,9 @@ end by either clock with mitmproxy silent; E2E with real mitmproxy: a host
 outside the ones allowed recorded, with no rule applied, and not after the
 end, its records kept; a `--pass-hosts` host still undecrypted; mitmproxy
 killed just before the end comes back without it; the CLI's answers, status,
-markers); not on an iPhone, not across a real sleep of the Mac.
+markers), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16) for a minute: another site and another app's
+requests recorded, none after the end, the records kept. Not across a real
+sleep of the Mac.
 
 #### Find the hosts an app reaches (`reqcove capture discover`)
 
@@ -447,7 +453,8 @@ mitmproxy silent; E2E with real mitmproxy: a TLS connection's SNI and a
 request's Host counted, once a connection, none of Apple's, nothing recorded
 of them, not in what `--mcp-http` and `--ui` read, none taken before or after,
 a host added dropping off; the summarize and status tools: on the local
-server alone); not on an iPhone.
+server alone), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): a site's names listed in `reqcove status`
+and `summarize` with their `capture add` command, one added and then recorded.
 
 ### Use one CA on two computers
 

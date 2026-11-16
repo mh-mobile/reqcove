@@ -100,7 +100,7 @@ reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # まとめ�
 - **端末でだけ動きます。** `reqcove mark` と同じで、エージェントは実行しません。ツールの note や `next_steps` が、あなたが実行するための `reqcove capture add HOST` を伝えます。これは間違いを防ぐためのもので、境界ではありません（[SECURITY](SECURITY.ja.md#このコンピュータのほかのプロセス)）。
 - **痕跡：** 変更のたびに、`run` のログの 1 行、source が `cli` のマーカー（`list_markers`）、`reqcove status` の「last changed at … (capture add api.example.com)」（`--json` では `scope_change` と `scope_changed_at`）が残ります。
 
-確認状況：テストだけです（単体テストと、本物の mitmproxy での E2E テスト：追加すると新しい接続を記録し、外すと記録しないこと、マーカーと status）。iPhone では試していません。`reqcove capture` が返す保留の答えと、`mock` ルールによる拒否は、コードから判断したものです（そのもとになる変更の仕組み、保留の状態、拒否そのものには、それぞれテストがあります）。mitmproxy の再起動中の拒否、保留の変更をもう一度伝えること、途中のボディをそれ以上コピーしないこと（mitmproxy の Python で）には単体テストがあります。
+確認状況：テスト（単体テストと、本物の mitmproxy での E2E テスト：追加すると新しい接続を記録し、外すと記録しないこと、マーカーと status）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。`add`、`remove`、`set` のそれぞれに答えとマーカーがあり、`add` と `set` のあとはホストを記録し、`remove` のあとは記録しませんでした。`reqcove capture` が返す保留の答えと、`mock` ルールによる拒否は、コードから判断したものです（そのもとになる変更の仕組み、保留の状態、拒否そのものには、それぞれテストがあります）。mitmproxy の再起動中の拒否、保留の変更をもう一度伝えること、途中のボディをそれ以上コピーしないこと（mitmproxy の Python で）には単体テストがあります。
 
 #### 次の起動のためにホストを残す（`reqcove capture save`）
 
@@ -116,7 +116,7 @@ reqcove capture save     # いま記録しているホストを、ホストの�
 - **復号せずに通すホスト**（`--pass`）は保存しません。答えがそう伝えます。起動すると、`run` の `--pass-hosts` のホストを通します。
 - **痕跡：** ほかの変更と同じく、`run` のログ、`cli` のマーカー、`reqcove status` の「last changed at … (capture save)」が残ります。
 
-確認状況：テストだけです（単体テスト：書く中身と残すもの、それぞれの拒否。本物の mitmproxy での E2E テスト：ホストのファイルを読む config とコマンドラインのホストで `run` を起動し、追加し、そのコマンドラインのホストを外し、保存したあと、その config で起動した新しい `run` が追加したホストを記録すること）。iPhone と `brew services` では試していません。
+確認状況：テスト（単体テスト：書く中身と残すもの、それぞれの拒否。本物の mitmproxy での E2E テスト：ホストのファイルを読む config とコマンドラインのホストで `run` を起動し、追加し、そのコマンドラインのホストを外し、保存したあと、その config で起動した新しい `run` が追加したホストを記録すること）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。動かしたまま足したホストで Homebrew の hosts ファイルが書き換わり、コメントは残りました。
 
 #### ファイルを編集して `reqcove reload`
 
@@ -135,7 +135,7 @@ v1.1 から、config、config が指すホストのファイル（`--allow-hosts
 - `capture add` や `remove` と同じく、**新しい接続だけ**です。
 - `capture` のコマンドと同じく、端末でだけ動きます。LAN モードでは拒否し、古い `run` はそう伝え、痕跡（`run` のログ、`cli` のマーカー、`scope_change` の `reload`）が残ります。
 
-確認状況：テストだけです（単体テスト：`run` の引数の読み直しが終了もログ出力もしないこと、伝える設定の名前、`"*"` を拒否すること、新しいルールの受け取りを返さない mitmproxy を再起動すること。本物の mitmproxy での E2E テスト：ホストとそのモックを一緒に足すと、モックが答えること。壊れたルールのファイルでは何も変わらず、ホストのファイルの編集も適用しないこと。ホストとそのモックを一緒に外せること。保存していない `capture add` を、置き換えたものとして伝えること。プリセットがオフになること。足した `--mcp-http` を伝えること）。iPhone とサービスでは試していません。
+確認状況：テスト（単体テスト：`run` の引数の読み直しが終了もログ出力もしないこと、伝える設定の名前、`"*"` を拒否すること、新しいルールの受け取りを返さない mitmproxy を再起動すること。本物の mitmproxy での E2E テスト：ホストとそのモックを一緒に足すと、モックが答えること。壊れたルールのファイルでは何も変わらず、ホストのファイルの編集も適用しないこと。ホストとそのモックを一緒に外せること。保存していない `capture add` を、置き換えたものとして伝えること。プリセットがオフになること。足した `--mcp-http` を伝えること）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。hosts ファイルを手で書き換えて `reload` すると、足したホストを記録し、外したホストは記録せず、記録は残りました。
 
 #### しばらく記録を止める
 
@@ -152,7 +152,7 @@ reqcove capture start    # 同じホストをまた記録する
 - mitmproxy が再起動しても止まったままです。`run` を再起動すると、また記録します（保存しません）。
 - `reqcove status` は「recorded: nothing: stopped」と残しているホストを表示します。`--json` と MCP の `status` は `"recording": "stopped"`、`allow_hosts: []`、残しているホストを `base_allow_hosts`（`base_pass_hosts`）で返します。`next_steps` は `reqcove capture start` を伝えます。ほかと同じく、LAN モードでは拒否します。
 
-確認状況：テストだけです（本物の mitmproxy での E2E テスト：開いている WebSocket はそれ以上記録せず、`start` のあとも再開しないこと、新しいものは記録すること。モックしていた URL が、新しい接続でも、止める前に復号した接続でもサーバーに届くこと。プリセットがオフになり、オンにできないこと。止めている間に mitmproxy を強制終了しても、止まったまま戻ること。CLI の答え、status、マーカー）。iPhone では試していません。
+確認状況：テスト（本物の mitmproxy での E2E テスト：開いている WebSocket はそれ以上記録せず、`start` のあとも再開しないこと、新しいものは記録すること。モックしていた URL が、新しい接続でも、止める前に復号した接続でもサーバーに届くこと。プリセットがオフになり、オンにできないこと。止めている間に mitmproxy を強制終了しても、止まったまま戻ること。CLI の答え、status、マーカー）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。止めている間は何も記録せず、`start` のあとはまた記録しました。
 
 #### しばらく、すべてのアプリの通信を見る
 
@@ -171,7 +171,7 @@ reqcove capture allow-all --end       # 早めに終える
 - **終わる時刻を越えて続くことはありません。** その間に mitmproxy が再起動しても、終わる時刻まで続き、それより長くは続きません。終わる時刻に mitmproxy が答えないときは、先にほかのホストの記録をやめ、それから allow-all なしで mitmproxy を再起動します。その間の `capture stop` に mitmproxy が受け取りを返さないときも同じで、止めたまま再起動します（単体テストで確認）。`run` を再起動すると終わります（保存しません）。
 - `reqcove status` は「every host: allow-all until …」と、残り時間、そのあとに記録するホストを表示します。`--json` と MCP の `status` は `"recording": "allow-all"`、`allow_hosts: ["*"]`、`allow_all_until`、`allow_all_left`、`base_allow_hosts` を返します。`next_steps` は残り時間と `reqcove capture allow-all --end` を伝えます。終わったあとは、記録しているホストの外の記録の数を `records_outside_scope` が数えます。痕跡、LAN モードでの拒否、端末でだけ動くことは、ほかと同じです。時間で終わったときは、`run` のログと `scope_change`（「allow-all ended: its time is up」）に残り、マーカーは残しません。
 
-確認状況：テストだけです（単体テスト：引数、順序、`stop` で終わること、mitmproxy が答えないときに、どちらの時計でも終わること。本物の mitmproxy での E2E テスト：許可したホストの外のホストを記録し、ルールは効かず、終わったあとは記録しないこと、その記録が残ること。`--pass-hosts` のホストが復号されないままであること。終わる直前に mitmproxy を強制終了すると、allow-all なしで戻ること。CLI の答え、status、マーカー）。iPhone と、Mac の実際のスリープでは試していません。
+確認状況：テスト（単体テスト：引数、順序、`stop` で終わること、mitmproxy が答えないときに、どちらの時計でも終わること。本物の mitmproxy での E2E テスト：許可したホストの外のホストを記録し、ルールは効かず、終わったあとは記録しないこと、その記録が残ること。`--pass-hosts` のホストが復号されないままであること。終わる直前に mitmproxy を強制終了すると、allow-all なしで戻ること。CLI の答え、status、マーカー）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。1 分の間、ほかのサイトとほかのアプリのリクエストを記録し、終わったあとは記録せず、記録は残りました。Mac の実際のスリープでは試していません。
 
 #### アプリが接続するホストを見つける（`reqcove capture discover`）
 
@@ -190,7 +190,7 @@ v1.1 から、しばらくの間、記録しているホストの外でデバイ
 - 負荷：TLS の接続ごとに、ClientHello をもう一度読みます（mitmproxy は、何を復号するかを決めるためにどのみち読みます）。1.5 KB のもので約 22 µs です（M1 Max の Mac でのマイクロベンチマーク、mitmproxy 12.3.1、Python 3.14）。オフのときは何もしません（コードから判断したものです）。
 - ほかの `capture` のコマンドと同じく、端末でだけ動き（エージェントは実行しません）、LAN モードでは拒否し、古い `run` はそう伝え、痕跡（`run` のログ、`cli` のマーカー、`scope_change`）が残ります。
 
-確認状況：テストだけです（単体テスト：オンの間だけ名前を取ること、Apple のホスト・mitm.it・不正な名前を除くこと、マスク、上限、mitmproxy が答えないときにどちらの時計でも終わること。本物の mitmproxy での E2E テスト：TLS 接続の SNI とリクエストの Host を、接続ごとに 1 回数えること、Apple のホストを数えないこと、それらを記録しないこと、`--mcp-http` と `--ui` が読むものに出ないこと、始める前と終わったあとは取らないこと、足したホストが一覧から消えること。summarize と status のツール：ローカルのサーバーだけ）。iPhone では試していません。
+確認状況：テスト（単体テスト：オンの間だけ名前を取ること、Apple のホスト・mitm.it・不正な名前を除くこと、マスク、上限、mitmproxy が答えないときにどちらの時計でも終わること。本物の mitmproxy での E2E テスト：TLS 接続の SNI とリクエストの Host を、接続ごとに 1 回数えること、Apple のホストを数えないこと、それらを記録しないこと、`--mcp-http` と `--ui` が読むものに出ないこと、始める前と終わったあとは取らないこと、足したホストが一覧から消えること。summarize と status のツール：ローカルのサーバーだけ）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。サイトのホスト名が、`capture add` のコマンドと一緒に `reqcove status` と `summarize` に出て、そのうち 1 つを足すと記録しました。
 
 ### 2 台のコンピュータで同じ CA を使う
 
