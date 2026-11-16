@@ -392,6 +392,47 @@ through `reqcove mcp`).
   (an E2E test). Requests live in memory only, and a restart of `run` drops
   them.
 
+Since v1.2 **`reqcove ui`** opens a page of `run`'s state and of these
+requests, with Approve and Deny, in this computer's browser
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-ui)). It changes nothing but
+that: an approval goes as `reqcove capture approve` does, for the hosts the
+request holds, traced "approved in the page"; a denial as `capture deny`.
+- **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
+  from the first `reqcove ui` until it ends; never on the tailnet node, the
+  LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
+- **The way in:** `reqcove ui` (a terminal only, as `capture`) gets a one-use
+  code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
+  prints and opens `http://127.0.0.1:PORT/#c=CODE`. The code is after `#`,
+  which the browser does not send; the page trades it once for a session
+  token, kept in that tab's sessionStorage and sent in a header, never a
+  cookie, and takes the code out of the address bar. A code traded a second
+  time ends every session and the page says so. At most 4 sessions, in
+  `run`'s memory only, each ending after 12 hours unused and all at `run`'s
+  end. The code and tokens are kept as hashes, never logged and never in an
+  answer but the trade's own (tests).
+- **What it guards against:** a page open in the browser (another site, or
+  one pointing its own name at 127.0.0.1): every request must name exactly
+  `127.0.0.1:PORT` as its Host, a change is a POST with the page's own Origin
+  and a JSON body (at most 4 KiB), a GET changes nothing, every API call
+  needs the session header, which another site's page cannot send without
+  CORS (none is given) nor read, and a cookie alone counts for nothing; the
+  page sets `default-src 'self'` and `frame-ancestors 'none'`, `no-store`
+  and `no-referrer`, loads nothing from elsewhere and puts every value in as
+  text. Another user of this computer reaches the port (127.0.0.1 is every
+  user's) but without a session gets the page's own files alone; a tailnet
+  device or the LAN does not reach 127.0.0.1. Tests check each of these; the
+  page was not tried in a real browser.
+- **What it does not guard against:** an agent that can run commands as your
+  user: it can run `reqcove ui` itself through a pseudo terminal and trade the
+  code before you, or write to `ctl.sock` directly, as above (if you then open
+  the link, it was used: every session ends and the page says so). While
+  `open` or `xdg-open` runs, the link with its code is in their process
+  arguments, which `ps` shows to the other users of this computer (not
+  tried here), for a moment; a code traded by someone else first shows as
+  above. What it shows is not secret beyond `reqcove status`: never the flows'
+  contents, a token, a link or a login URL, or text from an agent or an MCP
+  client.
+
 ## Masking
 
 The secrets Reqcove recognises are masked as they arrive, so no tool can

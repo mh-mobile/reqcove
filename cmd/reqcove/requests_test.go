@@ -47,7 +47,7 @@ func TestRequestHosts(t *testing.T) {
 		{ctlRequest{Cmd: "request", Hosts: []string{"a.com"}, ID: "0a1b2c3d"}, "usage"},
 		{ctlRequest{Cmd: "request", Hosts: []string{"a.com"}, Pass: true}, "usage"},
 		{ctlRequest{Cmd: "approve", ID: "0a1b2c3d"}, "usage"}, // no via
-		{ctlRequest{Cmd: "approve", ID: "0a1b2c3d", Via: "page"}, "usage"},
+		{ctlRequest{Cmd: "approve", ID: "0a1b2c3d", Via: "web"}, "usage"},
 		{ctlRequest{Cmd: "approve", ID: "0A1B2C3D", Via: "terminal"}, "not a request's id"},
 		{ctlRequest{Cmd: "approve", ID: "../../x", Via: "terminal"}, "not a request's id"},
 		{ctlRequest{Cmd: "approve", ID: "0a1b2c3d", Via: "terminal", Hosts: []string{"*.a.com"}}, "not a host name"},
@@ -151,7 +151,7 @@ func TestCaptureRequestsAsk(t *testing.T) {
 	}
 	// 10 made in 10 minutes: deny them as they come (the pending limit aside).
 	for _, x := range q.pending() {
-		q.deny(x.ID)
+		q.deny(x.ID, "terminal")
 	}
 	for i := 3; i < maxAsked; i++ {
 		x, a := asked(t, q, none, string(rune('e'+i))+".com")
@@ -159,7 +159,7 @@ func TestCaptureRequestsAsk(t *testing.T) {
 			t.Fatalf("%d: %+v", i, a)
 		}
 		if i < maxAsked-1 {
-			q.deny(x.ID)
+			q.deny(x.ID, "terminal")
 		}
 	}
 	last := q.pending()[0]
@@ -196,7 +196,7 @@ func TestCaptureRequestsExpire(t *testing.T) {
 			if p := q.pending(); len(p) != 0 {
 				t.Errorf("after the end: %+v", p)
 			}
-			if a := q.deny(r.ID); a.OK || !strings.Contains(a.Message, "expired") {
+			if a := q.deny(r.ID, "terminal"); a.OK || !strings.Contains(a.Message, "expired") {
 				t.Errorf("deny after the end: %+v", a)
 			}
 			if a := q.list(r.ID); !a.OK || a.Requests[0].State != "expired" {
@@ -244,10 +244,10 @@ func TestCaptureRequestsApprove(t *testing.T) {
 		t.Errorf("failed: %+v", a)
 	}
 	d, _ := asked(t, q, capture.HostRules{}, "d.com")
-	if a := q.deny(d.ID); !a.OK || a.Requests[0].State != "denied" {
+	if a := q.deny(d.ID, "terminal"); !a.OK || a.Requests[0].State != "denied" {
 		t.Errorf("deny: %+v", a)
 	}
-	if a := q.deny(d.ID); a.OK || !strings.Contains(a.Message, "denied already") {
+	if a := q.deny(d.ID, "terminal"); a.OK || !strings.Contains(a.Message, "denied already") {
 		t.Errorf("deny twice: %+v", a)
 	}
 	c.move(requestTTL-time.Second, 0)
@@ -413,7 +413,7 @@ func TestCaptureRequestsRefused(t *testing.T) {
 	defer cancel()
 	lanDir, _ := os.MkdirTemp("/tmp", "rcvq-")
 	defer os.RemoveAll(lanDir)
-	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}); err != nil {
+	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := (ctlRequests{state: lanDir}).Ask(ctx, []string{"a.com"}); err == nil || !strings.Contains(err.Error(), "LAN mode") {
@@ -457,12 +457,12 @@ func TestCaptureRequestE2E(t *testing.T) {
 	defer c.Stop()
 	logged := logTo(t)
 	o := &runOpts{state: state, mcpHTTP: true}
-	ctl, err := serveCtl(ctx, state, c, o)
+	var node nodeState
+	node.set(exitnode.Status{Backend: "Running"})
+	ctl, err := serveCtl(ctx, state, c, o, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	var node nodeState
-	node.set(exitnode.Status{Backend: "Running"})
 	handler, err := serveMCP(ctx, o, c, &node, ctl.reqs, "tok")
 	if err != nil {
 		t.Fatal(err)
@@ -585,5 +585,28 @@ func TestCaptureRequestE2E(t *testing.T) {
 	}
 	if m := c.Store.Markers(0); len(m) != 3 || m[2].Source != "mcp" || !strings.HasSuffix(m[2].Text, "… (asked by an agent, approved in the terminal)") { // a long host: its words kept (the stop's marker between)
 		t.Errorf("markers: %+v", m)
+	}
+
+	// reqcove ui's page approves it the same way.
+	req = tool("request_capture_add", map[string]any{"hosts": []string{"page.example"}})
+	base, code := openUI(t, state)
+	token := trade(t, base, code)
+	if _, s := pageStateOf(t, base, token); len(s.Requests) != 1 || s.Requests[0].ID != req.ID || s.Recording != capture.RecordingStopped {
+		t.Errorf("the page: %+v", s)
+	}
+	r, b := call(t, base, "POST", "/api/approve", `{"id":"`+req.ID+`","hosts":["page.example"]}`, map[string]string{sessionHeader: token})
+	if r.StatusCode != 200 || !strings.Contains(b, `"ok":true`) || !strings.Contains(b, "page.example added") {
+		t.Errorf("approve in the page: %d %s", r.StatusCode, b)
+	}
+	why = "capture add page.example (asked by an agent, approved in the page)"
+	if m := c.Store.Markers(0); len(m) != 4 || m[3].Source != "mcp" || m[3].Text != why || !slices.Contains(c.Base().Hosts, "page.example") {
+		t.Errorf("markers: %+v; base %q", m, c.Base().Hosts)
+	}
+	waitLog(t, logged, why+": applied: page.example added", 1)
+	if got := tool("get_capture_request", map[string]any{"id": req.ID}); got.State != "applied" || got.ApprovedIn != "page" {
+		t.Errorf("get: %+v", got)
+	}
+	if strings.Contains(logged.String(), code) || strings.Contains(logged.String(), token) {
+		t.Error("the code or the token logged")
 	}
 }

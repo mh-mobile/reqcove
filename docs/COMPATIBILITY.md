@@ -63,7 +63,7 @@ to 5 host names) and `get_capture_request` (`id`), 21 tools there: never on
 `run`'s socket's own list, never over `--mcp-http`. Both answer a request:
 `id`, `hosts`, `state` (`pending`, `approved`, `applied`, `failed`,
 `denied`, `expired`; more values may come), `created_at` and `expires_at`
-(RFC 3339), `approved_in` (`terminal` or `dialog`), `result` (text for
+(RFC 3339), `approved_in` (`terminal` or `dialog`; `page` since `reqcove ui`), `result` (text for
 people), `approve` (while pending, the command the user runs), `unmasked`
 (true while `run` masks nothing, `--no-redact`) and `note`.
 
@@ -230,6 +230,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
+| `reqcove ui` (since v1.2) | `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
@@ -242,6 +243,12 @@ The commands and their flags, from each command's flag set:
 
 `--uvx`, `--python` and `--mitmproxy-spec` are not in this list: they are not
 stable ([below](#not-stable)).
+
+`reqcove ui` (since v1.2) asks `run` over `ctl.sock` with a new op, `ui`: a
+`run` older than v1.2 answers it with its usage, and `reqcove ui` then says
+to restart `run` with v1.2 or later (a unit test with a v1.1 answer). The
+page's link (`http://127.0.0.1:PORT/#c=CODE`) and what it shows are not
+stable, nor its requests to `run` ([below](#not-stable)).
 
 ### The `--config` file
 
@@ -320,6 +327,8 @@ These may change in any release, a patch release included:
   `orphan_updates`, `all_hosts`, `brotli`, `brotli_decode`, `zstd_decode`,
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
+- `reqcove ui`'s page: its port, its layout, its `/api/` requests and their
+  answers.
 - The `poc/` folder: the maintainer's notes, not in the repository.
 - Anything else this page does not list as stable.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,7 +40,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover or reload (reqcove reload)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload) or ui (reqcove ui)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -47,7 +48,7 @@ type ctlRequest struct {
 	For        string   `json:"for,omitempty"`         // allow-all, discover: how long, as 30m or 2h
 	End        bool     `json:"end,omitempty"`         // allow-all, discover: end it now
 	ID         string   `json:"id,omitempty"`          // requests (one), approve, deny: an agent's request (since v1.2)
-	Via        string   `json:"via,omitempty"`         // approve: terminal or dialog
+	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or page; deny: page (or none: terminal)
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -56,6 +57,8 @@ type ctlAnswer struct {
 	Message  string                     `json:"message"`
 	Requests []mcpserver.CaptureRequest `json:"requests,omitempty"` // the request ops' (since v1.2)
 	New      bool                       `json:"new,omitempty"`      // request: made now, not pending already
+	Port     int                        `json:"port,omitempty"`     // ui: the page's, on 127.0.0.1 (since v1.2)
+	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
 }
 
 const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end | capture requests | capture approve ID | capture deny ID  [--state DIR]"
@@ -78,7 +81,7 @@ func captureCmd(ctx context.Context, args []string) error {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
 	switch req.Cmd {
-	case "request": // the agents' op, through reqcove mcp
+	case "request", "ui": // the agents' op, through reqcove mcp; reqcove ui's
 		return errors.New("usage: " + captureUse)
 	case "approve", "deny":
 		if len(req.Hosts) != 1 {
@@ -133,7 +136,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start", "save":
+	case "stop", "start", "save", "ui":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -172,9 +175,9 @@ func (r ctlRequest) request() (ctlRequest, error) {
 	case "request":
 		bad = bad || r.ID != "" || r.Via != ""
 	case "approve":
-		bad = bad || r.ID == "" || r.Via != "terminal" && r.Via != "dialog"
+		bad = bad || r.ID == "" || r.Via != "terminal" && r.Via != "dialog" && r.Via != "page"
 	case "deny":
-		bad = bad || r.ID == "" || r.Via != "" || len(r.Hosts) > 0
+		bad = bad || r.ID == "" || r.Via != "" && r.Via != "page" || len(r.Hosts) > 0
 	case "requests":
 		bad = bad || r.Via != "" || len(r.Hosts) > 0
 	}
@@ -276,7 +279,7 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
 	if err != nil {
 		need := "v1.1"
-		if requestOps[req.Cmd] {
+		if requestOps[req.Cmd] || req.Cmd == "ui" {
 			need = "v1.2"
 		}
 		return ctlAnswer{}, noCtl(ctx, state, need)
@@ -294,8 +297,13 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 		}
 		return a, fmt.Errorf("the running reqcove did not answer: %w", err)
 	}
-	if requestOps[req.Cmd] && !a.OK && strings.HasPrefix(a.Message, v11Usage) {
-		return a, errOlderRun
+	if !a.OK && strings.HasPrefix(a.Message, v11Usage) {
+		switch {
+		case req.Cmd == "ui":
+			return a, errOlderUI
+		case requestOps[req.Cmd]:
+			return a, errOlderRun
+		}
 	}
 	return a, nil
 }
@@ -331,16 +339,23 @@ type ctlState struct {
 	origin hostsOrigin
 	loaded capture.HostRules
 	reqs   *captureRequests // the agents' requests (its own lock)
+	// For reqcove ui: run's context, which the page lives as long as; its
+	// status (as this computer's status tool gives it; nil: none); the page,
+	// once opened (guarded by mu).
+	ctx    context.Context
+	status func() mcpserver.StatusOut
+	page   *page
 }
 
 func newCtlState(o *runOpts) *ctlState {
-	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state)}
+	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state), ctx: context.Background()}
 }
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
-// returns the state it answers from.
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts) (*ctlState, error) {
+// returns the state it answers from; status is what reqcove ui's page shows.
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
+	st.ctx, st.status = ctx, status
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
 	ln, err := net.Listen("unix", path)
@@ -383,6 +398,12 @@ var errUnchanged = errors.New("unchanged")
 func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlRequest) ctlAnswer {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if req.Cmd == "ui" { // in LAN mode too: the page shows the state (what LAN mode refuses, it refuses there too)
+		if _, err := req.normalized(); err != nil {
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+		}
+		return openPage(cap, st)
+	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
 		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"}
@@ -411,7 +432,7 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 	case "requests":
 		return unmasked(cap, st.reqs.list(req.ID))
 	case "deny":
-		return st.reqs.deny(req.ID)
+		return st.reqs.deny(req.ID, cmp.Or(req.Via, "terminal"))
 	case "approve":
 		return approve(st.reqs, req, func(why string, hosts []string) ctlAnswer {
 			return scopeChange(ctx, cap, ctlRequest{Cmd: "add", Hosts: hosts}, why, true)
