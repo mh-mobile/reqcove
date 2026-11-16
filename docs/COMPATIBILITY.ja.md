@@ -54,7 +54,7 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 
 - 入力：`run` が示すツール一覧の入力スキーマにあるフィールドです。マイナーリリースで増える新しい入力は、省略できるものだけです。メジャーバージョンの間、入力を削除したり、必須にしたり、意味を変えたりはしません。
 - 出力：`run` が示すツール一覧の出力スキーマにあるフィールドと、`status` と `capture_stats`（スキーマで中身を決めていないもの）については下に挙げたフィールドです。新しいフィールドはマイナーリリースで増えることがあるので、エージェントは知らないフィールドを無視してください。メジャーバージョンの間、フィールドを削除したり意味を変えたりはしません。
-- 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`）、`list_passthrough` の接続の `reason`（`pass_hosts`、`raw_tcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
+- 次の値は意味を変えません。`status` の `mode`（`tailnet`、`lan`）、`capture_stats` の `state`（`starting`、`ready`、`restarting`、`failed`）、プリセットの `kind`（`mock`、`map_remote`、`modify_headers`、`resolve`）、マーカーの `source`（`cli`、`mcp`。v1.3 から `console` も）、`list_passthrough` の接続の `reason`（`pass_hosts`、`raw_tcp`）。マイナーリリースで値が増えること（新しいモードなど）はあります。
 - 人が読む文を入れるフィールド（`next_steps`、`note`、`msg`、`list_rules` と `explain_rules` の `rules_error` や、`active_presets_error` などのエラーのフィールド）はなくなりませんが、文面は変わりえます。
 
 #### `status` と `reqcove status --json`
@@ -138,6 +138,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - v1.1 から、`reqcove setup` はホストを、その隣の別のファイル `hosts`（`~/.config/reqcove/hosts` か `$(brew --prefix)/etc/reqcove/hosts`）に書きます。1 行に 1 つのホストで、`#` から後はコメントです。config には、そのファイルを読む `--allow-hosts=@FILE` の行を書きます。`reqcove capture save` が書き換えるのもこのファイルです。それより前に書いた config（`--allow-hosts` の行にホストがあるもの）は、これまでどおり読みます。
 - v1.3 から、ホストのないホストのファイル（`--allow-hosts=@FILE`、`--pass-hosts=@FILE`。コメントだけか空のもの）を受け付け、ホストを足しません（以前は「has no hosts」で拒否しました）。`--mask-names` や `--mask-values` の `@FILE` は、行がなければこれまでどおり拒否します。記録するホストが必要なもの（`--pass-hosts` のホスト、`--rules`、`--upstream-proxy`）は、フラグがあるかではなく、実際のホストで確かめます。そのため、空のファイルの `--pass-hosts=@FILE` は、`--allow-hosts` がなくても受け付けます（以前は拒否しました）。
 - v1.3 から、`reqcove capture save` は、ホストのファイルを指定していない config（`--allow-hosts=@FILE` や `--pass-hosts=@FILE` がないもの）に、y/N を聞いたうえで 1 行を最後に足し、そのファイルを隣に作ることがあります。前の config は `config.prev` として残します。ほかの行は変えません。
+- v1.3 から、`reqcove setup` は `--allow-hosts=@FILE` の行と、config の隣のホストのファイルを必ず書きます。ホストを答えなかったときは、コメントだけのファイルを書き、ホストは足しません（以前は、`--allow-hosts` の行をコメントにして、ファイルは作りませんでした）。書く config とホストのファイルを、次の起動と同じように読んで確かめ、その起動が拒否するなら何も書きません。このコンピュータの Tailscale CLI が答えれば、タグのない自分のデバイスを一覧にし、番号で選べます（名前を打つこともできます）。
 
 ### 状態ディレクトリ
 
@@ -166,7 +167,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - Reqcove が動かす mitmproxy と Python のロック（`internal/capture/mitm.py.lock`）：セキュリティ修正のため、どのリリースでも更新します。どのリリースがどのバージョンの mitmproxy を動かすかは約束しません。
 - `--uvx`、`--python`、`--mitmproxy-spec`（`run` のもの。`--uvx` は `status` と `mock add` のものも）とその既定値：mitmproxy をどう動かすか（uv、Python、mitmproxy のバージョン）を選ぶもので、mitmproxy と uv に従います。
 - 上に挙げていない `capture_stats` のフィールド：`held_bytes`、`restarts`、`state_detail`、`tls_failures`、`passed_through_open`、`addon_dropped_bodies`、`addon_dropped_events`、`bad_lines`、`masking_failed`、`unknown_version`、`orphan_updates`、`all_hosts`、`brotli`、`brotli_decode`、`zstd_decode`、`rules`、`rules_error`、`resolve`、`upstream`。マイナーリリースで変わったりなくなったりします。
-- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change`、`/api/save`、`/api/settings`、`/api/restart` も）。
+- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え（v1.3 の `/api/change`、`/api/save`、`/api/settings`、`/api/restart`、`/api/presets`、`/api/preset`、`/api/marker`、`/api/ca`、`/api/har` も）。
 - `run --check-config`：再起動が、exec するバイナリに頼む隠れた確認のモード。
 - `reqcove restart` が新しいプロセスに渡すもの（`REQCOVE_RESTART_*` の変数、fd）と、状態ディレクトリと config の隣に残すファイル（`restart-*.config`、`restart-note`、`config.failed`）。
 - `poc/` フォルダ：メンテナーのメモで、リポジトリには入っていません。

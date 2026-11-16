@@ -47,7 +47,7 @@ type event struct {
 	MappedURL   string      `json:"mapped_url"` // request: where map_remote sent it
 	Rewrites    []string    `json:"rewrites"`   // request, response: --rules applied (rule kinds and header names, never values)
 	Mocked      bool        `json:"mocked"`     // request: a mock rule answered it, not the server
-	Preset      string      `json:"preset"`     // request: the preset that answered, turned on by an agent
+	Preset      string      `json:"preset"`     // request: the preset that answered, turned on by an agent or on reqcove console's page
 	Trailers    [][2]string `json:"trailers"`   // done: the response's trailers (HTTP/2's: gRPC's status)
 	Text        bool        `json:"text"`       // ws: a text message
 	Capped      bool        `json:"capped"`     // ws: no head (the socket's rate cap, or the queue was full)

@@ -94,8 +94,47 @@
   after the list was shown is refused, nothing stopped. New page endpoints
   (`/api/settings`, `/api/restart`), not stable. Unit tests; the panel was
   not tried in a browser.
+- **The `reqcove console` page's other panels** (127.0.0.1 alone):
+  **Presets and rules**: the `--rules` file's presets by name and kind,
+  whether each is on and until when, each turned on for 1 to 5 minutes (a
+  mock for a count too) or off, as `activate_preset` and `deactivate_preset`
+  make them (refused while recording is stopped, as there); the page first
+  says what the preset's kind changes, and for a `map_remote` preset where
+  the requests then go (a scheme and host alone; anything else "not shown"),
+  which goes back with the request: a destination changed since is refused.
+  The rules by kind, index and preset name, never a value (no URL, filter,
+  header, body, address, path, description or the file's error text). A
+  **marker** (source `console`). The **CA**: its name, SHA-256 fingerprint,
+  expiry, a QR code of http://mitm.it, and how to add it on an iPhone and
+  remove it (the public certificate's fields alone). **Save the records as
+  a HAR file**: what `reqcove har` writes, fetched with the session header
+  and saved from a blob (never a token in a URL), as an attachment of
+  `application/json`, `nosniff`, `no-store`; refused while `run` masks
+  nothing (`--no-redact`); the page says where the file lands. The restart's
+  confirm offers it first. **This run**: the service's commands, and with
+  `--ui` a link to its page's bare address (never its token). Presets turned
+  on or off and HAR files are logged "(from the console on this computer)".
+  New page endpoints (`/api/presets`, `/api/preset`, `/api/marker`,
+  `/api/ca`, `/api/har`), not stable, with v1.2's guards. Unit tests and an
+  E2E test with real mitmproxy (presets and rules); the panels and the HAR
+  download were not tried in a browser.
 
 ### Changed
+
+- **`reqcove setup` always writes `--allow-hosts=@FILE`** and the hosts file
+  beside the config, a file of comments alone when no host is answered
+  (before: a commented-out line and no file), so `capture save` and the
+  page's Save write it later. It checks the config and the hosts file it
+  would write as the next start reads them, and writes nothing (no `.old`
+  either) if that start would refuse them. Where the Tailscale CLI answers
+  on this computer, it lists your own untagged devices to pick by number,
+  iPhones first; a name can still be typed. Unit tests.
+- **`run -h`'s words** (which the page's confirm shows) say who reads more:
+  `--upstream-proxy`, that the proxy reads the decrypted requests unmasked;
+  `--mask-names`, that a name taken out leaves its values unmasked;
+  `--device`, that a device's requests are decrypted and recorded for the
+  agents; `--mcp-http`, that its agents and their model providers read the
+  records; `--ui`, that whoever has its link reads them. A marker's `source` may be `console` (`list_markers`). Unit tests.
 
 - **`reqcove restart` asks the binary it would exec first**: before
   anything stops, `run` runs that binary in a hidden check mode with the

@@ -442,6 +442,32 @@ It shows `--mask-values` as "set" and a count, never a pattern, and an
 or log line). A restart from the page lists first every setting that
 differs from the ones `run` started with and asks; it is the op of
 `reqcove restart`, with its checks (below).
+
+Since v1.3 the page also turns the `--rules` file's presets on (for 1 to 5
+minutes; a mock for a count too) and off, as `activate_preset` and
+`deactivate_preset` do, with their limits: mitmproxy refuses one while
+recording is stopped (an E2E test). Before it turns one on, it says what
+the preset's kind changes and, for a `map_remote` preset, the destination
+the requests then go to with their cookies and tokens: a scheme and a host
+name or IPv4 address alone, anything else "not shown". That destination goes
+back with the request, and one changed since (the file reloaded) is refused
+(tests). It lists the rules by kind, index and preset name, never a value:
+no URL, filter, regex, header, body, address, path, description or the
+file's error text (tests, unit and E2E). It puts a marker, source `console`
+(a help, not proof, as `cli` and `mcp` are). Its CA panel shows the CA's
+name, SHA-256 fingerprint and expiry, a QR code of http://mitm.it and how
+to add and remove it on an iPhone: the certificate's public fields alone,
+never the private key the state directory holds (a test). It gives the
+records as a HAR file, the one `reqcove har` writes (what the MCP tools
+return: masked, body heads), fetched with the session header and saved from
+a blob; no route takes a token in its URL (tests). The answer is an
+attachment of `application/json`, with `nosniff` and `no-store`, and it is
+refused while `run` masks nothing (`--no-redact`) (tests). The file lands
+where the browser saves downloads, with the permissions the browser gives
+it there (not checked; the download was not tried in a browser). A restart
+from the page offers that file first. With `--ui`, the page links to that
+page's bare address, never its token. Presets turned on or off and HAR
+files given are logged "(from the console on this computer)".
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
   from the first `reqcove console` until it ends (`reqcove restart` keeps it,
   below); never on the tailnet node, the
@@ -503,9 +529,17 @@ differs from the ones `run` started with and asks; it is the op of
   the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
   name out of `--mask-names`, and restart, which empties the records; the
   log names each flag written "(from the console on this computer)", and
-  `config.prev` holds the file before. What it shows is not secret beyond
+  `config.prev` holds the file before. Since v1.3 such a session can also
+  turn on one of your `--rules` file's presets for up to 5 minutes (a
+  `map_remote` preset sends the device's matching requests, with their
+  cookies and tokens, to the destination your file names), and download the
+  records as a HAR file, masked. What it shows is not secret beyond
   `reqcove status` and the config, but for the list of your own devices on
-  the tailnet (their machine names), to pick from: never the flows' contents, a token, a
+  the tailnet (their machine names), to pick from, and, since v1.3, the
+  presets' names, kinds and `map_remote` destinations (as `list_presets`
+  gives an agent), the rules' kinds and preset names, the CA's name and
+  fingerprint, and the records themselves as a HAR file, masked, when
+  asked: never the flows' contents on the page itself, a token, a
   link or a login URL, a `--mask-values` pattern, what an `@FILE` holds, an
   `--upstream-proxy` value `run` would refuse (a password written in by
   hand: a test), or text from an agent or an MCP client.

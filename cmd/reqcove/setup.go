@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
@@ -162,10 +165,27 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 		}
 	}
 	var device, hosts string
+	own := ownTailnetDevices()
 	for write && device == "" {
-		fmt.Fprintf(out, "   The iPhone's name in your tailnet: in the Tailscale app on it, or `tailscale status`\n   (`%s status` lists the devices it sees once run runs). Empty skips this step.\n", rc)
+		if len(own) > 0 {
+			fmt.Fprintln(out, "   Your own devices in your tailnet (from Tailscale on this computer):")
+			for i, d := range own {
+				fmt.Fprintf(out, "     %d. %s\n", i+1, d)
+			}
+			fmt.Fprintln(out, "   The iPhone: its number, or another device's name. Empty skips this step.")
+		} else {
+			fmt.Fprintf(out, "   The iPhone's name in your tailnet: in the Tailscale app on it, or `tailscale status`\n   (`%s status` lists the devices it sees once run runs). Empty skips this step.\n", rc)
+		}
 		if device, err = ask("   Device: "); err != nil {
 			return err
+		}
+		if n, err := strconv.Atoi(device); err == nil && len(own) > 0 {
+			if n < 1 || n > len(own) {
+				fmt.Fprintf(out, "   a number from 1 to %d, or a name\n", len(own))
+				device = ""
+				continue
+			}
+			device = own[n-1].name
 		}
 		if device == "" {
 			write = false
@@ -198,6 +218,23 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	}
 
 	if write {
+		// The hosts always in their file beside the config (none answered: a
+		// file of comments), which --allow-hosts=@FILE names: Save writes it.
+		// Both texts checked whole, as the next start reads them, before
+		// anything is written.
+		hostsFile := setupHosts(config)
+		var hs []string
+		if hosts != "" {
+			hs = strings.Split(hosts, ",")
+		}
+		htext, err := hostsText(hostsFile, hs, hostsHead)
+		if err != nil {
+			return fmt.Errorf("%w (nothing written)", err)
+		}
+		ctext, want := setupConfigText(device, hostsFile)
+		if _, err := setupCheck([]string{"--config", config}, []byte(ctext), map[string]string{hostsFile: htext}); err != nil {
+			return fmt.Errorf("the next start would refuse these settings (%v): nothing written", err)
+		}
 		if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 			return err
 		}
@@ -207,31 +244,27 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 			}
 			fmt.Fprintf(out, "   the old one: %s\n", shellWord(config+".old"))
 		}
-		hostsFile := ""
-		if hosts != "" {
-			hostsFile = setupHosts(config)
-			if fi, err := os.Lstat(hostsFile); err == nil && fi.Mode().IsRegular() {
-				b, err := os.ReadFile(hostsFile)
-				if err == nil {
-					err = writePrivate(hostsFile+".old", b)
-				}
-				if err != nil {
-					return fmt.Errorf("%s.old: %w (nothing replaced)", hostsFile, err)
-				}
-				fmt.Fprintf(out, "   the old hosts: %s\n", shellWord(hostsFile+".old"))
+		if fi, err := os.Lstat(hostsFile); err == nil && fi.Mode().IsRegular() {
+			b, err := os.ReadFile(hostsFile)
+			if err == nil {
+				err = writePrivate(hostsFile+".old", b)
 			}
-			if err := writeHosts(hostsFile, strings.Split(hosts, ","), hostsHead); err != nil {
-				return fmt.Errorf("%w (nothing replaced)", err)
+			if err != nil {
+				return fmt.Errorf("%s.old: %w (nothing replaced)", hostsFile, err)
 			}
+			fmt.Fprintf(out, "   the old hosts: %s\n", shellWord(hostsFile+".old"))
 		}
-		if err := writeSetupConfig(config, device, hostsFile); err != nil {
+		if err := writeHostsText(hostsFile, htext, hs); err != nil {
+			return fmt.Errorf("%w (nothing replaced)", err)
+		}
+		if err := writeSetupConfig(config, ctext, want); err != nil {
 			return err
 		}
 		have = true
-		if hostsFile != "" {
+		if hosts != "" {
 			fmt.Fprintf(out, "   wrote %s, and the hosts in %s (yours only, 0600)\n", shown, shellWord(hostsFile))
 		} else {
-			fmt.Fprintf(out, "   wrote %s (yours only, 0600)\n", shown)
+			fmt.Fprintf(out, "   wrote %s, and %s with no hosts yet (yours only, 0600): nothing is recorded until\n   you add one (`%s capture add HOST`, then `%s capture save`, or the file by hand)\n", shown, shellWord(hostsFile), rc, rc)
 		}
 	}
 
@@ -281,6 +314,59 @@ func setupIn(ctx context.Context, in io.Reader, out io.Writer, config string, br
 	return nil
 }
 
+// tailnetDevice is one of the user's own devices, untagged, as Tailscale on
+// this computer lists it.
+type tailnetDevice struct {
+	name, os string
+	online   bool
+}
+
+func (d tailnetDevice) String() string {
+	s := d.name + " (" + cmp.Or(d.os, "?")
+	if d.online {
+		s += ", online"
+	}
+	return s + ")"
+}
+
+// ownTailnetDevices are the user's own untagged devices on the tailnet but
+// this computer, iOS first, online first: none when the Tailscale CLI is
+// not there or does not answer.
+func ownTailnetDevices() []tailnetDevice {
+	b, err := tailscaleStatus()
+	if err != nil {
+		return nil
+	}
+	var st struct {
+		Self struct{ UserID int64 }
+		Peer map[string]struct {
+			DNSName, OS string
+			UserID      int64
+			Online      bool
+			Tags        []string
+		}
+	}
+	if json.Unmarshal(b, &st) != nil {
+		return nil
+	}
+	var out []tailnetDevice
+	for _, p := range st.Peer {
+		name, _, _ := strings.Cut(p.DNSName, ".")
+		if p.UserID != st.Self.UserID || len(p.Tags) > 0 || name == "" || strings.HasPrefix(name, "-") {
+			continue
+		}
+		out = append(out, tailnetDevice{name, p.OS, p.Online})
+	}
+	slices.SortFunc(out, func(a, b tailnetDevice) int {
+		return cmp.Or(cmp.Compare(boolInt(b.os == "iOS"), boolInt(a.os == "iOS")), cmp.Compare(boolInt(b.online), boolInt(a.online)), strings.Compare(a.name, b.name))
+	})
+	return out
+}
+
+// setupCheck is checkFlags (a seam for tests: nothing setup writes today is
+// one the next start refuses).
+var setupCheck = checkFlags
+
 // setupHosts is the hosts file beside config: ~/.config/reqcove/hosts, or
 // Homebrew's etc/reqcove/hosts.
 func setupHosts(config string) string { return filepath.Join(filepath.Dir(config), "hosts") }
@@ -290,23 +376,23 @@ const hostsHead = "# The hosts reqcove records, one a line (# starts a comment);
 	"# with --allow-hosts=@FILE. Written by reqcove setup; reqcove capture save rewrites\n" +
 	"# the hosts, keeping the comments.\n"
 
-// writeSetupConfig writes the --config file, whole or not at all, 0600 (its
-// directory 0700 when new), read back as run will before it takes the
-// file's place. hosts is the hosts file (setupHosts), "" for none.
-func writeSetupConfig(path, device, hosts string) error {
+// setupConfigText is the --config file setup writes: the device, and the
+// hosts file (setupHosts) with @; want, its words as run reads them.
+func setupConfigText(device, hosts string) (text string, want []string) {
 	q := func(s string) string { // "…" as configWords reads it
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 	}
-	text := "# reqcove run's flags, one a line (written by reqcove setup; edit it as you like).\n" +
+	text = "# reqcove run's flags, one a line (written by reqcove setup; edit it as you like).\n" +
 		"# --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused here.\n" +
-		"--device=" + q(device) + "\n"
-	want := []string{"--device=" + device}
-	if hosts == "" {
-		text += "# --allow-hosts=api.example.com   (none yet: nothing is recorded)\n"
-	} else {
-		text += "--allow-hosts=" + q("@"+hosts) + "\n"
-		want = append(want, "--allow-hosts=@"+hosts)
-	}
+		"--device=" + q(device) + "\n" +
+		"--allow-hosts=" + q("@"+hosts) + "\n"
+	return text, []string{"--device=" + device, "--allow-hosts=@" + hosts}
+}
+
+// writeSetupConfig writes the --config file text, whole or not at all, 0600
+// (its directory 0700 when new), read back as run will (want) before it
+// takes the file's place.
+func writeSetupConfig(path, text string, want []string) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".config.tmp*") // 0600
 	if err != nil {

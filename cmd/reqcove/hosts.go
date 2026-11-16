@@ -19,16 +19,6 @@ import (
 	"github.com/mh-mobile/reqcove/internal/capture"
 )
 
-// writeHosts writes hosts into the hosts file path (--allow-hosts=@path), one
-// a line, whole or not at all, 0600: as hostsText makes it.
-func writeHosts(path string, hosts []string, head string) error {
-	text, err := hostsText(path, hosts, head)
-	if err != nil {
-		return err
-	}
-	return writeHostsText(path, text, hosts)
-}
-
 // hostsText is the hosts file path with hosts (none: a file without hosts).
 // An existing file must be a plain file of this user's: its comments, and its
 // lines whose hosts are all kept, stay as they are, new hosts at the end; a
