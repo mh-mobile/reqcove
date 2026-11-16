@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,9 +22,9 @@ import (
 )
 
 // reload's parse of run's arguments changes nothing and never exits: a
-// hosts file emptied since the start is its error (run's own parse would
-// exit), nothing is logged, and an upstream proxy that went away is not
-// dialled (it takes a restart anyway).
+// hosts file broken since the start is its error (run's own parse would
+// exit), one emptied gives no hosts, nothing is logged, and an upstream proxy
+// that went away is not dialled (it takes a restart anyway).
 func TestReloadFlags(t *testing.T) {
 	dir := t.TempDir()
 	hostsFile, config := saveFiles(t, dir, "a.example.com\n", "--device x\n--mask-values=k=[a-z]{8,}\n")
@@ -45,11 +46,15 @@ func TestReloadFlags(t *testing.T) {
 	if err != nil || len(restartOnly(o, n)) > 0 {
 		t.Fatalf("again: %v, %v", err, restartOnly(o, n))
 	}
-	os.WriteFile(cmdHosts, []byte("# none\n"), 0o644)
+	os.WriteFile(cmdHosts, []byte("not a host!\n"), 0o644)
 	for _, args := range [][]string{o.args, {"--device", "x", "--state", dir, "--allow-hosts", "@" + cmdHosts}} { // with a config, and without
-		if _, err := reloadFlags(args); err == nil || !strings.Contains(err.Error(), "has no hosts") {
-			t.Errorf("an emptied hosts file: %v", err)
+		if _, err := reloadFlags(args); err == nil || !strings.Contains(err.Error(), "line 1 is not a host list") {
+			t.Errorf("a broken hosts file: %v", err)
 		}
+	}
+	os.WriteFile(cmdHosts, []byte("# none\n"), 0o644)
+	if n, err := reloadFlags(o.args); err != nil || !slices.Equal(n.allow.Hosts, []string{"a.example.com"}) {
+		t.Errorf("an emptied hosts file: %v, %v", n, err)
 	}
 	os.WriteFile(cmdHosts, []byte("c.example.com\n"), 0o644)
 	os.WriteFile(config, []byte("--allow-hosts=@"+hostsFile+"\n--nope\n"), 0o600)
@@ -261,5 +266,17 @@ func TestReloadE2E(t *testing.T) {
 	}
 	if s := liveStatus(exitnode.Status{Backend: "Running"}, c); s.ScopeChange != "reload" {
 		t.Errorf("status: %q", s.ScopeChange)
+	}
+}
+
+// reload's parse (and the writer's check) runs no tailscale to name the
+// devices a missing --device could be.
+func TestReloadFlagsRunsNothing(t *testing.T) {
+	called := false
+	was := tailscaleStatus
+	tailscaleStatus = func() ([]byte, error) { called = true; return nil, errors.New("none") }
+	t.Cleanup(func() { tailscaleStatus = was })
+	if _, err := reloadFlags([]string{"--state", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "--device is required") || called {
+		t.Errorf("%v, tailscale run: %v", err, called)
 	}
 }

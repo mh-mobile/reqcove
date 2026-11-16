@@ -49,23 +49,26 @@ type runOpts struct {
 // hostsOrigin is where run's --allow-hosts came from, for capture save: the
 // @FILEs read, the hosts in them, and the hosts given as they are, with where
 // ("the command line" or "the --config file"), in a file too or not: a
-// restart takes those again whatever the file says.
+// restart takes those again whatever the file says. The same of --pass-hosts
+// in pass.
 type hostsOrigin struct {
-	files, passFiles []string
-	inFiles          map[string]bool
-	given            map[string]string
+	files   []string
+	inFiles map[string]bool
+	given   map[string]string
+	pass    *hostsOrigin
 }
 
 // add notes value v of --allow-hosts (pass: --pass-hosts), hosts its hosts
 // (@FILE read), given in from.
 func (o *hostsOrigin) add(v, hosts, from string, pass bool) {
-	file, ok, _ := atFile(v)
 	if pass {
-		if ok {
-			o.passFiles = append(o.passFiles, file)
+		if o.pass == nil {
+			o.pass = &hostsOrigin{}
 		}
+		o.pass.add(v, hosts, from, false)
 		return
 	}
+	file, ok, _ := atFile(v)
 	if ok && !slices.Contains(o.files, file) {
 		o.files = append(o.files, file)
 	}
@@ -85,25 +88,58 @@ func (o *hostsOrigin) add(v, hosts, from string, pass bool) {
 	}
 }
 
+// passOrigin is o's --pass-hosts origin (empty for none).
+func (o hostsOrigin) passOrigin() hostsOrigin {
+	if o.pass == nil {
+		return hostsOrigin{}
+	}
+	return *o.pass
+}
+
 // parseRunFlags defines run's flags, reads --config and the command line, and
 // refuses what does not go together, warning of what is risky; it also sets
 // the mask policy and loads --proto.
 func parseRunFlags(args []string) (*runOpts, error) {
-	return runFlags(args, false)
+	return runFlags(args, nil)
 }
 
 // reloadFlags is parseRunFlags for reqcove reload, of the arguments run
 // started with (o.args): it changes nothing (no mask policy; --proto checked,
-// not loaded; no upstream dialled), logs nothing, and never exits: a flag or
-// file that no longer parses is its error.
+// not loaded; no upstream dialled; no tailscale run), logs nothing, and never
+// exits: a flag or file that no longer parses is its error.
 func reloadFlags(args []string) (*runOpts, error) {
-	return runFlags(args, true)
+	return runFlags(args, &flagCheck{})
 }
 
-func runFlags(args []string, reload bool) (*runOpts, error) {
+// checkFlags is reloadFlags with the texts a write would leave, before it is
+// made: config, when not nil, in place of the --config file's; files, hosts
+// files' texts by their absolute paths, in place of theirs. What the next
+// start of run would refuse is its error.
+func checkFlags(args []string, config []byte, files map[string]string) (*runOpts, error) {
+	return runFlags(args, &flagCheck{config: config, files: files})
+}
+
+// flagCheck makes runFlags a check, without side effects (reloadFlags).
+type flagCheck struct {
+	config []byte
+	files  map[string]string
+	defs   func(*flag.FlagSet) // handed run's flags once defined; nothing is parsed (runFlagSet)
+}
+
+// runFlagSet is run's flags, defined, not parsed.
+func runFlagSet() *flag.FlagSet {
+	var fs *flag.FlagSet
+	runFlags(nil, &flagCheck{defs: func(f *flag.FlagSet) { fs = f }})
+	return fs
+}
+
+func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
+	reload := chk != nil
 	lg := log.Default()
+	var files map[string]string
 	if reload {
 		lg = log.New(io.Discard, "", 0)
+		files = chk.files
 	}
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	var devices []string
@@ -115,13 +151,13 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	var origin hostsOrigin
 	from := "the --config file"
 	fs.Func("allow-hosts", `hosts decrypted and recorded, comma-separated (repeatable): "api.example.com", "*.example.com", or "*" for everything; @FILE reads them from a file, one a line. Without it, nothing is recorded.`, func(v string) error {
-		hosts, err := hostList(v)
+		hosts, err := hostsIn(v, files)
 		allowSpecs = append(allowSpecs, hosts)
 		origin.add(v, hosts, from, false)
 		return err
 	})
 	fs.Func("pass-hosts", `allowed hosts carried undecrypted, as --allow-hosts' (not "*"; @FILE too): for apps that refuse Reqcove's certificate there (certificate pinning). Only their connections are recorded (host, times, bytes): no URL, headers or bodies`, func(v string) error {
-		hosts, err := hostList(v)
+		hosts, err := hostsIn(v, files)
 		passSpecs = append(passSpecs, hosts)
 		origin.add(v, hosts, from, true)
 		return err
@@ -158,6 +194,10 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
 	keepAwakeFlag := fs.String("keep-awake", "always", "macOS: keep the Mac from sleeping while run runs: always (idle sleep, on battery too), ac (on AC power only; on battery it sleeps as set), never (as the Energy settings say)")
 	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
+	if reload && chk.defs != nil {
+		chk.defs(fs)
+		return nil, nil
+	}
 	bare := len(args) == 0 && !reload
 	var config, configUnused string
 	if takeFlags == nil { // the docs test reads no file
@@ -175,7 +215,11 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 		if path, ok, err := configFile(args); err != nil {
 			return nil, err
 		} else if ok {
-			if err := parseConfig(fs, path, &allowSpecs); err != nil {
+			var text []byte
+			if reload {
+				text = chk.config
+			}
+			if err := parseConfig(fs, path, &allowSpecs, text); err != nil {
 				return nil, err
 			}
 			if reload { // parseConfig leaves fs exiting on an error
@@ -209,8 +253,10 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	hostname := nodeName(fs, *state)
 	if len(devices) == 0 && !*localProxy && !*lanMode {
 		msg := "--device is required: the iPhone to carry, by its machine name (see `tailscale status`)"
-		if names := iosDevices(); len(names) > 0 {
-			msg += "; yours on this tailnet: " + strings.Join(names, ", ")
+		if !reload { // a check runs no tailscale
+			if names := iosDevices(); len(names) > 0 {
+				msg += "; yours on this tailnet: " + strings.Join(names, ", ")
+			}
 		}
 		if bare && config == "" {
 			msg += ". Or keep it in " + defaultConfig() + " (reqcove setup writes it): reqcove run with no arguments reads it"
@@ -229,11 +275,13 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(passSpecs) > 0 {
+	passHosts := hostsOnly(lg, "--pass-hosts", passSpecs)
+	// The hosts given, not the flag: a hosts file without hosts gives none.
+	if p, err := capture.ParseAllowHosts(passHosts); err != nil || len(p.Hosts) > 0 {
 		if !allow.All && len(allow.Patterns) == 0 {
 			return nil, errors.New("--pass-hosts needs --allow-hosts: hosts outside it pass undecrypted already, and nothing about them is recorded")
 		}
-		if allow, err = allow.WithPass(hostsOnly(lg, "--pass-hosts", passSpecs)); err != nil {
+		if allow, err = allow.WithPass(passHosts); err != nil {
 			return nil, err
 		}
 		for _, h := range allow.PassHosts {

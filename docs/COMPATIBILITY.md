@@ -284,6 +284,17 @@ v1.3 or later (unit tests with both answers).
   `--allow-hosts=@FILE` for it; `reqcove capture save` rewrites that file.
   A config written before (hosts on the `--allow-hosts` line) is read as
   before.
+- Since v1.3, a hosts file (`--allow-hosts=@FILE`, `--pass-hosts=@FILE`)
+  without hosts (comments only, or empty) is taken, giving none (refused
+  before: "has no hosts"). An `@FILE` of `--mask-names` or `--mask-values`
+  without lines is still refused. What needs hosts recorded (`--pass-hosts`'
+  hosts, `--rules`, `--upstream-proxy`) is checked against the hosts given,
+  not the flags: `--pass-hosts=@FILE` with an empty file and no
+  `--allow-hosts` is taken (refused before).
+- Since v1.3, `reqcove capture save` may add one line to a config that names
+  no hosts file (`--allow-hosts=@FILE`, or `--pass-hosts=@FILE`), at its end,
+  after asking y/N, and create that file beside it; the config before is kept
+  as `config.prev`. It changes no other line.
 
 ### The state directory
 

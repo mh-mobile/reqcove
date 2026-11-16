@@ -20,25 +20,34 @@ import (
 )
 
 // writeHosts writes hosts into the hosts file path (--allow-hosts=@path), one
-// a line, whole or not at all, 0600. An existing file must be a plain file of
-// this user's: its comments, and its lines whose hosts are all kept, stay as
-// they are, new hosts at the end; a new file starts with head. It is read
-// back as run reads it before it takes the file's place.
+// a line, whole or not at all, 0600: as hostsText makes it.
 func writeHosts(path string, hosts []string, head string) error {
+	text, err := hostsText(path, hosts, head)
+	if err != nil {
+		return err
+	}
+	return writeHostsText(path, text, hosts)
+}
+
+// hostsText is the hosts file path with hosts (none: a file without hosts).
+// An existing file must be a plain file of this user's: its comments, and its
+// lines whose hosts are all kept, stay as they are, new hosts at the end; a
+// new file starts with head.
+func hostsText(path string, hosts []string, head string) (string, error) {
 	old := head
 	switch fi, err := os.Lstat(path); {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
-		return err
+		return "", err
 	case !fi.Mode().IsRegular():
-		return fmt.Errorf("%s is not a plain file (a link?): hosts are written to a plain file only", path)
+		return "", fmt.Errorf("%s is not a plain file (a link?): hosts are written to a plain file only", path)
 	default:
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-			return fmt.Errorf("%s is not yours: its hosts decide what is recorded", path)
+			return "", fmt.Errorf("%s is not yours: its hosts decide what is recorded", path)
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return "", err
 		}
 		old = string(b)
 	}
@@ -61,11 +70,18 @@ func writeHosts(path string, hosts []string, head string) error {
 			written[h] = true
 		}
 	}
+	return text.String(), nil
+}
+
+// writeHostsText puts text in the hosts file path's place, 0600, read back as
+// run reads it (its hosts must be hosts) before.
+func writeHostsText(path, text string, hosts []string) error {
+	keep := setOf(hosts)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".hosts.tmp*") // 0600
 	if err != nil {
 		return err
 	}
-	_, err = tmp.WriteString(text.String())
+	_, err = tmp.WriteString(text)
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -103,19 +119,24 @@ func setOf(hosts []string) map[string]bool {
 	return out
 }
 
-// hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
-// a port, saying so: only hosts are matched, not schemes, paths or ports.
 // hostList is a --allow-hosts or --pass-hosts value: as given, or with @FILE
 // the hosts in the file, one a line (or comma-separated), # starting a
-// comment. @~/ is the home directory: the shell expands no ~ after @.
-func hostList(v string) (string, error) {
+// comment. @~/ is the home directory: the shell expands no ~ after @. A file
+// without hosts (comments only, or empty) gives none ("").
+func hostList(v string) (string, error) { return hostsIn(v, nil) }
+
+// hostsIn is hostList with files' texts (by absolute path) in place of theirs.
+func hostsIn(v string, files map[string]string) (string, error) {
 	path, ok, err := atFile(v)
 	if !ok || err != nil {
 		return v, err
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", err // the flag package names the flag and the value
+	text, given := files[path]
+	b := []byte(text)
+	if !given {
+		if b, err = os.ReadFile(path); err != nil {
+			return "", err // the flag package names the flag and the value
+		}
 	}
 	var hosts []string
 	for i, line := range strings.Split(string(b), "\n") {
@@ -131,9 +152,6 @@ func hostList(v string) (string, error) {
 			}
 		}
 		hosts = append(hosts, line)
-	}
-	if len(hosts) == 0 {
-		return "", fmt.Errorf("%s has no hosts", path)
 	}
 	return strings.Join(hosts, ","), nil
 }
@@ -167,6 +185,8 @@ func hostOf(h string) string {
 	return h
 }
 
+// hostsOnly takes the hosts out of --allow-hosts values pasted as URLs or with
+// a port, saying so: only hosts are matched, not schemes, paths or ports.
 func hostsOnly(lg *log.Logger, flagName string, specs []string) []string {
 	var out []string
 	for _, spec := range specs {

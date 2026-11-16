@@ -18,8 +18,33 @@
   links say they were ended. A new ctl op, `console-end`, in LAN mode too; a
   `run` older than v1.3 says to restart it with v1.3. Unit tests.
 
+- **`reqcove capture save` on a config with its hosts inline** (v1.0's
+  setup, or one written by hand): the first save shows what it would do and
+  asks y/N, then creates the hosts file beside the config (`hosts`; 0600,
+  created anew, never over a file or link there: refused, naming the file
+  and the choices) and adds one line, `--allow-hosts=@FILE`, at the config's
+  end; no other line changes, the config before is kept as `config.prev`
+  (0600), and a config write that fails removes the file created. The hosts
+  inline stay there, never written to the file. `run` takes the new file at
+  once: a second save writes it. The same for the hosts passed undecrypted
+  (`pass-hosts`, `--pass-hosts=@FILE`), which are saved now. A new field of
+  the ctl op `save`, `confirm` (the change's token). Through a config writer
+  that writes only the flags of a fixed list, each value checked (no line
+  break, control character or leading `@`), never through a link nor to a
+  file not yours, the file read back as the old flags plus the change, its
+  revision checked before the rename, the whole flag set checked first as
+  the next start reads it. Unit tests.
+
 ### Changed
 
+- **A hosts file without hosts** (comments only, or empty) is taken, giving
+  none; it was refused ("has no hosts"). `--mask-names` and `--mask-values`
+  `@FILE`s without lines are still refused. `--pass-hosts`, `--rules` and
+  `--upstream-proxy` need hosts recorded by the hosts given, not by the flag:
+  an empty `--pass-hosts` file with no `--allow-hosts` is taken. `capture
+  save` may leave a hosts file without hosts when the next start would still
+  take the flags it leaves (checked first, without side effects); a save
+  leaving none with `--rules` is refused. Unit tests.
 - **`reqcove console` no longer gives the link with its code to `open` or
   `xdg-open`**, whose arguments `ps` shows other users of this computer.
   `run` writes a file in the state directory (0600, created anew, never

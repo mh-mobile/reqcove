@@ -95,7 +95,7 @@ func runService() (service, manager string) {
 // and what is wrong with the services installed.
 func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
 	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
-	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passFiles...)
+	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passOrigin().files...)
 	out.Executable, _ = selfExe()
 	if runtime.GOOS == "darwin" {
 		out.KeepAwake = o.keepAwake

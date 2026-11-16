@@ -228,24 +228,42 @@ reqcove capture save     # write the hosts recorded now to the hosts file
 
 It writes the hosts recorded (those `capture start` records, while stopped)
 into the hosts file `run` read them from: the `--allow-hosts=@FILE` that
-`reqcove setup` puts in the config. The next start from that config records
-them. The file is replaced whole (0600). Its comments stay, and so do its
-lines whose hosts are all kept; new hosts go at the end.
+`reqcove setup` puts in the config. Since v1.3 the hosts passed undecrypted
+(`--pass`) go the same way into the `--pass-hosts=@FILE`. The next start from
+that config records them. The file is replaced whole (0600). Its comments
+stay, and so do its lines whose hosts are all kept; new hosts go at the end.
+
+- **A config with its hosts inline** (since v1.3: `reqcove setup` of v1.0
+  wrote `--allow-hosts=HOSTS`, or one written by hand): the first save shows
+  what it would do and asks y/N. It creates the hosts file beside the config
+  (`hosts`, and `pass-hosts` for hosts passed undecrypted; 0600, never over a
+  file or link already there) and adds one line to the config,
+  `--allow-hosts=@FILE` (or `--pass-hosts=@FILE`), at its end. The config's
+  other lines are not changed; the file before is kept as `config.prev`
+  (0600). If writing the config fails, the file created is removed. From then
+  on `run` saves to that file (a second save asks nothing). Refused when a
+  file of that name is there already and the config does not name it: add the
+  line yourself (then `reqcove reload`), or move the file away.
 
 - **Hosts given as they are** (on `run`'s command line, or as
   `--allow-hosts HOST` in the config) are not written: a start with them
   records them again whatever the file says (one in the hosts file too stays
   there). The answer names them, and says which of them you removed now
   that come back that way, in the hosts file too or not.
-- **Nothing to save to** when `run`'s hosts do not come from a hosts file, or
-  come from several: the answer says to put one `--allow-hosts=@FILE` in the
-  config. Nothing is written.
-- **Refused**, nothing written: `"*"` (never in the file); no hosts to write
-  (`run` refuses a hosts file without hosts, so the next start would fail);
-  a file that is not a plain file (a link, say) or not yours; the file
-  `--pass-hosts` reads too. In LAN mode, as the others.
-- **Hosts passed undecrypted** (`--pass`) are not saved: the answer says so,
-  and a start passes those of `run`'s `--pass-hosts`.
+- **Nothing to save to** when `run`'s hosts come from several files, or,
+  started from flags alone, from no hosts file: the answer says to put one
+  `--allow-hosts=@FILE` on the command line, or to start `run` from a config.
+  Nothing is written. (Started from flags alone, the hosts passed
+  undecrypted are not saved, unless `--pass-hosts=@FILE` names a file.)
+- **No hosts left** (since v1.3): the file keeps its comments and no host,
+  when the next start would still take it. Before writing, the save checks the
+  whole set of `run`'s flags it would leave, as the next start reads them:
+  `--rules`, `--upstream-proxy` and hosts passed undecrypted need hosts
+  recorded (hosts given as they are count), so a save leaving none with
+  `--rules` is refused.
+- **Refused**, nothing written: `"*"` (never in the file); what the next
+  start would refuse; a file that is not a plain file (a link, say) or not
+  yours; the file `--pass-hosts` reads too. In LAN mode, as the others.
 - **A trace**, as a change: `run`'s log, a `cli` marker, and `reqcove status`
   "last changed at … (capture save)".
 
@@ -253,7 +271,10 @@ Tried by tests only (unit: what is written and kept, each refusal; E2E with
 real mitmproxy: `run` started from a config with a hosts file and a host on
 the command line, add, remove that host, save, then a new `run` from the
 config records the host added), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): Homebrew's hosts file
-rewritten with the hosts added live, its comments kept.
+rewritten with the hosts added live, its comments kept. The v1.3 changes
+(the first save on an inline config with its y/N, a file without hosts, pass
+hosts saved, the check of the flags left) have unit tests only, not tried by
+hand.
 
 #### Edit the files, then `reqcove reload`
 
@@ -2653,8 +2674,15 @@ flags. Since v1.1 a `reqcove run` with no arguments reads one too
   change where requests go while running) and `--lan` (an open proxy on the
   LAN).
 - Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+- Since v1.3, reqcove writes the file itself in one case: `capture save` on a
+  config naming no hosts file adds its `--allow-hosts=@FILE` (or
+  `--pass-hosts=@FILE`) line, after y/N ([capture save](#keep-the-hosts-for-the-next-start-reqcove-capture-save)).
+  It writes only that line, the file whole (0600, the one before kept as
+  `config.prev`), never through a link nor to a file not yours, and checks
+  first that the next start would take it.
 
-Checked: tests (the refusals).
+Checked: tests (the refusals; the line added, and a link or another user's
+file refused).
 
 <a id="security-logs"></a>
 
@@ -2736,7 +2764,7 @@ said there.
 | | |
 |---|---|
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
-| `--allow-hosts HOSTS` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), `'*'` for all, or `@FILE`, one a line (`#` for comments). Without it, traffic is carried but nothing is recorded |
+| `--allow-hosts HOSTS` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), `'*'` for all, or `@FILE`, one a line (`#` for comments; a file without hosts gives none, since v1.3). Without it, traffic is carried but nothing is recorded |
 | `--pass-hosts HOSTS` | allowed hosts carried undecrypted, written the same way (not `'*'`): [pinning](#apps-that-pin-certificates---pass-hosts) |
 | `--rules FILE` | [rules](#rules---rules) for allowed hosts |
 | `--rules-reload` | read that file again whenever it changes |
