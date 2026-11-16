@@ -447,18 +447,15 @@ func TestServiceUninstall(t *testing.T) {
 			t.Fatal(err)
 		}
 		file, _ := serviceFile(goos)
-		// Loaded: restarted. Not loaded (launchctl bootout, stopped until the
-		// next login): on macOS, kickstart cannot find it; loaded again.
+		// Loaded or not (launchctl bootout: stopped until the next login,
+		// where kickstart cannot find it): out, then in again.
 		for _, loaded := range []bool{true, false} {
 			got := fakeCtl(t, loaded, nil)
 			if err := serviceRestart(goos); err != nil {
 				t.Fatal(err)
 			}
 			domain := "gui/" + strconv.Itoa(os.Getuid())
-			want := [][]string{{"launchctl", "print", domain + "/" + serviceLabel}, {"launchctl", "kickstart", "-k", domain + "/" + serviceLabel}}
-			if !loaded {
-				want[1] = []string{"launchctl", "bootstrap", domain, file}
-			}
+			want := [][]string{{"launchctl", "bootout", domain + "/" + serviceLabel}, {"launchctl", "bootstrap", domain, file}}
 			if goos == "linux" {
 				want = [][]string{{"systemctl", "--user", "restart", "reqcove.service"}}
 			}
@@ -663,5 +660,44 @@ func TestServiceWaitsForStart(t *testing.T) {
 	}()
 	if out := captureStdout(t, func() error { return serviceRestart(runtime.GOOS) }); strings.Contains(out, note) || !stateHeld(state) {
 		t.Errorf("restart, run started: returned before it held its state (%v)\n%s", stateHeld(state), out)
+	}
+}
+
+// restart right after launchctl bootout: launchd still takes the job out
+// (bootstrap fails a while) and the old run still holds the state. It waits
+// for the state, then loads it again once launchd lets it.
+func TestServiceRestartWhileStopping(t *testing.T) {
+	home, config := serviceHome(t, "cfg")
+	state := filepath.Join(home, "st")
+	fakeCtl(t, false, nil)
+	if err := serviceInstall("darwin", config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lockState(state) // the old run, stopping
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	var heldAtStart []bool
+	old, oldWait := serviceCtl, startWait
+	startWait = 2 * time.Second
+	serviceCtl = func(args ...string) error {
+		if slices.Contains(args, "bootstrap") {
+			heldAtStart = append(heldAtStart, stateHeld(state))
+			if len(heldAtStart) < 3 {
+				return errors.New("Bootstrap failed: 37: Operation already in progress")
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { serviceCtl, startWait = old, oldWait })
+	captureStdout(t, func() error {
+		if err := serviceRestart("darwin"); err != nil {
+			t.Errorf("restart: %v", err)
+		}
+		return nil
+	})
+	if !slices.Equal(heldAtStart, []bool{false, false, false}) {
+		t.Errorf("bootstrap while the old run held the state, or not retried: %v", heldAtStart)
 	}
 }

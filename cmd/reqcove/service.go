@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -207,7 +208,7 @@ func serviceInstall(goos, config, state string, stateGiven bool) error {
 		}
 	}
 	for _, c := range start {
-		if err := serviceCtl(c...); err != nil {
+		if err := ctlRetry(c...); err != nil {
 			if again { // the old one is stopped already: the new file stays
 				return fmt.Errorf("%w: %s is written, not started: %s service install again, or log out and in", err, file, selfCmd())
 			}
@@ -454,25 +455,34 @@ func serviceRestart(goos string) error {
 	if _, err := os.Stat(file); err != nil {
 		return fmt.Errorf("not installed (no %s): reqcove service install", file)
 	}
+	state := serviceState(goos, file)
 	if goos == "darwin" {
-		// Stopped until the next login (launchctl bootout): launchd no longer
-		// has the job, so kickstart cannot find it; loading it starts it
-		// (RunAtLoad).
+		// Out, then in again, as install does: kickstart cannot find a job
+		// stopped until the next login (launchctl bootout), and fails (37)
+		// on one launchd is still taking out. bootout returns before the old
+		// run lets go of the state: waited for.
 		domain := "gui/" + strconv.Itoa(os.Getuid())
-		if serviceCtl("launchctl", "print", domain+"/"+serviceLabel) != nil {
-			err = serviceCtl("launchctl", "bootstrap", domain, file)
-		} else {
-			err = serviceCtl("launchctl", "kickstart", "-k", domain+"/"+serviceLabel)
-		}
+		serviceCtl("launchctl", "bootout", domain+"/"+serviceLabel) // not loaded, or going: fine
+		waitStateFree(state, stateFreeWait)
+		err = ctlRetry("launchctl", "bootstrap", domain, file)
 	} else {
 		err = serviceCtl("systemctl", "--user", "restart", serviceUnit)
 	}
 	if err != nil {
 		return err
 	}
-	state := serviceState(goos, file)
 	notStarted(waitState(state, startWait, true), state)
 	return nil
+}
+
+// ctlRetry runs a start command again for a while (startWait) while it
+// fails: launchd refuses to load a job it is still taking out.
+func ctlRetry(args ...string) error {
+	for deadline := time.Now().Add(startWait); ; time.Sleep(200 * time.Millisecond) {
+		if err := serviceCtl(args...); err == nil || time.Now().After(deadline) {
+			return err
+		}
+	}
 }
 
 // notStarted says so when the run a service started has not taken its state

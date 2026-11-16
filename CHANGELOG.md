@@ -268,9 +268,12 @@
   old run to let go of the state directory before starting the new one, and
   says so when it does not. Unit test.
 - **`reqcove service restart` on macOS starts a service stopped until the
-  next login** (`launchctl bootout`): it loads it again, where `launchctl
-  kickstart` alone answered that it could not find it. Unit test (the
-  commands sent); the `kickstart` error checked by hand.
+  next login** (`launchctl bootout`), also right after it, while launchd is
+  still taking it out: it takes it out and loads it again, as `service
+  install` does, waiting for the old run to let go of the state and retrying
+  while launchd refuses (at most 5 s). `launchctl kickstart -k` alone
+  answered that it could not find it, or failed (37) while it was going.
+  Unit tests; both errors seen by hand.
 - **`reqcove status`, while `run` is not running**, says that its service is
   installed and the command that starts it (`reqcove service restart`, `brew
   services restart reqcove`), for the service of that state directory. Unit
