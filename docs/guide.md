@@ -202,9 +202,10 @@ the pid; not tried under them), so you need not know which started it.
   starts the new version (read from the code; not tried). Then `run` asks
   that binary itself to check the same config and command line (a hidden
   check mode of `run`'s: it starts nothing, takes no lock and writes no
-  file), so a newer binary that checks more refuses before anything stops; a
-  binary built before that mode leaves the check to `run`, and the answer
-  says so.
+  file), so a newer binary that checks more refuses before anything stops. A
+  binary without that mode (older than v1.3) is refused, nothing stopped: it
+  could not take over the state `run` holds, so stop `run` and start it
+  again yourself.
 - **Then it stops as Ctrl-C stops it:** the system's web proxies put back
   (`--local-proxy`), mitmproxy, the node and caffeinate stopped. Devices lose
   the internet until it is up again.
@@ -224,7 +225,12 @@ the pid; not tried under them), so you need not know which started it.
   service restarts it: none of them is set to; from the code). `reqcove status` says what happened (a `restart:`
   line), until `run` is next started by hand or by its service. A run
   started from flags alone (no `--config`) has no config to put back: a
-  failed start stays down.
+  failed start stays down. A stop (Ctrl-C, or a service's SIGTERM) while
+  `run` restarts or while the new start is under way is a stop, not a
+  failure: `run` stays stopped and puts nothing back. The new start counts
+  as good once it is ready, or 2 minutes after it serves its tools (a node
+  waiting for a login, a new `--state`): a failure later is no failed start
+  and puts nothing back.
 - **The config names another `--state`:** the new start uses it, and
   `reqcove status --state DIR` for it says how it went.
 - In a terminal only, as `reqcove capture`, or from the `reqcove console`
@@ -232,12 +238,16 @@ the pid; not tried under them), so you need not know which started it.
   A `run` older than v1.3 says to stop it and start it again.
 
 Tried: unit tests (the checks; the binary's check: a refusal stopping
-nothing, a binary without the mode, the mode reading a bare run's file and
+nothing, a binary without the mode refused, the mode reading a bare run's file and
 leaving no file, lock or state directory; the copy of the start config, after two writes
 and after a write then an edit by hand, after a `capture save` that added the
 hosts file line, with a leftover copy and with `--state` changed; a copy that
 is a link, another user's, not 0600, wrongly named, outside a state directory
-or missing is neither read nor removed, and no retry; the retry made once;
+or missing is neither read nor removed, and no retry; the retry made once,
+carrying the page's sessions as they are then (none after `console --end`);
+a stop during the restart or the new start neither execs nor puts the config
+back; a start that served 2 minutes counts as good; the carried page's
+sessions in place before its first request;
 the exec of a test binary keeping the page's port, its session and the
 state's lock, the variables and the fds not reaching a child), and E2E with
 real mitmproxy (`run` in LAN mode on the loopback, started through a link:
@@ -428,7 +438,8 @@ console)"; Deny is `reqcove capture deny`.
   one. A `run` older than v1.3 says to restart it with v1.3.
 - **Never shown:** the flows' contents on the page (the HAR file, below,
   gives the records, masked, when you ask), any token, link or login URL, the
-  `--mask-values` patterns, what an `@FILE` holds, and any
+  `--mask-values` patterns, what a masking `@FILE` holds (a hosts file's
+  hosts are shown, as hosts), and any
   text from an agent or an MCP client (the hosts it asked for are checked as
   host names first). Discovery's names are shown when they are host names
   (others are left out).
@@ -493,13 +504,17 @@ now and once saved, the hosts that are pinned (given on `run`'s command
 line or inline in the config: a start takes them again whatever the file
 says; Save never writes them), and, on a config with its hosts inline, the
 file it creates and the line it adds (the page asks where `capture save`
-asks y/N). Hosts not in their hosts file yet are marked "unsaved". After a
+asks y/N). What the page confirms is the change and the files as read: an
+edit to the config or to a hosts file after it was shown refuses the save,
+even one the save would not change, and a hosts file changed since it was
+read is never replaced. Hosts not in their hosts file yet are marked "unsaved". After a
 first save, the page and `reqcove status` name the new hosts file at once,
 and the next Save writes it.
 
 Tried: unit tests (the panel's endpoints: each of the checks above, the
 page's changes alone (`set`, `reload`, `restart` and the others refused,
-none reaching `run`), an older scope refused, discovery's names checked as
+none reaching `run`), an older scope refused, a save refused after an edit to the config or the
+hosts file since it was shown, discovery's names checked as
 host names, the warnings `run`'s own, LAN mode) and E2E with real mitmproxy
 (each change answering as through `ctl.sock`, traced "(from the console on
 this computer)", the warnings shown before the confirm in the answers, an
@@ -537,11 +552,13 @@ change made on a page that read the config before another change (another
 tab, an edit by hand) is refused. `run`'s log names the flag written, never
 its values. **Restart…** first lists every setting the config on disk has
 otherwise than `run` started with (edits by hand and the terminal's own
-flags included; `--mask-values` and what an `@FILE` holds only as
-"changed"), the records there are now, and that a restart empties them;
+flags included; `--mask-values` and what a masking `@FILE` holds only as
+"changed"; a hosts file's hosts as they are now against when `run` last read
+or wrote them), the records there are now, and that a restart empties them;
 then it asks, and restarts as `reqcove restart` does
 ([above](#restart-in-place-reqcove-restart)). An edit made after the list was
-shown is refused, nothing stopped. This computer's page keeps its session across the
+shown, to the config or to a hosts or masking file it reads, is refused,
+nothing stopped. This computer's page keeps its session across the
 restart; the tailnet page's sessions end with the run. Before it asks, it
 offers the records as a HAR file ([below](#presets-a-marker-the-ca-the-har-file)).
 
@@ -552,7 +569,9 @@ pinned settings and a flags-only run read-only; the warnings `run -h`'s own,
 refused until confirmed; `--mask-values` in no answer and no log line; a
 page that read the config before an edit refused; the device list the own
 devices alone; the restart's list with an edit by hand of a terminal-only
-flag and a changed `@FILE`, a list made stale refused, the restart asked).
+flag, a changed masking `@FILE` and a hosts file's hosts, a list made stale
+by an edit to the config, a hosts file or a masking file refused, the
+restart asked).
 Not tried: the panel in a browser (its script and confirms are from reading
 the code), the device list on a real tailnet.
 
@@ -617,7 +636,8 @@ it prints. It prints both in the terminal alone: it opens no browser and
 writes no file. The page has what ends with the run:
 - the state, the next steps and the warnings, without this computer's paths
   (the binary, the config and hosts files, a `--state` in a command: "(a
-  path on this computer)");
+  path on this computer)"; a next step that names another path of this
+  computer is left out);
 - the agents' requests, with **Approve** and **Deny**;
 - the Scope panel: add and remove, stop and start, allow-all and discovery
   with **End**, with their warnings and confirms; discovery's names only as
@@ -676,7 +696,8 @@ another of your devices refused and ended; this computer's page's codes and
 tokens refused on the tailnet page, and the reverse; a Host by name or by
 another port, and another Origin (`--ui`'s among them) refused; every route
 of this computer's page but the tailnet page's refused, Save too; no path of
-this computer in the answers, with a `--state` not the default; discovery's
+this computer in the answers, with a `--state` not the default, a next step
+naming a path with a space left out; discovery's
 names absent, their count there; 1 hour unused and 12 hours in all; the
 counts for `status`; `--end`; LAN mode and a tagged node refused; the
 terminal check, the QR code and link printed, no opener run and no file

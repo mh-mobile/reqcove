@@ -20,8 +20,8 @@ not.
   Homebrew's `opt` path) is still there, and then asks that binary itself
   (a hidden check mode, `run --check-config`: it starts nothing, takes no
   lock, writes no file), so a newer binary after `brew upgrade` that checks
-  more refuses too; a binary without the mode leaves the check to `run`, and
-  the answer says so. Refused, nothing stops, and it says why. Then it stops
+  more refuses too; a binary without the mode (older than v1.3, which could
+  not take over the state) is refused. Refused, nothing stops, and it says why. Then it stops
   as Ctrl-C does (system proxy put back, mitmproxy, the node and caffeinate
   stopped) and starts again. The state's lock and the `reqcove console`
   page's port and sessions (as hashes) are carried across, so no other run
@@ -29,7 +29,10 @@ not.
   the config `run` had started from (kept from its start, in memory, then in
   a 0600 file in the state directory; not `config.prev`), keeps the failed
   one as `config.failed`, and starts once more; failing again, it stays
-  down; `reqcove status` says what happened. A new ctl op, `restart`, in LAN
+  down; `reqcove status` says what happened. A start counts as good once it
+  is ready, or 2 minutes after it serves its tools. A stop (Ctrl-C, a
+  service's SIGTERM) during the restart or the new start is a stop: no exec,
+  nothing put back. A new ctl op, `restart`, in LAN
   mode too; a `run` older than v1.3 says to stop it and start it again. Unit
   tests (an exec of a test binary among them) and an E2E test with real
   mitmproxy (LAN mode on the loopback); not tried: a tailnet node, under a
@@ -64,14 +67,16 @@ not.
   next start, through the config writer alone (below); `--upstream-ca` may
   be taken out. Shown, never written: `--upstream-ca`, `--rules` and
   `--proto` (their paths), `--mask-values` ("set" and a count, never a
-  pattern), an `@FILE`'s contents, the settings given on `run`'s command
+  pattern), a masking `@FILE`'s contents, the settings given on `run`'s command
   line (pinned), and every setting of a run started from flags alone.
   `run`'s log names the flag written, never its values. **Restart…** lists
   every setting the config on disk has otherwise than `run` started with
-  (edits by hand and terminal-only flags included; `--mask-values` and an
-  `@FILE`'s contents as "changed" alone) and the records it empties, offers
-  the HAR file first, asks, and restarts as `reqcove restart` does; an edit
-  after the list was shown is refused, nothing stopped. Unit tests; the
+  (edits by hand and terminal-only flags included; `--mask-values` and a
+  masking `@FILE`'s contents as "changed" alone; a hosts file's hosts now
+  against when `run` last read or wrote them) and the records it empties,
+  offers the HAR file first, asks, and restarts as `reqcove restart` does;
+  an edit after the list was shown, to the config or a hosts or masking file
+  it reads, is refused, nothing stopped. Unit tests; the
   panel was not tried in a browser.
 - **The `reqcove console` page's other panels** (127.0.0.1 alone):
   **Presets and rules**: the `--rules` file's presets by name and kind,
@@ -138,7 +143,9 @@ not.
   (before: after a restart; a `reqcove reload` that changes the hosts files
   too, from the code, not tried). The same for the hosts passed undecrypted
   (`pass-hosts`, `--pass-hosts=@FILE`), which are saved now. A new field of
-  the ctl op `save`, `confirm` (the change's token). Unit tests and an E2E
+  the ctl op `save`, `confirm` (the token of the change and of the config
+  and hosts files as read: an edit to one since it was shown refuses the
+  save, and a hosts file changed since it was read is never replaced). Unit tests and an E2E
   test (Save from the page).
 - **A config writer**, the one way `capture save` and the page change the
   `--config` file: it writes only the flags of a fixed list, each value
@@ -200,6 +207,20 @@ not.
 
 ### Fixed
 
+- **Found by the review before v1.3's release** (none of it was released):
+  a restart's retry carried the page's sessions handed over at the restart,
+  so one ended by `reqcove console --end` meanwhile came back (now the
+  page's sessions as they are, none if it never served); a page carried
+  across a restart served before its sessions were in place (a poll then
+  got 401); a restart asked as `ctl.sock` began serving was refused; a
+  binary older than v1.3 was restarted into and stayed down (now refused,
+  nothing stopped); Ctrl-C or a service's SIGTERM during a restart was
+  ignored, or taken as a failed start (config put back, exec'd again); a
+  restarted run that never got ready kept the start config's copy and could
+  put it back hours later; Save's confirmation and the page's restart did
+  not see an edit to a hosts file (or a masking file) made after they were
+  shown; the tailnet page could keep the tail of a path with a space in a
+  next step. Unit tests for each.
 - **A computer whose name is long** (over 39 characters, GitHub's macOS
   runners among them) could not start a `run` that makes its own CA: the
   CA's name (`Reqcove CA (<computer>, <date>)`) went over X.509's 64

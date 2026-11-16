@@ -412,8 +412,11 @@ checks the config and the command line itself, then asks the binary it would
 exec to check them (a hidden check mode of `run`'s, with the same
 arguments: it reads them as a start would, and starts nothing, takes no
 lock, creates no state directory and writes no file; tests). Refused by
-either, nothing stops (a test); a binary without the mode (built before it)
-leaves the check to `run`, which says so. What crosses the exec:
+either, nothing stops (a test); a binary without the mode (older than v1.3)
+is refused too, nothing stopped (a test): it could not take over the
+state's lock. A stop (Ctrl-C, a service's SIGTERM) during the restart or the
+new start is a stop: no exec, no config put back, the copy removed (tests).
+What crosses the exec:
 - **The state's lock and this computer's page's port**, as open files: no other `run`
   takes the state, and no other process the port, in between (an E2E test
   tries the lock throughout; that no one else bound the port was not tried
@@ -435,7 +438,8 @@ leaves the check to `run`, which says so. What crosses the exec:
   The new process reads it only from the path in its environment, and only a
   plain file of your user's, mode 0600, named as a copy, directly in a
   reqcove state directory; anything else is neither read nor removed, and no
-  start is retried (tests). It is removed once the new start is up, or when
+  start is retried (tests). It is removed once the new start is up (ready, or
+  2 minutes after it serves its tools: tests), or when
   the retry fails and `run` stays down; a copy a crash left is removed by the
   next start in that state directory, after the same checks, never the one
   handed over before the retry is decided (tests).
@@ -669,18 +673,22 @@ hides (tests: every other route of this computer's page refused, Save too).
 #### What never reaches a page
 
 - **On either page:** a token, a link with a token, a login URL, the
-  `--mask-values` patterns ("set" and a count), what an `@FILE` holds (its
-  path at most), an `--upstream-proxy` value `run` would refuse (a password
+  `--mask-values` patterns ("set" and a count), what a masking `@FILE` holds
+  (its path at most; a hosts file's hosts are shown, as hosts), an `--upstream-proxy` value `run` would refuse (a password
   written in by hand), and text from an agent or an MCP client (the hosts it
   asked for are checked as host names first); tests: no code or token in an
   answer or `run`'s log, no pattern in any answer or log line, no rule's
   value, description or error text. The flows' contents are never on the
   page itself; this computer's page hands out the records as a HAR file,
   masked, when you ask, and refuses it while `run` masks nothing (tests).
-- **Not on the tailnet page:** this computer's paths (the binary, the config
-  and hosts files, the state directory in a command's `--state`: taken out
-  of every answer; a test with a `--state` not the default), and
-  discovery's names (their count alone; tests, unit and E2E).
+- **Not on the tailnet page:** this computer's paths: the binary, the config
+  and hosts files (left out of its state), the state directory (taken out
+  whole wherever an answer names it, a command's `--state` among them; a test
+  with a `--state` not the default), a next step that names another path
+  (left out whole; a test with a path with a space); and discovery's names
+  (their count alone; tests, unit and E2E). Any other path in an answer's
+  words is replaced up to its first space or quote, so one with a space in
+  it would leave its tail (from reading the code).
 - **What a page shows beyond `reqcove status` and the config:** the list of
   your own devices on the tailnet (their machine names), to pick from on
   this computer's page; the presets' names, kinds and `map_remote`
