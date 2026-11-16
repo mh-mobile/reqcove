@@ -687,8 +687,9 @@ hides (tests: every other route of this computer's page refused, Save too).
   with a `--state` not the default), a next step that names another path
   (left out whole; a test with a path with a space); and discovery's names
   (their count alone; tests, unit and E2E). Any other path in an answer's
-  words is replaced up to its first space or quote, so one with a space in
-  it would leave its tail (from reading the code).
+  words is replaced up to its first space, quote, comma, semicolon or
+  parenthesis, so one with any of those in it would leave its tail (from
+  reading the code).
 - **What a page shows beyond `reqcove status` and the config:** the list of
   your own devices on the tailnet (their machine names), to pick from on
   this computer's page; the presets' names, kinds and `map_remote`
