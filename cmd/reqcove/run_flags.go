@@ -34,6 +34,7 @@ type runOpts struct {
 	upstreamProxy, upstreamCA, upstream string
 	lanIface                            string
 	localProxy                          bool
+	keepAwake                           string
 	origin                              hostsOrigin
 	// config is the --config file read (in full), "" for none; configUnused
 	// the other file a bare run finds there too, not read.
@@ -155,6 +156,7 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	lanMode := fs.Bool("lan", false, "LAN mode, without Tailscale: an HTTP proxy on this computer's LAN address (--proxy-port), for clients on that network you allow (reqcove lan allow ADDR, or run's prompt); ports 80 and 443 only")
 	lanIface := fs.String("lan-interface", "", "with --lan, the interface to listen on (default: the default route's, such as en0)")
 	localProxy := fs.Bool("local-proxy", false, fmt.Sprintf("an HTTP proxy on 127.0.0.1:%d for this computer's own apps, such as the iOS Simulator, recorded as the device \"local\"; on macOS the system's web proxies point at it while run runs", localProxyPort))
+	keepAwakeFlag := fs.String("keep-awake", "always", "macOS: keep the Mac from sleeping while run runs: always (idle sleep, on battery too), ac (on AC power only; on battery it sleeps as set), never (as the Energy settings say)")
 	fs.String("config", "", "a `FILE` of these flags, one a line (for a service), read before the command line's; --no-redact, --web, --rules-reload, --lan and --allow-hosts '*' are refused there. The file must be yours, readable by you only (chmod 600)")
 	bare := len(args) == 0 && !reload
 	var config, configUnused string
@@ -200,6 +202,9 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 	}
 	if err := lanFlags(fs, *lanMode, *proxyPort); err != nil {
 		return nil, err
+	}
+	if !slices.Contains([]string{"always", "ac", "never"}, *keepAwakeFlag) {
+		return nil, fmt.Errorf("--keep-awake %q: always, ac or never", *keepAwakeFlag)
 	}
 	hostname := nodeName(fs, *state)
 	if len(devices) == 0 && !*localProxy && !*lanMode {
@@ -338,7 +343,7 @@ func runFlags(args []string, reload bool) (*runOpts, error) {
 		state: *state, hostname: hostname, dns: dns, mitmSpec: *mitmSpec, python: *python, uvx: *uvx,
 		proxyPort: *proxyPort, mcpHTTP: *mcpHTTP, ui: *uiFlag, verbose: *verbose, lanMode: *lanMode,
 		upstreamProxy: *upstreamProxy, upstreamCA: *upstreamCA, upstream: upstream,
-		lanIface: *lanIface, localProxy: *localProxy, origin: origin,
+		lanIface: *lanIface, localProxy: *localProxy, keepAwake: *keepAwakeFlag, origin: origin,
 		config: config, configUnused: configUnused,
 		args: args, maskNames: maskNames, maskValues: maskValues, proto: *protoFile, dnsFlag: *dnsFlag,
 	}, nil

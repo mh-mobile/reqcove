@@ -81,7 +81,7 @@ func run(ctx context.Context, args []string) error {
 	if err := restoreSystemProxy(o.state); err != nil {
 		log.Printf("WARN: the system's web proxies, pointed at reqcove by a run that did not stop cleanly, could not be put back: %v. System Settings, Network, Details, Proxies", err)
 	}
-	keepAwake(ctx)
+	keepAwake(ctx, o.keepAwake)
 	upstreamCAFile, err := upstreamCA(o)
 	if err != nil {
 		return err

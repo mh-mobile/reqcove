@@ -135,6 +135,9 @@ exits 1, saying why on stderr. Its fields:
   `hosts_files` (the files `--allow-hosts=@FILE` and `--pass-hosts=@FILE`
   read). Absent from a run older than v1.1: `reqcove status` takes the
   version from `serverInfo` then.
+- Since v1.2, on this computer only (not over `--mcp-http`): `executable`
+  (`run`'s binary, its symlinks resolved) and, on macOS, `keep_awake`
+  (`always`, `ac` or `never`). Absent from a run older than v1.2.
 - Since v1.1, on this computer only (not over `--mcp-http`), host discovery
   (`reqcove capture discover`): `discover_until` (RFC 3339) and
   `discover_left` while it is on; `out_of_scope_hosts` (each with `host`,
@@ -202,7 +205,7 @@ The commands and their flags, from each command's flag set:
 
 | Command | Flags |
 |---|---|
-| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config` |
+| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config`, `--keep-awake` (v1.2) |
 | `reqcove status` | `--json`, `--state` |
 | `reqcove har` | `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit`, `--state` (a HAR 1.2 file on standard output) |
 | `reqcove links` | `--state` |
