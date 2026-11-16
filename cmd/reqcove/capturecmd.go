@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mh-mobile/reqcove/internal/capture"
+	"github.com/mh-mobile/reqcove/internal/mcpserver"
 )
 
 // `reqcove capture` changes the hosts the running reqcove records, without a
@@ -45,15 +46,19 @@ type ctlRequest struct {
 	PassHosts  []string `json:"pass_hosts,omitempty"`  // set
 	For        string   `json:"for,omitempty"`         // allow-all, discover: how long, as 30m or 2h
 	End        bool     `json:"end,omitempty"`         // allow-all, discover: end it now
+	ID         string   `json:"id,omitempty"`          // requests (one), approve, deny: an agent's request (since v1.2)
+	Via        string   `json:"via,omitempty"`         // approve: terminal or dialog
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
 type ctlAnswer struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
+	OK       bool                       `json:"ok"`
+	Message  string                     `json:"message"`
+	Requests []mcpserver.CaptureRequest `json:"requests,omitempty"` // the request ops' (since v1.2)
+	New      bool                       `json:"new,omitempty"`      // request: made now, not pending already
 }
 
-const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end  [--state DIR]"
+const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end | capture requests | capture approve ID | capture deny ID  [--state DIR]"
 
 func captureCmd(ctx context.Context, args []string) error {
 	words, flags := wordsAndFlags(args, "allow-hosts", "pass-hosts", "for")
@@ -72,6 +77,18 @@ func captureCmd(ctx context.Context, args []string) error {
 	if len(words) > 0 {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
+	switch req.Cmd {
+	case "request": // the agents' op, through reqcove mcp
+		return errors.New("usage: " + captureUse)
+	case "approve", "deny":
+		if len(req.Hosts) != 1 {
+			return fmt.Errorf("capture %s takes the request's id (reqcove capture requests lists them)", req.Cmd)
+		}
+		req.ID, req.Hosts = req.Hosts[0], nil
+		if req.Cmd == "approve" {
+			req.Via = "terminal"
+		}
+	}
 	if _, err := req.normalized(); err != nil { // before reaching run: run checks it again
 		return err
 	}
@@ -84,6 +101,12 @@ func captureCmd(ctx context.Context, args []string) error {
 func (r ctlRequest) normalized() (ctlRequest, error) {
 	if r.Cmd != "allow-all" && r.Cmd != "discover" && (r.For != "" || r.End) {
 		return r, fmt.Errorf("--for and --end go with capture allow-all and capture discover (usage: %s)", captureUse)
+	}
+	if requestOps[r.Cmd] {
+		return r.request()
+	}
+	if r.ID != "" || r.Via != "" {
+		return r, errors.New("usage: " + captureUse)
 	}
 	switch r.Cmd {
 	case "allow-all", "discover":
@@ -133,6 +156,35 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if *l, err = hostSpecs(*l); err != nil {
 			return r, err
 		}
+	}
+	return r, nil
+}
+
+// request is normalized for the request ops: request takes the agent's hosts
+// (requestHosts), approve the request's id and its hosts (the ones shown:
+// run checks them), deny the id alone, requests the id or none.
+func (r ctlRequest) request() (ctlRequest, error) {
+	if r.ID != "" && !validID(r.ID) {
+		return r, errors.New("not a request's id (reqcove capture requests lists them)")
+	}
+	bad := len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass
+	switch r.Cmd {
+	case "request":
+		bad = bad || r.ID != "" || r.Via != ""
+	case "approve":
+		bad = bad || r.ID == "" || r.Via != "terminal" && r.Via != "dialog"
+	case "deny":
+		bad = bad || r.ID == "" || r.Via != "" || len(r.Hosts) > 0
+	case "requests":
+		bad = bad || r.Via != "" || len(r.Hosts) > 0
+	}
+	if bad {
+		return r, errors.New("usage: " + captureUse)
+	}
+	if r.Cmd == "request" || len(r.Hosts) > 0 {
+		var err error
+		r.Hosts, err = requestHosts(r.Hosts)
+		return r, err
 	}
 	return r, nil
 }
@@ -192,30 +244,20 @@ func captureIn(ctx context.Context, in, out *os.File, state string, req ctlReque
 		}
 		return errors.New(name + " runs only in a terminal: it changes what is recorded, which is the user's choice (an agent never runs it). Run it in your own terminal")
 	}
+	switch req.Cmd {
+	case "approve":
+		return approveIn(ctx, in, out, state, req)
+	case "requests":
+		return printRequests(ctx, out, state)
+	}
 	return sendCapture(ctx, out, state, req)
 }
 
 // sendCapture asks the running reqcove for the change and prints its answer.
 func sendCapture(ctx context.Context, w io.Writer, state string, req ctlRequest) error {
-	ctx, cancel := context.WithTimeout(ctx, ctlWait)
-	defer cancel()
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
+	a, err := askRun(ctx, state, req)
 	if err != nil {
-		return noCtl(ctx, state)
-	}
-	defer conn.Close()
-	dl, _ := ctx.Deadline()
-	conn.SetDeadline(dl)
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return err
-	}
-	var a ctlAnswer
-	if err := json.NewDecoder(io.LimitReader(conn, 64<<10)).Decode(&a); err != nil {
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): whether it took the change, `%s` says", state, ctlWait, withState("reqcove status", state))
-		}
-		return fmt.Errorf("the running reqcove did not answer: %w", err)
 	}
 	if !a.OK {
 		return errors.New(a.Message)
@@ -224,14 +266,48 @@ func sendCapture(ctx context.Context, w io.Writer, state string, req ctlRequest)
 	return nil
 }
 
+// askRun sends req to the running reqcove and returns its answer; an error
+// when none answers (errNotRunning among them), or when the run is too old
+// for req.
+func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error) {
+	ctx, cancel := context.WithTimeout(ctx, ctlWait)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
+	if err != nil {
+		need := "v1.1"
+		if requestOps[req.Cmd] {
+			need = "v1.2"
+		}
+		return ctlAnswer{}, noCtl(ctx, state, need)
+	}
+	defer conn.Close()
+	dl, _ := ctx.Deadline()
+	conn.SetDeadline(dl)
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return ctlAnswer{}, err
+	}
+	var a ctlAnswer
+	if err := json.NewDecoder(io.LimitReader(conn, 64<<10)).Decode(&a); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return a, fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): whether it took the change, `%s` says", state, ctlWait, withState("reqcove status", state))
+		}
+		return a, fmt.Errorf("the running reqcove did not answer: %w", err)
+	}
+	if requestOps[req.Cmd] && !a.OK && strings.HasPrefix(a.Message, v11Usage) {
+		return a, errOlderRun
+	}
+	return a, nil
+}
+
 // noCtl says why no run answers on ctl.sock: none runs, one is starting, or
 // it is older than v1.1 (it serves mcp.sock only; a v1.1 run serves ctl.sock
-// first).
-func noCtl(ctx context.Context, state string) error {
+// first). need is the version the request needs.
+func noCtl(ctx context.Context, state, need string) error {
 	cs, err := dialRun(ctx, state, "reqcove-capture")
 	switch {
 	case errors.Is(err, errNotRunning):
-		return fmt.Errorf("reqcove is not running (%s): nothing to change", state)
+		return fmt.Errorf("%w (%s): nothing to change", errNotRunning, state)
 	case err != nil:
 		return fmt.Errorf("%w: nothing changed", err)
 	}
@@ -240,7 +316,7 @@ func noCtl(ctx context.Context, state string) error {
 	if ir := cs.InitializeResult(); ir != nil && ir.ServerInfo != nil && ir.ServerInfo.Version != "" {
 		v = ir.ServerInfo.Version
 	}
-	return fmt.Errorf("this run is %s: restart it with v1.1 or later to change what it records while it runs (a restart empties the records: `%s > flows.har` keeps them first); nothing changed", v, withState("reqcove har", state))
+	return fmt.Errorf("this run is %s: restart it with %s or later to change what it records while it runs (a restart empties the records: `%s > flows.har` keeps them first); nothing changed", v, need, withState("reqcove har", state))
 }
 
 // ctlState is what ctl.sock answers from: run's options as it started (in
@@ -254,24 +330,26 @@ type ctlState struct {
 	mu     sync.Mutex
 	origin hostsOrigin
 	loaded capture.HostRules
+	reqs   *captureRequests // the agents' requests (its own lock)
 }
 
 func newCtlState(o *runOpts) *ctlState {
-	return &ctlState{o: o, origin: o.origin, loaded: o.allow}
+	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state)}
 }
 
-// serveCtl serves ctl.sock until ctx ends, for the run o started.
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts) error {
+// serveCtl serves ctl.sock until ctx ends, for the run o started, and
+// returns the state it answers from.
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts) (*ctlState, error) {
 	st := newCtlState(o)
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
 	ln, err := net.Listen("unix", path)
 	if err != nil {
-		return fmt.Errorf("control socket: %w (a shorter --state path helps if it is too long)", err)
+		return nil, fmt.Errorf("control socket: %w (a shorter --state path helps if it is too long)", err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil { // the directory is 0700 already
 		ln.Close()
-		return err
+		return nil, err
 	}
 	go func() { <-ctx.Done(); ln.Close() }() // Close removes the file
 	go func() {
@@ -293,7 +371,7 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpt
 			}()
 		}
 	}()
-	return nil
+	return st, nil
 }
 
 // errUnchanged: the request changes nothing.
@@ -328,11 +406,27 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		return discover(ctx, cap, req, why)
 	case "reload":
 		return reload(ctx, cap, st, why)
+	case "request":
+		return unmasked(cap, st.reqs.ask(cap.Base(), req.Hosts))
+	case "requests":
+		return unmasked(cap, st.reqs.list(req.ID))
+	case "deny":
+		return st.reqs.deny(req.ID)
+	case "approve":
+		return approve(st.reqs, req, func(why string, hosts []string) ctlAnswer {
+			return scopeChange(ctx, cap, ctlRequest{Cmd: "add", Hosts: hosts}, why, true)
+		})
 	}
+	return scopeChange(ctx, cap, req, why, false)
+}
+
+// scopeChange is add, remove or set (req, normalized): asked is an agent's
+// request approved, traced as such.
+func scopeChange(ctx context.Context, cap *capture.Capture, req ctlRequest, why string, asked bool) ctlAnswer {
 	var cur, next capture.HostRules
 	var notes []string
 	var rec string
-	err = cap.ChangeScope(ctx, why, func(c capture.HostRules, r string) (capture.HostRules, error) {
+	err := cap.ChangeScope(ctx, why, func(c capture.HostRules, r string) (capture.HostRules, error) {
 		var err error
 		cur, rec = c, r
 		if next, notes, err = newScope(c, req); err != nil {
@@ -372,7 +466,11 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 			msg += "; new connections only: reopen the app to see it now"
 		}
 	}
-	return traced(cap, why, strings.Join(append([]string{msg}, notes...), "; "))
+	msg = strings.Join(append([]string{msg}, notes...), "; ")
+	if asked {
+		return tracedAs(cap, requestMark(why), "mcp", why+": "+msg, msg)
+	}
+	return traced(cap, why, msg)
 }
 
 // traced is the answer to a change taken, leaving its trace: run's log line
@@ -382,9 +480,15 @@ func traced(cap *capture.Capture, why, msg string) ctlAnswer {
 	if why == "reload" {
 		from = "reqcove reload"
 	}
-	log.Printf("%s (%s, from a terminal): %s", why, from, msg)
-	if _, _, err := cap.Store.AddMarker(cut(why, capture.MaxMarkerText), "cli"); err != nil {
-		log.Printf("WARN: the marker of %s: %v", why, err)
+	return tracedAs(cap, why, "cli", fmt.Sprintf("%s (%s, from a terminal): %s", why, from, msg), msg)
+}
+
+// tracedAs is traced with the marker's text and source and run's log line
+// given: an agent's request approved is source mcp.
+func tracedAs(cap *capture.Capture, mark, source, line, msg string) ctlAnswer {
+	log.Print(line)
+	if _, _, err := cap.Store.AddMarker(cut(mark, capture.MaxMarkerText), source); err != nil {
+		log.Printf("WARN: the marker of %s: %v", mark, err)
 	}
 	return ctlAnswer{OK: true, Message: msg}
 }

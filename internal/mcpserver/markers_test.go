@@ -30,7 +30,7 @@ func TestMarkers(t *testing.T) {
 	redialAfter = 0
 	t.Cleanup(func() { redialAfter = old })
 	ct, pt := mcp.NewInMemoryTransports()
-	go Proxy(t.Context(), sock, "not running", pt)
+	go Proxy(t.Context(), sock, "not running", nil, pt)
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: MarkClient}, nil).Connect(ctx, ct, nil) // an agent calling itself reqcove-mark
 	if err != nil {
 		t.Fatal(err)

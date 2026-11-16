@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,7 +51,7 @@ func agent(t *testing.T, sock string) *mcp.ClientSession {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	ct, st := mcp.NewInMemoryTransports()
-	go Proxy(ctx, sock, "reqcove is not running (test)", st)
+	go Proxy(ctx, sock, "reqcove is not running (test)", &fakeRequests{}, st)
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "agent", Version: "0"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +116,11 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s has an output schema: a run of another version could fail it", tool.Name)
 		}
 		a := tool.Annotations
-		if tool.Name == "add_marker" { // a write, but only to reqcove's memory
+		if tool.Name == "request_capture_add" { // the proxy's own: asks, changes nothing itself
+			if writeTools[tool.Name] || a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+				t.Errorf("%s: annotations %+v, want not read-only, not destructive", tool.Name, a)
+			}
+		} else if tool.Name == "add_marker" { // a write, but only to reqcove's memory
 			if !writeTools[tool.Name] || a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
 				t.Errorf("%s: annotations %+v, want a write, not destructive", tool.Name, a)
 			}
@@ -127,7 +132,7 @@ func TestProxyAcrossRestarts(t *testing.T) {
 			t.Errorf("%s: annotations %+v, want read-only, not destructive", tool.Name, a)
 		}
 	}
-	if len(names) != 19 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") { // the tools, without run
+	if len(names) != 21 || !strings.Contains(strings.Join(names, ","), "status") || !strings.Contains(strings.Join(names, ","), "explain_rules") || !slices.Contains(names, "get_capture_request") { // the tools, without run (the request tools are the proxy's)
 		t.Errorf("tools without run: %v", names)
 	}
 	if got, isErr := ids(t, cs); !isErr || got != "reqcove is not running (test)" {

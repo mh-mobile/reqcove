@@ -765,7 +765,10 @@ func TestStatusUpgrade(t *testing.T) {
 	answer = mcpserver.StatusOut{Version: version, Executable: self, KeepAwake: "ac"}
 	check("v1.2, this binary", []string{"keep awake:  ac: no sleep on AC power"}, "binary:")
 	answer = mcpserver.StatusOut{Version: version, Executable: "/opt/homebrew/Cellar/reqcove/1.2.0/bin/reqcove"}
-	check("v1.2, another binary", []string{"binary:      run is /opt/homebrew/Cellar/reqcove/1.2.0/bin/reqcove; this reqcove is " + self}, "keep awake:")
+	check("v1.2, another binary", []string{"binary:      run is /opt/homebrew/Cellar/reqcove/1.2.0/bin/reqcove; this reqcove is " + self}, "keep awake:", "asked:")
+	// v1.2: an agent's request waiting for the user.
+	answer = mcpserver.StatusOut{Version: version, CaptureRequests: []mcpserver.CaptureRequest{{ID: "0a1b2c3d", Hosts: []string{"a.com", "b.com"}, State: "pending", ExpiresAt: "2026-11-16T10:10:00Z", Approve: "reqcove capture approve 0a1b2c3d"}}}
+	check("v1.2, a request", []string{"asked:       a.com, b.com, by an agent (until " + localClock("2026-11-16T10:10:00Z") + "): reqcove capture approve 0a1b2c3d approves it"})
 }
 
 // What started run, and the command that restarts it there: install

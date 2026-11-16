@@ -140,7 +140,8 @@ func run(ctx context.Context, args []string) error {
 	}
 	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
 	// and no ctl.sock for one older than v1.1.
-	if err := serveCtl(ctx, o.state, cap, o); err != nil {
+	ctl, err := serveCtl(ctx, o.state, cap, o)
+	if err != nil {
 		return err
 	}
 	if !o.lanMode {
@@ -158,7 +159,7 @@ func run(ctx context.Context, args []string) error {
 			discoverEndCmd = "reqcove capture discover --end"
 		}()
 	}
-	mcpHandler, err := serveMCP(ctx, o, cap, &node, mcpToken)
+	mcpHandler, err := serveMCP(ctx, o, cap, &node, ctl.reqs, mcpToken)
 	if err != nil {
 		return err
 	}
@@ -348,7 +349,7 @@ func privateOutput(fs ...*os.File) {
 
 // serveMCP serves the MCP tools on the state's socket until ctx ends, and
 // returns --mcp-http's handler (nil without it).
-func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeState, mcpToken string) (http.Handler, error) {
+func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeState, reqs *captureRequests, mcpToken string) (http.Handler, error) {
 	mcpSock := filepath.Join(o.state, "mcp.sock")
 	remoteStatus := func() mcpserver.StatusOut {
 		return liveStatus(node.get(), cap)
@@ -356,6 +357,7 @@ func serveMCP(ctx context.Context, o *runOpts, cap *capture.Capture, node *nodeS
 	// The local server's alone: discovery's names, never --mcp-http's.
 	tools, remote := mcpserver.Servers(cap.Store, func() mcpserver.StatusOut {
 		out := withDiscovery(withFiles(remoteStatus(), o), cap)
+		out.CaptureRequests = reqs.pending()
 		if len(statsPresets(out.Capture)) > 0 {
 			ctx, cancel := context.WithTimeout(ctx, time.Second) // status comes first: never long
 			defer cancel()

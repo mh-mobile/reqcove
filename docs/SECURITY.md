@@ -277,9 +277,10 @@ Not covered: processes of your own user, which can read the password file
 anyway, and root. Another user was not tried. How the port is held, and what
 was tried: [details](guide.md#security-other-processes).
 
-`reqcove capture` (add, remove, set, stop, start, save, allow-all, discover) changes which hosts `run` records, over
+`reqcove capture` (add, remove, set, stop, start, save, allow-all, discover; requests, approve, deny since v1.2) changes which hosts `run` records, over
 `ctl.sock` in the state directory (0600, a test), not over the MCP tools'
-socket: no tool changes what is recorded. It runs only when its input and
+socket: no tool changes what is recorded (one can ask you since v1.2,
+below). It runs only when its input and
 output are a terminal, and the skill and the server's instructions tell agents
 never to run it. The terminal check is a guard against mistakes, not a
 boundary: any process of your user (an agent that can run commands among
@@ -358,6 +359,38 @@ names.
 - **Not exhaustive:** a connection without a name, one with ECH (its outer
   name only), and a non-TLS connection to a host outside the scope are not
   seen (from reading the code, not tried). Who can turn it on: as `reqcove capture` (above).
+
+Since v1.2 an agent can **ask** for hosts to be recorded
+(`request_capture_add`, a tool of `reqcove mcp` alone: never on `run`'s own
+socket's tool list, never over `--mcp-http`; refused in LAN mode). The
+request records nothing; you approve it with `reqcove capture approve ID`
+(it shows the hosts and asks y/N) or in the agent's client's dialog, and it
+then adds those hosts as `reqcove capture add` does (unit tests; an E2E test
+through `reqcove mcp`).
+- **What it guards:** an agent that has Reqcove's MCP tools and no shell, steered by text a
+  page or an app put in the records: it can ask, but not record a
+  host, and cannot see anything new unless you approve. What reaches you is
+  Reqcove's text and host names checked as such (letters, digits, `-`, `.`;
+  no wildcard, no IP address; at most 5), never the agent's words. The id is
+  bound to the hosts it was made with: an approval for others is refused.
+  Requests are bounded (3 pending, 10 made in 10 minutes, the same hosts not
+  asked again for 10 minutes after you deny them) and expire in 10 minutes by
+  either clock (unit tests).
+- **What a steering page can still do:** make the agent ask for hosts it
+  names, again and again within those bounds, and word its chat to you so
+  that you approve. Read the hosts before you type `y`.
+- **What it does not guard:** an agent that can run commands as your user is
+  not kept out, as above: it can write to `ctl.sock` itself (approve
+  included), or give `reqcove capture approve` a pseudo terminal. The client's
+  dialog is the client's: whatever answers it for you (hooks can, in Claude Code, as
+  reported by others; not tried here) approves. A client that
+  declines without showing it leaves the request pending (a test with an
+  in-memory client; a real client's dialog not tried).
+- **The trace:** each state is a line in `run`'s log; an approval is a
+  marker with source `mcp` and `scope_change` ("capture add HOST (asked by an
+  agent, approved in the terminal)" or "in the dialog"), as a change of yours
+  (an E2E test). Requests live in memory only, and a restart of `run` drops
+  them.
 
 ## Masking
 
