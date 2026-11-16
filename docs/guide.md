@@ -114,7 +114,8 @@ setup wrote Homebrew's config and its hosts file and pointed to `brew services
 start reqcove`, whose run read them and recorded the iPhone. The hosts file
 otherwise: unit tests (the file, its `@` line, an old one kept; since v1.3
 the file of comments alone when no host is answered, a set the next start
-refuses writing nothing, the device list from a stand-in for `tailscale
+refuses writing nothing (with a stand-in for the check: nothing setup
+writes today is one a start refuses), the device list from a stand-in for `tailscale
 status`). Not tried by hand: v1.3's setup.
 
 <a id="security-login-url"></a>
@@ -724,7 +725,8 @@ restart. Before it asks, it offers the records as a HAR file (below).
 Since v1.3 the page has these panels too:
 - **Presets and rules**: the `--rules` file's presets by name and kind,
   whether each is on, until when and (a mock) how many requests are left;
-  **Turn on** for 1 to 5 minutes, **Turn off**, as an agent's
+  **Turn on** for 1 to 5 minutes (a mock: or until 1 to 20 requests),
+  **Turn off**, as an agent's
   `activate_preset` and `deactivate_preset` do (while recording is stopped,
   mitmproxy refuses, as it does an agent). Before turning one on, the page
   says what that kind changes; for a `map_remote` preset, where the requests

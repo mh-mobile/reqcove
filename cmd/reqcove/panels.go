@@ -215,6 +215,9 @@ func (p *page) presetSet(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, capture.ErrUncertain):
 		reply(false, "mitmproxy did not answer in time: "+in.Name+" may be on (the page shows it as it is now)")
 		return
+	case err != nil && strings.HasPrefix(err.Error(), "recording is stopped"):
+		reply(false, "refused: recording is stopped: no rule applies, presets included, so none can be turned on; Start recording first")
+		return
 	case err != nil:
 		reply(false, "refused: "+err.Error())
 		return
@@ -334,7 +337,10 @@ func (p *page) harFile(w http.ResponseWriter, r *http.Request) {
 		refuse("run was started with --no-redact: nothing is masked, so the page gives no HAR file. reqcove har in your terminal writes one, marked unmasked, where you choose")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second) // under the server's WriteTimeout
+	// A full store (10,000 flows, 64 MiB) took 5.6 s here: longer than the
+	// server's other answers may take.
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(3 * time.Minute))
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 	srv := mcpserver.New(p.cap.Store, nil)
 	ct, stt := mcp.NewInMemoryTransports()

@@ -398,11 +398,21 @@ async function loadPresets() {
       for (const v of [1, 2, 3, 4, 5]) m.append(el("option", String(v)));
       m.value = "5";
       m.setAttribute("aria-label", "minutes");
-      e.append(m, el("span", "min", "muted"), button("Turn on", () => {
+      e.append(m, el("span", "min", "muted"));
+      let n = null;
+      if (x.kind === "mock") { // a mock may also end after a count of requests
+        n = el("select");
+        n.append(el("option", "no count"));
+        for (let v = 1; v <= 20; v++) n.append(el("option", String(v)));
+        n.setAttribute("aria-label", "requests");
+        e.append(n);
+      }
+      e.append(button("Turn on", () => {
         const what = (d.warnings[x.kind] || "") + (x.kind === "map_remote" ? ": " + x.target : "");
         if (!confirm("Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?")) return;
         const body = { name: x.name, on: true, minutes: Number(m.value) };
         if (x.kind === "map_remote") body.target = x.target;
+        if (n && n.value !== "no count") body.times = Number(n.value);
         preset(body);
       }));
     }

@@ -133,7 +133,8 @@
   `--upstream-proxy`, that the proxy reads the decrypted requests unmasked;
   `--mask-names`, that a name taken out leaves its values unmasked;
   `--device`, that a device's requests are decrypted and recorded for the
-  agents. A marker's `source` may be `console` (`list_markers`). Unit tests.
+  agents; `--mcp-http`, that its agents and their model providers read the
+  records; `--ui`, that whoever has its link reads them. A marker's `source` may be `console` (`list_markers`). Unit tests.
 
 - **`reqcove restart` asks the binary it would exec first**: before
   anything stops, `run` runs that binary in a hidden check mode with the

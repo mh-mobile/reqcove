@@ -402,13 +402,15 @@ func TestPageFlowsAndService(t *testing.T) {
 }
 
 // --upstream-proxy's words, run -h's and the page's confirm alike, say the
-// proxy reads the decrypted requests unmasked; so do --mask-names' (a name
-// taken out) and --device's (one added).
+// proxy reads the decrypted requests unmasked; --mask-names' (a name taken
+// out), --device's (one added), --mcp-http's and --ui's say who reads more.
 func TestWideningWarnings(t *testing.T) {
 	for flag, want := range map[string]string{
 		"upstream-proxy": "which reads them unmasked (cookies, tokens, bodies",
 		"mask-names":     "a name taken out leaves its values unmasked",
 		"device":         "decrypted and recorded, for the agents to read",
+		"mcp-http":       "and their model providers (Grok Bot: xAI's cloud), read the records",
+		"ui":             "whoever has the link reads the records",
 	} {
 		if u := runFlagSet().Lookup(flag).Usage; !strings.Contains(u, want) || settingWarning(flag) != u {
 			t.Errorf("--%s: %q", flag, u)
