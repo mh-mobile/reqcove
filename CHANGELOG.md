@@ -73,8 +73,37 @@
   file not yours, the file read back as the old flags plus the change, its
   revision checked before the rename, the whole flag set checked first as
   the next start reads it. Unit tests.
+- **The `reqcove console` page's Settings panel** (127.0.0.1 alone): writes
+  `--device` (picked among your own untagged devices on the tailnet, as
+  `run`'s node sees them; written as the StableID), `--keep-awake`,
+  `--proxy-port`, `--hostname` and `--verbose`, and, once it showed
+  `run -h`'s words for the flag and asked, `--ui`, `--mcp-http`,
+  `--local-proxy`, `--dns`, `--upstream-proxy` (a URL, no user or password),
+  a `--device` added and `--mask-names`, to the `--config` file for the
+  next start, through the config writer alone (its checks, `config.prev`,
+  the config's revision: a page that read it before another change is
+  refused); `--upstream-ca` may be taken out. Shown, never written:
+  `--upstream-ca`, `--rules` and `--proto` (their paths), `--mask-values`
+  ("set" and a count, never a pattern), an `@FILE`'s contents, the settings
+  given on `run`'s command line (pinned), and every setting of a run started
+  from flags alone. `run`'s log names the flag written, never its values.
+  **Restart…** lists every setting the config on disk has otherwise than
+  `run` started with (edits by hand and terminal-only flags included;
+  `--mask-values` and an `@FILE`'s contents as "changed" alone) and the
+  records it empties, asks, and restarts as `reqcove restart` does; an edit
+  after the list was shown is refused, nothing stopped. New page endpoints
+  (`/api/settings`, `/api/restart`), not stable. Unit tests; the panel was
+  not tried in a browser.
 
 ### Changed
+
+- **`reqcove restart` asks the binary it would exec first**: before
+  anything stops, `run` runs that binary in a hidden check mode with the
+  same arguments (it reads the config and command line as a start would,
+  starts nothing, takes no lock, writes no file), so a newer binary after
+  `brew upgrade` that checks more refuses with nothing stopped. A binary
+  without the mode leaves the check to `run`, and the answer says so. Unit
+  tests (not tried after a real `brew upgrade`).
 
 - **caffeinate** (`--keep-awake`) is stopped when `run` stops, not left to
   end with `run`'s process: a restart keeps the process. E2E test.

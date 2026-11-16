@@ -218,6 +218,137 @@ async function save() {
   change({ cmd: "save", confirm: d.confirm });
 }
 
+// The Settings panel: the config's settings as run's page lists them; a
+// change writes one setting (its values whole) through run's config writer,
+// on the config's revision the page read; those marked confirm first show
+// run's own words for the flag (run -h) and ask.
+const CHOICES = { "keep-awake": ["always", "ac", "never"], verbose: ["true", "false"], ui: ["true", "false"], "mcp-http": ["true", "false"], "local-proxy": ["true", "false"] };
+let conf = null; // the settings shown last: their rev goes with a change
+
+async function loadSettings() {
+  try {
+    const { ok, d } = await api("GET", "/api/settings");
+    if (ok) showSettings(d);
+  } catch (e) {
+    $("settings-result").textContent = "reqcove did not answer";
+  }
+}
+
+function showSettings(d) {
+  conf = d;
+  $("settings-ro").textContent = d.read_only ? "Read-only: " + d.read_only : (d.config ? "From " + d.config : "");
+  const dl = $("settings");
+  dl.replaceChildren();
+  for (const s of d.settings) {
+    const dd = el("dd");
+    const now = s.set != null && s.set !== "" ? s.set : s.values.length ? s.values.join(", ") : "not in the file (default: " + (s.default || "none") + ")";
+    dd.append(el("div", s.flag === "mask-values" && !s.set ? "not set" : now));
+    if (s.pinned) dd.append(el("div", "on run's command line: " + s.pinned.join(", "), "muted"));
+    if (s.why) dd.append(el("div", s.why, "muted"));
+    if (s.edit) dd.append(editor(s, d));
+    dl.append(el("dt", "--" + s.flag), dd);
+  }
+}
+
+// editor is a setting's controls: a list with Remove and an Add (repeating
+// flags), a choice or a text with Save, Clear (back to the default).
+function editor(s, d) {
+  const box = el("div");
+  const ask = s.edit === "confirm";
+  if (s.edit === "clear") {
+    box.append(button("Clear", () => setSetting(s, [], false)));
+    return box;
+  }
+  if (s.flag === "device" || s.flag === "mask-names") {
+    const list = el("ul", null, "list");
+    for (const v of s.values) {
+      const name = (d.devices.find((x) => x.id === v) || {}).name;
+      list.append(li(name ? v + " (" + name + ")" : v, [], button("Remove", () => setSetting(s, s.values.filter((x) => x !== v), ask))));
+    }
+    box.append(list);
+    const p = el("p");
+    let input;
+    if (s.flag === "device") {
+      input = el("select");
+      for (const x of d.devices) if (!s.values.includes(x.id)) { const o = el("option", x.name); o.value = x.id; input.append(o); }
+      if (!input.options.length) { p.append(el("span", "no other device of yours in the tailnet", "muted")); box.append(p); return box; }
+    } else {
+      input = el("input");
+      input.type = "text";
+      input.placeholder = "x-api-key";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+    }
+    p.append(input, button("Add", () => { const v = input.value.trim(); if (v) setSetting(s, s.values.concat([v]), true); }));
+    box.append(p);
+    return box;
+  }
+  let input;
+  if (CHOICES[s.flag]) {
+    input = el("select");
+    for (const v of CHOICES[s.flag]) input.append(el("option", v));
+    input.value = s.values[0] || s.default;
+  } else {
+    input = el("input");
+    input.type = "text";
+    input.value = s.values[0] || "";
+    input.placeholder = s.default || "";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+  }
+  box.append(input, button("Save", () => setSetting(s, input.value.trim() ? [input.value.trim()] : [], ask)));
+  if (s.values.length) box.append(button("Clear", () => setSetting(s, [], ask)));
+  return box;
+}
+
+// setSetting writes the setting's values; ask: run's words for it first.
+async function setSetting(s, values, ask) {
+  if (!conf) return;
+  if (ask && !confirm("--" + s.flag + ": " + (values.join(", ") || "(removed)") + "\n\n" + s.warning + "\n\nWrite it to the config (taken at the next restart)?")) return;
+  for (const b of $("settings").querySelectorAll("button")) b.disabled = true;
+  try {
+    const { d } = await api("POST", "/api/settings", { flag: s.flag, values, rev: conf.rev, confirmed: ask });
+    $("settings-result").textContent = d.message || d.error || "";
+  } catch (e) {
+    $("settings-result").textContent = "reqcove did not answer";
+  }
+  loadSettings();
+}
+
+// beforeRestart is where the page offers the records as a HAR file before a
+// restart empties them (to come); true: go on.
+async function beforeRestart(d) { return true; }
+
+// restart lists what a restart changes (every setting the config on disk
+// has otherwise than run started with), the records it empties, then asks.
+async function restart() {
+  let d;
+  try {
+    ({ d } = await api("GET", "/api/restart"));
+  } catch (e) {
+    $("settings-result").textContent = "reqcove did not answer";
+    return;
+  }
+  if (d.message || d.error) { $("settings-result").textContent = d.message || d.error; return; }
+  const lines = [];
+  for (const x of d.diff) {
+    const what = x.changed ? "changed (not shown)" : (x.was || []).join(", ") + " -> " + ((x.now || []).join(", ") || "(removed)");
+    lines.push("--" + x.flag + ": " + what + (x.pinned ? " (given on run's command line too)" : ""));
+  }
+  if (!lines.length) lines.push("no setting changed: run starts again as it is");
+  if (!(await beforeRestart(d))) return;
+  if (!confirm("Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning)) return;
+  $("restart").disabled = true;
+  try {
+    const { d: a } = await api("POST", "/api/restart", { rev: d.rev });
+    $("settings-result").textContent = a.message || a.error || "";
+  } catch (e) {
+    $("settings-result").textContent = "reqcove did not answer: reqcove status says what came of it";
+  }
+  $("restart").disabled = false;
+  setTimeout(loadSettings, 5000);
+}
+
 function setup() {
   for (const id of ["all-for", "disc-for"]) {
     for (const v of DURATIONS) $(id).append(el("option", v));
@@ -231,6 +362,7 @@ function setup() {
   $("stop").onclick = () => change({ cmd: "stop" }, last && last.warnings.stop);
   $("start").onclick = () => change({ cmd: "start" });
   $("save").onclick = save;
+  $("restart").onclick = restart;
   $("all-on").onclick = () => change({ cmd: "allow-all", for: $("all-for").value }, last && "Record every host for " + $("all-for").value + "?\n" + last.warnings.allow_all);
   $("all-end").onclick = () => change({ cmd: "allow-all", end: true });
   $("disc-on").onclick = () => change({ cmd: "discover", for: $("disc-for").value });
@@ -275,6 +407,7 @@ async function start() {
   if (!sessionStorage.getItem(KEY)) return ended("Open the link reqcove console prints in your terminal.");
   setup();
   refresh();
+  loadSettings();
   timer = setInterval(refresh, 5000);
 }
 

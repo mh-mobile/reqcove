@@ -185,7 +185,12 @@ the pid; not tried under them), so you need not know which started it.
   `run` was started from still being there. That path is the one `run` was
   started with (absolute, as services start it, or found on PATH then), links
   kept: Homebrew's `opt/reqcove` is kept, so after `brew upgrade` a restart
-  starts the new version (read from the code; not tried).
+  starts the new version (read from the code; not tried). Then `run` asks
+  that binary itself to check the same config and command line (a hidden
+  check mode of `run`'s: it starts nothing, takes no lock and writes no
+  file), so a newer binary that checks more refuses before anything stops; a
+  binary built before that mode leaves the check to `run`, and the answer
+  says so.
 - **Then it stops as Ctrl-C stops it:** the system's web proxies put back
   (`--local-proxy`), mitmproxy, the node and caffeinate stopped. Devices lose
   the internet until it is up again.
@@ -207,10 +212,13 @@ the pid; not tried under them), so you need not know which started it.
   failed start stays down.
 - **The config names another `--state`:** the new start uses it, and
   `reqcove status --state DIR` for it says how it went.
-- In a terminal only, as `reqcove capture`. A `run` older than v1.3 says to
-  stop it and start it again.
+- In a terminal only, as `reqcove capture`, or from the `reqcove console`
+  page's **Restart…** ([above](#see-the-state-and-approve-in-a-page-reqcove-console)).
+  A `run` older than v1.3 says to stop it and start it again.
 
-Tried: unit tests (the checks; the copy of the start config, after two writes
+Tried: unit tests (the checks; the binary's check: a refusal stopping
+nothing, a binary without the mode, the mode reading a bare run's file and
+leaving no file, lock or state directory; the copy of the start config, after two writes
 and after a write then an edit by hand, after a `capture save` that added the
 hosts file line, with a leftover copy and with `--state` changed; a copy that
 is a link, another user's, not 0600, wrongly named, outside a state directory
@@ -666,8 +674,41 @@ the new hosts file at once, and the next Save writes it. A change made on a
 page that read the hosts before another change (in another tab, or
 `reqcove capture` in a terminal) is refused, and the page shows them as they
 are now. Changes are traced as `capture`'s, "(from the console on this
-computer)": `run`'s log, a `cli` marker and `scope_change`. `capture set`,
-`reqcove reload` and `reqcove restart` stay commands.
+computer)": `run`'s log, a `cli` marker and `scope_change`. `capture set`
+and `reqcove reload` stay commands.
+
+Since v1.3 its **Settings** panel writes `run`'s settings to the `--config`
+file, for the next start, and restarts `run`:
+- `--device` (a list of your own devices on the tailnet, untagged, as
+  `run`'s node sees them: the page writes the device's StableID and shows its
+  name; any other device in your terminal), `--keep-awake`, `--proxy-port`,
+  `--hostname` and `--verbose`;
+- `--ui`, `--mcp-http`, `--local-proxy`, `--dns`, `--upstream-proxy` (a URL,
+  no user or password), a `--device` added, and `--mask-names` (names; one
+  taken out too): the page first shows `run`'s own words for the flag (as
+  `reqcove run -h` gives them) and asks;
+- shown, never written, with the reason: `--upstream-ca` (its path;
+  **Clear** takes it out), `--rules` and `--proto` (their paths),
+  `--mask-values` ("set" and how many, never the patterns), and a setting
+  read from a file (`@FILE`: its path, never what it holds). A setting given
+  on `run`'s command line wins over the file: shown as given there, never
+  written. A `run` started from flags alone (no `--config`) has every setting
+  read-only, and the page says why.
+
+A change goes through the writer `capture save` uses: the values checked (a
+line break, a control character or a leading `@` refused, and every flag but
+these), the config's other lines and comments kept, the file before kept as
+`config.prev`, the whole config checked as the next start would read it. A
+change made on a page that read the config before another change (another
+tab, an edit by hand) is refused. `run`'s log names the flag written, never
+its values. **Restart…** first lists every setting the config on disk has
+otherwise than `run` started with (edits by hand and the terminal's own
+flags included; `--mask-values` and what an `@FILE` holds only as
+"changed"), the records there are now, and that a restart empties them;
+then it asks, and restarts as `reqcove restart` does
+([below](#restart-in-place-reqcove-restart)). An edit made after the list was
+shown is refused, nothing stopped. The page keeps its session across the
+restart.
 
 - **This computer only:** `run` listens on 127.0.0.1, on a port the system
   picks, from the first `reqcove console` until `run` ends (`reqcove restart`
@@ -686,7 +727,8 @@ computer)": `run`'s log, a `cli` marker and `scope_change`. `capture set`,
 - **`reqcove console --end`** (since v1.3) closes every page and ends every
   link not opened yet; the pages say so. `reqcove console` again opens a new
   one. A `run` older than v1.3 says to restart it with v1.3.
-- **Never shown:** the flows' contents, any token, link or login URL, and any
+- **Never shown:** the flows' contents, any token, link or login URL, the
+  `--mask-values` patterns, what an `@FILE` holds, and any
   text from an agent or an MCP client (the hosts it asked for are checked as
   host names first). Discovery's names are shown when they are host names
   (others are left out).
@@ -722,6 +764,17 @@ headless Chromium and Firefox on macOS (2026-11-16). Not tried: the file in
 Safari, Linux's `xdg-open`, the page in another browser, another user of this
 computer, and the Scope panel in a browser (its script, its confirms and
 countdowns are from reading the code).
+
+The Settings panel: unit tests (each setting written through the page and
+read back; a line break, NUL, a leading `@`, another flag in a value, a
+terminal-only flag as the field or a field added, refused, nothing written;
+pinned settings and a flags-only run read-only; the warnings `run -h`'s own,
+refused until confirmed; `--mask-values` in no answer and no log line; a
+page that read the config before an edit refused; the device list the own
+devices alone; the restart's list with an edit by hand of a terminal-only
+flag and a changed `@FILE`, a list made stale refused, the restart asked).
+Not tried: the panel in a browser (its script and confirms are from reading
+the code), the device list on a real tailnet.
 
 ### Use one CA on two computers
 

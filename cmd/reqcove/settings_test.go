@@ -375,13 +375,7 @@ func TestCheckConfigMode(t *testing.T) {
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state-not-made")
 	config := filepath.Join(dir, "config")
-	check := func(args ...string) (string, error) {
-		t.Helper()
-		cmd := exec.Command(os.Args[0], append([]string{"run", checkConfigArg}, args...)...) // TestMain takes it as reqcove does
-		cmd.Env = append(os.Environ(), "HOME="+home)
-		out, err := cmd.CombinedOutput()
-		return string(out), err
-	}
+	var before []string
 	listing := func() []string {
 		var out []string
 		for _, d := range []string{home, dir} {
@@ -392,8 +386,21 @@ func TestCheckConfigMode(t *testing.T) {
 		}
 		return out
 	}
+	// check runs the mode; nothing in HOME or beside the config changes.
+	check := func(args ...string) (string, error) {
+		t.Helper()
+		before = listing()
+		defer func() {
+			if after := listing(); !slices.Equal(before, after) {
+				t.Errorf("%q: files changed:\n%v\n%v", args, before, after)
+			}
+		}()
+		cmd := exec.Command(os.Args[0], append([]string{"run", checkConfigArg}, args...)...) // TestMain takes it as reqcove does
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
 	os.WriteFile(config, []byte("--device=phone\n--allow-hosts=a.example\n--state="+state+"\n"), 0o600)
-	before := listing()
 	if out, err := check("--config", config); err != nil {
 		t.Errorf("a good config: %v %s", err, out)
 	}
@@ -401,7 +408,6 @@ func TestCheckConfigMode(t *testing.T) {
 		t.Errorf("a refused command line: %v %s", err, out)
 	}
 	os.WriteFile(config, []byte("--device=phone\n--state="+state+"\n--web\n"), 0o600)
-	before = listing()
 	out, err := check("--config", config)
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 || !strings.Contains(out, checkPrefix) || !strings.Contains(out, "--web only on the command line") {
 		t.Errorf("a refused config: %v %s", err, out)
@@ -412,12 +418,8 @@ func TestCheckConfigMode(t *testing.T) {
 	bare := filepath.Join(home, ".config", "reqcove", "config")
 	os.MkdirAll(filepath.Dir(bare), 0o700)
 	os.WriteFile(bare, []byte("--device=phone\n--state="+state+"\n"), 0o600)
-	before = listing()
 	if out, err := check(); err != nil {
 		t.Errorf("bare: %v %s", err, out)
-	}
-	if after := listing(); !slices.Equal(before, after) {
-		t.Errorf("files changed:\n%v\n%v", before, after)
 	}
 	if _, err := os.Stat(state); err == nil {
 		t.Error("the state directory made")

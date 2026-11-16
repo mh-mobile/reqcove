@@ -24,4 +24,6 @@ h3 { font-size: .9rem; margin: 1rem 0 .3rem; color: var(--muted); font-weight: 6
 .list button, #scope p button { padding: .1rem .6rem; }
 .left { margin: 0 .5rem; color: var(--muted); }
 input[type=text], select { font: inherit; padding: .2rem .4rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); }
-#scope-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+#scope-result, #settings-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+#settings dd .list, #settings dd p { margin: .2rem 0; }
+#settings button { padding: .1rem .6rem; }
