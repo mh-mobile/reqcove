@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -719,9 +720,7 @@ func TestRestartE2E(t *testing.T) {
 	os.Mkdir(filepath.Join(dir, "bin"), 0o700)
 	link := filepath.Join(dir, "bin", "reqcove")
 	os.Symlink(bin, link)
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
+	port := quietPort(t)
 	state := filepath.Join(dir, "s")
 	config := filepath.Join(dir, "config")
 	start := fmt.Sprintf("--allow-hosts=example.com\n--state=%s\n--proxy-port=%d\n--keep-awake=always\n", state, port)
@@ -947,4 +946,21 @@ func TestRestartCmd(t *testing.T) {
 	if err := restartIn(ctx, r, out, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Errorf("no run: %v", err)
 	}
+}
+
+// quietPort is a free TCP port on 127.0.0.1 outside the systems' ephemeral
+// ranges (Linux from 32768, macOS from 49152), where outgoing connections take
+// their source ports: one picked with :0 and closed could be taken by another
+// test's connection before run binds it (seen on CI: "address already in use").
+func quietPort(t *testing.T) int {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		port := 20000 + rand.IntN(10000)
+		if ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
+			ln.Close()
+			return port
+		}
+	}
+	t.Fatal("no free port in 20000-29999")
+	return 0
 }
