@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`reqcove status` names the other `reqcove` executables on PATH**
+  besides this one ("other reqcove on PATH: /opt/homebrew/bin/reqcove (your
+  shell runs the first one; `type reqcove`)", among the next steps): only
+  executable files (a directory or a file that cannot run is skipped), by
+  their symlinks resolved (this binary through a symlink is not another; one
+  file found twice is named once), none of them run. The text uses your
+  shell's PATH and this binary; `status --json` and `status` (on this
+  computer only, never over `--mcp-http`) give `run`'s, from `run`'s own PATH
+  (a service's may differ). Unit tests.
+
 ## v1.2.0 — 2026-11-16
 
 ### Added

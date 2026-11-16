@@ -388,7 +388,9 @@ through `reqcove mcp`).
   dialog is the client's: whatever answers it for you (hooks can, in Claude Code, as
   reported by others; not tried here) approves. A client that
   declines without showing it leaves the request pending (a test with an
-  in-memory client; a real client's dialog not tried).
+  in-memory client). In Claude Code's terminal CLI (2026-11-16), Esc and
+  Accept with the box unticked left the request pending; ticked, it was
+  approved ("approved in the dialog").
 - **The trace:** each state is a line in `run`'s log; an approval is a
   marker with source `mcp` and `scope_change` ("capture add HOST (asked by an
   agent, approved in the terminal)" or "in the dialog"), as a change of yours
@@ -424,7 +426,10 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   text. Another user of this computer reaches the port (127.0.0.1 is every
   user's) but without a session gets the page's own files alone (tests
   without a session; another user was not tried); a tailnet device or the
-  LAN does not reach 127.0.0.1. The page was not tried in a real browser.
+  LAN does not reach 127.0.0.1. Tried by hand in a Chromium-based browser on
+  macOS (2026-11-16): the page showed the state and the requests, and Approve
+  applied the hosts ("approved in the console"); another browser was not
+  tried.
 - **What it does not guard against:** an agent that can run commands as your
   user: it can run `reqcove console` itself through a pseudo terminal and trade the
   code before you, or write to `ctl.sock` directly, as above (if you then open
