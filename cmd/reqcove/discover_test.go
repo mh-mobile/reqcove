@@ -77,7 +77,7 @@ func TestDiscoverE2E(t *testing.T) {
 	defer c.Stop()
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	defer func() { mcpserver.CaptureAddCmd = "" }()
-	if err := serveCtl(ctx, state, c, &runOpts{}); err != nil {
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))

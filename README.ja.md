@@ -158,7 +158,7 @@ reqcove run --lan --allow-hosts api.example.com
 - IPv6 は拒否し、QUIC は Apple 宛てを除いてドロップします。アプリは IPv4 と TCP にフォールバックします。
 - iPhone から、このコンピュータや LAN には直接届きません。許可したホストへのリクエストを、ルールでそこへ送ることはできます。
 - iPhone が使っている間に reqcove が停止すると、iPhone の DNS が止まったままになることがあります（[tailscale#20870](https://github.com/tailscale/tailscale/issues/20870)）。Exit Node を一度オフにして、オンに戻してください。
-- コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません。
+- コンピュータはスリープさせないでください。`reqcove run` は macOS のアイドルスリープを防ぎますが、蓋を閉じたときのスリープは防げません（v1.2 から、`--keep-awake=ac` で AC 電源のときだけ防ぐようにできます）。
 
 ほかの制限事項は[ガイド](docs/guide.ja.md#制限事項)にあります。
 

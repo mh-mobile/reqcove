@@ -192,6 +192,43 @@ v1.1 から、しばらくの間、記録しているホストの外でデバイ
 
 確認状況：テスト（単体テスト：オンの間だけ名前を取ること、Apple のホスト・mitm.it・不正な名前を除くこと、マスク、上限、mitmproxy が答えないときにどちらの時計でも終わること。本物の mitmproxy での E2E テスト：TLS 接続の SNI とリクエストの Host を、接続ごとに 1 回数えること、Apple のホストを数えないこと、それらを記録しないこと、`--mcp-http` と `--ui` が読むものに出ないこと、始める前と終わったあとは取らないこと、足したホストが一覧から消えること。summarize と status のツール：ローカルのサーバーだけ）。iPhone でも手作業で試しました（Safari、出口ノード経由、`brew services` の `run`、2026-11-16）。サイトのホスト名が、`capture add` のコマンドと一緒に `reqcove status` と `summarize` に出て、そのうち 1 つを足すと記録しました。
 
+#### エージェントにホストを頼ませる（`reqcove capture approve`）
+
+```sh
+reqcove capture requests            # エージェントが頼んだものと、その結果
+reqcove capture approve 0a1b2c3d    # ホストを表示し、y/N を聞いてから足す
+reqcove capture deny 0a1b2c3d       # 断る
+```
+
+v1.2 から、`reqcove mcp` でつないだエージェントは、記録するホストを頼めます（`request_capture_add` ツール）。ホスト名を 1〜5 個です。頼むだけでは何も記録しません。`run` が頼みを、ID と固定したホストと一緒に保ち、エージェントの答えが、あなたが実行するコマンド（`reqcove capture approve 0a1b2c3d` など）を伝えます。エージェントには、それを自分で実行しないよう伝えています。
+
+- **承認**はホストを表示して `Approve? [y/N]` と聞きます。承認になるのは `y` か `yes` だけです。足すのはちょうどそのホストで、`reqcove capture add` と同じです。新しい接続からで、保存せず、復号せずに通すホストはそのまま残し、止めている記録は止めたままです（そのホストは `capture start` が記録するものになります）。ID はそのホストに結びついています。ほかのホストでの承認は拒否します。
+- **クライアントのダイアログ：** エージェントのクライアントがフォームを表示できると伝えたとき（MCP の elicitation）、`reqcove mcp` は新しい頼みについてダイアログも出します。文はすべて Reqcove のものです。ホスト（`run` がホスト名として確かめたもの）、エージェントがその通信をマスクした状態で読むこと（`--no-redact` ではマスクしないと伝えます。`approve` と、頼みのどの表示の `unmasked` も同じです）、保存しないことを伝え、エージェントの言葉は出しません。チェックの欄「Record these hosts」が 1 つあり、はじめはオフです。この欄をオンにして受け入れたときだけ、`approve` と同じく承認します（Claude Code ではカーソルが Accept にあるので、そのまま Enter を押しても承認されません）。断る、閉じる、欄をオフのまま受け入れる、エラー、2 分以内に答えがないときは保留のまま残り、端末か `reqcove console` で承認できます。Claude Code のターミナル版で試しました（2026-11-16）：ダイアログが出て、Esc で保留のまま残り、console で承認できました。チェックの欄は単体テストだけです。同じホストをまた頼まれても、もう一度は出しません。URL の elicitation だけを伝えた（フォームを伝えない）クライアントには出しません。MCP の最新のプロトコルでは、クライアントは 2 回の呼び出しの間にダイアログを出します。その答えが効くのは、`reqcove mcp` がその接続で出したダイアログへの答えで、1 回だけ、どちらの時計でも 2 分以内のときだけです。ほかの答えでは保留のまま残ります。そこでクライアントが失敗すると、エージェントの呼び出しはエラーで終わり、頼みは保留のまま残ります。同じホストをまた頼むと、その ID とコマンドが返ります。
+- **頼めるもの：** ホスト名だけです（英小文字、数字、`-`、`.`。ワイルドカードと IP アドレスは不可）。小文字にし、重複を除き、並べ替えます。拒否するもの：すべて記録済みのホスト、復号せずに通すホスト（`--pass-hosts`）、10 分以内にあなたが断ったホストを 1 つでも含むもの（ほかのホストと一緒でも）、4 つめの保留、10 分で 11 個めの頼み、LAN モードでのすべての頼み。保留の間に同じホストをまた頼むと、同じ頼みを返します。
+- **時間を限ります：** 頼みは作ってから 10 分で期限切れになります。このコンピュータの時計か `run` の経過時間の、早いほうです。終わった頼み（applied、failed、denied、expired）は、`capture requests` と `get_capture_request` のために、さらに 10 分残します。`run` を再起動すると、すべて消えます。
+- **表示する場所：** `reqcove status`（「asked:」とコマンド）、このコンピュータの `status`（`capture_requests`）、エージェントの `get_capture_request`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`）です。`--mcp-http` には、どちらのツールもありません。
+- **痕跡：** 状態が変わるたびに `run` のログに 1 行残ります。承認したときは、source が `mcp` のマーカーと `scope_change` も残ります。どちらも「capture add HOST (asked by an agent, approved in the terminal)」（ダイアログなら「in the dialog」）です。
+- ほかの `capture` のコマンドと同じく、端末でだけ動きます。v1.2 より古い `run` には、v1.2 で起動し直すよう伝えます。
+
+確認状況：テストだけです。単体テスト：受け付けるホストと拒否するホスト、上限、どちらの時計でも期限が切れること、断ったことを残すこと、再起動、ほかのホストでの承認、y/N の確認、v1.1 と v1.0 の `run`、LAN モード、端末の確認、断ったホストをほかのホストと一緒に頼むこと、`--no-redact` でどの表示も `unmasked` になること。ダイアログは、メモリ上のクライアントで、受け入れ・断り・キャンセル・エラー・時間内に答えない・機能なしを、MCP の最新のプロトコルと古いプロトコルで確認。URL の elicitation だけを伝えるクライアント。作った答え、2 回目の答え、ほかの接続からの答え、どちらかの時計で遅れた答え。`initialize` で 2026-07-28 を求める生のクライアント（2025-11-25 と答えられ、SDK の扱いどおり 2 回の呼び出しの間にダイアログを受け取ること）。`--mcp-http` にどちらのツールもないこと。本物の mitmproxy での E2E テスト：`reqcove mcp` から頼み、このコンピュータの status に出て `--mcp-http` の status には出ないこと、承認すると新しい接続を記録すること、`mcp` のマーカーと `scope_change`、止めている間の承認。本物のクライアント（Claude Code、Codex）のダイアログは試していません。
+
+<a id="reqcove-console"></a>
+
+#### ページで状態を見て承認する（`reqcove console`）
+
+```sh
+reqcove console    # 127.0.0.1 のページへのリンクを表示し、ブラウザで開く
+```
+
+v1.2 から、`reqcove console` は動いている `run` に、状態とエージェントの頼みのページを頼み、`open`（macOS）か `xdg-open`（Linux）で開きます。開けなかったときは、表示したリンクを自分で開いてください。ページは `reqcove status` と同じものを 5 秒ごとに更新して表示します。バージョン、`run` のバイナリ、サービス、config とホストのファイル、スリープの扱い（keep awake）、ノードとそのデバイス、記録しているもの（on、stopped、または allow-all といつまでか、とそのホスト）と保留中の変更、次の手順です。待っている頼みも、ホスト、いつまでか、**Approve** と **Deny** と一緒に表示します。Approve はページが表示したホストを `reqcove capture approve` と同じく足し（ほかのホストは `run` が拒否します）、「capture add HOST (asked by an agent, approved in the console)」と残ります。Deny は `reqcove capture deny` です。ページから変えられるのはこれだけです。ホスト、stop と start、save、allow-all、discover はコマンドのままです。
+
+- **このコンピュータだけ：** `run` は 127.0.0.1 で、システムが選ぶポートで待ち受けます。最初の `reqcove console` から `run` が終わるまでです。tailnet のノード、LAN、`--ui` のページでは待ち受けません。LAN モードでも状態は表示します（頼みはそこでは、これまでどおり拒否します）。
+- **リンクは 1 回だけ、60 秒：** リンクは `#` のあとに 1 回だけ使えるコードを持ちます。ページはそれを、そのタブだけに置くセッションに換え（タブを閉じるとブラウザは忘れます。`run` は下の上限まで持ちます）、アドレスバーから消します。もう一度 `reqcove console` を実行すると新しいリンクになります。同じリンクが 2 回開かれると、`reqcove console` のページをすべて閉じ、それを伝えます。ほかの誰かがリンクを持っていたかもしれないからです。同時に開けるのは 4 つまでで（5 つめは、いちばん長く使っていないものを閉じます）、12 時間使わないと閉じ、`run` を再起動するとすべて閉じます。
+- **表示しないもの：** フローの中身、トークン、リンク、ログイン用の URL、エージェントや MCP クライアントからの文（頼まれたホストは、先にホスト名として確かめます）。
+- ほかの `capture` のコマンドと同じく、端末でだけ動きます。v1.2 より古い `run` には、v1.2 で起動し直すよう伝えます。
+
+確認状況：テストだけです。単体テスト：待ち受けが 127.0.0.1 だけであること、間違った Host、ほかのサイトの Origin と Origin なし、JSON でない本文、変更を POST でなく GET や PUT で送ること、セッションなし、間違ったセッション、クッキーだけ、コードが 1 回だけであること、どちらの時計でも 60 秒、2 回使われたコードがすべてのセッションを終えること、4 つのセッション、どちらの時計でも 12 時間の未使用、ほかのホストでの承認の拒否、承認と拒否がページのものとして残ること、どの答えにも CORS のヘッダーがなく CSP、`no-store`、`no-referrer` があること、答えと `run` のログにコードもトークンもないこと、LAN モード、端末の確認、リンクの表示と `open` の代わりに渡すこと、v1.1 の `run`。本物の mitmproxy での E2E テスト：ページの待ち受けを通した承認と、`mcp` のマーカー「approved in the console」。本物のブラウザでは試していません。
+
 ### 2 台のコンピュータで同じ CA を使う
 
 状態ディレクトリが同じであれば、CA も同じままです。秘密鍵を含む `~/.reqcove/mitmproxy/` をディレクトリごと、もう 1 台の `~/.reqcove/` にコピーします。コピー先の reqcove は止めておくか、初めて起動する前にコピーしてください。
@@ -263,7 +300,7 @@ cleanup が自分で行うことと、状態ディレクトリの削除を断る
 ### ツールを許可する
 
 - 読むツールには読み取り専用の注釈（`readOnlyHint`）を付けています。クライアントはこれを使って確認を減らせます（どのクライアントでも確かめていません）。
-- 読み取り専用の注釈を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）と、`add_marker`（書き込むのは Reqcove のメモリだけ）です。
+- 読み取り専用の注釈を付けていないもの：プリセットを有効・無効にするツール（`activate_preset`、`deactivate_preset`）、`add_marker`（書き込むのは Reqcove のメモリだけ）、`request_capture_add`（あなたに頼むだけで、承認するまで何も記録しません）です。
 - Claude Code は許可していないツールを使う前に確認します。読むツールは名前で許可してください（`"mcp__reqcove__list_flows"` など）。`"mcp__reqcove"` でまとめて許可すると、読み取り専用の注釈のないツールも許可されます（プリセットに書いたサーバーへリクエストを送れる `activate_preset`）。Claude Code のドキュメントによるもので、ここでは試していません。
 
 たとえば `.claude/settings.json` に次のように書きます（書き方は Claude Code のドキュメントによるもので、ここでは試していません）。
@@ -276,7 +313,8 @@ cleanup が自分で行うことと、状態ディレクトリの削除を断る
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__request_capture_add", "mcp__reqcove__get_capture_request"],
     "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
@@ -1127,7 +1165,14 @@ Exit Node とのほかの違いは次のとおりです。
 - アップデートのあとは、新しい `reqcove status` がそう伝えます。動いている `run` のバージョンと自分のバージョンを比べ、`run` を起動したものに合わせて、再起動するコマンドを 1 つ示します。それまでは、`brew upgrade` のあとでも、`run` は古いバイナリのまま動き続けます（動いているプロセスは自分のファイルを持ち続けます）。
 - `reqcove status` はほかに、`run` を起動したもの（ターミナル、`reqcove service install` のサービス、`brew services`）と、`run` が読んだ設定ファイルとホストのファイルを表示します。reqcove のサービスが同時に 2 つ入っているときや、`reqcove service install` のサービスが、消えたバイナリやこのバイナリでないものを起動するときは、警告します（`reqcove service install` をもう一度実行すると、このバイナリを指すようにします）。
 - サービスと同じ状態ディレクトリで、ターミナルから `run` を起動すると「使用中」と断られます。先にサービスを止めてください。
-- スリープ：`run` は動いている間、Mac のアイドルスリープを止めます（`caffeinate -i`。バッテリーでも止めるので電池を使います）。ふたを閉じたときや、スリープを選んだときは止められません。
+- スリープ：`run` は動いている間、Mac のアイドルスリープを止めます（`caffeinate -i`。バッテリーでも止めるので電池を使います）。ふたを閉じたときや、スリープを選んだときは止められません。v1.2 から、`--keep-awake` で選べます（設定ファイルにも書けます。変えたときは `reqcove reload` では効かず、再起動が要ります）。
+  - `always`：いままでどおりです（指定しないときもこれです）。
+  - `ac`：AC 電源につないでいる間だけスリープを止めます（`caffeinate -s`）。バッテリーのときは、エネルギーの設定どおりにスリープし、その間、出口ノードを使っている iPhone はインターネットにつながりません。
+  - `never`：Reqcove は何も止めません。エネルギーの設定や `sudo pmset -c sleep 0`（AC 電源のときだけ）でも、Mac 全体に同じことができます。Mac を出口ノードにするとき、Tailscale もこの方法を案内しています。
+
+  Mac を起こしておくほかのアプリ（Amphetamine や、自分で動かした `caffeinate`）とは重なって効きます。Reqcove が何を止めていても、どれか 1 つが止めていれば Mac は起きたままです。誰が何を止めているかは `pmset -g assertions` で、`run` の選んだものは `reqcove status`（「keep awake:」）で確かめられます。ある Mac で見たところ（2026-11-16）、Claude と ChatGPT のデスクトップアプリ（Electron）は、動いている間ずっと `NoIdleSleepAssertion` を持っていました。そのため、`--keep-awake` をどれにしてもアイドルスリープしませんでした。
+
+  確認状況：単体テスト（フラグ、設定ファイル、それぞれの caffeinate の指定、status）。`pmset -g assertions` に 2 つの `caffeinate` が並ぶことも確かめました。AC 電源で `run --keep-awake=ac` を動かすと、caffeinate が持つのは `PreventSystemSleep` で（`always` の `PreventUserIdleSystemSleep` ではなく）、`reqcove status` もそう表示しました。`ac` と `never` での実際のスリープは試していません。
 
 確認状況：`reqcove status` がそれぞれの場合に表示するもの（v1.0.0 の `run` と新しい CLI、それぞれのサービス、同時に 2 つのサービス、消えたバイナリや別のバイナリ）を、一時的なホームディレクトリにサービスのファイルを書いて、単体テストで確かめました。手作業では試していません：v1.1 での、この表の流れ（サービスが動いている間の `brew upgrade`、インストール済みのところへの `reqcove service install`）。
 
@@ -1342,6 +1387,8 @@ iPhone で確認したもの：`--mask-names`、RoamRun で操作したあとの
 | `explain_rules` | フロー（`flow_id`）や、メソッドと URL が、どのルールを受けたか（受けるか）と理由。範囲、書き換え、モック、有効なプリセットと、無効なものを有効にしたらどうなるか。メソッドと URL だけでは決められないフィルターのルールは `cannot_tell` に。何も送らず、プリセットの回数も使わない。`--mcp-http` からは使えない |
 | `add_marker` | [マーカー](#マーカーを置くreqcove-mark)を置く（`text` は 1 行で 80 文字まで、マスクする）。`id`、`time`（`since` 用）、`checkpoint`（`wait_for_flows` の `after` 用）を返す。デバイスの側は何も変わらない。`--mcp-http` からは使えない |
 | `list_markers` | マーカーを古い順に（`since`）。`source` は `cli`（`reqcove mark`）か `mcp`（エージェント）。`--mcp-http` からは使えない |
+| `request_capture_add` | ホスト名を 1〜5 個、記録するようあなたに頼む。承認するまで何も記録しない（[使い方](#エージェントにホストを頼ませるreqcove-capture-approve)）。`reqcove mcp` だけ（v1.2 から） |
+| `get_capture_request` | 頼み（`id`）の結果：`pending`、`applied`、`denied`、`expired` など。`reqcove mcp` だけ（v1.2 から） |
 
 ### WebSocket のメッセージ（`list_ws_messages`）
 

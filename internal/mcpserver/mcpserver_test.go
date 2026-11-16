@@ -143,7 +143,7 @@ func TestServeAndProxy(t *testing.T) {
 	}
 	// The agent side: in-memory transports stand in for `reqcove mcp`'s stdio.
 	ct, pt := mcp.NewInMemoryTransports()
-	go Proxy(ctx, sock, "down", pt)
+	go Proxy(ctx, sock, "down", nil, pt)
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		t.Fatal(err)

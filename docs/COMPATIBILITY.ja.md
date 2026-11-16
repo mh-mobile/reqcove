@@ -38,6 +38,8 @@ v1.0.0 から、バージョンは `major.minor.patch`（[セマンティック 
 
 `status`、`list_flows`、`wait_for_flows`、`search_flows`、`summarize`、`get_flow`、`list_ws_messages`、`diff_flows`、`list_devices`、`list_tls_failures`、`list_passthrough`、`capture_stats`、`list_presets`、`activate_preset`、`deactivate_preset`、`list_rules`、`explain_rules`、`add_marker`、`list_markers`
 
+v1.2 から、`reqcove mcp` だけに `request_capture_add`（`hosts`：ホスト名 1〜5 個）と `get_capture_request`（`id`）もあり、そこでは 21 個です。`run` のソケット自身の一覧にはなく、`--mcp-http` にもありません。どちらも頼みを返します：`id`、`hosts`、`state`（`pending`、`approved`、`applied`、`failed`、`denied`、`expired`。値は増えることがあります）、`created_at` と `expires_at`（RFC 3339）、`approved_in`（`terminal` か `dialog`。`reqcove console` からは `console` も）、`result`（人が読むための文）、`approve`（保留の間、ユーザーが実行するコマンド）、`unmasked`（`run` が何もマスクしないとき、`--no-redact` で true）、`note`。
+
 `--mcp-http` から使えるのは最初の 12 個（`status` から `capture_stats` まで）で、プリセット、ルール、マーカーのツールは使えません。`--mcp-http` の `status` には `active_presets` と `active_presets_error` がありません。そのサーバーは `/mcp` で答えます。ポートはノードの 8090 番です。認証は `Authorization: Bearer` で、トークンは `mcp-token`（下の状態ディレクトリ）にあります。
 
 v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除しました。
@@ -64,6 +66,8 @@ v1.0.0 では、v0.8.0 から非推奨にしていた v0.6 の名前を削除し
 - v1.1 から、`recording`：`on` か `stopped`（`reqcove capture stop` から `capture start` まで。値は今後増えることがあります）。止めている間、`allow_hosts` は `[]` で、`pass_hosts` はありません（何も記録しません）。`base_allow_hosts` と `base_pass_hosts` は、記録しているときに記録するホストです（ないときはフィールドもありません）。止めている間は、`start` で記録するホストです。v1.1 より前の `run` にはありません。
 - v1.1 から、`recording` は `allow-all` にもなります（`reqcove capture allow-all --for D` から、終わるまで）。その間 `allow_hosts` は `["*"]`、`pass_hosts` は復号せずに通したままのホスト、`base_allow_hosts` は終わったあとに記録するホストです。`allow_all_until`（RFC 3339）と `allow_all_left`（`29m10s` のような Go の duration）が終わる時刻を伝えます。オフのときはありません。`records_outside_scope` は、残っている記録のうち、ホストが `base_allow_hosts` の外にあるものの数です（allow-all の間の記録で、終わったあとも残るもの、またはあとで外したホストのもの）。ないときはフィールドもありません。
 - v1.1 から、`run` 自身について：`version`（`reqcove version` が表示するもの。`serverInfo` のものと同じ）、`manager`（起動したもの：`terminal`、`reqcove service install` の LaunchAgent かユニットなら `reqcove service`、`brew services`。値は増えることがあります。見分けられないときはありません）、`restart_command`（サービスの下で再起動するコマンド。`brew services restart reqcove` など。そのサービスが `run` と別のバイナリや、もうないバイナリを動かすときは `reqcove service install`。ターミナルから起動したときはありません）。さらにこのコンピュータでだけ（`--mcp-http` ではなし）、`config_file`（読んだ `--config` のファイル、フルパス。フラグだけのときはありません）、`config_unused`（引数なしの `run` が見つけて読まなかった、もう 1 つの設定ファイル）、`hosts_files`（`--allow-hosts=@FILE` と `--pass-hosts=@FILE` が読んだファイル）。v1.1 より古い `run` にはありません。そのとき `reqcove status` はバージョンを `serverInfo` から取ります。
+- v1.2 から、このコンピュータでだけ（`--mcp-http` ではなし）：`executable`（`run` のバイナリ。シンボリックリンクはたどった先）と、macOS では `keep_awake`（`always`、`ac`、`never`）。v1.2 より古い `run` にはありません。
+- v1.2 から、このコンピュータでだけ（`--mcp-http` ではなし）：`capture_requests`。ユーザーを待っているエージェントの頼みです（それぞれ `get_capture_request` が返すもので、`note` はなし）。ないときはフィールドもありません。
 - v1.1 から、このコンピュータだけで（`--mcp-http` では返しません）、ホストの発見（`reqcove capture discover`）について：オンの間の `discover_until`（RFC 3339）と `discover_left`。`out_of_scope_hosts`（各要素に `host`、`count`、それを記録するコマンドの `add`。`add` は普通のホスト名でないときはありません。多い順に最大 30 件）と、残している名前の数の `out_of_scope_hosts_kept`。ないときはフィールドもありません。`summarize` も同じ `out_of_scope_hosts` を返します。フィルターでは絞りません。
 - `node`：`backend`、`node`、`ips`、`exit_node_approved`、`tailnet_lock`、`tailnet_lock_signed`、`node_key`、`devices`、`device_os`、`device_problems`、`health`。`backend` の値と `health` の文は Reqcove ではなく Tailscale のものなので、変わらないとは約束しません。
 - `lan`（LAN モードのときだけ）：`interface`、`network`、`listen`、`stopped`、`allowed`（各要素に `addr` と `allowed_at`）、`refused`、`refused_more`。
@@ -93,7 +97,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 
 | コマンド | フラグ |
 |---|---|
-| `reqcove run` | `--device`、`--allow-hosts`、`--pass-hosts`、`--rules`、`--rules-reload`、`--proto`、`--upstream-proxy`、`--upstream-ca`、`--local-proxy`、`--proxy-port`、`--lan`、`--lan-interface`、`--ui`、`--web`、`--mcp-http`、`--dns`、`--no-redact`、`--mask-names`、`--mask-values`、`--state`、`--hostname`、`--verbose`、`--config` |
+| `reqcove run` | `--device`、`--allow-hosts`、`--pass-hosts`、`--rules`、`--rules-reload`、`--proto`、`--upstream-proxy`、`--upstream-ca`、`--local-proxy`、`--proxy-port`、`--lan`、`--lan-interface`、`--ui`、`--web`、`--mcp-http`、`--dns`、`--no-redact`、`--mask-names`、`--mask-values`、`--state`、`--hostname`、`--verbose`、`--config`、`--keep-awake`（v1.2） |
 | `reqcove status` | `--json`、`--state` |
 | `reqcove har` | `--host`、`--device`、`--since`、`--until`、`--status`、`--method`、`--user-agent`、`--limit`、`--state`（HAR 1.2 のファイルを標準出力へ） |
 | `reqcove links` | `--state` |
@@ -105,6 +109,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture save`（v1.1 から） | `--state` |
 | `reqcove capture allow-all`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove capture discover`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
+| `reqcove capture requests`、`capture approve ID`、`capture deny ID`（v1.2 から） | `--state` |
+| `reqcove console`（v1.2 から） | `--state` |
 | `reqcove reload`（v1.1 から） | `--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
 | `reqcove setup` | なし |
@@ -116,6 +122,8 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove version` | なし |
 
 `--uvx`、`--python`、`--mitmproxy-spec` は変わりうるので、この一覧に入れていません（[下記](#変わりうるもの)）。
+
+`reqcove console`（v1.2 から）は、`ctl.sock` の新しい op `console` で `run` に頼みます。v1.2 より古い `run` はこれに使い方の説明で答え、`reqcove console` は `run` を v1.2 以降で起動し直すよう伝えます（v1.1 の答えを使う単体テストで確認）。ページのリンク（`http://127.0.0.1:PORT/#c=CODE`）と表示する内容、ページから `run` への要求は変わりうるものです（[下記](#変わりうるもの)）。
 
 ### `--config` のファイル
 
@@ -153,6 +161,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - Reqcove が動かす mitmproxy と Python のロック（`internal/capture/mitm.py.lock`）：セキュリティ修正のため、どのリリースでも更新します。どのリリースがどのバージョンの mitmproxy を動かすかは約束しません。
 - `--uvx`、`--python`、`--mitmproxy-spec`（`run` のもの。`--uvx` は `status` と `mock add` のものも）とその既定値：mitmproxy をどう動かすか（uv、Python、mitmproxy のバージョン）を選ぶもので、mitmproxy と uv に従います。
 - 上に挙げていない `capture_stats` のフィールド：`held_bytes`、`restarts`、`state_detail`、`tls_failures`、`passed_through_open`、`addon_dropped_bodies`、`addon_dropped_events`、`bad_lines`、`masking_failed`、`unknown_version`、`orphan_updates`、`all_hosts`、`brotli`、`brotli_decode`、`zstd_decode`、`rules`、`rules_error`、`resolve`、`upstream`。マイナーリリースで変わったりなくなったりします。
+- `reqcove console` のページ：ポート、レイアウト、`/api/` の要求とその答え。
 - `poc/` フォルダ：メンテナーのメモで、リポジトリには入っていません。
 - そのほか、このページで変わらないとしていないもの。
 
@@ -161,7 +170,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 - MCP サーバーは、エージェントがつないだときに自分のバージョンを伝えます（`serverInfo`：名前は `reqcove`、バージョンは `reqcove version` が出すもの）。ソケット、`reqcove mcp`、`--mcp-http` のどれでも同じです。
 - `reqcove mcp` が示すのは、つなぐ先の `run` ではなく自分のバージョンのツールで、出力スキーマは付けません。別のバージョンの `run` の答えがスキーマで拒否されないようにするためです。
 - `run` のバージョンが `reqcove mcp` と違うと、つないで最初の答えに注記が付きます。注記は両方を同じバージョンにすることと、新しいほうで `reqcove run` を起動し直し、エージェントの MCP サーバーをつなぎ直すことを伝えます。
-- この `reqcove mcp` にあって `run` にないツールのうち、プリセット、ルール、マーカーのツールは、動いている reqcove のそのバージョンにはそのツールがない、と答えます。それ以外のツールには、知らないツールだという `run` 自身のエラーがそのまま返ります。
+- この `reqcove mcp` にあって `run` にないツールのうち、プリセット、ルール、マーカーのツールは、動いている reqcove のそのバージョンにはそのツールがない、と答えます。それ以外のツールには、知らないツールだという `run` 自身のエラーがそのまま返ります。v1.2 より古い `run` に対する `request_capture_add` と `get_capture_request` は、その `run` には頼みの仕組みがないので v1.2 以降で起動し直すよう答えます（単体テストで確認）。
 - これらの注記のほかに、バージョンの混在はサポートしません。`reqcove run` と `reqcove mcp` は同じバージョンで動かしてください。v1.0.0 の `reqcove mcp` には、古い `run` につないでも `list_mock_presets`、`activate_mock`、`deactivate_mock` はありません。これらを `run` や `reqcove mcp` で呼ぶと、代わりのツールの名前を書いたエラーが返ります。v1.0.0 の `reqcove status` は、古い `run` の `active_mock_presets` と `mock_presets` も読みます。v0.6 や v0.7 の `reqcove status` は古い名前しか読まないので、v1.0.0 の `run` につなぐと、有効なプリセットを表示しません（コードから判断したもの）。そのバージョンの `reqcove mcp` は、`run` の答えをそのまま渡します。
 
 確認状況：テストで確かめたのは、出力スキーマを付けないツールの一覧、バージョンが違うときの注記、`run` にないツールへの 2 通りの答え、削除したツールを呼んだときのエラー、v1.0.0 の `reqcove status` が古い `run` のフィールドを読むことです。

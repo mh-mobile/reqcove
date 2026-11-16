@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.2.0 — 2026-11-16
+
+### Added
+
+- **`reqcove run` with arguments but without `--device` or `--config`**,
+  while the file a bare run reads is there: the error says that file is not
+  read when run has arguments, and to add `--config FILE`. Unit test.
+- **An agent asks, you approve: `request_capture_add`** (a tool of
+  `reqcove mcp` alone, never `run`'s socket nor `--mcp-http`) asks for 1 to
+  5 host names to be recorded; it records nothing itself. `run` keeps the
+  request (an id, the hosts fixed, 10 minutes by either clock, dropped at a
+  restart; 3 pending, 10 made in 10 minutes; the same hosts asked again give
+  the same request; refused when all are recorded already, passed
+  undecrypted, or in LAN mode, and when any host in it was denied in the last
+  10 minutes, alone or with others). **`reqcove capture requests`, `capture
+  approve ID`** (shows the hosts, asks y/N) **and `capture deny ID`**, in a
+  terminal only; an approval adds exactly those hosts as `capture add` does
+  (not saved, never starts a stopped recording). A client that declares MCP
+  form elicitation also gets a dialog with Reqcove's text alone and one box,
+  "Record these hosts", off at first (accept with it ticked approves, so
+  Enter on Accept alone does not; decline, close, accept without the box or
+  2 minutes without an answer leave it pending;
+  over MCP's newest protocol its answer counts only for a dialog shown on
+  that connection, once, within 2 minutes by either clock).
+  Every view of a request says `unmasked` under `--no-redact`.
+  `get_capture_request` says what came of it; `status` (on this computer)
+  gives `capture_requests`, `reqcove status` "asked:". Traced in `run`'s log,
+  and on approval as a marker with source `mcp` and `scope_change`. Unit and
+  E2E tests; a real client's dialog not tried.
+- **`reqcove console`: the state and the agents' requests in a page.** In a
+  terminal only, it asks `run` (a new `ctl.sock` op) for a page on 127.0.0.1
+  alone (a port the system picks, kept until `run` ends) and a one-use code
+  good for 60 seconds, prints `http://127.0.0.1:PORT/#c=CODE` and opens it
+  (`open`, `xdg-open`). The page trades the code for a session token sent
+  as a header (no cookie; at most 4, ended after 12 hours idle and at
+  `run`'s end; a code used twice ends them all) and shows what
+  `reqcove status` shows, refreshed every 5 seconds, and the requests
+  waiting with Approve (as `capture approve`, for the hosts asked only;
+  traced "approved in the console", `approved_in: console`) and Deny. Never the
+  flows, a token or link, or an agent's text. Exact Host, same Origin, JSON
+  POSTs, no CORS, CSP `default-src 'self'` and `frame-ancestors 'none'`,
+  `no-store`. A `run` older than v1.2 says to restart it. Unit and E2E
+  tests; not tried in a real browser.
+- **`--keep-awake=always|ac|never`** (macOS; in the config file too): what
+  `run` does about sleep. `always` is the default and v1.1's behaviour
+  (`caffeinate -i`: no idle sleep, on battery too); `ac` holds it on AC power
+  only (`caffeinate -s`); `never` holds nothing (the Energy settings decide).
+  `reqcove status` shows it ("keep awake:"), and `status` (on this computer)
+  gives `keep_awake`; `reqcove reload` names it as needing a restart. Unit
+  tests; a real sleep not tried.
+- **`reqcove status` names `run`'s binary when it is not this one**
+  ("binary:"), even at the same version: a `reqcove` built from source and
+  Homebrew's on one Mac run whichever PATH finds first. `status` (on this
+  computer only) gives `executable`. Unit tests.
+
 ## v1.1.0 — 2026-11-16
 
 ### Added

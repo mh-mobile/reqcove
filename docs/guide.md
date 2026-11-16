@@ -456,6 +456,129 @@ a host added dropping off; the summarize and status tools: on the local
 server alone), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): a site's names listed in `reqcove status`
 and `summarize` with their `capture add` command, one added and then recorded.
 
+#### Let an agent ask for a host (`reqcove capture approve`)
+
+```sh
+reqcove capture requests            # what agents asked, and what came of it
+reqcove capture approve 0a1b2c3d    # shows the hosts, asks y/N, then adds them
+reqcove capture deny 0a1b2c3d       # refuses it
+```
+
+Since v1.2, an agent connected through `reqcove mcp` can ask for hosts to be
+recorded (the `request_capture_add` tool): 1 to 5 host names. It records
+nothing by itself. `run` keeps the request, with an id and its hosts fixed,
+and the agent's answer gives you the command to run, such as
+`reqcove capture approve 0a1b2c3d`. The agent is told never to run it.
+
+- **Approve** shows the hosts and asks `Approve? [y/N]`; only `y` or `yes`
+  approves. It adds exactly those hosts, as `reqcove capture add` does:
+  new connections only, not saved, the hosts passed undecrypted kept, and a
+  stopped recording stays stopped (the hosts are the ones `capture start`
+  records). The id is bound to its hosts: an approval for other hosts is
+  refused.
+- **The client's dialog:** when the agent's client says it can show a form
+  (MCP elicitation), `reqcove mcp` also shows one for a new request. Its text
+  is Reqcove's: the hosts (run's, checked as host names), that agents will
+  read their traffic, masked (unmasked, it says, under `--no-redact`; so does
+  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. It has one box, "Record these hosts", off at
+  first: accept with the box ticked approves it as `approve` does (Enter on
+  Accept alone, where Claude Code's cursor starts, approves nothing). Decline,
+  close it, accept without the box, an error or no answer within 2 minutes
+  leaves it pending, for the terminal or `reqcove console`. Tried in Claude
+  Code's terminal (2026-11-16): the dialog shows, Esc leaves it pending, the
+  console approves it; the box, by unit tests only. It is not
+  shown again when the agent asks again for the same hosts. A client that
+  declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
+  protocol the client shows the dialog between two calls: its answer counts
+  only for a dialog `reqcove mcp` showed on that connection, once, within 2
+  minutes by either clock; any other answer leaves the request pending. If
+  the client fails there, the agent's call ends in an error and the request
+  stays pending: asking again for the same hosts gives its id and command.
+- **What is asked:** host names only (letters, digits, `-` and `.`; no
+  wildcard, no IP address), lowercased, each once, sorted. Refused: hosts all
+  recorded already, a host passed undecrypted (`--pass-hosts`), any host
+  you denied in the last 10 minutes (alone or with other hosts), a 4th pending request, an 11th made in
+  10 minutes, and any in LAN mode. Asking again for the same hosts while
+  pending gives the same request.
+- **Time-limited:** a request expires 10 minutes after it was made, by this
+  computer's clock or by `run`'s running time, whichever comes first. One
+  that ended (applied, failed, denied, expired) is kept 10 minutes more for
+  `capture requests` and `get_capture_request`. A restart of `run` drops
+  them all.
+- **Where it shows:** `reqcove status` ("asked:", with the command), this
+  computer's `status` (`capture_requests`), and the agent's
+  `get_capture_request` (`pending`, `approved`, `applied`, `failed`,
+  `denied`, `expired`). Never over `--mcp-http`, which has neither tool.
+- **A trace:** each state is a line in `run`'s log; an approval is also a
+  marker with source `mcp` and `scope_change`, both "capture add HOST (asked
+  by an agent, approved in the terminal)" (or "in the dialog").
+- As the other `capture` commands: in a terminal only, and a `run` older than
+  v1.2 says to restart it with v1.2.
+
+Tried by tests only: unit (the hosts taken and refused, the limits, expiry
+by either clock, the denial kept, a restart, an approval for other hosts, the
+y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check, a denied
+host asked with another, `unmasked` in every view under `--no-redact`; the
+dialog with an in-memory client accepting, declining, cancelling, failing,
+not answering in time, or without the capability, over MCP's newest
+protocol and older ones; a client declaring URL elicitation alone; an answer
+made up, replayed, from another connection, or late by either clock; a raw
+client asking 2026-07-28 in `initialize` (answered 2025-11-25, and given the
+dialog between two calls, as the SDK treats it); neither tool over `--mcp-http`), and E2E with real
+mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
+not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
+marker and `scope_change`; approved while stopped). A real client's dialog
+(Claude Code, Codex) was not tried.
+
+#### See the state and approve in a page (`reqcove console`)
+
+```sh
+reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
+```
+
+Since v1.2, `reqcove console` asks the running `run` for a page of its state and
+of the agents' requests, and opens it with `open` (macOS) or `xdg-open`
+(Linux); when that fails, open the printed link yourself. The page shows
+what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
+binary, the service, the config and hosts files, keep awake, the node and its
+devices, what is recorded (on, stopped, or allow-all and until when, with the
+hosts) and a change pending, and the next steps; and the requests waiting,
+each with its hosts, until when, and **Approve** and **Deny**. Approve adds
+the hosts the page showed, as `reqcove capture approve` does (`run` refuses
+other hosts), traced "capture add HOST (asked by an agent, approved in the
+console)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
+the hosts, stop and start, save, allow-all and discovery stay commands.
+
+- **This computer only:** `run` listens on 127.0.0.1, on a port the system
+  picks, from the first `reqcove console` until `run` ends; never on the tailnet
+  node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
+  requests are refused there, as ever).
+- **The link works once, for 60 seconds:** it carries a one-use code after
+  `#`, which the page trades for a session kept in that tab alone (the
+  browser forgets it when the tab closes; `run` keeps it until the limits
+  below) and then takes out of the address bar. `reqcove console` again
+  gives a new link. A link opened a second time closes every page of
+  `reqcove console` and says so: someone else may have had it. At most 4 pages
+  at once (a 5th closes the one used least recently); one unused for 12
+  hours closes; a restart of `run` closes them all.
+- **Never shown:** the flows' contents, any token, link or login URL, and any
+  text from an agent or an MCP client (the hosts it asked for are checked as
+  host names first).
+- In a terminal only, as the `capture` commands; a `run` older than v1.2 says
+  to restart it with v1.2.
+
+Tried by tests only: unit (the listener on 127.0.0.1 only; a wrong Host, a
+cross-site or missing Origin, a body other than JSON, a GET or PUT where a
+change is a POST, no session, a wrong one, a cookie alone, the code once,
+60 seconds by either clock, a code used twice closing every session, 4
+sessions, 12 hours idle by either clock; an approval for other hosts refused,
+approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
+`no-referrer` on every answer; no code or token in the answers or `run`'s
+log; LAN mode; the terminal check, the link printed and handed to a stand-in for `open`, a v1.1
+`run`), and E2E with real mitmproxy (approved in the console through its
+listener, the `mcp` marker "approved in the console"). The page was not tried
+in a real browser.
+
 ### Use one CA on two computers
 
 The CA lasts as long as the state directory. Copy `~/.reqcove/mitmproxy/` whole
@@ -580,8 +703,9 @@ What the tools can do:
 - The tools that read are marked read-only (`readOnlyHint`). A client may use
   that to ask less (not checked with any client).
 - Not marked read-only: the tools that turn presets on and off
-  (`activate_preset`, `deactivate_preset`), and `add_marker` (a write to
-  Reqcove's memory only).
+  (`activate_preset`, `deactivate_preset`), `add_marker` (a write to
+  Reqcove's memory only), and `request_capture_add` (it asks you; it records
+  nothing until you approve).
 - Claude Code asks before a tool it has not been allowed. Allow the read tools
   by name (`"mcp__reqcove__list_flows"` and so on), not `"mcp__reqcove"`:
   that also allows the ones not marked read-only (`activate_preset`, which can
@@ -599,7 +723,8 @@ documentation; not tried here):
               "mcp__reqcove__list_ws_messages", "mcp__reqcove__diff_flows", "mcp__reqcove__list_tls_failures",
               "mcp__reqcove__list_passthrough", "mcp__reqcove__list_devices", "mcp__reqcove__capture_stats",
               "mcp__reqcove__list_presets", "mcp__reqcove__list_rules", "mcp__reqcove__explain_rules",
-              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker"],
+              "mcp__reqcove__list_markers", "mcp__reqcove__add_marker",
+              "mcp__reqcove__request_capture_add", "mcp__reqcove__get_capture_request"],
     "ask": ["mcp__reqcove__activate_preset", "mcp__reqcove__deactivate_preset"]
   }
 }
@@ -2303,7 +2428,29 @@ no internet; turn the exit node off then.
   use: stop the service first.
 - **Sleep**: `run` keeps the Mac from idle sleep while it runs
   (`caffeinate -i`, also on battery: it drains it), not from closing the lid
-  or choosing Sleep.
+  or choosing Sleep. Since v1.2, `--keep-awake` chooses (in the config file
+  too; a restart takes a change, not `reqcove reload`):
+  - `always` (the default, as before);
+  - `ac`: no sleep while on AC power (`caffeinate -s`); on battery the Mac
+    sleeps as the Energy settings say, and a phone using its exit node has
+    no internet meanwhile;
+  - `never`: Reqcove holds nothing. The Energy settings, or `sudo pmset -c
+    sleep 0` (on AC power only), do the same for the whole Mac, as Tailscale
+    suggests for a Mac exit node.
+
+  Other apps that keep the Mac awake (Amphetamine, a `caffeinate` of yours)
+  add up with it: whatever Reqcove holds, the Mac stays awake while one of
+  them does. `pmset -g assertions` lists who holds what; `reqcove status`
+  shows `run`'s choice ("keep awake:"). Seen on a Mac (2026-11-16): the
+  Claude and ChatGPT desktop apps (Electron) held `NoIdleSleepAssertion`
+  for as long as they ran, so it did not idle-sleep whatever `--keep-awake`
+  said.
+
+  Tried: unit tests (the flag, the config file, caffeinate's assertion for
+  each, status); two `caffeinate` assertions seen side by side in `pmset -g
+  assertions`; `run --keep-awake=ac` on AC power holding `PreventSystemSleep`
+  (not `always`'s `PreventUserIdleSystemSleep`) and `reqcove status` saying
+  so. Not tried: a real sleep with `ac` or `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or
@@ -2636,6 +2783,8 @@ with no run, by a unit test.
 | `explain_rules` | why a flow (`flow_id`), or a method and URL, got or would get which rules: the scope, then the rewrites, a mock, the presets on and what one off would do; rules whose filter reads more than a method and URL in `cannot_tell`. Sends nothing, uses no preset's count. Not over `--mcp-http` |
 | `add_marker` | a [marker](#mark-a-moment-reqcove-mark) (`text`, at most 80 characters, one line, masked); returns `id`, `time` (for `since`) and `checkpoint` (for `wait_for_flows`' `after`). Changes nothing on the device. Not over `--mcp-http` |
 | `list_markers` | the markers, oldest first (`since`), with `source`: `cli` (`reqcove mark`) or `mcp` (an agent). Not over `--mcp-http` |
+| `request_capture_add` | ask you to record 1 to 5 more host names; records nothing until you approve it ([how](#let-an-agent-ask-for-a-host-reqcove-capture-approve)). `reqcove mcp` only (since v1.2) |
+| `get_capture_request` | what came of a request (`id`): `pending`, `applied`, `denied`, `expired`… `reqcove mcp` only (since v1.2) |
 
 ### WebSocket messages (`list_ws_messages`)
 

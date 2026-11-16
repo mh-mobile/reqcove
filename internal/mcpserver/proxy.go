@@ -21,8 +21,9 @@ import (
 // Proxy serves New's tools on t (the agent's stdio, for `reqcove mcp`) and
 // forwards each call to the `run` serving the socket at sock, dialling it when
 // needed. The agent stays connected while `run` restarts or is not running:
-// a call then answers notRunning, as a tool error.
-func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error {
+// a call then answers notRunning, as a tool error. With reqs, it also serves
+// request_capture_add and get_capture_request, its own: never mcp.sock's.
+func Proxy(ctx context.Context, sock, notRunning string, reqs Requests, t mcp.Transport) error {
 	tools, err := toolList(ctx)
 	if err != nil {
 		return err
@@ -36,6 +37,9 @@ func Proxy(ctx context.Context, sock, notRunning string, t mcp.Transport) error 
 		// checked against this one's output schemas.
 		tool.OutputSchema = nil
 		s.AddTool(tool, p.call)
+	}
+	if reqs != nil {
+		addRequestTools(s, reqs)
 	}
 	return s.Run(ctx, t)
 }

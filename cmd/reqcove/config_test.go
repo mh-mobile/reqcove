@@ -194,6 +194,11 @@ func TestBareRun(t *testing.T) {
 	if err != nil || !slices.Equal(o.devices, []string{"mine"}) || o.config != defaultConfig() || o.configUnused != brew {
 		t.Fatalf("both: %+v %v", o, err)
 	}
+	// Arguments without --device or --config: the file is not read, and the
+	// error says how to read it.
+	if _, err := parseRunFlags([]string{"--keep-awake=ac", "--state", filepath.Join(home, "st")}); err == nil || !strings.Contains(err.Error(), defaultConfig()+" is not read when run has arguments: add --config "+defaultConfig()) {
+		t.Errorf("arguments, the file there: %v", err)
+	}
 	o, err = parseRunFlags([]string{"--device", "flags", "--state", filepath.Join(home, "st")})
 	if err != nil || !slices.Equal(o.devices, []string{"flags"}) || o.config != "" {
 		t.Errorf("flags only: %+v %v", o, err)
@@ -225,5 +230,32 @@ func TestStatusService(t *testing.T) {
 func TestReadConfigMissing(t *testing.T) {
 	if _, _, err := readConfig(filepath.Join(t.TempDir(), "config")); err == nil || !strings.Contains(err.Error(), "reqcove setup writes it") {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+// --keep-awake: always by default (as v1.0), ac and never, in a config file
+// too; another value refused; caffeinate's assertion for each.
+func TestKeepAwake(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := tailscaleStatus
+	t.Cleanup(func() { tailscaleStatus = old })
+	tailscaleStatus = func() ([]byte, error) { return nil, os.ErrNotExist }
+	st := filepath.Join(home, "st")
+	if o, err := parseRunFlags([]string{"--device", "p", "--state", st}); err != nil || o.keepAwake != "always" {
+		t.Errorf("default: %+v %v", o, err)
+	}
+	cfg := filepath.Join(home, "config")
+	os.WriteFile(cfg, []byte("--device p\n--keep-awake=ac\n--state "+st+"\n"), 0o600)
+	if o, err := parseRunFlags([]string{"--config", cfg}); err != nil || o.keepAwake != "ac" {
+		t.Errorf("config file: %+v %v", o, err)
+	}
+	if _, err := parseRunFlags([]string{"--device", "p", "--state", st, "--keep-awake", "sometimes"}); err == nil || !strings.Contains(err.Error(), "always, ac or never") {
+		t.Errorf("refused: %v", err)
+	}
+	for mode, want := range map[string]string{"always": "-i", "ac": "-s", "never": ""} {
+		if got := caffeinateFlag(mode); got != want {
+			t.Errorf("%s: %q, want %q", mode, got, want)
+		}
 	}
 }

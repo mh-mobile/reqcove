@@ -58,6 +58,15 @@ On this computer (`reqcove mcp`, and `run`'s socket), 19 tools:
 `activate_preset`, `deactivate_preset`, `list_rules`, `explain_rules`,
 `add_marker`, `list_markers`.
 
+Since v1.2, `reqcove mcp` alone also has `request_capture_add` (`hosts`: 1
+to 5 host names) and `get_capture_request` (`id`), 21 tools there: never on
+`run`'s socket's own list, never over `--mcp-http`. Both answer a request:
+`id`, `hosts`, `state` (`pending`, `approved`, `applied`, `failed`,
+`denied`, `expired`; more values may come), `created_at` and `expires_at`
+(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`), `result` (text for
+people), `approve` (while pending, the command the user runs), `unmasked`
+(true while `run` masks nothing, `--no-redact`) and `note`.
+
 Over `--mcp-http`, the first twelve (`status` to `capture_stats`), never the
 preset, rule and marker tools; its `status` has no `active_presets` or
 `active_presets_error`. Its server answers at `/mcp`, on the node's port
@@ -135,6 +144,12 @@ exits 1, saying why on stderr. Its fields:
   `hosts_files` (the files `--allow-hosts=@FILE` and `--pass-hosts=@FILE`
   read). Absent from a run older than v1.1: `reqcove status` takes the
   version from `serverInfo` then.
+- Since v1.2, on this computer only (not over `--mcp-http`): `executable`
+  (`run`'s binary, its symlinks resolved) and, on macOS, `keep_awake`
+  (`always`, `ac` or `never`). Absent from a run older than v1.2.
+- Since v1.2, on this computer only (not over `--mcp-http`):
+  `capture_requests`, the agents' requests waiting for the user (each as
+  `get_capture_request` answers it, without `note`); absent when none.
 - Since v1.1, on this computer only (not over `--mcp-http`), host discovery
   (`reqcove capture discover`): `discover_until` (RFC 3339) and
   `discover_left` while it is on; `out_of_scope_hosts` (each with `host`,
@@ -202,7 +217,7 @@ The commands and their flags, from each command's flag set:
 
 | Command | Flags |
 |---|---|
-| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config` |
+| `reqcove run` | `--device`, `--allow-hosts`, `--pass-hosts`, `--rules`, `--rules-reload`, `--proto`, `--upstream-proxy`, `--upstream-ca`, `--local-proxy`, `--proxy-port`, `--lan`, `--lan-interface`, `--ui`, `--web`, `--mcp-http`, `--dns`, `--no-redact`, `--mask-names`, `--mask-values`, `--state`, `--hostname`, `--verbose`, `--config`, `--keep-awake` (v1.2) |
 | `reqcove status` | `--json`, `--state` |
 | `reqcove har` | `--host`, `--device`, `--since`, `--until`, `--status`, `--method`, `--user-agent`, `--limit`, `--state` (a HAR 1.2 file on standard output) |
 | `reqcove links` | `--state` |
@@ -214,6 +229,8 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture save` (since v1.1) | `--state` |
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
+| `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
+| `reqcove console` (since v1.2) | `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
@@ -226,6 +243,12 @@ The commands and their flags, from each command's flag set:
 
 `--uvx`, `--python` and `--mitmproxy-spec` are not in this list: they are not
 stable ([below](#not-stable)).
+
+`reqcove console` (since v1.2) asks `run` over `ctl.sock` with a new op, `console`: a
+`run` older than v1.2 answers it with its usage, and `reqcove console` then says
+to restart `run` with v1.2 or later (a unit test with a v1.1 answer). The
+page's link (`http://127.0.0.1:PORT/#c=CODE`) and what it shows are not
+stable, nor its requests to `run` ([below](#not-stable)).
 
 ### The `--config` file
 
@@ -304,6 +327,8 @@ These may change in any release, a patch release included:
   `orphan_updates`, `all_hosts`, `brotli`, `brotli_decode`, `zstd_decode`,
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
+- `reqcove console`'s page: its port, its layout, its `/api/` requests and their
+  answers.
 - The `poc/` folder: the maintainer's notes, not in the repository.
 - Anything else this page does not list as stable.
 
@@ -320,7 +345,9 @@ These may change in any release, a patch release included:
   the newer one, then reconnect the agent's MCP server.
 - A tool this `reqcove mcp` has and the `run` lacks: a preset, rule or marker
   tool answers that the running reqcove (its version) has no such tool; any
-  other gets `run`'s own error, an unknown tool.
+  other gets `run`'s own error, an unknown tool. `request_capture_add` and
+  `get_capture_request` against a `run` older than v1.2 answer that it has
+  no requests: restart it with v1.2 or later (a unit test).
 - Mixed versions are not supported beyond these notes: run `reqcove run` and
   `reqcove mcp` at one version. A v1.0.0 `reqcove mcp` has no
   `list_mock_presets`, `activate_mock` or `deactivate_mock`, even against an

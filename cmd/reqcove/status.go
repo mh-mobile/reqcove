@@ -96,6 +96,10 @@ func runService() (service, manager string) {
 func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
 	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
 	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passFiles...)
+	out.Executable, _ = selfExe()
+	if runtime.GOOS == "darwin" {
+		out.KeepAwake = o.keepAwake
+	}
 	out.NextSteps = append(out.NextSteps, serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "")...)
 	return out
 }
@@ -358,28 +362,31 @@ func status(ctx context.Context, args []string) error {
 		ActiveErr string                `json:"active_presets_error"`
 		// v0.6 and v0.7's names (a run not yet restarted): read when the new
 		// ones are absent, never written (removed in v1.0).
-		OldActive    []mcpserver.PresetOut `json:"active_mock_presets"`
-		OldActiveErr string                `json:"active_mock_presets_error"`
-		Service      string                `json:"service"`
-		AllowHosts   []string              `json:"allow_hosts"`
-		PassHosts    []string              `json:"pass_hosts"`
-		Recording    string                `json:"recording"`
-		BaseAllow    []string              `json:"base_allow_hosts"`
-		BasePass     []string              `json:"base_pass_hosts"`
-		AllUntil     string                `json:"allow_all_until"`
-		AllLeft      string                `json:"allow_all_left"`
-		Outside      int                   `json:"records_outside_scope"`
-		Pending      string                `json:"scope_pending"`
-		ChangedAt    string                `json:"scope_changed_at"`
-		Change       string                `json:"scope_change"`
-		Version      string                `json:"version"`
-		Manager      string                `json:"manager"`
-		ConfigFile   string                `json:"config_file"`
-		ConfigUnused string                `json:"config_unused"`
-		HostsFiles   []string              `json:"hosts_files"`
-		Seen         []mcpserver.OutHost   `json:"out_of_scope_hosts"`
-		SeenKept     int                   `json:"out_of_scope_hosts_kept"`
-		DiscUntil    string                `json:"discover_until"`
+		OldActive    []mcpserver.PresetOut      `json:"active_mock_presets"`
+		OldActiveErr string                     `json:"active_mock_presets_error"`
+		Service      string                     `json:"service"`
+		AllowHosts   []string                   `json:"allow_hosts"`
+		PassHosts    []string                   `json:"pass_hosts"`
+		Recording    string                     `json:"recording"`
+		BaseAllow    []string                   `json:"base_allow_hosts"`
+		BasePass     []string                   `json:"base_pass_hosts"`
+		AllUntil     string                     `json:"allow_all_until"`
+		AllLeft      string                     `json:"allow_all_left"`
+		Outside      int                        `json:"records_outside_scope"`
+		Pending      string                     `json:"scope_pending"`
+		ChangedAt    string                     `json:"scope_changed_at"`
+		Change       string                     `json:"scope_change"`
+		Version      string                     `json:"version"`
+		Manager      string                     `json:"manager"`
+		ConfigFile   string                     `json:"config_file"`
+		ConfigUnused string                     `json:"config_unused"`
+		HostsFiles   []string                   `json:"hosts_files"`
+		Executable   string                     `json:"executable"`
+		KeepAwake    string                     `json:"keep_awake"`
+		Seen         []mcpserver.OutHost        `json:"out_of_scope_hosts"`
+		SeenKept     int                        `json:"out_of_scope_hosts_kept"`
+		DiscUntil    string                     `json:"discover_until"`
+		Requests     []mcpserver.CaptureRequest `json:"capture_requests"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -426,6 +433,12 @@ func status(ctx context.Context, args []string) error {
 			files += "; also there, not read: " + out.ConfigUnused
 		}
 		fmt.Printf("  config:      %s\n", files)
+	}
+	if out.Executable != "" && self != "" && out.Executable != self {
+		fmt.Printf("  binary:      run is %s; this reqcove is %s (your shell runs the first `reqcove` on PATH)\n", out.Executable, self)
+	}
+	if out.KeepAwake != "" {
+		fmt.Printf("  keep awake:  %s\n", keepAwakeText(out.KeepAwake))
 	}
 	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), self) {
 		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
@@ -480,6 +493,9 @@ func status(ctx context.Context, args []string) error {
 		hosts += "; a change pending: " + out.Pending
 	}
 	fmt.Printf("  recorded:    %s\n", hosts)
+	for _, r := range out.Requests {
+		fmt.Printf("  asked:       %s, by an agent (until %s): %s approves it\n", strings.Join(r.Hosts, ", "), localClock(r.ExpiresAt), r.Approve)
+	}
 	printSeen(os.Stdout, out.Seen, out.SeenKept, out.DiscUntil != "")
 	c := out.Capture
 	fmt.Printf("  mitmproxy:   %v %v, %v flows, %v TLS failures\n", c["mitmproxy"], c["state"], c["flows"], c["tls_failures"])
@@ -780,4 +796,15 @@ func serviceHint(label, state string) string {
 		return "reqcove service uninstall stops and removes it; systemctl --user stop reqcove stops it until it starts again at login; the log: journalctl --user -u reqcove"
 	}
 	return "brew services stop reqcove; the log: $(brew --prefix)/var/log/reqcove.log"
+}
+
+// keepAwakeText says what run's --keep-awake does on this Mac.
+func keepAwakeText(mode string) string {
+	switch mode {
+	case "ac":
+		return "ac: no sleep on AC power; on battery the Mac sleeps as the Energy settings say (other apps can keep it awake: pmset -g assertions)"
+	case "never":
+		return "never: the Mac sleeps as the Energy settings say (other apps can keep it awake: pmset -g assertions); while it sleeps, a phone using its exit node has no internet"
+	}
+	return "always: no idle sleep, on battery too (--keep-awake=ac holds it on AC power only)"
 }
