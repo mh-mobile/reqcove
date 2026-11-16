@@ -315,6 +315,11 @@ func status(ctx context.Context, args []string) error {
 	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
+	// brew services start (or a login) returns before its run takes the
+	// state: with a service for it installed, wait for that a moment.
+	if errors.Is(err, errNotRunning) && len(servicesFor(*state)) > 0 && waitState(*state, serviceStartWait, true) {
+		session, err = dialRun(ctx, *state, "reqcove-status")
+	}
 	// Right after a start (service install or restart) or a stop: wait a
 	// moment for the answer, running or not, rather than "starting up or
 	// shutting down".
@@ -541,14 +546,11 @@ func offlineStatus(state, uvx string) error {
 		fmt.Println("  node:  has logged in before (state kept); while it is down, a phone using its exit node has no internet: turn the exit node off there, or start it")
 	}
 	printCA(os.Stdout, state, false)
-	svcs := installedServices(runtime.GOOS)
-	for _, w := range serviceWarnings(runtime.GOOS, svcs, "") {
+	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "") {
 		fmt.Println("warning: " + w)
 	}
-	for _, s := range svcs {
-		if serviceState(runtime.GOOS, s.file) == state {
-			fmt.Printf("its service (%s) is installed: start it with %s\n", s.file, restartCmd(s.name))
-		}
+	for _, s := range servicesFor(state) {
+		fmt.Printf("its service (%s) is installed: start it with %s\n", s.file, restartCmd(s.name))
 	}
 	if cfg, _ := bareConfig(); cfg != "" && isDefaultState(state) {
 		fmt.Printf("start it with: reqcove run (it reads %s)\n", cfg)

@@ -101,8 +101,10 @@ About the login URL and the links:
 Tried, for `reqcove setup`: unit tests (answers fed in); by hand on macOS and
 on Linux (a VM, over ssh), 2026-11-14; Ctrl-C at the first question (it ended
 at once, nothing written). Tried too: `reqcove links` from Claude Code's `!`.
-Not tried: `brew services` with the file setup wrote. The hosts file: unit
-tests only (the file, its `@` line, an old one kept).
+Tried by hand with a v1.1 build from a local formula (macOS, 2026-11-16):
+setup wrote Homebrew's config and its hosts file and pointed to `brew services
+start reqcove`, whose run read them and recorded the iPhone. The hosts file
+otherwise: unit tests (the file, its `@` line, an old one kept).
 
 <a id="security-login-url"></a>
 

@@ -23,6 +23,7 @@ import (
 func init() {
 	serviceCtl = func(args ...string) error { panic("serviceCtl without fakeCtl: " + strings.Join(args, " ")) }
 	startWait = 0 // no run starts: install and restart do not wait for one
+	serviceStartWait = 0
 }
 
 // fakeCtl records the commands; launchctl print and bootout and systemctl
@@ -699,5 +700,36 @@ func TestServiceRestartWhileStopping(t *testing.T) {
 	})
 	if !slices.Equal(heldAtStart, []bool{false, false, false}) {
 		t.Errorf("bootstrap while the old run held the state, or not retried: %v", heldAtStart)
+	}
+}
+
+// brew services start returns before its run takes the state: status, with a
+// service installed for that state, waits for it (then says starting), and
+// without one says not running at once.
+func TestStatusWaitsForServiceStart(t *testing.T) {
+	_, config := serviceHome(t, "cfg")
+	fakeCtl(t, false, nil)
+	state := filepath.Join(t.TempDir(), ".reqcove-b")
+	if err := serviceInstall(runtime.GOOS, config, state, true); err != nil {
+		t.Fatal(err)
+	}
+	old := serviceStartWait
+	serviceStartWait = 2 * time.Second
+	t.Cleanup(func() { serviceStartWait = old })
+	go func() { // the run, a moment after the service started
+		time.Sleep(300 * time.Millisecond)
+		if release, err := lockState(state); err == nil {
+			t.Cleanup(release)
+		}
+	}()
+	out := captureStdout(t, func() error { return status(context.Background(), []string{"--state", state}) })
+	if !strings.Contains(out, "reqcove is starting (") || strings.Contains(out, "not running") {
+		t.Errorf("service starting:\n%s", out)
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	begin := time.Now()
+	out = captureStdout(t, func() error { return status(context.Background(), []string{"--state", other}) })
+	if !strings.Contains(out, "not running") || time.Since(begin) > time.Second {
+		t.Errorf("no service: %v\n%s", time.Since(begin), out)
 	}
 }

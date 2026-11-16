@@ -51,7 +51,7 @@ README の 4 つの手順を終えたあとに読むガイドです。各節の�
 - サービスや `docker logs` のようにターミナルでないところでは、`run` はその代わりに「`reqcove links` prints it」と表示します。
 - 承認を省く：新しいノードのたびに Exit Node を承認する手間を省くには、tailnet のポリシーに自動承認を追加します（`"autoApprovers": {"exitNode": ["you@example.com"]}`）。
 
-確認状況（`reqcove setup`）：単体テスト（答えを流し込んで実行）と、macOS と Linux（VM に ssh で接続）での手作業（2026-11-14）で確かめました。最初の質問で Ctrl-C を押すこと（すぐに終わり、何も書かれませんでした）と、Claude Code の `!` から `reqcove links` を実行することも試しました。試していないもの：setup が書いたファイルでの `brew services`。ホストのファイルは単体テストだけで確かめました（ファイルの中身、`@` の行、元のファイルを残すこと）。
+確認状況（`reqcove setup`）：単体テスト（答えを流し込んで実行）と、macOS と Linux（VM に ssh で接続）での手作業（2026-11-14）で確かめました。最初の質問で Ctrl-C を押すこと（すぐに終わり、何も書かれませんでした）と、Claude Code の `!` から `reqcove links` を実行することも試しました。v1.1 のビルドを手元の formula から入れて、手作業でも試しました（macOS、2026-11-16）。setup は Homebrew の config とホストのファイルを書き、`brew services start reqcove` を案内しました。そのサービスの `run` は、この 2 つのファイルを読み、iPhone の通信を記録しました。ホストのファイルのそのほかの点は、単体テストで確かめました（ファイルの中身、`@` の行、元のファイルを残すこと）。
 
 <a id="security-login-url"></a>
 
