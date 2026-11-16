@@ -15,8 +15,10 @@
   approve ID`** (shows the hosts, asks y/N) **and `capture deny ID`**, in a
   terminal only; an approval adds exactly those hosts as `capture add` does
   (not saved, never starts a stopped recording). A client that declares MCP
-  form elicitation also gets a dialog with Reqcove's text alone (accept
-  approves; decline, close or 2 minutes without an answer leave it pending;
+  form elicitation also gets a dialog with Reqcove's text alone and one box,
+  "Record these hosts", off at first (accept with it ticked approves, so
+  Enter on Accept alone does not; decline, close, accept without the box or
+  2 minutes without an answer leave it pending;
   over MCP's newest protocol its answer counts only for a dialog shown on
   that connection, once, within 2 minutes by either clock).
   Every view of a request says `unmasked` under `--no-redact`.

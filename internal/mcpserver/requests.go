@@ -204,9 +204,13 @@ func multiRoundTrip(ss *mcp.ServerSession) bool {
 // as host names), never the agent's.
 func dialogParams(r CaptureRequest) *mcp.ElicitParams {
 	return &mcp.ElicitParams{
-		Mode:            "form",
-		Message:         DialogText(r),
-		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		Mode:    "form",
+		Message: DialogText(r),
+		// One box, off at first: Enter on the client's Accept, where the
+		// cursor starts (Claude Code), approves nothing unless it is ticked.
+		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{
+			dialogBox: map[string]any{"type": "boolean", "title": "Record these hosts", "default": false},
+		}},
 	}
 }
 
@@ -233,8 +237,8 @@ func afterDialog(ctx context.Context, reqs Requests, shown *dialogs, ss *mcp.Ser
 // answered is the answer once the dialog for r is answered (res), or not
 // (err): accepted, r is approved for its hosts; otherwise it stays pending.
 func answered(ctx context.Context, reqs Requests, r CaptureRequest, res *mcp.ElicitResult, err error) RequestOut {
-	if err != nil || res == nil || res.Action != "accept" {
-		return RequestOut{r, requestNote(r) + " The dialog was not accepted (declined, closed or not answered in time): it stays pending."}
+	if err != nil || res == nil || res.Action != "accept" || res.Content[dialogBox] != true {
+		return RequestOut{r, requestNote(r) + " The dialog was not accepted with \"Record these hosts\" ticked (declined, closed, not ticked or not answered in time): it stays pending."}
 	}
 	a, err := reqs.Approve(ctx, r.ID, r.Hosts)
 	if err != nil { // approved or denied in the terminal meanwhile, or expired: what it is now
@@ -246,9 +250,12 @@ func answered(ctx context.Context, reqs Requests, r CaptureRequest, res *mcp.Eli
 	return RequestOut{a, requestNote(a)}
 }
 
+// dialogBox is the dialog's one field: approved only when it is true.
+const dialogBox = "record"
+
 // DialogText is the dialog's message for r.
 func DialogText(r CaptureRequest) string {
 	return "Reqcove: an agent asks to record these hosts too: " + strings.Join(r.Hosts, ", ") +
-		". Accept, and their traffic is decrypted and recorded from new connections on, and agents will read it, " + Masked(r) + "; not saved (a restart of reqcove run goes back to its hosts)." +
+		". Tick \"Record these hosts\" and accept, and their traffic is decrypted and recorded from new connections on, and agents will read it, " + Masked(r) + "; not saved (a restart of reqcove run goes back to its hosts)." +
 		" Decline or close this to leave it pending: in your terminal, " + r.Approve + " approves it; it expires at " + r.ExpiresAt + "."
 }

@@ -480,8 +480,13 @@ and the agent's answer gives you the command to run, such as
   (MCP elicitation), `reqcove mcp` also shows one for a new request. Its text
   is Reqcove's: the hosts (run's, checked as host names), that agents will
   read their traffic, masked (unmasked, it says, under `--no-redact`; so does
-  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. Accept approves it as `approve` does. Decline, close it, an error or
-  no answer within 2 minutes leaves it pending, for the terminal. It is not
+  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. It has one box, "Record these hosts", off at
+  first: accept with the box ticked approves it as `approve` does (Enter on
+  Accept alone, where Claude Code's cursor starts, approves nothing). Decline,
+  close it, accept without the box, an error or no answer within 2 minutes
+  leaves it pending, for the terminal or `reqcove console`. Tried in Claude
+  Code's terminal (2026-11-16): the dialog shows, Esc leaves it pending, the
+  console approves it; the box, by unit tests only. It is not
   shown again when the agent asks again for the same hosts. A client that
   declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
   protocol the client shows the dialog between two calls: its answer counts
