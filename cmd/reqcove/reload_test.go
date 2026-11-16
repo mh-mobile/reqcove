@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -265,5 +266,17 @@ func TestReloadE2E(t *testing.T) {
 	}
 	if s := liveStatus(exitnode.Status{Backend: "Running"}, c); s.ScopeChange != "reload" {
 		t.Errorf("status: %q", s.ScopeChange)
+	}
+}
+
+// reload's parse (and the writer's check) runs no tailscale to name the
+// devices a missing --device could be.
+func TestReloadFlagsRunsNothing(t *testing.T) {
+	called := false
+	was := tailscaleStatus
+	tailscaleStatus = func() ([]byte, error) { called = true; return nil, errors.New("none") }
+	t.Cleanup(func() { tailscaleStatus = was })
+	if _, err := reloadFlags([]string{"--state", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "--device is required") || called {
+		t.Errorf("%v, tailscale run: %v", err, called)
 	}
 }

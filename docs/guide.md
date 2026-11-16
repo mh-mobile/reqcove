@@ -2674,8 +2674,15 @@ flags. Since v1.1 a `reqcove run` with no arguments reads one too
   change where requests go while running) and `--lan` (an open proxy on the
   LAN).
 - Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+- Since v1.3, reqcove writes the file itself in one case: `capture save` on a
+  config naming no hosts file adds its `--allow-hosts=@FILE` (or
+  `--pass-hosts=@FILE`) line, after y/N ([capture save](#keep-the-hosts-for-the-next-start-reqcove-capture-save)).
+  It writes only that line, the file whole (0600, the one before kept as
+  `config.prev`), never through a link nor to a file not yours, and checks
+  first that the next start would take it.
 
-Checked: tests (the refusals).
+Checked: tests (the refusals; the line added, and a link or another user's
+file refused).
 
 <a id="security-logs"></a>
 

@@ -65,6 +65,7 @@ func TestCaptureArgs(t *testing.T) {
 		{ctlRequest{Cmd: "stop", For: "1h"}, "go with capture allow-all"},
 		{ctlRequest{Cmd: "add", Hosts: []string{"a.com"}, End: true}, "go with capture allow-all"},
 		{ctlRequest{Cmd: "allow-al"}, "usage"},
+		{ctlRequest{Cmd: "add", Hosts: []string{"a.com"}, Confirm: "x"}, "usage"}, // save's token only
 		{ctlRequest{}, "usage"},
 	} {
 		if _, err := c.req.normalized(); err == nil || !strings.Contains(err.Error(), c.want) {

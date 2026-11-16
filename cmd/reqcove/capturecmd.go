@@ -800,7 +800,7 @@ func saveScope(base capture.HostRules, st *ctlState, confirm string) (ctlAnswer,
 		}
 		saves[i].text, files[s.path] = text, text
 	}
-	msg, notes := "", saveNotes(base, o, pass, saves)
+	notes := saveNotes(base, o, pass, saves)
 	if len(saves) == 0 {
 		return ctlAnswer{OK: true, Message: strings.Join(append([]string{"nothing to save: the hosts are all given as they are (a start takes them again)"}, notes...), "; ")}, false
 	}
@@ -860,31 +860,43 @@ func saveScope(base capture.HostRules, st *ctlState, confirm string) (ctlAnswer,
 			undo() // so that a retry's exclusive create works
 			return refuse("refused: the config: " + err.Error())
 		}
-		msg = "added to " + config + ": " + strings.Join(plan.added, ", ") + "; "
 	}
-	var did []string
+	var did []string // what was written, the files created first
+	if plan != nil {
+		did = append(did, "added to "+config+": "+strings.Join(plan.added, ", "))
+	}
 	for _, s := range saves {
-		if !s.created {
-			if err := writeHostsText(s.path, s.text, s.hosts); err != nil {
-				if len(did)+len(created) == 0 {
-					return refuse("refused: " + err.Error())
-				}
-				refreshOrigin(st, saves)
-				msg = "partly saved: " + msg + strings.Join(did, "; ")
-				return ctlAnswer{Message: msg + "; but " + s.path + " was not written: " + err.Error()}, true
+		if s.created {
+			did = append(did, savedText(s))
+		}
+	}
+	for _, s := range saves {
+		if s.created {
+			continue
+		}
+		if err := writeHostsText(s.path, s.text, s.hosts); err != nil {
+			if len(did) == 0 {
+				return refuse("refused: " + err.Error())
 			}
+			refreshOrigin(st, saves)
+			return ctlAnswer{Message: "partly saved: " + strings.Join(did, "; ") + "; but " + s.path + " was not written: " + err.Error()}, true
 		}
-		what := "no hosts (a start records none from it)"
-		if s.pass {
-			what = "no hosts (a start passes none from it)"
-		}
-		if len(s.hosts) > 0 {
-			what = strings.Join(s.hosts, ", ")
-		}
-		did = append(did, "saved to "+s.path+": "+what)
+		did = append(did, savedText(s))
 	}
 	refreshOrigin(st, saves)
-	return ctlAnswer{OK: true, Message: msg + strings.Join(append(did, notes...), "; ")}, true
+	return ctlAnswer{OK: true, Message: strings.Join(append(did, notes...), "; ")}, true
+}
+
+// savedText says what s saved.
+func savedText(s hostsSave) string {
+	what := "no hosts (a start records none from it)"
+	if s.pass {
+		what = "no hosts (a start passes none from it)"
+	}
+	if len(s.hosts) > 0 {
+		what = strings.Join(s.hosts, ", ")
+	}
+	return "saved to " + s.path + ": " + what
 }
 
 // refreshOrigin makes run's hosts origin and loaded hosts the files' now, as

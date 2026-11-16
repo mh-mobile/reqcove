@@ -160,7 +160,9 @@ func TestSaveHosts(t *testing.T) {
 // then remove the command line's host, then save: the file has the host
 // added, the answer says the removed one comes back, and the save leaves its
 // log line, cli marker and status's trace. A new run from the config records
-// the host added.
+// the host added. Then (v1.3) a run from a config with its hosts inline:
+// capture save shows the change and asks, y creates the hosts file and adds
+// its line, a second save writes the file, asking nothing.
 func TestCaptureSaveE2E(t *testing.T) {
 	if os.Getenv("REQCOVE_E2E") == "" {
 		t.Skip("set REQCOVE_E2E=1")
@@ -176,11 +178,14 @@ func TestCaptureSaveE2E(t *testing.T) {
 	state := filepath.Join(dir, "s")
 	start := func(args ...string) (*capture.Capture, *runOpts) {
 		t.Helper()
-		o, err := parseRunFlags(append([]string{"--config", config, "--device", "x", "--state", state}, args...))
+		if !slices.Contains(args, "--config") {
+			args = append([]string{"--config", config, "--state", state}, args...)
+		}
+		o, err := parseRunFlags(append([]string{"--device", "x"}, args...))
 		if err != nil {
 			t.Fatal(err)
 		}
-		c, err := capture.Start(ctx, capture.Config{Dir: state, Confdir: filepath.Join(dir, "m"),
+		c, err := capture.Start(ctx, capture.Config{Dir: o.state, Confdir: filepath.Join(dir, "m"),
 			Uvx: "uvx", Python: defaultPython, MitmSpec: defaultMitmSpec,
 			BodyHead: capture.DefaultBodyHead, MaxFlows: capture.DefaultMaxFlows, MaxBytes: capture.DefaultMaxBytes,
 			Log: os.Stderr, ReadyTimeout: 2 * time.Minute, AllowHosts: o.allow})
@@ -198,7 +203,7 @@ func TestCaptureSaveE2E(t *testing.T) {
 	change := func(req ctlRequest) string {
 		t.Helper()
 		var out strings.Builder
-		if err := sendCapture(ctx, &out, state, req); err != nil {
+		if err := sendCapture(ctx, &out, o.state, req); err != nil {
 			t.Fatal(err)
 		}
 		return out.String()
@@ -251,6 +256,38 @@ func TestCaptureSaveE2E(t *testing.T) {
 			t.Fatalf("the new run recorded %d flows", len(flows))
 		}
 	}
+	c.Stop()
+
+	inline := filepath.Join(dir, "i")
+	os.Mkdir(inline, 0o700)
+	iconf, ihosts := filepath.Join(inline, "config"), filepath.Join(inline, "hosts")
+	os.WriteFile(iconf, []byte("--allow-hosts=localhost\n"), 0o600)
+	c, o = start("--config", iconf, "--state", filepath.Join(dir, "t"))
+	defer c.Stop()
+	sctx, stopCtl = context.WithCancel(ctx)
+	defer stopCtl()
+	if _, err := serveCtl(sctx, o.state, c, o, nil); err != nil {
+		t.Fatal(err)
+	}
+	change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.1"}})
+	var out2 strings.Builder
+	if err := saveIn(ctx, strings.NewReader("y\n"), &out2, o.state, ctlRequest{Cmd: "save"}); err != nil {
+		t.Fatal(err)
+	}
+	if s := out2.String(); !strings.Contains(s, "+ --allow-hosts=@"+ihosts+"\nGo on? [y/N] added to "+iconf+": --allow-hosts=@"+ihosts+"; saved to "+ihosts+": 127.0.0.1;") {
+		t.Errorf("first save:\n%s", s)
+	}
+	if b, _ := os.ReadFile(iconf); string(b) != "--allow-hosts=localhost\n--allow-hosts=@"+ihosts+"\n" {
+		t.Errorf("config:\n%s", b)
+	}
+	change(ctlRequest{Cmd: "add", Hosts: []string{"127.0.0.2"}})
+	if out := change(ctlRequest{Cmd: "save"}); !strings.HasPrefix(out, "saved to "+ihosts+": 127.0.0.1, 127.0.0.2;") {
+		t.Errorf("second save: %q", out)
+	}
+	if ms := c.Store.Markers(0); len(ms) == 0 || ms[len(ms)-1].Text != "capture save" {
+		t.Errorf("markers: %+v", ms)
+	}
+
 }
 
 // The first save on a config that names no hosts file (v1.0's setup, or one
@@ -353,17 +390,72 @@ func TestFirstSave(t *testing.T) {
 		t.Errorf("a fresh start: %v", err)
 	}
 
-	// A file there already, the config naming none: refused, shown nothing.
-	config, args = confFile(t, "--device x\n--allow-hosts=inline.a.com\n--state=/nonexistent/s\n")
-	there := filepath.Join(filepath.Dir(config), "hosts")
-	os.WriteFile(there, []byte("mine.d.com\n"), 0o600)
-	o, _ = reloadFlags(args)
-	if a, saved := saveScope(base, newCtlState(o), ""); a.Confirm != "" || saved || !strings.Contains(a.Message, "refused: "+there+" is there already, and the config does not name it") ||
-		!strings.Contains(a.Message, "add the line --allow-hosts=@"+there+" to "+config+" yourself") || !strings.Contains(a.Message, "or move "+there+" away and save again; nothing written") {
-		t.Errorf("there already: %+v", a)
+	// A file there already, or a link (dangling too), the config naming none:
+	// refused, shown nothing.
+	for _, link := range []bool{false, true} {
+		config, args = confFile(t, "--device x\n--allow-hosts=inline.a.com\n--state=/nonexistent/s\n")
+		there := filepath.Join(filepath.Dir(config), "hosts")
+		if link {
+			os.Symlink(filepath.Join(t.TempDir(), "nowhere"), there)
+		} else {
+			os.WriteFile(there, []byte("mine.d.com\n"), 0o600)
+		}
+		o, _ = reloadFlags(args)
+		if a, saved := saveScope(base, newCtlState(o), ""); a.Confirm != "" || saved || !strings.Contains(a.Message, "refused: "+there+" is there already, and the config does not name it") ||
+			!strings.Contains(a.Message, "add the line --allow-hosts=@"+there+" to "+config+" yourself") || !strings.Contains(a.Message, "or move "+there+" away and save again; nothing written") {
+			t.Errorf("there already (link %v): %+v", link, a)
+		}
+		if b, err := os.ReadFile(there); !link && string(b) != "mine.d.com\n" || link && err == nil {
+			t.Errorf("there already (link %v), written:\n%s", link, b)
+		}
 	}
-	if b, _ := os.ReadFile(there); string(b) != "mine.d.com\n" {
-		t.Errorf("there already, written:\n%s", b)
+}
+
+// A save across a created file, the config and a file there: the file
+// there not written (its directory read-only), the answer says what was
+// written and what not, and the run takes the created file (a retry writes
+// it, not creates it again).
+func TestSavePartly(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
+	other := t.TempDir()
+	hostsFile := filepath.Join(other, "hosts")
+	os.WriteFile(hostsFile, []byte("a.com\n"), 0o600)
+	config, args := confFile(t, "--device x\n--allow-hosts=@"+hostsFile+"\n--state=/nonexistent/s\n")
+	passHosts := filepath.Join(filepath.Dir(config), "pass-hosts")
+	o, err := reloadFlags(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := newCtlState(o)
+	base, _ := capture.ParseAllowHosts([]string{"a.com,b.com"})
+	base, _ = base.WithPass([]string{"a.com"})
+	a, _ := saveScope(base, st, "")
+	if a.Confirm == "" || !strings.Contains(a.Message, "write "+hostsFile+": a.com, b.com\n") {
+		t.Fatalf("shown: %+v", a)
+	}
+	os.Chmod(other, 0o500)
+	t.Cleanup(func() { os.Chmod(other, 0o700) })
+	a, saved := saveScope(base, st, a.Confirm)
+	if a.OK || !saved || !strings.HasPrefix(a.Message, "partly saved: added to "+config+": --pass-hosts=@"+passHosts+"; saved to "+passHosts+": a.com; but "+hostsFile+" was not written: ") {
+		t.Errorf("partly: %+v %v", a, saved)
+	}
+	if b, _ := os.ReadFile(hostsFile); string(b) != "a.com\n" {
+		t.Errorf("the file there:\n%s", b)
+	}
+	if b, _ := os.ReadFile(passHosts); !strings.HasSuffix(string(b), "\na.com\n") {
+		t.Errorf("pass-hosts:\n%s", b)
+	}
+	if b, _ := os.ReadFile(config); !strings.HasSuffix(string(b), "\n--pass-hosts=@"+passHosts+"\n") {
+		t.Errorf("config:\n%s", b)
+	}
+	if !slices.Equal(st.origin.passOrigin().files, []string{passHosts}) {
+		t.Errorf("pass origin: %q", st.origin.passOrigin().files)
+	}
+	os.Chmod(other, 0o700)
+	if a, _ := saveScope(base, st, ""); !a.OK || a.Confirm != "" || !strings.HasPrefix(a.Message, "saved to "+hostsFile+": a.com, b.com; saved to "+passHosts+": a.com") {
+		t.Errorf("again: %+v", a)
 	}
 }
 
