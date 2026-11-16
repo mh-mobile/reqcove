@@ -475,7 +475,8 @@ func TestCheckConfigMode(t *testing.T) {
 
 // A restart asks the binary it would exec first: refused there, nothing is
 // stopped (no snapshot, run not asked); a binary older than the check mode
-// leaves the check to this run, and the answer says so.
+// (older than v1.3: it could not take on the state's lock, nor retry) is
+// refused too, nothing stopped.
 func TestRestartBinaryCheck(t *testing.T) {
 	state := t.TempDir()
 	st, _, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
@@ -500,11 +501,14 @@ func TestRestartBinaryCheck(t *testing.T) {
 	}
 	startBinary = script(`echo "flag provided but not defined: -check-config" >&2; echo "Usage: reqcove run [flags]" >&2; exit 2`)
 	a = restartOp(t.Context(), st, 0)
-	if !a.OK || !strings.Contains(a.Message, "has no check of its own") || strings.Contains(a.Message, "Usage") {
+	if a.OK || a.after != nil || !strings.Contains(a.Message, "is older than v1.3") || !strings.Contains(a.Message, "stop run and start it again yourself") || !strings.HasSuffix(a.Message, "; nothing stopped") || strings.Contains(a.Message, "Usage") {
 		t.Errorf("an older binary: %q", a.Message)
 	}
+	if m, _ := filepath.Glob(filepath.Join(state, "restart-*")); len(m) != 0 || asked {
+		t.Errorf("an older binary: stopped: %v %v", m, asked)
+	}
 	startBinary = script(`exit 0`)
-	if a := restartOp(t.Context(), st, 0); !a.OK || strings.Contains(a.Message, "no check of its own") {
+	if a := restartOp(t.Context(), st, 0); !a.OK {
 		t.Errorf("checked: %q", a.Message)
 	}
 }

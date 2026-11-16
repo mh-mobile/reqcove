@@ -186,6 +186,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	h.serving() // after a restart: a good start once up a while, ready or not
 
 	webAddr := ""
 	if cap.WebURL != "" {

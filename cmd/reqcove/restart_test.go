@@ -1069,3 +1069,71 @@ func TestCtlRestartBeforeServing(t *testing.T) {
 		t.Errorf("%v %q", err, a.Message)
 	}
 }
+
+// stubRun stands in for run in runRestartable.
+func stubRun(t *testing.T, f func(ctx context.Context) error) {
+	t.Helper()
+	runStart = func(ctx context.Context, _ []string) error { return f(ctx) }
+	t.Cleanup(func() { runStart = run })
+}
+
+// A stop (Ctrl-C, a service's SIGTERM) is never undone by a restart: asked
+// while run stops for one, no exec and the new snapshot removed; ending the
+// start after one, no failed start (no config put back, no exec), the
+// snapshot removed.
+func TestRestartStopSignal(t *testing.T) {
+	state := t.TempDir()
+	start := "--device phone\n--state=" + state + "\n"
+	_, config, args, restart := restartable(t, start)
+	env := stubExec(t)
+	*env = []string{"none"}
+	stopped, stop := context.WithCancel(t.Context())
+	stop()
+
+	snap := restart()
+	stubRun(t, func(context.Context) error { return &restartExec{snapshot: snap} })
+	if err := runRestartable(stopped, args); err != nil || !slices.Equal(*env, []string{"none"}) || exists(snap) {
+		t.Errorf("stopped while restarting: %v, exec'd %v, snapshot there %v", err, !slices.Equal(*env, []string{"none"}), exists(snap))
+	}
+
+	snap = restart()
+	os.WriteFile(config, []byte(start+"--verbose\n"), 0o600)
+	t.Setenv(envSnapshot, snap)
+	stubRun(t, func(ctx context.Context) error { return fmt.Errorf("mitmproxy: %w", ctx.Err()) })
+	if err := runRestartable(stopped, args); err == nil || !slices.Equal(*env, []string{"none"}) || exists(snap) || exists(config+".failed") || read(t, config) == start {
+		t.Errorf("stopped while starting: %v, exec'd %v, snapshot there %v, config put back %v", err, !slices.Equal(*env, []string{"none"}), exists(snap), read(t, config) == start)
+	}
+}
+
+// A start after a restart that has served restartGrace counts as good, ready
+// or not (a node waiting for a login): a failure later neither puts the
+// config back nor execs; the snapshot is gone.
+func TestRestartGrace(t *testing.T) {
+	state := t.TempDir()
+	start := "--device phone\n--state=" + state + "\n"
+	_, config, args, restart := restartable(t, start)
+	env := stubExec(t)
+	*env = []string{"none"}
+	restartGrace = 20 * time.Millisecond
+	t.Cleanup(func() { restartGrace = 2 * time.Minute })
+	snap := restart()
+	os.WriteFile(config, []byte(start+"--verbose\n"), 0o600)
+	t.Setenv(envSnapshot, snap)
+	stubRun(t, func(context.Context) error {
+		carried.serving()
+		for exists(snap) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		return errors.New("hours later")
+	})
+	done := make(chan error, 1)
+	go func() { done <- runRestartable(t.Context(), args) }()
+	select {
+	case err := <-done:
+		if err == nil || !slices.Equal(*env, []string{"none"}) || read(t, config) == start {
+			t.Errorf("%v, exec'd %v, config put back %v", err, !slices.Equal(*env, []string{"none"}), read(t, config) == start)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the snapshot stays: the start never counted as good")
+	}
+}

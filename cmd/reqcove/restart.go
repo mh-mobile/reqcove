@@ -29,7 +29,8 @@ import (
 // run checks the config on disk and its command line as the next start would
 // take them (checkFlags, nothing changed), that the binary it was started
 // from is still there, and that this binary takes them too (its hidden
-// `run --check-config` mode: a newer binary may check more); then it stops as at Ctrl-C (the system proxy
+// `run --check-config` mode: a newer binary may check more; one without it,
+// older than v1.3, is refused); then it stops as at Ctrl-C (the system proxy
 // put back, mitmproxy, the node and caffeinate stopped: run returns, its
 // defers run) and execs that binary again, with the same arguments and pid,
 // so launchd, systemd and brew services see the same process. Across the
@@ -98,7 +99,8 @@ func checkConfigMode(args []string) error {
 var checkTimeout = 8 * time.Second
 
 // binaryCheck runs startBinary's check mode with run's arguments. old: the
-// binary has no such mode (older than it): the in-process check stands alone.
+// binary has no such mode (older than v1.3): a restart refuses it, as it
+// could not take on the state's lock carried across, nor retry.
 func binaryCheck(ctx context.Context) (old bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
@@ -156,9 +158,10 @@ type handover struct {
 	served    *page  // the page carried in, once served (carriedPage)
 	snapPath  string // the snapshot, checked and read; "" for none
 	snap      []byte
-	why       string // why there is no snapshot to retry with
-	started   atomic.Bool
+	why       string      // why there is no snapshot to retry with
+	started   atomic.Bool // a good start, or the retry decided: once
 	dropOnce  sync.Once
+	grace     *time.Timer // serving's
 }
 
 type carriedSession struct {
@@ -446,6 +449,25 @@ func (h *handover) ready() {
 	}
 }
 
+// restartGrace is how long after ctl.sock and mcp.sock serve a start after a
+// restart counts as good, ready or not (a node waiting for a login, a new
+// --state): a failure later is no failed start, and keeps no snapshot or lock.
+var restartGrace = 2 * time.Minute
+
+// serving is run's ctl.sock and mcp.sock serving: ready once restartGrace
+// has passed (runRestartable stops the timer when run returns).
+func (h *handover) serving() {
+	if h == nil || !h.restarted {
+		return
+	}
+	h.grace = time.AfterFunc(restartGrace, func() {
+		if !h.started.Swap(true) {
+			log.Printf("restart: run has served for %v: the start counts as good (no retry now)", restartGrace)
+			h.drop()
+		}
+	})
+}
+
 // drop removes the snapshot (checked again) and lets another state's lock go:
 // once the retry is decided.
 func (h *handover) drop() {
@@ -472,8 +494,13 @@ type restartExec struct {
 
 func (*restartExec) Error() string { return "restart" }
 
+// runStart is run (a seam: tests stand in for it).
+var runStart = run
+
 // runRestartable is `reqcove run`: run, and the exec when it returns for a
-// restart; after a restart, the retry of a failed start.
+// restart; after a restart, the retry of a failed start. A stop (ctx: Ctrl-C,
+// or a service's SIGTERM) is never undone: asked during a restart, no exec;
+// ending a start after one, it is no failed start.
 func runRestartable(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == checkConfigArg {
 		return checkConfigMode(args[1:])
@@ -483,17 +510,28 @@ func runRestartable(ctx context.Context, args []string) error {
 	h := takeHandover()
 	carried = h
 	defer func() { carried = nil }()
-	err := run(ctx, args)
+	err := runStart(ctx, args)
+	if h.grace != nil {
+		h.grace.Stop()
+	}
 	var r *restartExec
 	if errors.As(err, &r) {
-		return execRestart(r)
-	}
-	if !h.restarted || h.started.Load() {
-		return err
-	}
-	if err == nil { // stopped before it was up: it stays down
+		if ctx.Err() == nil {
+			return execRestart(r)
+		}
+		log.Print("restart: run was told to stop while it restarted: it stays stopped")
+		if _, err := snapshotCheck(r.snapshot); err == nil {
+			os.Remove(r.snapshot)
+		}
 		h.drop()
 		return nil
+	}
+	if !h.restarted || !h.started.CompareAndSwap(false, true) { // a good start: what ready decided stands
+		return err
+	}
+	if err == nil || ctx.Err() != nil { // stopped before it was up: it stays down
+		h.drop()
+		return err
 	}
 	return h.failed(args, err)
 }
@@ -625,6 +663,9 @@ func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 	if err != nil {
 		return refuse(startBinary + ", which a restart starts, refuses the settings (the --config file on disk and run's command line): " + err.Error())
 	}
+	if old { // its run would not take on the lock carried across: it would stay down
+		return refuse(startBinary + ", which a restart starts, is older than v1.3 (it cannot take over the running state): stop run and start it again yourself")
+	}
 	snap := ""
 	if st.o.config != "" {
 		if snap, err = writeSnapshot(st.o.state, st.startConfig); err != nil {
@@ -633,9 +674,6 @@ func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 	}
 	os.Remove(filepath.Join(st.o.state, restartNote))
 	msg := fmt.Sprintf("restarting: run stops (the system proxy put back, mitmproxy and the node stopped) and %s starts again with the config on disk and the same command line; %s", startBinary, restartEmpties(records))
-	if old {
-		msg += "; " + startBinary + " has no check of its own (older than this run): checked by this run alone"
-	}
 	if absPath(n.state) != absPath(st.o.state) {
 		msg += "; the config names another --state now: " + n.state
 	}
