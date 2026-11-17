@@ -28,7 +28,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: v1.0.** The MCP tools, the CLI and the rules file stay compatible
+> **Status: v1.3.** The MCP tools, the CLI and the rules file stay compatible
 > until a v2 ([COMPATIBILITY](docs/COMPATIBILITY.md)).
 
 ## What you need

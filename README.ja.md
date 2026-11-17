@@ -22,7 +22,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：v1.0 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。
+> **開発状況：v1.3 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。
 
 ## 必要なもの
 
