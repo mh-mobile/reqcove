@@ -190,8 +190,9 @@ reqcove restart    # in your terminal; --state DIR for another node
 Since v1.3, `reqcove restart` asks the running `run` to stop and start again
 in the same process, as it was started: the same binary path and arguments,
 the config on disk as it is now. Under `reqcove service install`'s service or
-`brew services` it stays the service's process (from the code: an exec keeps
-the pid; not tried under them), so you need not know which started it.
+`brew services` it stays the service's process (an exec keeps the pid: seen
+under launchd and systemd; not tried under `brew services`), so you need not
+know which started it.
 
 - **Checked first, nothing stopped when refused:** the config on disk and
   `run`'s command line as the next start reads them (a flag or file it would
@@ -277,10 +278,19 @@ stopped before each exec (the failed start's too), the config put back and kept 
 put back at each stop, through a stand-in `networksetup`; both restarts
 asked with `--web`: after the first, `status` says mitmweb is on for this
 start and `web-token` is new, the config unchanged; the retry after the
-second runs without it). Not tried: a tailnet node, under launchd,
-`brew services` or systemd (`--web` under a service included), after
-`brew upgrade` and `brew cleanup`, on Linux; mitmweb's page in a browser
-after such a restart.
+second runs without it). By hand (2026-11-17): in a terminal, the pid,
+the page's port and session kept, and a rebuilt binary taken; a failed new
+start (`--uvx=/usr/bin/false` in the config): the config put back,
+`config.failed` kept, `status`'s `restart:` line, the page's session kept;
+Ctrl-C during the new start: `run` stayed down, the config untouched, no
+copy of the start config left; from the page under `reqcove service
+install`'s launchd service: the same pid, no exit seen by launchd; under its
+systemd user service on Ubuntu 24.04: the same MainPID, NRestarts 0, and
+`systemctl --user stop` during a restart: stopped, the config unchanged, no
+`config.failed`; another OS user there, retrying to bind the page's
+127.0.0.1 port throughout a restart, never got it; `--web` from the page:
+[the Settings panel](#change-the-settings-then-restart). Not tried: under `brew services` (`--web` under any
+service too), after `brew upgrade` and `brew cleanup`.
 
 ### Use one CA on two computers
 
@@ -407,11 +417,11 @@ restart. You open it from your terminal. A path through it:
 The pages are `run`'s and live while it runs (`--state DIR` for another
 `run`). Agents never open them: the skill and the server's instructions tell
 them never to run `reqcove console`. Tried: this computer's page in a
-Chromium-based browser on macOS for its state and Approve (2026-11-16);
-its v1.3 panels in no browser; the tailnet page in the iPhone's Safari
-through the Remote Proxy, where its QR link opened the page, and in no other
-browser (their scripts are from reading the code); what they ask of `run`, by unit
-and E2E tests (each section's "Tried:"). The guards and their limits:
+Chromium-based browser on macOS for its state and Approve (2026-11-16), and
+parts of its v1.3 panels in a desktop browser on macOS (2026-11-17; not Safari);
+the tailnet page in the iPhone's Safari, over the exit node and through the
+Remote Proxy, and in no other browser; what they ask of `run`, by unit and
+E2E tests; each section's "Tried:" says what. The guards and their limits:
 [SECURITY](SECURITY.md#the-reqcove-console-pages).
 
 ### See the state and approve in a page (`reqcove console`)
@@ -495,9 +505,12 @@ with real mitmproxy (approved in the console through its listener, the
 on macOS (2026-11-16): the page showed the state and the agents' requests,
 and Approve applied the hosts (traced "approved in the console"). The file's
 link, its `#c=` kept, reached a page on 127.0.0.1 in headless Chromium and
-Firefox on macOS (2026-11-16). Not tried: `--print` and the output once
-opened by hand, the file in Safari, Linux's
-`xdg-open`, the page in another browser, another user of this computer.
+Firefox on macOS (2026-11-16). By hand in a desktop browser on macOS
+(2026-11-17): `reqcove console` printed no link once the browser opened the
+page, `--print` printed one, `--end` ended the open page, and an agent's
+request (`request_capture_add`) was approved on the page. Not tried: the
+file in Safari, Linux's `xdg-open`, Safari on the Mac, another user of this
+computer, a 5th session.
 
 ### Change the hosts: the Scope panel
 
@@ -553,9 +566,15 @@ host names, the warnings `run`'s own, LAN mode) and E2E with real mitmproxy
 this computer)", the warnings shown before the confirm in the answers, an
 older scope refused, Save's diff then a first save on a config with its
 hosts inline, the new hosts file in the page and in `status` at once, a
-second Save writing it; discovery's names on the page). Not tried: the panel
-in a browser (its script, its confirms and countdowns are from reading the
-code).
+second Save writing it; discovery's names on the page), and by hand in a
+desktop browser on macOS (2026-11-17): add, remove, a host "unsaved"; Save
+on a config with its hosts inline, which added the `--allow-hosts=@FILE`
+line, created the hosts file 0600 and kept `config.prev`, its confirm
+listing the change; Save refused, nothing written, after another tab added
+a host and after an edit by hand to the hosts file between the confirm and
+OK. Not tried in a browser: stop and start, allow-all and discovery (their
+confirms and countdowns are from reading the code; allow-all and End were
+tried on the tailnet page).
 
 ### Change the settings, then restart
 
@@ -622,8 +641,14 @@ flag, a changed masking `@FILE` and a hosts file's hosts, a list made stale
 by an edit to the config, a hosts file or a masking file refused, the
 restart asked; with mitmweb: its words and `+ --web` in the list, the
 restart asked with it, the tailnet page refused, directly and relayed).
-Not tried: the panel in a browser (its script and confirms are from reading
-the code), the device list on a real tailnet.
+By hand in a desktop browser on macOS (2026-11-17): `--keep-awake` written
+and Restart… with its list; a change in the hosts file alone shown in that
+list; a run from flags alone read-only; Restart with mitmweb (this start
+only)…: its confirm, `mitmweb: on — unmasked; this start only` on the page
+and in `reqcove status`, mitmweb opened from the iPhone over the tailnet,
+and a plain Restart… dropping it. Not tried in a
+browser: the other settings (their confirms are from reading the code), the
+device list.
 
 ### Presets, a marker, the CA, the HAR file
 
@@ -667,9 +692,10 @@ attachment of JSON with `nosniff` and `no-store`, masked, refused without
 masking, no token taken in a URL; v1.2's guards on each new request; the
 `--ui` link without a token) and an E2E test with real mitmproxy (presets
 and rules from a real file, none of its values shown; on with the
-destination, off; refused once recording stopped). Not tried: the panels in
-a browser (the QR code drawn, the HAR download, the confirms: from reading
-the code).
+destination, off; refused once recording stopped), and by hand in a
+desktop browser on macOS (2026-11-17): a marker, and the HAR download (the
+browser renamed the file). Not tried in a browser: the presets, the CA
+panel (the QR code drawn), This run (from reading the code).
 
 <a id="tailnet-page"></a>
 
@@ -761,10 +787,12 @@ connection's remote address the peer's tailnet address), and E2E with real
 mitmproxy (the Scope panel's changes from the tailnet page, traced with the
 device's name, their answers without the state directory; discovery's names
 absent from it; the page's requests through the Remote Proxy answered by
-the page and no flow, under allow-all). Not tried: the page on an iPhone (Safari, the QR code) but through the
-Remote Proxy (above), a
-real tailnet with devices of your own, the page in any browser (its script:
-from reading the code).
+the page and no flow, under allow-all), and by hand in the iPhone's Safari
+(2026-11-17), over the exit node and with the Wi-Fi proxy set to the Remote
+Proxy: the state with no path of the Mac, a host added, an agent's request
+approved, allow-all on and End; `reqcove restart` ended its session (a new
+QR code needed). Not tried: another user's or a tagged device, presets, a
+5th session, any other browser.
 
 ### What stays in the terminal, and why
 
@@ -1177,8 +1205,9 @@ mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
 not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
 marker and `scope_change`; approved while stopped); by hand in Claude Code's
 terminal CLI (2026-11-16): its dialog as above, a request left pending
-approved in `reqcove console`, and one that expired by itself. Not tried:
-Codex's dialog.
+approved in `reqcove console`, and one that expired by itself; approved on
+this computer's page and on the iPhone's tailnet page (2026-11-17). Not
+tried: Codex's dialog.
 
 ## Read the traffic with an agent
 
@@ -2967,7 +2996,9 @@ no internet; turn the exit node off then.
   each, status); two `caffeinate` assertions seen side by side in `pmset -g
   assertions`; `run --keep-awake=ac` on AC power holding `PreventSystemSleep`
   (not `always`'s `PreventUserIdleSystemSleep`) and `reqcove status` saying
-  so. Not tried: a real sleep on battery with `ac`, nor with `never`.
+  so; on battery with `ac`, the Mac slept (lid closed, and the menu's
+  Sleep; 2026-11-17). Not tried: a real sleep with `ac` on AC power, nor
+  with `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or

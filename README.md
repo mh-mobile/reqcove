@@ -162,11 +162,12 @@ the tailnet) with what ends with the run: approvals, the hosts, presets,
 the CA; no Save, setting or restart. `reqcove restart` restarts `run` in
 the same process, under its service too, after checking the config; the
 records empty. Each link works once, for 60 seconds; agents never run these
-commands. Tried: the page's state and approvals in a Chromium-based browser
-on macOS; its v1.3 panels in no browser (tests only); the iPhone's page in
-the iPhone's Safari through the Remote Proxy (its QR link opened it);
-`reqcove restart` not under a service. How to use them, and what stays in
-the terminal:
+commands. Tried: the page and parts of its v1.3 panels in a desktop
+browser on macOS (not Safari; the guide says which); the iPhone's page
+in the iPhone's Safari, over the exit node and through the Remote Proxy;
+`reqcove restart` in a terminal and under `reqcove service install`'s
+service (launchd, and systemd on Ubuntu), not under `brew services`. How to
+use them, and what stays in the terminal:
 [the guide](docs/guide.md#the-console-reqcove-console).
 
 ### What the agent can do

@@ -1,21 +1,25 @@
 # Changelog
 
-## Unreleased
+## v1.3.0 — 2026-11-17
 
 v1.3 makes `reqcove console` the place to see and change a running `run`
 (the hosts, the settings, the agents' requests, a restart), adds a page for
 your own devices on the tailnet, and `reqcove restart`. What the page shows
 and how it talks to `run` are not stable ([COMPATIBILITY](docs/COMPATIBILITY.md#not-stable)).
-The tailnet page was tried in the iPhone's Safari with its Wi-Fi proxy set
-to the Remote Proxy (the QR link opened the page); this computer's page was
-not tried in Safari, and was tried in a Chromium-based browser before its
-v1.3 panels, which were not.
+Walked by hand on 2026-11-17 (macOS, a desktop browser on the Mac, the
+iPhone's Safari, an Ubuntu 24.04 VM): this computer's page and parts of its panels,
+`reqcove restart` in a terminal and under `reqcove service install`'s
+launchd and systemd services, the tailnet page in the iPhone's Safari over
+the exit node and through the Remote Proxy; each entry says what. Not
+tried: `brew upgrade` from v1.2 and a `brew services` restart, another
+user's or a tagged device on the tailnet page, Safari on the Mac, a 5th
+session.
 
 ### Added
 
 - **`reqcove restart`** (in a terminal only) restarts the running `run`
   in the same process (an exec: launchd, systemd and brew services see the
-  same process; from the code, not tried). Before anything stops, it checks
+  same process; seen under launchd and systemd, not under brew services). Before anything stops, it checks
   the config on disk and the command line as the next start reads them, that
   the binary `run` was started from (its path as started, links kept:
   Homebrew's `opt` path) is still there, and then asks that binary itself
@@ -36,8 +40,18 @@ v1.3 panels, which were not.
   nothing put back. A new ctl op, `restart`, in LAN
   mode too; a `run` older than v1.3 says to stop it and start it again. Unit
   tests (an exec of a test binary among them) and an E2E test with real
-  mitmproxy (LAN mode on the loopback); not tried: a tailnet node, under a
-  service manager, after a real `brew upgrade`.
+  mitmproxy (LAN mode on the loopback); by hand (2026-11-17): in a terminal
+  (the pid, the page's port and session kept; a rebuilt binary taken), a
+  failed new start (`--uvx=/usr/bin/false` in the config: the config put
+  back, `config.failed` kept, `status`'s `restart:` line, the page's session
+  kept), Ctrl-C during the new start (stayed down, the config untouched, no
+  copy left), under `reqcove service install`'s services: launchd's,
+  restarted from the page (the same pid, no exit seen by launchd), and the
+  systemd user service on Ubuntu 24.04 (the same MainPID, NRestarts 0; `systemctl --user
+  stop` during a restart: stayed stopped, the config unchanged, no
+  `config.failed`), and another OS user there retrying to bind the page's
+  port throughout a restart never got it; not tried: under brew services,
+  after a real `brew upgrade`.
 - **mitmweb for one start: `reqcove restart --web`**, and the
   `reqcove console` page's **Restart with mitmweb (this start only)…** (this
   computer's page alone; the tailnet page has no such button and `run`
@@ -58,12 +72,15 @@ v1.3 panels, which were not.
   unmasked; this start only` or `from the command line`), the MCP `status`
   (`mitmweb`, `mitmweb_this_start_only`: booleans) and both pages say it is
   on, never its link or password. Unit tests and the E2E restart test with
-  real mitmproxy (LAN mode); not tried: the page's button in a browser,
-  under a service.
+  real mitmproxy (LAN mode); by hand (2026-11-17): the page's button, its
+  confirm, `mitmweb: on — unmasked; this start only` on the page and in
+  `reqcove status`, mitmweb opened from the iPhone over the tailnet, and a
+  plain Restart… dropping it; not tried: under a service.
 - **`reqcove console --end`** (in a terminal only, as `console`) ends every
   session of the pages and every link not opened yet; the pages say so, the
   links say they were ended. A new ctl op, `console-end`, in LAN mode too; a
-  `run` older than v1.3 says to restart it with v1.3. Unit tests.
+  `run` older than v1.3 says to restart it with v1.3. Unit tests; by hand
+  (2026-11-17): it ended the page open in the browser.
 - **The `reqcove console` page's Scope panel** (127.0.0.1 alone) changes
   the hosts as `reqcove capture` does (`run` checks each again; LAN mode
   refuses them): add and remove (with "pass undecrypted"), stop and start,
@@ -78,8 +95,13 @@ v1.3 panels, which were not.
   made on a page that read the hosts before another change (another tab, the
   CLI) is refused. Changes are traced "(from the console on this computer)"
   (the log, a `cli` marker, `scope_change`). The page keeps v1.2's guards on
-  its new endpoints. Unit tests and an E2E test with real mitmproxy; the
-  panel was not tried in a browser.
+  its new endpoints. Unit tests and an E2E test with real mitmproxy; by
+  hand in a browser (2026-11-17): add, remove, a host "unsaved", Save on a
+  config with its hosts inline (the line added, the hosts file made 0600,
+  `config.prev` kept, the change listed in the confirm), Save refused after
+  another tab added a host and after an edit by hand to the hosts file
+  between the confirm and OK (nothing written); not tried there: stop and
+  start, allow-all, discovery.
 - **The `reqcove console` page's Settings panel** (127.0.0.1 alone): writes
   `--device` (picked among your own untagged devices on the tailnet, as
   `run`'s node sees them; written as the StableID), `--keep-awake`,
@@ -99,8 +121,10 @@ v1.3 panels, which were not.
   against when `run` last read or wrote them) and the records it empties,
   offers the HAR file first, asks, and restarts as `reqcove restart` does;
   an edit after the list was shown, to the config or a hosts or masking file
-  it reads, is refused, nothing stopped. Unit tests; the
-  panel was not tried in a browser.
+  it reads, is refused, nothing stopped. Unit tests; by hand in a browser
+  (2026-11-17): `--keep-awake` written and Restart… with its list, a change
+  in the hosts file alone shown in that list, a run from flags alone
+  read-only; not tried: the other settings, the device list.
 - **The `reqcove console` page's other panels** (127.0.0.1 alone):
   **Presets and rules**: the `--rules` file's presets by name and kind,
   whether each is on and until when, each turned on for 1 to 5 minutes (a
@@ -121,8 +145,9 @@ v1.3 panels, which were not.
   run**: the service's commands, and with `--ui` a link to its page's bare
   address (never its token). Presets turned on or off and HAR files are
   logged "(from the console on this computer)". Unit tests and an E2E test
-  with real mitmproxy (presets and rules); the panels and the HAR download
-  were not tried in a browser.
+  with real mitmproxy (presets and rules); by hand in a browser
+  (2026-11-17): a marker, the HAR download (the browser renamed the file);
+  not tried in a browser: the presets, the CA, This run.
 - **`reqcove console --tailnet`** (in a terminal only; refused in LAN mode
   and on a tagged node) opens a second page, for your own devices on the
   tailnet: a QR code and `http://100.x.y.z:PORT/#c=CODE` in the terminal
@@ -153,7 +178,11 @@ v1.3 panels, which were not.
   mode never serve it. Unit tests, real tsnet nodes (the listener's address,
   another user's device refused, a connection's address the peer's) and E2E
   tests with real mitmproxy (the Remote Proxy under allow-all among them);
-  not tried on an iPhone or a real tailnet with devices of your own.
+  by hand in the iPhone's Safari (2026-11-17), over the exit node and through
+  the Remote Proxy: the state without the Mac's paths, a host added, an
+  agent's request approved, allow-all on and End, and `reqcove restart`
+  ending its session (a new QR code needed); not tried: another user's or a
+  tagged device, presets, a 5th session.
 - **`reqcove capture save` on a config with its hosts inline** (v1.0's
   setup, or one written by hand): the first save shows what it would do and
   asks y/N, then creates the hosts file beside the config (`hosts`; 0600,
@@ -169,7 +198,7 @@ v1.3 panels, which were not.
   the ctl op `save`, `confirm` (the token of the change and of the config
   and hosts files as read: an edit to one since it was shown refuses the
   save, and a hosts file changed since it was read is never replaced). Unit tests and an E2E
-  test (Save from the page).
+  test (Save from the page); Save from the page by hand (above).
 - **A config writer**, the one way `capture save` and the page change the
   `--config` file: it writes only the flags of a fixed list, each value
   checked (no line break, control character or leading `@`), never through
@@ -239,7 +268,8 @@ v1.3 panels, which were not.
   first line no longer says to open the link within 60 s, which read wrong
   once the browser had opened it: it says the link works once, within 60 s,
   for both. In a terminal only; refused with `--end` or `--tailnet`.
-  Unit tests; not tried by hand.
+  Unit tests; by hand (2026-11-17): no link once the browser opened, one
+  with `--print`.
 
 ### Fixed
 
@@ -271,8 +301,8 @@ v1.3 panels, which were not.
   restart confirm, "restarted at …" once the new start answers, the HAR
   name "offered", the ended text (a restart keeps the sessions), and a run
   from flags alone: a failed restart stays down, Settings show the command
-  line's. Unit tests for the Go texts; the page's from the code, not tried
-  in a browser.
+  line's. Unit tests for the Go texts; the page's from the code, not
+  checked one by one in a browser.
 - **A computer whose name is long** (over 39 characters, GitHub's macOS
   runners among them) could not start a `run` that makes its own CA: the
   CA's name (`Reqcove CA (<computer>, <date>)`) went over X.509's 64
