@@ -9,7 +9,7 @@ Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent.
 The name Reqcove (REK-kohv) combines request and cove: a sheltered place where
 requests gather.
 
-[日本語](README.ja.md)
+[Website](https://mh-mobile.github.io/reqcove/) · [日本語](README.ja.md)
 
 The iPhone picks your computer as its Tailscale **exit node**. Reqcove, a single
 binary on that computer, carries the traffic, has [mitmproxy](https://mitmproxy.org)

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reqcove</title>
+<meta name="description" content="Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent over MCP, through a Tailscale exit node.">
+<meta property="og:title" content="Reqcove">
+<meta property="og:description" content="Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent over MCP.">
+<meta property="og:url" content="https://mh-mobile.github.io/reqcove/">
+<meta name="twitter:card" content="summary">
+<script>
+  // Before the page renders, so Japanese readers don't see English first.
+  (function () {
+    var l = null;
+    try { l = localStorage.getItem("lang"); } catch (e) {}
+    document.documentElement.lang = l || ((navigator.language || "").indexOf("ja") === 0 ? "ja" : "en");
+  })();
+</script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --card: #f5f5f7; --line: #e3e3e8;
+    --accent: #2c5bd8; --accent-fg: #ffffff; --code: #f0f1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111114; --fg: #f2f2f5; --muted: #a1a1a8; --card: #1c1c21; --line: #2c2c33;
+            --accent: #6b93ff; --accent-fg: #0b0b0f; --code: #1f2027; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 0 16px 64px; }
+  a { color: var(--accent); }
+  .lang { position: absolute; top: 16px; right: 16px; font-size: 14px; }
+  .lang button { background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 999px;
+                 padding: 4px 12px; cursor: pointer; font: inherit; }
+  .lang button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  header { text-align: center; padding: 72px 0 24px; }
+  h1 { font-size: 44px; margin: 8px 0 4px; letter-spacing: -0.02em; }
+  .tagline { font-size: 22px; font-weight: 600; margin: 0 auto 8px; max-width: 680px; }
+  .sub { color: var(--muted); margin: 0 auto 24px; max-width: 620px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 10px 20px; border-radius: 999px; text-decoration: none; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); }
+  .btn.ghost { border: 1px solid var(--line); color: var(--fg); }
+  h2 { font-size: 26px; margin: 56px 0 16px; letter-spacing: -0.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border-radius: 12px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .flow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+  .flow .box { display: flex; flex-direction: column; align-items: center; background: var(--card); border: 1px solid var(--line);
+               border-radius: 10px; padding: 8px 14px; font-size: 15px; font-weight: 600; }
+  .flow .box small { font-weight: 400; color: var(--muted); font-size: 13px; }
+  .flow .arrow { color: var(--muted); font-size: 20px; }
+  ol.steps { padding-left: 20px; } ol.steps li { margin-bottom: 8px; }
+  pre { background: var(--code); border-radius: 10px; padding: 14px 76px 14px 16px; overflow-x: auto; position: relative; margin: 0 0 12px; }
+  code { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .copy { position: absolute; top: 8px; right: 8px; font-size: 12px; padding: 4px 10px; border-radius: 6px;
+          border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  ul.req { padding-left: 20px; } ul.req li { margin-bottom: 6px; }
+  .note { color: var(--muted); font-size: 14px; }
+  footer { border-top: 1px solid var(--line); margin-top: 64px; padding-top: 20px; color: var(--muted); font-size: 14px;
+           display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+  [data-l="ja"] { display: none; }
+  html[lang="ja"] [data-l="en"] { display: none; }
+  html[lang="ja"] [data-l="ja"] { display: revert; }
+  @media (max-width: 520px) {
+    h1 { font-size: 36px; } .tagline { font-size: 19px; } header { padding-top: 64px; }
+    .flow { flex-direction: column; } .flow .arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="lang" role="group" aria-label="Language">
+  <button type="button" data-set="en" aria-pressed="true">English</button>
+  <button type="button" data-set="ja" aria-pressed="false">日本語</button>
+</div>
+<main>
+  <header>
+    <h1>Reqcove</h1>
+    <p class="tagline" data-l="en">Hand your iPhone's HTTP(S) traffic to an AI agent over MCP, from anywhere.</p>
+    <p class="tagline" data-l="ja">iPhone の HTTP(S) 通信を、どこからでも、AI エージェントに MCP で渡す。</p>
+    <p class="sub" data-l="en">The iPhone picks your computer as its Tailscale exit node. Reqcove, one binary on that computer, carries the traffic, has mitmproxy decrypt the hosts you allow, and serves the records to your agent. Wi-Fi or 5G, with the iPhone on your desk or far away.</p>
+    <p class="sub" data-l="ja">iPhone は、お使いのコンピュータを Tailscale の Exit Node として選びます。そのコンピュータで動く 1 つのバイナリの Reqcove が通信を中継し、許可したホストを mitmproxy で復号して、記録をエージェントに渡します。Wi-Fi でも 5G でも、iPhone が手元にあっても離れた場所にあっても使えます。</p>
+    <div class="cta">
+      <a class="btn primary" href="#install"><span data-l="en">Install</span><span data-l="ja">インストール</span></a>
+      <a class="btn ghost" href="https://github.com/mh-mobile/reqcove">GitHub</a>
+    </div>
+  </header>
+
+  <h2 data-l="en">What you get</h2>
+  <h2 data-l="ja">できること</h2>
+  <div class="grid">
+    <div class="card">
+      <h3 data-l="en">An exit node, not a Wi-Fi proxy</h3><h3 data-l="ja">Wi-Fi のプロキシではなく Exit Node</h3>
+      <p data-l="en">On the iPhone, you choose the exit node and trust a CA once. No proxy to set on each Wi-Fi, and no VPN app on the iPhone in Tailscale's place: Tailscale stays on, and the tailnet with it.</p>
+      <p data-l="ja">iPhone では、Exit Node を選び、CA を一度信頼するだけです。Wi-Fi ごとにプロキシを設定することも、Tailscale の代わりに iPhone で VPN 型のアプリを動かすこともありません。Tailscale はオンのままで、tailnet もそのまま使えます。</p>
+    </div>
+    <div class="card">
+      <h3 data-l="en">Only the hosts you allow</h3><h3 data-l="ja">記録するのは許可したホストだけ</h3>
+      <p data-l="en">Requests to other hosts are not recorded, and Apple's hosts always pass undecrypted. The secrets Reqcove recognises (tokens, keys, cookies, passwords) are masked as they arrive. Records stay in memory and are gone when <code>reqcove run</code> stops.</p>
+      <p data-l="ja">ほかのホストへのリクエストは記録しません。Apple のホストへの接続は常に復号せずに通します。Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。記録はメモリの中だけにあり、<code>reqcove run</code> を止めると消えます。</p>
+    </div>
+    <div class="card">
+      <h3 data-l="en">Your agent reads it over MCP</h3><h3 data-l="ja">エージェントは MCP で読む</h3>
+      <p data-l="en">A summary of the traffic, lists and search, one request's headers and bodies, and the TLS handshakes a device refused (often certificate pinning). Ask "which requests to api.example.com failed in the last ten minutes?"</p>
+      <p data-l="ja">通信の内訳、一覧と検索、1 件のヘッダーとボディ、デバイスが拒否した TLS ハンドシェイク（多くは証明書ピンニング）を、ツールで読めます。「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」と聞けます。</p>
+    </div>
+    <div class="card">
+      <h3 data-l="en">See and change it while it runs</h3><h3 data-l="ja">動かしたまま見て変える</h3>
+      <p data-l="en"><code>reqcove console</code> opens a page of the running <code>run</code> in your browser: its status, the hosts to add or remove, its settings and a restart. An agent can ask to record another host; you approve it, on that page or in the terminal, never the agent. <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.md#the-console-reqcove-console">More</a></p>
+      <p data-l="ja"><code>reqcove console</code> で、動いている <code>run</code> のページをブラウザで開けます。状態、ホストの追加と削除、設定と再起動を扱えます。エージェントは記録するホストを足すよう頼めます。承認するのはエージェントではなくあなたで、そのページでも端末でも承認できます。<a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.ja.md#コンソールreqcove-console">詳しく</a></p>
+    </div>
+    <div class="card">
+      <h3 data-l="en">With RoamRun, the real app</h3><h3 data-l="ja">RoamRun と使えば実機のアプリで</h3>
+      <p data-l="en"><a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a>, a separate tool, lets an agent see and operate an iPhone (iOS 27 or later). Give the agent both: it operates the real app, then reads the requests that action sent with <code>wait_for_flows</code>. <a href="https://github.com/mh-mobile/RoamRun">RoamRun on GitHub</a></p>
+      <p data-l="ja">別のツールの <a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a> を使うと、エージェントが iPhone の画面を見て操作できます（iOS 27 以降）。両方をエージェントに渡せば、エージェントが実機のアプリを操作し、その操作で送られたリクエストを <code>wait_for_flows</code> で読めます。<a href="https://github.com/mh-mobile/RoamRun">GitHub の RoamRun</a></p>
+    </div>
+    <div class="card">
+      <h3 data-l="en">Open source, one binary</h3><h3 data-l="ja">オープンソースで、1 つのバイナリ</h3>
+      <p data-l="en">MIT licensed. Decryption is done by mitmproxy, open source too, which Reqcove fetches with uv on the first run. The macOS release binary is signed with a Developer ID and notarized by Apple.</p>
+      <p data-l="ja">MIT ライセンスです。復号はオープンソースの mitmproxy が行い、初回の起動時に Reqcove が uv で取得します。macOS のリリースのバイナリは Developer ID で署名してあり、Apple の公証を受けています。</p>
+    </div>
+  </div>
+
+  <h2 data-l="en">How it works</h2>
+  <h2 data-l="ja">仕組み</h2>
+  <div class="flow" aria-hidden="true">
+    <div class="box">iPhone<small data-l="en">Wi-Fi or 5G</small><small data-l="ja">Wi-Fi でも 5G でも</small></div>
+    <span class="arrow">→</span>
+    <div class="box">reqcove run<small data-l="en">exit node</small><small data-l="ja">Exit Node</small></div>
+    <span class="arrow">→</span>
+    <div class="box">mitmproxy<small data-l="en">allowed hosts</small><small data-l="ja">許可したホスト</small></div>
+    <span class="arrow">→</span>
+    <div class="box">reqcove mcp<small data-l="en">masked records</small><small data-l="ja">マスク済みの記録</small></div>
+    <span class="arrow">→</span>
+    <div class="box"><span data-l="en">AI agent</span><span data-l="ja">AI エージェント</span><small>MCP</small></div>
+  </div>
+  <ol class="steps" data-l="en">
+    <li>The iPhone picks your computer as its Tailscale exit node. Its traffic goes over the tailnet and out through <code>reqcove run</code>.</li>
+    <li>mitmproxy decrypts the connections to the hosts you allow, with Reqcove's CA that the iPhone trusts. Other connections are carried as they are.</li>
+    <li>Each request to an allowed host is recorded in memory, its secrets masked as it arrives.</li>
+    <li><code>reqcove mcp</code> serves the records to your agent as MCP tools.</li>
+  </ol>
+  <ol class="steps" data-l="ja">
+    <li>iPhone は、お使いのコンピュータを Tailscale の Exit Node として選びます。iPhone の通信は tailnet を通り、<code>reqcove run</code> から出ていきます。</li>
+    <li>許可したホストへの接続は、iPhone が信頼した Reqcove の CA を使って、mitmproxy が復号します。ほかの接続はそのまま中継します。</li>
+    <li>許可したホストへのリクエストを、届いた時点でシークレットをマスクして、メモリに記録します。</li>
+    <li><code>reqcove mcp</code> が、その記録を MCP のツールとしてエージェントに渡します。</li>
+  </ol>
+
+  <div id="install"></div>
+  <h2 data-l="en">Install</h2>
+  <h2 data-l="ja">インストール</h2>
+  <pre><code>brew trust --formula mh-mobile/tap/reqcove
+brew install mh-mobile/tap/reqcove</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
+  <p class="note" data-l="en">Then, in a terminal, <code>reqcove setup</code> asks for the iPhone's name in your tailnet and the hosts to record, and writes a config file. Start it with <code>reqcove run</code>; the first time, <code>reqcove links</code> prints the login URL, and <code>reqcove status</code> says what is left.</p>
+  <p class="note" data-l="ja">続いて、ターミナルで <code>reqcove setup</code> を実行します。tailnet での iPhone の名前と記録するホストを聞いて、設定ファイルに書きます。<code>reqcove run</code> で起動します。初回のログイン用の URL は <code>reqcove links</code> が表示し、残っている手順は <code>reqcove status</code> が教えます。</p>
+  <pre><code>reqcove setup</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
+  <pre><code>reqcove run</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
+  <p class="note" data-l="en">On the iPhone: in the Tailscale app, choose the exit node <code>reqcove</code>; scan the CA's QR code (<code>reqcove links</code> prints it), install the profile and trust it in Settings › General › About › Certificate Trust Settings. For Claude Code, give the agent the tools with <code>claude mcp add reqcove -- reqcove mcp</code>.</p>
+  <p class="note" data-l="ja">iPhone では、Tailscale アプリで Exit Node に <code>reqcove</code> を選び、CA の QR コード（<code>reqcove links</code> が表示します）を読んでプロファイルを入れ、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。Claude Code には <code>claude mcp add reqcove -- reqcove mcp</code> でツールを渡します。</p>
+  <p class="note" data-l="en">Or download a binary from <a href="https://github.com/mh-mobile/reqcove/releases/latest">GitHub Releases</a>. Full steps: <a href="https://github.com/mh-mobile/reqcove#readme">README</a> and <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.md">the guide</a>.</p>
+  <p class="note" data-l="ja"><a href="https://github.com/mh-mobile/reqcove/releases/latest">GitHub Releases</a> からバイナリをダウンロードすることもできます。詳しい手順は <a href="https://github.com/mh-mobile/reqcove/blob/main/README.ja.md">README</a> と<a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.ja.md">ガイド</a>にあります。</p>
+
+  <h2 data-l="en">Requirements</h2>
+  <h2 data-l="ja">必要なもの</h2>
+  <ul class="req" data-l="en">
+    <li>macOS on Apple silicon, or Linux (amd64 or arm64)</li>
+    <li>uv (Homebrew installs it): Reqcove fetches mitmproxy and Python with it on the first run</li>
+    <li>A Tailscale tailnet, and the Tailscale app on the iPhone</li>
+    <li>The computer awake while the iPhone uses it</li>
+  </ul>
+  <ul class="req" data-l="ja">
+    <li>Apple シリコンの macOS、または Linux（amd64 または arm64）</li>
+    <li>uv（Homebrew で入れれば一緒に入ります）。初回の起動時に、Reqcove が uv で mitmproxy と Python を取得します</li>
+    <li>Tailscale の tailnet と、iPhone にインストールした Tailscale アプリ</li>
+    <li>iPhone が使っている間、スリープしていないコンピュータ</li>
+  </ul>
+
+  <h2 data-l="en">What it does not do</h2>
+  <h2 data-l="ja">しないこと</h2>
+  <p data-l="en">It does not find secrets under names that do not say so, and does not mask personal data such as e-mail addresses. Once trusted, the CA lets this computer read the iPhone's HTTPS to any site, not only the hosts you allow. What the agent reads goes to its model provider. Apps that pin certificates refuse Reqcove's. More in <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">SECURITY</a>.</p>
+  <p data-l="ja">名前からシークレットと分からない値は見つけられず、メールアドレスなどの個人情報はマスクしません。CA を信頼すると、このコンピュータは iPhone の HTTPS を、許可したホストに限らずどのサイトについても読めるようになります。エージェントが読んだものは、そのモデルの提供元に送られます。証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。詳しくは <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">SECURITY</a> にあります。</p>
+
+  <footer>
+    <span>Reqcove · MIT License</span>
+    <span>
+      <a href="https://github.com/mh-mobile/reqcove">GitHub</a> ·
+      <a href="https://github.com/mh-mobile/reqcove/releases">Releases</a> ·
+      <a data-l="en" href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">Security</a><a data-l="ja" href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">Security</a>
+    </span>
+  </footer>
+</main>
+<script>
+  const root = document.documentElement;
+  function setLang(l, remember) {
+    root.lang = l;
+    document.querySelectorAll(".lang button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.set === l)));
+    if (remember) { try { localStorage.setItem("lang", l); } catch (e) {} }
+  }
+  setLang(root.lang, false);
+  document.querySelectorAll(".lang button").forEach(b => b.addEventListener("click", () => setLang(b.dataset.set, true)));
+  document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", () => {
+    const label = b.innerHTML, ja = root.lang === "ja";
+    const show = t => { b.textContent = t; setTimeout(() => (b.innerHTML = label), 1500); };
+    if (!navigator.clipboard) { show(ja ? "選択してコピーしてください" : "Select and copy"); return; }
+    navigator.clipboard.writeText(b.previousElementSibling.textContent)
+      .then(() => show(ja ? "コピーしました" : "Copied"), () => show(ja ? "コピーできません" : "Copy failed"));
+  }));
+</script>
+</body>
+</html>
