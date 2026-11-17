@@ -201,7 +201,7 @@ v1.3 panels, which were not.
   device list and its tailnet page; no change expected, as such a node is
   another user's. A unit test.
 - **The skill and the server's instructions** name `reqcove restart` and
-  `reqcove console` (`--tailnet` and `--end` too) among the commands agents
+  `reqcove console` (`--tailnet`, `--end` and `--print` too) among the commands agents
   never run, with `setup` and `capture` as before; an agent may still ask
   for a host with `request_capture_add`, which the user may now approve on
   the console's page too. Nothing else of v1.3 changes what an agent does.

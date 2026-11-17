@@ -406,7 +406,7 @@ of the agents' requests. Since v1.3 it opens a file
 `run` wrote in the state directory with `open` (macOS) or `xdg-open`
 (Linux), never the link itself, which other users of this computer would see
 in `ps`: the file sends the browser on to the link, and `run` removes it
-after 60 seconds. Once it opened, it prints neither the link nor its code:
+after 60 seconds. Once the opener succeeded, it prints neither the link nor its code:
 the link works once, and opened again it would close every page, the one
 just opened too. When the opener fails, it prints the link and why: open it
 yourself; against a v1.2 `run`, which writes no file, it opens nothing and
@@ -743,7 +743,7 @@ stays a command or a line you write yourself. From the code:
 | Any other flag of `run` (`--lan-interface`, say) | a line you write in the config, or the command line | the page writes its fixed list alone |
 | `reqcove capture set`, `reqcove reload` | your terminal | the page takes its own changes alone, one at a time, each with its warning |
 | Save, the Settings panel, **Restart…**, the HAR file | this computer's page; never the tailnet page | they write files on this computer or hand out the records |
-| `reqcove console` itself (`--tailnet`, `--end`), `reqcove restart`, `capture`, `setup`, `service`, `cleanup`, `links`, `lan`, `init` | your terminal (restart: also the page's **Restart…**) | the code that opens a page is printed there; the others install, remove, print tokens or let devices in |
+| `reqcove console` itself (`--tailnet`, `--end`, `--print`), `reqcove restart`, `capture`, `setup`, `service`, `cleanup`, `links`, `lan`, `init` | your terminal (restart: also the page's **Restart…**) | the code that opens a page is printed there; the others install, remove, print tokens or let devices in |
 
 The terminal check is a guard against mistakes, not a boundary: a process
 of your user can give a command a terminal

@@ -540,7 +540,7 @@ files given are logged "(from the console on this computer)".
   `open` or `xdg-open` is given that file's path, never the link (a test
   checks their arguments). `run` removes the file after 60 seconds, at
   `reqcove console --end`, when it ends, and when it starts (one a killed
-  `run` left) (tests). Once the browser opened, the terminal shows neither
+  `run` left) (tests). Once the opener succeeded, the terminal shows neither
   the link nor the code, so it is not used twice by mistake; it prints the
   link when the opener fails, against a v1.2 `run` (no file), and with
   `reqcove console --print`, which opens nothing and removes the file at
@@ -638,7 +638,7 @@ hides (tests: every other route of this computer's page refused, Save too).
   it. Each still needs the code (from reading the code; not tried with a
   second user or a real tailnet with devices of your own).
 - **An agent with a shell, or one that drives the browser or the phone's
-  screen, is not kept out.** `reqcove console`, `--tailnet`, `--end`,
+  screen, is not kept out.** `reqcove console`, `--tailnet`, `--end`, `--print`,
   `capture` and `restart` run only in a terminal, and the skill and the
   server's instructions tell agents never to run them; that is a guard
   against mistakes, not a boundary. A process of your user can give them a
