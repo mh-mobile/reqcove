@@ -76,9 +76,13 @@ go build -o reqcove ./cmd/reqcove
 
    初回はログインが必要です。ログイン用の URL は `reqcove links` で表示できます。Exit Node の承認など、残っている手順は `reqcove status` で確認できます。
 2. **iPhone で Exit Node を選びます。** Tailscale アプリで、Exit Node に `reqcove` を選びます。
+
+   <img src="docs/images/iphone-exit-node.png" width="360" alt="iPhone の Tailscale アプリ。接続中で、EXIT NODE に reqcove が選ばれている">
 3. **iPhone で Reqcove の CA を信頼します。** この CA を信頼すると、プロファイルが iPhone にある間、このコンピュータは iPhone の HTTPS を、許可したホストに限らずどのサイトについても読めるようになります（[SECURITY](docs/SECURITY.ja.md#ca-の秘密鍵)）。
 
    CA の QR コードをカメラで読み取ります。QR コードは `reqcove links` が表示し、ターミナルで起動した `reqcove run` も表示します。Safari で `http://mitm.it` を開く方法もあります（`http://` から入力します）。続いて「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です（コンピュータ名は 39 文字までで切ります）。
+
+   <img src="docs/images/iphone-ca-trust.png" width="420" alt="iPhone の設定の「証明書信頼設定」。Reqcove CA がオンになっている">
 4. **エージェントにツールを渡します。** ツールの使い方を教える Skill も入れます。Claude Code の場合は次のとおりです。
 
    ```sh
@@ -109,6 +113,8 @@ reqcove restart             # config を読み直して、同じプロセスで 
 ```
 
 v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）と `brew services` のもとで試しました。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
+
+<img src="docs/images/console.png" width="600" alt="reqcove console のページの上部。エージェントの頼み、Remove の付いた記録するホスト、Add、Stop recording、Allow all、Discover、プリセット">
 
 ### エージェントにできること
 
@@ -156,6 +162,8 @@ reqcove run --lan --allow-hosts api.example.com
 - 記録するのは `--allow-hosts` のホストへのリクエストだけです。Apple のホストへの接続は常に復号せずに通します。
 - HTTP/2 で接続が再利用されると、許可したホストの接続に、ほかのホストへのリクエストが相乗りすることがあります。このリクエストも復号されます。記録はしませんが、`--web` では表示され、`--upstream-proxy` に転送されることがあります。
 - Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません**（`--mask-names` や `--mask-values` で足せます）。メールアドレスなどの個人情報もマスクしません。
+
+  <img src="docs/images/ui-flow.png" width="600" alt="--ui のページのログインのリクエスト。authorization ヘッダーと JSON のボディの password が [redacted] になっている">
 - エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、サイトがその中でエージェントに指示しようとすることがあります。
 - Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
 - `reqcove console` のページは、記録するものと `run` の設定を変えられます。鍵は 1 回だけ使えるリンクです。先に開いた人がページを持ち、あなたのユーザーとして動くもの（シェルを使えるエージェントなど）もリンクを頼めます（[SECURITY](docs/SECURITY.ja.md#reqcove-console-のページ)）。
