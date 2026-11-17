@@ -26,6 +26,12 @@ launcher and for known vulnerabilities (pip-audit). To move to another
 mitmproxy: change the version and the date in `internal/capture/mitm.py`,
 `capture.LockedMitmSpec` and `UVExcludeNewer`, then
 `uv lock --script internal/capture/mitm.py --upgrade`.
+A push or pull request that changes only docs (`*.md`, `docs/`, `poc/`) runs
+only the checks and, on Linux, `go test ./cmd/reqcove/` (the tests that read the
+docs and SKILL.md); anything else, or a change it cannot tell (a new branch, a
+force-push), runs everything (`scripts/ci-docs-only.sh`). A tag is released only
+when test.yml passed on its commit or, for a merge with the same tree as its
+second parent (dev merged into main), on that parent (`scripts/release-gate.sh`).
 The end-to-end tests use local servers, except `TestEndToEnd`, which also checks
 that github.com and www.apple.com pass through undecrypted: it needs the internet.
 Tests that need a real tailnet, an iPhone or hours (`REQCOVE_TRIAL2`,

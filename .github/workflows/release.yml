@@ -20,21 +20,18 @@ jobs:
       # script: a ref name can hold $(…) and quotes.
       VERSION: ${{ github.ref_name }}
     steps:
-      # Only a commit that passed the whole test workflow (macOS and Linux,
-      # end to end with mitmproxy, the container, the checks) is released.
-      - name: tests passed on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq length)
-          if [ "$runs" -eq 0 ]; then
-            echo "::error::$GITHUB_SHA has no successful run of test.yml: push it to dev or main (or open a pull request), wait for test.yml to pass, then re-run this job"
-            exit 1
-          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # nothing here pushes; keep the token out of .git/config
+          fetch-depth: 2 # the tagged commit's parents, for the check below
+      # Only a commit that passed the test workflow (macOS and Linux, end to end
+      # with mitmproxy, the container, the checks; for a docs-only change, its
+      # light jobs) is released: the tagged commit, or the second parent of a
+      # merge with the same tree (dev merged into main with nothing else).
+      - name: tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-gate.sh "$GITHUB_SHA"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

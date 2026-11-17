@@ -9,7 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  # docs_only: every changed path is docs (scripts/ci-docs-only.sh); then the
+  # test matrix and the container are skipped (the run still succeeds) and only
+  # checks and docs run. Anything uncertain runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the push's before and the pull request's base
+      - id: diff
+        shell: bash # pipefail: a failed script fails the job
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: scripts/ci-docs-only.sh "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +60,8 @@ jobs:
   # The container image (Dockerfile), built and run without a tailnet login:
   # mitmproxy offline, reqcove mcp from another container, the lock, docker stop.
   container:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +72,21 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/container-smoke.sh
+
+  # Docs-only changes: the tests that read the docs and SKILL.md (docs_test.go,
+  # skill_test.go, setup_test.go) are cmd/reqcove's; the test job runs them otherwise.
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./cmd/reqcove/
 
   checks:
     runs-on: ubuntu-latest
