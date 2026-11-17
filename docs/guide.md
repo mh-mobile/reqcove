@@ -602,6 +602,8 @@ file, for the next start, and restarts `run`:
   written. A `run` started from flags alone (no `--config`) has every setting
   read-only, and the page says why.
 
+<img src="images/console-confirm.png" width="650" alt="The Settings panel asking before it writes --local-proxy: true, with run's own words for the flag, Cancel and Write it">
+
 A change goes through the writer `capture save` uses: the values checked (a
 line break, a control character or a leading `@` refused, and every flag but
 these), the config's other lines and comments kept, the file before kept as
@@ -726,6 +728,8 @@ writes no file. The page has what ends with the run:
   how many (listed, with **Add**, on this computer's page);
 - presets on and off and the rules by kind and name, a marker, and the CA
   panel.
+
+<img src="images/console-tailnet.png" width="600" alt="The page on the tailnet: the agents' requests, the hosts recorded, Stop recording, Allow all, Discover, and the presets; no Save, settings or restart">
 
 Save, the Settings panel, **Restart…** and the HAR file are this computer's
 page's alone: `run` refuses them on the tailnet page, which does not show
@@ -1510,6 +1514,8 @@ QR code (`reqcove links` prints them again; off a terminal, only it). Scan it wi
 new flows every second (split view puts it beside the app). Tap a flow for its
 headers and bodies, masked as the MCP tools return them.
 
+<img src="images/ui-list.png" width="650" alt="The --ui list: a search field, filters by status, Live and Clear, and one flow, POST /anything/login, 200, from iphone-duo">
+
 - Search matches URLs and headers as you type; "bodies too" adds the kept
   heads of bodies and stops the list following (it walks every record). Filter
   by status (2xx to 5xx, no answer) or, from a flow's page, by host.
@@ -1619,6 +1625,8 @@ mitmweb runs instead of mitmdump, on `http://127.0.0.1:8081` (8091-8099 while
 another run has 8081: [two addresses](several-exit-nodes.md#ports)) and, for
 your own devices on the tailnet, on the node's port 8081, with the link and QR
 code `run` (or `reqcove links`) prints.
+
+<img src="images/mitmweb.png" width="650" alt="mitmweb's Flow List with requests to httpbin.org and example.com: method, status and size. What mitmweb shows is not masked">
 
 - Nothing is masked, and anyone with its password can edit and replay
   requests and change its options (scripts included), which runs code on

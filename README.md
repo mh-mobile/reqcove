@@ -104,6 +104,8 @@ the agent.
    `reqcove status` says what is left, such as approving the exit node.
 2. **On the iPhone: choose the exit node.** In the Tailscale app, choose the
    exit node `reqcove`.
+
+   <img src="docs/images/iphone-exit-node.png" width="360" alt="The Tailscale app on the iPhone, connected, with EXIT NODE reqcove">
 3. **On the iPhone: trust Reqcove's CA.** Once trusted, the CA lets this
    computer read the iPhone's HTTPS to any site, not only the hosts you
    allow, for as long as its profile stays on the iPhone
@@ -115,6 +117,8 @@ the agent.
    Downloaded), and trust it in Settings › General › About › Certificate
    Trust Settings. It is named `Reqcove CA (<computer>, <date>)`, the
    computer's name cut to 39 characters.
+
+   <img src="docs/images/iphone-ca-trust.png" width="420" alt="Certificate Trust Settings in the iPhone's Settings (in Japanese), with Reqcove CA turned on">
 4. **Give your agent the tools**, and the skill that teaches it how to use
    them. For Claude Code:
 
@@ -171,6 +175,8 @@ in the iPhone's Safari, over the exit node and through the Remote Proxy;
 service (launchd, and systemd on Ubuntu) and under `brew services`. How to
 use them, and what stays in the terminal:
 [the guide](docs/guide.md#the-console-reqcove-console).
+
+<img src="docs/images/console.png" width="600" alt="The top of the reqcove console page: agents' requests, the hosts recorded with Remove, Add, Stop recording, Allow all, Discover, and the presets">
 
 ### What the agent can do
 
@@ -237,6 +243,8 @@ iPhone on a home Wi-Fi (iOS 27.3).
   as they arrive. **Other secrets in a body, under names that do not say so,
   are not found** (add yours with `--mask-names` or `--mask-values`), and
   personal data such as e-mail addresses is not masked.
+
+  <img src="docs/images/ui-flow.png" width="600" alt="A login request on the --ui page: the authorization header and the password in the JSON body show as [redacted]">
 - What the agent reads goes to its model provider. Bodies are written by remote
   sites and may try to instruct the agent.
 - The exit node refuses this computer, its LAN and the tailnet as destinations.
