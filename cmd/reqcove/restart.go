@@ -674,14 +674,18 @@ func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 		}
 	}
 	os.Remove(filepath.Join(st.o.state, restartNote))
-	msg := fmt.Sprintf("restarting: run stops (the system proxy put back, mitmproxy and the node stopped) and %s starts again with the config on disk and the same command line; %s", startBinary, restartEmpties(records))
+	with, failed := "the config on disk and the same command line", "run puts back the config it had started from and starts once more"
+	if st.o.config == "" {
+		with, failed = "the same command line", "run stays down (no config to put back)"
+	}
+	msg := fmt.Sprintf("restarting: run stops (the system proxy put back, mitmproxy and the node stopped) and %s starts again with %s; %s", startBinary, with, restartEmpties(records))
 	if absPath(n.state) != absPath(st.o.state) {
 		msg += "; the config names another --state now: " + n.state
 	}
 	if st.page != nil {
 		msg += "; the console's page keeps its port and sessions"
 	}
-	msg += ". If the new start fails, run puts back the config it had started from and starts once more; " + withState("reqcove status", n.state) + " says how it went"
+	msg += ". If the new start fails, " + failed + "; " + withState("reqcove status", n.state) + " says how it went"
 	log.Print("restart: asked; " + strings.TrimPrefix(msg, "restarting: "))
 	return ctlAnswer{OK: true, Message: msg, after: func() { st.restart(snap) }}
 }

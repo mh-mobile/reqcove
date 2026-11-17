@@ -6,6 +6,7 @@ const DURATIONS = ["30m", "1h", "2h", "4h", "8h", "12h", "24h"];
 let timer = 0;
 let last = null; // the state shown last: its rev goes with a change, its warnings before a confirm
 let again = "run reqcove console again in your terminal"; // the tailnet page's: console --tailnet
+let restartedFrom = ""; // the start time of the run a restart from here stopped
 
 function $(id) { return document.getElementById(id); }
 
@@ -50,6 +51,11 @@ async function api(method, path, body) {
 }
 
 function show(d) {
+  if (restartedFrom && d.started && d.started !== restartedFrom) {
+    restartedFrom = "";
+    $("settings-result").textContent = "restarted at " + clock(d.started) + "; reqcove status says how it went";
+    loadSettings();
+  }
   $("line").textContent = "Updated " + new Date().toLocaleTimeString() + " (every 5 s)";
   $("main").hidden = false;
   // The tailnet page: only what ends with the run (run refuses the rest there too).
@@ -216,8 +222,8 @@ async function change(body, warning) {
   return ok;
 }
 
-// save shows what Save writes (the files now, then; pinned hosts; the line
-// added to the config), then asks.
+// save shows what Save writes (the files now, then; the line added to the
+// config; the notes, which name the pinned hosts), then asks.
 async function save() {
   let d;
   try {
@@ -232,7 +238,6 @@ async function save() {
     const what = f.pass ? " (passed undecrypted)" : "";
     lines.push((f.created ? "create " + f.path + what + " (yours only, 0600)" : f.path + what + ": " + (f.now.join(", ") || "no hosts")) + " -> will write: " + (f.write.join(", ") || "no hosts"));
   }
-  if (d.pinned) lines.push("pinned (given as they are, not written; a start takes them again): " + d.pinned.join(", "));
   if (d.config_add) lines.push("add to " + d.config + " (its other lines kept, the old file kept as .prev):\n  + " + d.config_add.join("\n  + "));
   for (const n of d.notes || []) lines.push(n);
   if (!confirm("Save writes:\n" + lines.join("\n") + "\n\nWrite it?")) return;
@@ -258,13 +263,15 @@ async function loadSettings() {
 function showSettings(d) {
   conf = d;
   $("settings-ro").textContent = d.read_only ? "Read-only: " + d.read_only : (d.config ? "From " + d.config : "");
+  $("settings-how").hidden = !d.config; // flags alone: no file to write
   const dl = $("settings");
   dl.replaceChildren();
   for (const s of d.settings) {
     const dd = el("dd");
-    const now = s.set != null && s.set !== "" ? s.set : s.values.length ? s.values.join(", ") : "not in the file (default: " + (s.default || "none") + ")";
+    const cmdline = !d.config && s.pinned; // flags alone: the command line's are the values
+    const now = s.set != null && s.set !== "" ? s.set : s.values.length ? s.values.join(", ") : cmdline ? s.pinned.join(", ") : (d.config ? "not in the file" : "not given") + " (default: " + (s.default || "none") + ")";
     dd.append(el("div", s.flag === "mask-values" && !s.set ? "not set" : now));
-    if (s.pinned) dd.append(el("div", "on run's command line: " + s.pinned.join(", "), "muted"));
+    if (s.pinned && !cmdline) dd.append(el("div", "on run's command line: " + s.pinned.join(", "), "muted"));
     if (s.why) dd.append(el("div", s.why, "muted"));
     if (s.edit) dd.append(editor(s, d));
     dl.append(el("dt", "--" + s.flag), dd);
@@ -361,7 +368,7 @@ async function saveHAR() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  $("rec-result").textContent = "Saved as " + name + " where your browser saves downloads (your Downloads folder, usually), with the permissions it gives files there: it holds what the agents' tools return, masked, body heads only. Check it before you share it.";
+  $("rec-result").textContent = "Offered as " + name + " (your browser may name it otherwise), where your browser saves downloads (your Downloads folder, usually), with the permissions it gives files there: it holds what the agents' tools return, masked, body heads only. Check it before you share it.";
   return true;
 }
 
@@ -488,7 +495,7 @@ async function restart() {
   if (d.message || d.error) { $("settings-result").textContent = d.message || d.error; return; }
   const lines = [];
   for (const x of d.diff) {
-    const what = x.changed ? "changed (not shown)" : (x.was || []).join(", ") + " -> " + ((x.now || []).join(", ") || "(removed)");
+    const what = x.changed ? "changed (not shown)" : ((x.was || []).join(", ") || "(not set)") + " -> " + ((x.now || []).join(", ") || "(removed)");
     lines.push("--" + x.flag + ": " + what + (x.pinned ? " (given on run's command line too)" : ""));
   }
   if (!lines.length) lines.push("no setting changed: run starts again as it is");
@@ -498,11 +505,11 @@ async function restart() {
   try {
     const { d: a } = await api("POST", "/api/restart", { rev: d.rev });
     $("settings-result").textContent = a.message || a.error || "";
+    if (a.ok && last) restartedFrom = last.started;
   } catch (e) {
     $("settings-result").textContent = "reqcove did not answer: reqcove status says what came of it";
   }
   $("restart").disabled = false;
-  setTimeout(loadSettings, 5000);
 }
 
 function setup() {

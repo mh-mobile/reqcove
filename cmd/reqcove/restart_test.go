@@ -500,6 +500,27 @@ func TestRestartRefused(t *testing.T) {
 	}
 }
 
+// The answer says what a failed start does: with a config, run puts back
+// the one it started from; started from flags alone, it stays down.
+func TestRestartAnswerFlagsOnly(t *testing.T) {
+	state := t.TempDir()
+	st, _, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
+	if a := restartOp(t.Context(), st, 0); !a.OK || !strings.Contains(a.Message, "with the config on disk and the same command line") || !strings.Contains(a.Message, "run puts back the config it had started from") {
+		t.Errorf("with a config: %q", a.Message)
+	}
+	o, err := parseRunFlags([]string{"--device", "phone", "--state=" + state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st = newCtlState(o)
+	st.restart = func(string) {}
+	startArgs = []string{"--device", "phone", "--state=" + state}
+	a := restartOp(t.Context(), st, 0)
+	if !a.OK || !strings.Contains(a.Message, "starts again with the same command line;") || !strings.Contains(a.Message, "If the new start fails, run stays down") || strings.Contains(a.Message, "puts back") {
+		t.Errorf("flags alone: %q", a.Message)
+	}
+}
+
 // capture save's first save adds the @FILE line to the config and to the
 // start config's snapshot: a failed start after a restart keeps the line,
 // and the next save writes the hosts file rather than creating it again.

@@ -1,5 +1,6 @@
 :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --muted: #6e6e73; --line: #d2d2d7; --ok: #0a7d32; --no: #b3261e; }
 @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --muted: #a1a1a6; --line: #3a3a3c; --ok: #4cd964; --no: #ff6961; } }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; } /* iOS Safari enlarges text in landscape otherwise, past the width */
 body { margin: 0 auto; max-width: 52rem; padding: 1rem; font: 15px/1.45 -apple-system, system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
