@@ -196,8 +196,11 @@ func TestPageChecks(t *testing.T) {
 	check("another path", r, 404)
 
 	// The session: in its header, nowhere else.
-	r, _ = call(t, base, "GET", "/api/state", "", nil)
+	r, b = call(t, base, "GET", "/api/state", "", nil)
 	check("no session", r, http.StatusUnauthorized)
+	if !strings.Contains(b, "or run was stopped and started again") || strings.Contains(b, "run restarted") { // a restart keeps the sessions
+		t.Errorf("no session: %s", b)
+	}
 	r, _ = call(t, base, "GET", "/api/state", "", map[string]string{sessionHeader: token[:63] + "x"})
 	check("a wrong session", r, http.StatusUnauthorized)
 	r, _ = call(t, base, "GET", "/api/state", "", map[string]string{sessionHeader: code})
@@ -210,6 +213,9 @@ func TestPageChecks(t *testing.T) {
 	check("the session", r, 200)
 	if strings.Contains(b, leak) || strings.Contains(b, token) || strings.Contains(b, code) {
 		t.Errorf("shows what it must not: %s", b)
+	}
+	if !strings.Contains(b, `"started":"`+pageStarted+`"`) || pageStarted == "" { // the page sees a restart by it
+		t.Errorf("started: %s", b)
 	}
 
 	// Changes: POST only, from this page, as JSON, with the session.

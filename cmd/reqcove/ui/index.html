@@ -14,8 +14,8 @@
 <section><h2>Asked by agents</h2><div id="requests"></div><p id="result" role="status"></p></section>
 <section><h2>Recorded</h2><dl id="recorded"></dl>
 <form id="mark"><input id="mark-text" type="text" maxlength="80" placeholder="about to tap Pay" autocomplete="off" spellcheck="false" aria-label="marker text"> <button>Add a marker</button></form>
-<p id="har-box"><button id="har" type="button">Save the records as a HAR file…</button></p>
 <p id="rec-result" role="status"></p>
+<p id="har-box"><button id="har" type="button">Save the records as a HAR file…</button></p>
 <div id="scope">
 <h3>Hosts recorded</h3><ul id="hosts" class="list"></ul>
 <h3>Passed undecrypted</h3><ul id="pass" class="list"></ul>
@@ -23,11 +23,11 @@
 <form id="add"><input id="add-host" type="text" placeholder="api.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="host to add">
 <label><input id="add-pass" type="checkbox"> pass undecrypted</label> <button>Add</button></form>
 <p><button id="stop" type="button">Stop recording</button><button id="start" type="button">Start recording</button><button id="save" type="button">Save…</button></p>
+<p id="scope-result" role="status"></p>
 <p>Every host for <select id="all-for"></select> <button id="all-on" type="button">Allow all</button><span id="all-left" class="left"></span><button id="all-end" type="button">End</button></p>
 <p>Discover hosts for <select id="disc-for"></select> <button id="disc-on" type="button">Discover</button><span id="disc-left" class="left"></span><button id="disc-end" type="button">End</button></p>
 <div id="seen-box"><h3>Discovered (outside the hosts recorded)</h3><ul id="seen" class="list"></ul></div>
 <p id="seen-count" class="muted" hidden></p>
-<p id="scope-result" role="status"></p>
 </div>
 <p id="scope-lan" class="muted" hidden>In LAN mode the hosts recorded are the ones run started with: nothing here changes them.</p>
 </section>
@@ -45,7 +45,7 @@
 <ol id="ca-steps"></ol>
 </section>
 <section id="settings-box"><h2>Settings</h2>
-<p class="muted">Written to the config file; run takes them at its next restart. The config's other lines are kept, the file before as config.prev.</p>
+<p id="settings-how" class="muted">Written to the config file; run takes them at its next restart. The config's other lines are kept, the file before as config.prev.</p>
 <p id="settings-ro" class="muted"></p>
 <dl id="settings"></dl>
 <p><button id="restart" type="button">Restart…</button></p>

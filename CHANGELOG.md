@@ -221,6 +221,13 @@ not.
   not see an edit to a hosts file (or a masking file) made after they were
   shown; the tailnet page could keep the tail of a path with a space in a
   next step. Unit tests for each.
+- **The `reqcove console` page's words** (not released): pinned hosts said
+  once in Save's confirm, results beside their buttons, "(not set)" in the
+  restart confirm, "restarted at …" once the new start answers, the HAR
+  name "offered", the ended text (a restart keeps the sessions), and a run
+  from flags alone: a failed restart stays down, Settings show the command
+  line's. Unit tests for the Go texts; the page's from the code, not tried
+  in a browser.
 - **A computer whose name is long** (over 39 characters, GitHub's macOS
   runners among them) could not start a `run` that makes its own CA: the
   CA's name (`Reqcove CA (<computer>, <date>)`) went over X.509's 64

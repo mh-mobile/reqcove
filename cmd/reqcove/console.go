@@ -620,7 +620,7 @@ func (p *page) authed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d, _ := caller(r)
 		if !p.live(r.Header.Get(sessionHeader), d) {
-			why := "no session: ended (by reqcove console --end, a link opened twice or 12 h idle), or run restarted: run reqcove console again in your terminal"
+			why := "no session: ended (by reqcove console --end, a link opened twice or 12 h idle), or run was stopped and started again: run reqcove console again in your terminal"
 			if p.tailnet {
 				why = "no session on this device: ended (by reqcove console --end, a link opened twice, 1 h idle or 12 h in all, or used from another device), or run restarted: run reqcove console --tailnet again in your terminal"
 			}
@@ -702,7 +702,12 @@ type pageState struct {
 	// Tailnet: the tailnet page's state: no local path, discovery's names
 	// as their count alone (discovered_kept); its panels are what ends with the run.
 	Tailnet bool `json:"tailnet,omitempty"`
+	// Started is when this process started: a restart (an exec) changes it.
+	Started string `json:"started"`
 }
+
+// pageStarted is pageState.Started.
+var pageStarted = time.Now().Format(time.RFC3339)
 
 // pageHost is a name host discovery saw: a host (capture.ValidHost) alone,
 // never a command; the page puts it in as text.
@@ -746,6 +751,7 @@ func (p *page) state(w http.ResponseWriter, r *http.Request) {
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
 	}
+	out.Started = pageStarted
 	out.ServiceCmds = serviceCommands(s.Service, s.Manager, p.st.dir)
 	out.FlowsURL = flowsURL(p.st.o, n.IPs)
 	for _, r := range p.st.reqs.pending() {
