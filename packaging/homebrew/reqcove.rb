@@ -4,8 +4,8 @@
 class Reqcove < Formula
   desc "Hand an iPhone's HTTP(S) traffic to an AI agent, over a Tailscale exit node"
   homepage "https://github.com/mh-mobile/reqcove"
-  url "https://github.com/mh-mobile/reqcove/archive/refs/tags/v1.2.0.tar.gz"
-  sha256 "d4e57068fb2755fd83475d7802e5fe77fa5274c9aae53b109cf5e77ef205bba0"
+  url "https://github.com/mh-mobile/reqcove/archive/refs/tags/v1.3.0.tar.gz"
+  sha256 "488de44a108e2dec4efb46299ba111216b32437d55ac7a9b6d26ec514ec78ea0"
   license "MIT"
 
   depends_on "go" => :build
