@@ -235,8 +235,10 @@ v1.3 panels, which were not.
   opened too). When the opener fails, or against a v1.2 `run` (no file), it
   prints the link as before. **`reqcove console --print`** (new) prints a
   link and opens nothing, for another browser or one that cannot read the
-  state directory; it removes the file `run` wrote for it at once (no
-  change to `run`). In a terminal only; refused with `--end` or `--tailnet`.
+  state directory; it removes the file `run` wrote for it at once. `run`'s
+  first line no longer says to open the link within 60 s, which read wrong
+  once the browser had opened it: it says the link works once, within 60 s,
+  for both. In a terminal only; refused with `--end` or `--tailnet`.
   Unit tests; not tried by hand.
 
 ### Fixed
