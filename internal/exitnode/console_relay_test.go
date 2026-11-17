@@ -94,6 +94,13 @@ func TestRemoteProxyRelaysConsole(t *testing.T) {
 			t.Errorf("a header added: %s: %v", name, v)
 		}
 	}
+	// iOS sends the link's #fragment (the page's code) to the proxy: the page
+	// gets the path without it, and nothing after # goes on.
+	for target, want := range map[string]string{"http://100.64.0.9:47001/#c=abc": "/", "http://100.64.0.9:47001/api/state?x=1#c=abc": "/api/state?x=1"} {
+		if code, _, in := ask(rp(false), "GET", target, "100.64.0.1:5000", nil); code != 200 || in == nil || in.URL.RequestURI() != want || strings.Contains(in.URL.String(), "abc") {
+			t.Errorf("%s: %d, the page got %v", target, code, in)
+		}
+	}
 	// By the node's name: the page itself refuses a name (its exact Host).
 	if code, _, in := ask(rp(false), "GET", "http://reqcove:47001/", "100.64.0.1:5000", nil); code != 200 || in == nil {
 		t.Errorf("by name: %d, to the page %v", code, in != nil)
