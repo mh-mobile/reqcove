@@ -38,33 +38,31 @@ function note(anchor, text) {
   n.textContent = text;
 }
 
-// ask shows text in the page, under anchor (and its note), with yes and no
-// (Cancel): true once yes is clicked; false on no, Esc, or another ask. The
-// browser's own dialog shows nothing on a page opened in a window not in
-// front, so the page asks itself. No has the focus: Enter is never yes.
+// ask shows text in the page's dialog (modal: the page behind it waits),
+// with Cancel (or no) and yes: true once yes is clicked; false on Cancel, Esc,
+// or another ask. Cancel has the focus: Enter is never yes. The page asks
+// itself: auto-opened by reqcove console in Arc, the browser's own confirm
+// dialog answered no without showing.
 const askBox = $("ask");
 let asked = null; // the open one's answer
-function ask(anchor, text, yes, no) {
+askBox.addEventListener("close", () => { if (!askBox.open && asked) asked(false); }); // Esc
+function ask(text, yes, no) {
   if (asked) asked(false);
   return new Promise((resolve) => {
-    const esc = (e) => { if (e.key === "Escape") done(false); };
     const done = (v) => {
       if (asked !== done) return;
       asked = null;
-      document.removeEventListener("keydown", esc);
-      askBox.hidden = true;
+      askBox.close();
       resolve(v);
     };
     asked = done;
     const cancel = button(no || "Cancel", () => done(false));
     const t = el("p", text);
     t.id = "ask-text";
-    askBox.replaceChildren(t, button(yes, () => done(true)), cancel);
-    const n = anchor.nextElementSibling;
-    (n && n.classList.contains("note") ? n : anchor).after(askBox);
-    askBox.hidden = false;
-    document.addEventListener("keydown", esc);
-    askBox.scrollIntoView({ block: "nearest" });
+    const b = el("p");
+    b.append(cancel, button(yes, () => done(true)));
+    askBox.replaceChildren(t, b);
+    askBox.showModal();
     cancel.focus();
   });
 }
@@ -78,6 +76,7 @@ function clock(rfc) {
 function ended(why) {
   sessionStorage.removeItem(KEY);
   clearInterval(timer);
+  if (asked) asked(false);
   $("main").hidden = true;
   $("line").textContent = why;
 }
@@ -251,12 +250,12 @@ function tick() {
 
 // change asks run for it, with the revision the page showed (read before
 // the ask: the page refreshes while it asks); warning, when given, is the
-// CLI's own, asked under where with yes. The answer, word for word, under
-// where; true when run took it.
+// CLI's own, asked first with yes. The answer, word for word, under where;
+// true when run took it.
 async function change(body, where, warning, yes) {
   if (!last) return false;
   if (body.rev == null) body.rev = last.rev;
-  if (warning && !(await ask(where, warning + "\n\nGo on?", yes))) return false;
+  if (warning && !(await ask(warning + "\n\nGo on?", yes))) return false;
   let ok = false;
   for (const b of $("scope").querySelectorAll("button")) b.disabled = true;
   note(where, body.cmd === "save" ? "Saving…" : "Sending…");
@@ -292,7 +291,7 @@ async function save() {
   }
   if (d.config_add) lines.push("add to " + d.config + " (its other lines kept, the old file kept as .prev):\n  + " + d.config_add.join("\n  + "));
   for (const n of d.notes || []) lines.push(n);
-  if (!(await ask(where, "Save writes:\n" + lines.join("\n") + "\n\nWrite it?", "Write it"))) return;
+  if (!(await ask("Save writes:\n" + lines.join("\n") + "\n\nWrite it?", "Write it"))) return;
   change({ cmd: "save", confirm: d.confirm, rev }, where);
 }
 
@@ -396,12 +395,13 @@ function editor(s, d) {
   return box;
 }
 
-// setSetting writes the setting's values, on the revision shown; asked:
-// run's words for it first, under where (its row); back, on Cancel.
-async function setSetting(s, values, asked, where, back) {
+// setSetting writes the setting's values, on the revision shown; confirms:
+// run's words for it asked first; the answer under where (its row); back,
+// on Cancel.
+async function setSetting(s, values, confirms, where, back) {
   if (!conf) return;
   const rev = conf.rev;
-  if (asked && !(await ask(where, "--" + s.flag + ": " + (values.join(", ") || "(removed)") + "\n\n" + s.warning + "\n\nWrite it to the config (taken at the next restart)?", "Write it"))) {
+  if (confirms && !(await ask("--" + s.flag + ": " + (values.join(", ") || "(removed)") + "\n\n" + s.warning + "\n\nWrite it to the config (taken at the next restart)?", "Write it"))) {
     if (back) back();
     return;
   }
@@ -409,7 +409,7 @@ async function setSetting(s, values, asked, where, back) {
   notes = { [s.flag]: "Saving…" };
   note(where, notes[s.flag]);
   try {
-    const { d } = await api("POST", "/api/settings", { flag: s.flag, values, rev, confirmed: asked });
+    const { d } = await api("POST", "/api/settings", { flag: s.flag, values, rev, confirmed: confirms });
     notes[s.flag] = d.message || d.error || "";
   } catch (e) {
     notes[s.flag] = "reqcove did not answer";
@@ -452,12 +452,12 @@ async function saveHAR() {
 }
 
 // beforeRestart offers the records as a HAR file before a restart empties
-// them, asked under where; true: go on.
-async function beforeRestart(d, where) {
+// them; true: go on.
+async function beforeRestart(d) {
   if (!(d.records > 0)) return true;
-  if (!(await ask(where, "A restart empties the " + d.records + " records. Save them as a HAR file first (to your browser's downloads)?", "Save a HAR file", "No"))) return true;
+  if (!(await ask("A restart empties the " + d.records + " records. Save them as a HAR file first (to your browser's downloads)?", "Save a HAR file", "No"))) return true;
   if (await saveHAR()) return true;
-  return ask(where, "No HAR file: " + $("har-result").textContent + "\n\nRestart anyway?", "Restart anyway");
+  return ask("No HAR file: " + $("har-result").textContent + "\n\nRestart anyway?", "Restart anyway");
 }
 
 // The presets and rules panel: names and kinds alone; a preset turned on
@@ -506,7 +506,7 @@ async function loadPresets() {
         const body = { name: x.name, on: true, minutes: Number(m.value) }; // as shown when asked
         if (x.kind === "map_remote") body.target = x.target;
         if (n && n.value !== "no count") body.times = Number(n.value);
-        if (!(await ask(list, "Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?", "Turn on"))) return;
+        if (!(await ask("Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?", "Turn on"))) return;
         preset(body);
       }));
     }
@@ -566,7 +566,6 @@ async function loadCA() {
 // has otherwise than run started with), the records it empties, then asks.
 // web: the next start alone runs mitmweb, after a confirm of its own.
 async function restart(web) {
-  const where = $("restart").parentElement;
   let d;
   try {
     ({ d } = await api("GET", web ? "/api/restart?web=1" : "/api/restart"));
@@ -582,9 +581,9 @@ async function restart(web) {
   }
   lines.push(...(d.lines || []));
   if (!lines.length) lines.push("no setting changed: run starts again as it is");
-  if (d.web && !(await ask(where, "Turn mitmweb on for the next start only?\n\n" + d.web + ".", "Turn mitmweb on"))) return;
-  if (!(await beforeRestart(d, where))) return;
-  if (!(await ask(where, "Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning, "Restart"))) return;
+  if (d.web && !(await ask("Turn mitmweb on for the next start only?\n\n" + d.web + ".", "Turn mitmweb on"))) return;
+  if (!(await beforeRestart(d))) return;
+  if (!(await ask("Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning, "Restart"))) return;
   $("restart").disabled = $("restart-web").disabled = true;
   $("settings-result").textContent = "Restarting…";
   try {

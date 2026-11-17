@@ -7,27 +7,31 @@
 - **`reqcove console`'s page asks in the page.** Its confirms (a setting
   marked confirm, Save, Restart…, Restart with mitmweb, Allow all, Remove,
   Stop recording, a preset turned on, the HAR file before a restart) were the
-  browser's own dialog, which Chromium does not show on a page opened in a
-  window not in front (as `reqcove console` opens it): Save did nothing.
-  Each is now a block in the page, in the same words, with its action button
-  and Cancel (Esc, and Enter, which Cancel has the focus for, cancel; one
-  open at a time), under the row of the button pressed (under the list for a
-  list's buttons); `run`'s checks are the same. Each answer, and "Sending…",
-  "Saving…" or "Restarting…" while it is asked, shows there too, not only at
-  the panel's end. A setting's control shows the value the file gives (its
-  last, as `run` reads it; `1` or `t` as `true`), else the default, and again
-  after a Cancel: with the dialog answering no unseen, the `--ui` choice kept
-  `false` under a value `true`. Tried: unit tests (no browser dialog left in
-  the page's code), and in headless Chrome against a stand-in for `run`: the
-  old page with the dialog answering no (the choice left `false` under
-  `true`, nothing sent, nothing said), and the new one: the words, place and
-  answer of `--ui`'s Save (Esc, Write it), Remove, Save, Stop recording,
-  Allow all (Cancel), a preset turned on, Restart…, and Restart with mitmweb
-  through the HAR offer and a failed HAR file; Esc, one open at a time,
-  Cancel putting the choice back, the revision and values sent, "Sending…",
-  "Saving…" and "Restarting…" in flight. Not tried: a real `run`, a browser
-  by hand, the other confirms (a passed host's Remove, a device or masked
-  name added or removed, Clear, Discover).
+  browser's own dialog. With the page auto-opened by `reqcove console` in Arc,
+  it answered no without showing: Save did nothing. Opened by hand from
+  `--print`'s link in Arc, Safari or Chrome, it showed. Each is now one dialog
+  of the page's own (an HTML `<dialog>`, modal: the page behind it waits),
+  centered, in the page's light or dark colors, in the same words, with Cancel
+  and the action button. Esc and Cancel cancel; Cancel has the focus, so Enter
+  cancels too and the action takes a click. `run`'s checks are the same. Each
+  answer, and "Sending…", "Saving…" or "Restarting…" while it is asked, shows
+  under the row of the button pressed (under the list for a list's buttons),
+  not only at the panel's end. A setting's control shows the value the file
+  gives (its last, as `run` reads it; `1` or `t` as `true`), else the default,
+  and again after a Cancel: with the dialog answering no unseen, the `--ui`
+  choice kept `false` under a value `true`. Tried: unit tests (no browser
+  dialog left in the page's code, the `<dialog>` there), and in headless
+  Chrome against a stand-in for `run`: the old page with the dialog
+  answering no (the choice left `false` under `true`, nothing sent, nothing
+  said), and the new one, with real clicks and keys: the words,
+  buttons and answer of `--ui`'s Save, Remove, Save, Stop recording, Allow
+  all, a preset turned on, Restart…, and Restart with mitmweb through the HAR
+  offer and a failed HAR file; Esc, Cancel and Enter cancelling (nothing
+  sent, the choice put back), a click behind the dialog doing nothing, Cancel
+  having the focus, the dialog centered in light and dark, the revision and
+  values sent, "Sending…", "Saving…" and "Restarting…" in flight. Not tried:
+  a real `run`, Arc's auto-open again by hand, the other confirms (a passed
+  host's Remove, a device or masked name added or removed, Clear, Discover).
 
 ## v1.3.0 — 2026-11-17
 
