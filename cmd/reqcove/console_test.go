@@ -551,9 +551,12 @@ func TestPageChange(t *testing.T) {
 	}
 }
 
-// reqcove console: in a terminal only; prints the link and opens the code
-// file, never the link (the code would show in ps); with no file (a v1.2
-// run), the link alone; a v1.1 run says to restart it with v1.2.
+// reqcove console: in a terminal only; opens the code file, never the link
+// (the code would show in ps), and then prints neither the link nor its code
+// (used twice, it would end every session, the one just opened too); the
+// link printed when it could not open it or there is no file (a v1.2 run),
+// and with --print, which opens nothing and removes the file; a v1.1 run
+// says to restart it with v1.2.
 func TestConsoleCmd(t *testing.T) {
 	ctx := context.Background()
 	code := strings.Repeat("ab", 16)
@@ -568,28 +571,32 @@ func TestConsoleCmd(t *testing.T) {
 	r, w, _ := os.Pipe()
 	defer r.Close()
 	defer w.Close()
-	if err := uiIn(ctx, r, w, dir); err == nil || !strings.Contains(err.Error(), "only in a terminal") || len(*got) != 0 {
+	if err := uiIn(ctx, r, w, dir, false); err == nil || !strings.Contains(err.Error(), "only in a terminal") || len(*got) != 0 {
 		t.Errorf("off a terminal: %v %+v", err, *got)
+	}
+	if err := uiIn(ctx, r, w, dir, true); !errors.Is(err, errNotTerminal) || len(*got) != 0 {
+		t.Errorf("--print off a terminal: %v %+v", err, *got)
 	}
 	terminal = func(*os.File) bool { return true }
 	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
 	defer out.Close()
-	if err := uiIn(ctx, r, out, dir); err != nil {
-		t.Fatal(err)
+	printed := func(printLink bool, state string) string {
+		t.Helper()
+		out.Truncate(0)
+		out.Seek(0, 0)
+		if err := uiIn(ctx, r, out, state, printLink); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(out.Name())
+		return string(b)
 	}
 	link := "http://127.0.0.1:4242/#c=" + code
-	b, _ := os.ReadFile(out.Name())
-	if !strings.Contains(string(b), "the page\n  "+link+"\n") || len(opened) != 1 || opened[0] != filepath.Join(dir, file) || (*got)[0].Cmd != "console" {
-		t.Errorf("%q %q %+v", b, opened, *got)
+	if b := printed(false, dir); strings.Contains(b, "#c=") || strings.Contains(b, code) || !strings.Contains(b, "the page\nopened in your browser") || !strings.Contains(b, "reqcove console --print") || len(opened) != 1 || opened[0] != filepath.Join(dir, file) || (*got)[0].Cmd != "console" {
+		t.Errorf("opened: %q %q %+v", b, opened, *got)
 	}
 	openBrowser = func(context.Context, string) error { return errors.New("no browser") }
-	out.Truncate(0)
-	out.Seek(0, 0)
-	if err := uiIn(ctx, r, out, dir); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(out.Name()); !strings.Contains(string(b), link) || !strings.Contains(string(b), "not opened in a browser (no browser)") {
-		t.Errorf("%q", b)
+	if b := printed(false, dir); !strings.Contains(b, "the page\n  "+link+"\n") || !strings.Contains(b, "not opened in a browser (no browser)") || strings.Contains(b, "opened in your browser") {
+		t.Errorf("not opened: %q", b)
 	}
 
 	openBrowser = func(_ context.Context, f string) error { opened = append(opened, f); return nil }
@@ -598,18 +605,26 @@ func TestConsoleCmd(t *testing.T) {
 			return ctlAnswer{OK: true, Message: "the page", Port: 4242, Code: code, File: f}
 		})
 		opened = nil
-		out.Truncate(0)
-		out.Seek(0, 0)
-		if err := uiIn(ctx, r, out, noFile); err != nil {
-			t.Fatal(err)
-		}
-		if b, _ := os.ReadFile(out.Name()); len(opened) != 0 || !strings.Contains(string(b), link) || !strings.Contains(string(b), "open the link above yourself") {
+		if b := printed(false, noFile); len(opened) != 0 || !strings.Contains(b, link) || !strings.Contains(b, "open the link above yourself") {
 			t.Errorf("file %q: %q %q", f, opened, b)
+		}
+		if b := printed(true, noFile); len(opened) != 0 || b != "the page\n  "+link+"\n" {
+			t.Errorf("--print, file %q: %q %q", f, opened, b)
 		}
 	}
 
+	// --print: the link, nothing opened, the code file removed.
+	opened = nil
+	os.WriteFile(filepath.Join(dir, file), []byte("x"), 0o600)
+	if b := printed(true, dir); len(opened) != 0 || b != "the page\n  "+link+"\n" {
+		t.Errorf("--print: %q %q", opened, b)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, file)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("--print left the code file: %v", err)
+	}
+
 	old, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer { return ctlAnswer{Message: v11Answer} })
-	if err := uiIn(ctx, r, out, old); !errors.Is(err, errOlderUI) || !strings.Contains(err.Error(), "restart it with v1.2") {
+	if err := uiIn(ctx, r, out, old, false); !errors.Is(err, errOlderUI) || !strings.Contains(err.Error(), "restart it with v1.2") {
 		t.Errorf("v1.1: %v", err)
 	}
 	for _, op := range []string{"console", "console-end"} {
@@ -653,7 +668,8 @@ func TestCodeFile(t *testing.T) {
 		}
 	}
 
-	// The opener: the file's path, never the link.
+	// The opener: the file's path, never the link; the code printed nowhere.
+	codeFileTTL = pageCodeTTL // the file kept, to read the code from it
 	var args []string
 	was := openBrowser
 	openBrowser = func(_ context.Context, f string) error { args = append(args, f); return nil }
@@ -661,16 +677,17 @@ func TestCodeFile(t *testing.T) {
 	terminal = func(*os.File) bool { return true }
 	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
 	defer out.Close()
-	if err := uiIn(context.Background(), out, out, state); err != nil || len(args) != 1 {
+	if err := uiIn(context.Background(), out, out, state, false); err != nil || len(args) != 1 {
 		t.Fatalf("%v %q", err, args)
 	}
-	if b, _ := os.ReadFile(out.Name()); strings.Contains(args[0], "#c=") || strings.Contains(args[0], "http") || !strings.Contains(string(b), "#c=") {
-		t.Errorf("opened %q; printed %q", args[0], b)
+	b, _ = os.ReadFile(args[0])
+	m := regexp.MustCompile(`#c=([0-9a-f]+)`).FindStringSubmatch(string(b))
+	printed, _ := os.ReadFile(out.Name())
+	if m == nil || strings.Contains(args[0], "#c=") || strings.Contains(args[0], "http") || strings.Contains(string(printed), "#c=") {
+		t.Fatalf("opened %q (%s); printed %q", args[0], b, printed)
 	}
-	for _, c := range regexp.MustCompile(`#c=([0-9a-f]+)`).FindAllStringSubmatch(string(b), -1) {
-		if strings.Contains(args[0], c[1]) || strings.Contains(logged.String(), c[1]) {
-			t.Errorf("the code in %q or the log", args[0])
-		}
+	if strings.Contains(args[0], m[1]) || strings.Contains(string(printed), m[1]) || strings.Contains(logged.String(), m[1]) {
+		t.Errorf("the code in %q, the terminal or the log", args[0])
 	}
 
 	// Never through a symlink, nor over a file there already.

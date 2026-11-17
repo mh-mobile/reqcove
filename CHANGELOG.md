@@ -6,9 +6,10 @@ v1.3 makes `reqcove console` the place to see and change a running `run`
 (the hosts, the settings, the agents' requests, a restart), adds a page for
 your own devices on the tailnet, and `reqcove restart`. What the page shows
 and how it talks to `run` are not stable ([COMPATIBILITY](docs/COMPATIBILITY.md#not-stable)).
-None of the pages was tried in Safari or on an iPhone; this computer's page
-was tried in a Chromium-based browser before its v1.3 panels, which were
-not.
+The tailnet page was tried in the iPhone's Safari with its Wi-Fi proxy set
+to the Remote Proxy (the QR link opened the page); this computer's page was
+not tried in Safari, and was tried in a Chromium-based browser before its
+v1.3 panels, which were not.
 
 ### Added
 
@@ -200,10 +201,21 @@ not.
   device list and its tailnet page; no change expected, as such a node is
   another user's. A unit test.
 - **The skill and the server's instructions** name `reqcove restart` and
-  `reqcove console` (`--tailnet` and `--end` too) among the commands agents
+  `reqcove console` (`--tailnet`, `--end` and `--print` too) among the commands agents
   never run, with `setup` and `capture` as before; an agent may still ask
   for a host with `request_capture_add`, which the user may now approve on
   the console's page too. Nothing else of v1.3 changes what an agent does.
+- **`reqcove console` prints the link only when it did not open it**: once
+  the browser opened the page, it prints neither the link nor its code, but
+  a line saying the link works once and how to get one to open by hand
+  (found walking v1.3: clicking the printed link after the browser opened
+  used the code twice, which ends every session of the page, the one just
+  opened too). When the opener fails, or against a v1.2 `run` (no file), it
+  prints the link as before. **`reqcove console --print`** (new) prints a
+  link and opens nothing, for another browser or one that cannot read the
+  state directory; it removes the file `run` wrote for it at once (no
+  change to `run`). In a terminal only; refused with `--end` or `--tailnet`.
+  Unit tests; not tried by hand.
 
 ### Fixed
 
@@ -256,9 +268,8 @@ not.
   `xdg-open`**, whose arguments `ps` shows other users of this computer
   (v1.2 did, for a moment). `run` writes a file in the state directory
   (0600, created anew, never through a symlink, a random name) that sends
-  the browser to the link; `reqcove console` opens that file and still
-  prints the link, to open by hand when the browser cannot read the state
-  directory. `run` removes the file after 60 seconds, at `--end`, and when
+  the browser to the link; `reqcove console` opens that file, and prints
+  the link only when it could not (or with `--print`, above). `run` removes the file after 60 seconds, at `--end`, and when
   it ends and starts; the code's 60 seconds stay `run`'s, as before. Against
   a v1.2 `run` (no file) it opens nothing and prints the link alone; a v1.2
   `reqcove console` still passes the link in the opener's arguments: update

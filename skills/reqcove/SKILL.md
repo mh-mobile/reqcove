@@ -18,7 +18,7 @@ records through the reqcove MCP tools (`reqcove mcp`).
   can put the system's proxy settings back) or `reqcove service install`,
   `service restart` or `service uninstall` (they start and stop `run`: a
   restart or an uninstall empties the records). Never run `reqcove console`
-  (`--tailnet` and `--end` included): its pages, on this computer and on the
+  (`--tailnet`, `--end` and `--print` included): its pages, on this computer and on the
   user's devices over the tailnet, approve requests and change what is
   recorded, and its one-use code is the user's. The commands you may run:
   `reqcove status`, `reqcove har`, `reqcove init --print`, and `reqcove mock

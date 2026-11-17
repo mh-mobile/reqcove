@@ -100,18 +100,21 @@ func consoleCmd(ctx context.Context, args []string) error {
 	state := fs.String("state", defaultState(), "state directory")
 	end := fs.Bool("end", false, "end every session of the pages and every link not opened yet")
 	tailnet := fs.Bool("tailnet", false, "open the page for your own devices on the tailnet (a QR code for the iPhone): only what ends with the run, never a file written, a setting or a restart")
+	printLink := fs.Bool("print", false, "print a link to this computer's page (it works once, for 60 s) and open nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	switch {
-	case *end && *tailnet:
+	case *end && (*tailnet || *printLink):
 		return errors.New("reqcove console --end ends every page's sessions, the tailnet page's too: give it alone")
+	case *tailnet && *printLink:
+		return errors.New("reqcove console --tailnet prints its link already and opens nothing: give it without --print")
 	case *end:
 		return endIn(ctx, os.Stdin, os.Stdout, *state)
 	case *tailnet:
 		return tailnetIn(ctx, os.Stdin, os.Stdout, *state)
 	}
-	return uiIn(ctx, os.Stdin, os.Stdout, *state)
+	return uiIn(ctx, os.Stdin, os.Stdout, *state, *printLink)
 }
 
 // errOlderTailnet: a run older than v1.3 takes the tailnet op as the local
@@ -144,7 +147,11 @@ func tailnetIn(ctx context.Context, in, out *os.File, state string) error {
 
 var errNotTerminal = errors.New("reqcove console runs only in a terminal: its page approves what agents ask, which is the user's choice (an agent never runs it). Run it in your own terminal")
 
-func uiIn(ctx context.Context, in, out *os.File, state string) error {
+// uiIn is `reqcove console`: the page opened in the browser through the code
+// file, and its link printed only when it was not (printing it too would let
+// the user use the code twice, which ends every session, the one just
+// opened too); printLink (--print): the link printed, nothing opened.
+func uiIn(ctx context.Context, in, out *os.File, state string, printLink bool) error {
 	if !terminal(in) || !terminal(out) {
 		return errNotTerminal
 	}
@@ -155,18 +162,29 @@ func uiIn(ctx context.Context, in, out *os.File, state string) error {
 	if !a.OK || a.Port == 0 || a.Code == "" {
 		return errors.New(a.Message)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d/#c=%s", a.Port, a.Code)
-	fmt.Fprintf(out, "%s\n  %s\n", a.Message, url)
-	if !codeFileName.MatchString(a.File) { // none: a v1.2 run, or run could not write it
-		fmt.Fprintln(out, "not opened in a browser (that would show the link to this computer's other users): open the link above yourself")
-		return nil
+	hasFile := codeFileName.MatchString(a.File) // none: a v1.2 run, or run could not write it
+	why := ""
+	switch {
+	case printLink:
+		if hasFile {
+			os.Remove(filepath.Join(state, a.File)) // nothing opens it (run would remove it after 60 s)
+		}
+	case !hasFile:
+		why = "not opened in a browser (that would show the link to this computer's other users): open the link above yourself"
+	default:
+		file, err := filepath.Abs(filepath.Join(state, a.File))
+		if err == nil {
+			err = openBrowser(ctx, file)
+		}
+		if err == nil {
+			fmt.Fprintf(out, "%s\nopened in your browser (the link works once). Not opened, or another browser? reqcove console --print prints a link instead and opens nothing\n", a.Message)
+			return nil
+		}
+		why = fmt.Sprintf("not opened in a browser (%v): open the link above yourself", err)
 	}
-	file, err := filepath.Abs(filepath.Join(state, a.File))
-	if err == nil {
-		err = openBrowser(ctx, file)
-	}
-	if err != nil {
-		fmt.Fprintf(out, "not opened in a browser (%v): open the link above yourself\n", err)
+	fmt.Fprintf(out, "%s\n  http://127.0.0.1:%d/#c=%s\n", a.Message, a.Port, a.Code)
+	if why != "" {
+		fmt.Fprintln(out, why)
 	}
 	return nil
 }

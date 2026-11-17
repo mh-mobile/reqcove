@@ -121,7 +121,7 @@ v1.0.0 で読み込めるファイルは、v1 のどのリリースでも読み�
 | `reqcove capture allow-all`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove capture discover`（v1.1 から） | `--for D`（最長 `24h`）か `--end`、`--state` |
 | `reqcove capture requests`、`capture approve ID`、`capture deny ID`（v1.2 から） | `--state` |
-| `reqcove console`（v1.2 から） | `--end`、`--tailnet`（v1.3 から）、`--state` |
+| `reqcove console`（v1.2 から） | `--end`、`--tailnet`、`--print`（v1.3 から）、`--state` |
 | `reqcove reload`（v1.1 から） | `--state` |
 | `reqcove restart`（v1.3 から） | `--state` |
 | `reqcove mock add` | `--rules`、`--url`、`--method`、`--operation`、`--status`、`--header`、`--body`、`--body-file`、`--delay-ms`、`--fault`、`--preset`、`--description`、`--print`、`--state` |
