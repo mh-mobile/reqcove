@@ -428,8 +428,8 @@ and both pages say mitmweb is on (tests).
 What crosses the exec:
 - **The state's lock and this computer's page's port**, as open files: no other `run`
   takes the state, and no other process the port, in between (an E2E test
-  tries the lock throughout; that no one else bound the port was not tried
-  with another user). The new process makes them close-on-exec again before
+  tries the lock throughout; by hand on Ubuntu 24.04, another OS user
+  retrying to bind the page's port throughout a restart never got it). The new process makes them close-on-exec again before
   it starts anything, so mitmdump and caffeinate never get them (tests: a
   child of the new process holds neither).
 - **In its environment:** their numbers, the page's sessions as hashes with
@@ -457,7 +457,8 @@ What crosses the exec:
   handed over before the retry is decided (tests).
 - **Not carried:** the records, markers and the agents' requests (in memory),
   the console's links not opened yet, the tailnet page and its sessions
-  (they end with the run; from reading the code). The retry is made once (marked in the
+  (they end with the run: `reqcove restart` ended the iPhone's session, by
+  hand). The retry is made once (marked in the
   environment): a start that fails again stays down.
 
 ### The `reqcove console` pages
@@ -534,7 +535,8 @@ a blob; no route takes a token in its URL (tests). The answer is an
 attachment of `application/json`, with `nosniff` and `no-store`, and it is
 refused while `run` masks nothing (`--no-redact`) (tests). The file lands
 where the browser saves downloads, with the permissions the browser gives
-it there (not checked; the download was not tried in a browser). A restart
+it there (not checked; a desktop browser on macOS renamed the downloaded
+file). A restart
 from the page offers that file first. With `--ui`, the page links to that
 page's bare address, never its token. Presets turned on or off and HAR
 files given are logged "(from the console on this computer)".
@@ -579,8 +581,9 @@ files given are logged "(from the console on this computer)".
   without a session; another user was not tried); a tailnet device or the
   LAN does not reach 127.0.0.1. Tried by hand in a Chromium-based browser on
   macOS (2026-11-16): the page showed the state and the requests, and Approve
-  applied the hosts ("approved in the console"); another browser was not
-  tried.
+  applied the hosts ("approved in the console"); parts of its v1.3 panels in
+  a desktop browser on macOS (2026-11-17; [the guide](guide.md#the-console-reqcove-console)
+  says which); Safari on the Mac was not tried.
 
 <a id="tailnet-console-page"></a>
 Since v1.3 **`reqcove console --tailnet`** opens a second page, for your
@@ -628,7 +631,8 @@ hides (tests: every other route of this computer's page refused, Save too).
   session header (`X-Reqcove-Session`) is masked in any record, with
   `--no-redact` too, as a second guard (unit tests; an E2E test with real
   mitmproxy under allow-all; tried in the iPhone's Safari with its Wi-Fi
-  proxy set to the Remote Proxy: the QR link opened the page).
+  proxy set to the Remote Proxy: the state, a host added, an agent's request
+  approved, allow-all on and End).
 
 <a id="console-limits"></a>
 
@@ -648,7 +652,7 @@ hides (tests: every other route of this computer's page refused, Save too).
   tailnet as you, they reach the node from it), and a cloud or CI machine
   signed in to the tailnet as you (an agent's host) are your own devices to
   it. Each still needs the code (from reading the code; not tried with a
-  second user or a real tailnet with devices of your own).
+  second user or a device shared on your account).
 - **An agent with a shell, or one that drives the browser or the phone's
   screen, is not kept out.** `reqcove console`, `--tailnet`, `--end`, `--print`,
   `capture` and `restart` run only in a terminal, and the skill and the
@@ -819,7 +823,7 @@ output names that command, as for `--ui` (from the code; a service run was
 not tried). `reqcove status`, the MCP `status` (`mitmweb`,
 `mitmweb_this_start_only`: booleans) and both `reqcove console` pages say it
 is on, never its link, password or port with them (tests for the fields;
-the browser was not tried). Who can turn it on that way:
+seen by hand on this computer's page and in `reqcove status`). Who can turn it on that way:
 [`reqcove restart`](#other-processes-on-this-computer).
 
 ### The page (`--ui`)
