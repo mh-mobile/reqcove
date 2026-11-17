@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.3.1 — 2026-11-17
 
 ### Fixed
 
@@ -29,9 +29,11 @@
   offer and a failed HAR file; Esc, Cancel and Enter cancelling (nothing
   sent, the choice put back), a click behind the dialog doing nothing, Cancel
   having the focus, the dialog centered in light and dark, the revision and
-  values sent, "Sending…", "Saving…" and "Restarting…" in flight. Not tried:
-  a real `run`, Arc's auto-open again by hand, the other confirms (a passed
-  host's Remove, a device or masked name added or removed, Clear, Discover).
+  values sent, "Sending…", "Saving…" and "Restarting…" in flight. By hand on macOS
+  with a real `run`: the page auto-opened by `reqcove console` in Arc showed
+  the dialog each time, `--local-proxy`'s Save asked in it, and Cancel wrote
+  nothing. Not tried: the other confirms by hand (a passed host's Remove, a
+  device or masked name added or removed, Clear, Discover).
 
 ## v1.3.0 — 2026-11-17
 
