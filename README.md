@@ -6,7 +6,7 @@
 [![release](https://img.shields.io/github/v/release/mh-mobile/reqcove)](https://github.com/mh-mobile/reqcove/releases)
 [![license](https://img.shields.io/github/license/mh-mobile/reqcove)](LICENSE)
 
-Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent.
+Hand your iPhone's HTTP(S) traffic to an AI agent. The iPhone can be on your desk or far away.
 
 The name Reqcove (REK-kohv) combines request and cove: a sheltered place where
 requests gather.

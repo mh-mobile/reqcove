@@ -6,7 +6,7 @@
 [![release](https://img.shields.io/github/v/release/mh-mobile/reqcove)](https://github.com/mh-mobile/reqcove/releases)
 [![license](https://img.shields.io/github/license/mh-mobile/reqcove)](LICENSE)
 
-iPhone の HTTP(S) 通信を、iPhone が手元にあっても離れた場所にあっても、AI エージェントに渡すツールです。
+iPhone の HTTP(S) 通信を AI エージェントに渡すツールです。iPhone は手元にあっても、離れた場所にあっても使えます。
 
 Reqcove（レクコーブ）という名称は、request（リクエスト）と cove（入り江）を組み合わせた造語です。リクエストが集まる入り江、というイメージです。
 
