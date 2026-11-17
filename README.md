@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" width="128" height="128" alt="Reqcove icon"></p>
+
 # Reqcove
 
 [![test](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml/badge.svg)](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml)
@@ -9,7 +11,7 @@ Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent.
 The name Reqcove (REK-kohv) combines request and cove: a sheltered place where
 requests gather.
 
-[日本語](README.ja.md)
+[Website](https://mh-mobile.github.io/reqcove/) · [日本語](README.ja.md)
 
 The iPhone picks your computer as its Tailscale **exit node**. Reqcove, a single
 binary on that computer, carries the traffic, has [mitmproxy](https://mitmproxy.org)
@@ -28,7 +30,7 @@ iPhone ──(tailnet, exit node)──▶ reqcove run ──SOCKS5──▶ mit
 Reqcove is a separate tool from RoamRun, which brings a remote device to Xcode
 and does not read its traffic.
 
-> **Status: v1.0.** The MCP tools, the CLI and the rules file stay compatible
+> **Status: v1.3.** The MCP tools, the CLI and the rules file stay compatible
 > until a v2 ([COMPATIBILITY](docs/COMPATIBILITY.md)).
 
 ## What you need
@@ -166,7 +168,7 @@ commands. Tried: the page and parts of its v1.3 panels in a desktop
 browser on macOS (not Safari; the guide says which); the iPhone's page
 in the iPhone's Safari, over the exit node and through the Remote Proxy;
 `reqcove restart` in a terminal and under `reqcove service install`'s
-service (launchd, and systemd on Ubuntu), not under `brew services`. How to
+service (launchd, and systemd on Ubuntu) and under `brew services`. How to
 use them, and what stays in the terminal:
 [the guide](docs/guide.md#the-console-reqcove-console).
 

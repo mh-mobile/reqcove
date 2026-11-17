@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" width="128" height="128" alt="Reqcove のアイコン"></p>
+
 # Reqcove
 
 [![test](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml/badge.svg)](https://github.com/mh-mobile/reqcove/actions/workflows/test.yml)
@@ -8,7 +10,7 @@ iPhone の HTTP(S) 通信を、iPhone が手元にあっても離れた場所に
 
 Reqcove（レクコーブ）という名称は、request（リクエスト）と cove（入り江）を組み合わせた造語です。リクエストが集まる入り江、というイメージです。
 
-[English](README.md)
+[Web サイト](https://mh-mobile.github.io/reqcove/) · [English](README.md)
 
 iPhone はお使いのコンピュータを Tailscale の **Exit Node** として選びます。そのコンピュータでは Reqcove が単一のバイナリとして動き、通信を中継します。許可したホストの通信は [mitmproxy](https://mitmproxy.org) で復号し、記録したフローを [MCP](https://modelcontextprotocol.io) でエージェントに渡します。iPhone 側で必要な設定は Exit Node を選ぶことと、CA を一度信頼することだけです。Wi-Fi でも 5G でも使えます。
 
@@ -22,7 +24,7 @@ iPhone ──(tailnet, Exit Node)──▶ reqcove run ──SOCKS5──▶ mit
 
 Reqcove は RoamRun とは別のツールです。RoamRun は遠くにあるデバイスを Xcode につなぐためのもので、通信は読みません。
 
-> **開発状況：v1.0 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。
+> **開発状況：v1.3 です。** MCP のツール、CLI、ルールのファイルは、v2 まで互換性を保ちます（[COMPATIBILITY](docs/COMPATIBILITY.ja.md)）。
 
 ## 必要なもの
 
@@ -106,7 +108,7 @@ reqcove console --tailnet   # iPhone で開くページの QR コード
 reqcove restart             # config を読み直して、同じプロセスで run を再起動する
 ```
 
-v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）のもとで試しました。`brew services` のもとでは試していません。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
+v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）と `brew services` のもとで試しました。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
 
 ### エージェントにできること
 
