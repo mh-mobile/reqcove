@@ -1,6 +1,6 @@
 #!/bin/sh
 # Prints docs_only=true when every path a push or pull request changes is docs
-# (*.md, docs/, poc/), read by no test but cmd/reqcove's; then test.yml
+# (*.md, docs/, local/), read by no test but cmd/reqcove's; then test.yml
 # runs only its light jobs. Anything uncertain prints docs_only=false: an event
 # other than these two, a commit missing (a new branch's first push has no
 # before), a force-push, no change at all.
@@ -25,7 +25,7 @@ files=$(git diff --no-renames --name-only "$range") || answer false
 echo "$files" >&2
 echo "$files" | while IFS= read -r f; do
   case $f in
-    *.md | docs/* | poc/*) ;;
+    *.md | docs/* | local/*) ;;
     *) echo "not docs: $f" >&2; exit 1 ;;
   esac
 done || answer false
