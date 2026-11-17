@@ -166,7 +166,7 @@ commands. Tried: the page and parts of its v1.3 panels in a desktop
 browser on macOS (not Safari; the guide says which); the iPhone's page
 in the iPhone's Safari, over the exit node and through the Remote Proxy;
 `reqcove restart` in a terminal and under `reqcove service install`'s
-service (launchd, and systemd on Ubuntu), not under `brew services`. How to
+service (launchd, and systemd on Ubuntu) and under `brew services`. How to
 use them, and what stays in the terminal:
 [the guide](docs/guide.md#the-console-reqcove-console).
 
