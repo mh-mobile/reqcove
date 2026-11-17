@@ -57,7 +57,7 @@ func tailnetRun(t *testing.T, o *runOpts) (string, *ctlState, *atomic.Pointer[ex
 	st, err := serveCtl(ctx, dir, cap, o, nil, func() mcpserver.StatusOut {
 		return mcpserver.StatusOut{Mode: "tailnet", Version: "v1.3.0", Executable: "/opt/homebrew/bin/reqcove", Service: "com.example", Manager: "launchd",
 			ConfigFile: home + "/.config/reqcove/config", ConfigUnused: dir + "/config", HostsFiles: []string{dir + "/hosts"}, KeepAwake: "ac", Recording: "on",
-			BaseAllowHosts: []string{"a.example.com"},
+			BaseAllowHosts: []string{"a.example.com"}, Mitmweb: o.web, MitmwebThisStart: o.webOnce,
 			NextSteps: []string{"approve the exit node", "to end it now, in your terminal: " + withState("reqcove capture discover --end", dir),
 				"/Library/LaunchAgents/com.example.plist runs /opt/old/reqcove, which is gone", "see ~/Library/Logs/reqcove.log.",
 				otherOnPathPrefix + "/Users/x/My Tools/bin/reqcove (your shell runs the first one; `type reqcove`)"},
@@ -508,6 +508,12 @@ func TestTailnetPageRelayed(t *testing.T) {
 	} {
 		if w := serve("GET", c.url, c.from, "", c.hdr); w.Code != c.want {
 			t.Errorf("%s: %d %s", c.what, w.Code, w.Body)
+		}
+	}
+	// A restart, with mitmweb or not, is this computer's page's alone.
+	for _, body := range []string{`{"rev":"x","web":true}`, `{"rev":"x"}`} {
+		if w := serve("POST", base+"/api/restart", "100.64.0.1:5000", body, merge(post, session)); w.Code != 403 || !strings.Contains(w.Body.String(), "no restart") {
+			t.Errorf("relayed restart %s: %d %s", body, w.Code, w.Body)
 		}
 	}
 }

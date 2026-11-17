@@ -97,6 +97,7 @@ func runService() (service, manager string) {
 // and what is wrong with the services installed.
 func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
 	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
+	out.Mitmweb, out.MitmwebThisStart = o.web, o.webOnce
 	out.Executable, _ = selfExe()
 	if runtime.GOOS == "darwin" {
 		out.KeepAwake = o.keepAwake
@@ -430,6 +431,8 @@ func status(ctx context.Context, args []string) error {
 		HostsFiles   []string                   `json:"hosts_files"`
 		Executable   string                     `json:"executable"`
 		KeepAwake    string                     `json:"keep_awake"`
+		Mitmweb      bool                       `json:"mitmweb"`
+		MitmwebOnce  bool                       `json:"mitmweb_this_start_only"`
 		Seen         []mcpserver.OutHost        `json:"out_of_scope_hosts"`
 		SeenKept     int                        `json:"out_of_scope_hosts_kept"`
 		DiscUntil    string                     `json:"discover_until"`
@@ -487,6 +490,9 @@ func status(ctx context.Context, args []string) error {
 	}
 	if out.KeepAwake != "" {
 		fmt.Printf("  keep awake:  %s\n", keepAwakeText(out.KeepAwake))
+	}
+	if out.Mitmweb {
+		fmt.Printf("  mitmweb:     %s\n", mitmwebText(out.MitmwebOnce))
 	}
 	if c := out.Console; c != nil {
 		fmt.Printf("  console:     %s\n", consoleText(c))
@@ -895,4 +901,13 @@ func consoleText(c *mcpserver.ConsoleSessions) string {
 		by = append(by, fmt.Sprintf("%s %d", name, c.Tailnet[name]))
 	}
 	return s + "; on the tailnet page: " + strings.Join(by, ", ") + " (reqcove console --end ends them all)"
+}
+
+// mitmwebText is status's and the pages' line while mitmweb runs: never its
+// link or password.
+func mitmwebText(thisStart bool) string {
+	if thisStart {
+		return "on — unmasked; this start only"
+	}
+	return "on — unmasked; from the command line"
 }

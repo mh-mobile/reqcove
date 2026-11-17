@@ -177,7 +177,7 @@ func uiIn(ctx context.Context, in, out *os.File, state string, printLink bool) e
 			err = openBrowser(ctx, file)
 		}
 		if err == nil {
-			fmt.Fprintf(out, "%s\nopened in your browser (the link works once). Not opened, or another browser? reqcove console --print prints a link instead and opens nothing\n", a.Message)
+			fmt.Fprintf(out, "%s\nopened in your browser. Not opened, or another browser? reqcove console --print prints a link instead and opens nothing\n", a.Message)
 			return nil
 		}
 		why = fmt.Sprintf("not opened in a browser (%v): open the link above yourself", err)
@@ -285,7 +285,7 @@ func openPage(cap *capture.Capture, st *ctlState, tailnet bool) ctlAnswer {
 	fmt.Sscan(port, &n)
 	log.Print("reqcove console: a one-use code given to the terminal (60 s)") // never the code
 	a := ctlAnswer{OK: true, Port: n, Code: code,
-		Message: "the page of this run, on this computer only (until run ends): open the link within 60 s; it works once (run reqcove console again for another)"}
+		Message: "the page of this run, on this computer only (until run ends); its link works once, within 60 s (run reqcove console again for another)"}
 	name := "console-" + secret(16) + ".html"
 	path := filepath.Join(st.dir, name)
 	if err := writeCodeFile(path, fmt.Sprintf("http://127.0.0.1:%d/#c=%s", n, code)); err != nil {
@@ -692,6 +692,7 @@ type pageState struct {
 	ConfigUnused string        `json:"config_unused,omitempty"`
 	HostsFiles   []string      `json:"hosts_files,omitempty"`
 	KeepAwake    string        `json:"keep_awake,omitempty"`
+	Mitmweb      string        `json:"mitmweb,omitempty"` // while it runs (mitmwebText): never its link or password
 	Mode         string        `json:"mode"`
 	Node         string        `json:"node,omitempty"`
 	IPs          []string      `json:"ips,omitempty"`
@@ -768,6 +769,9 @@ func (p *page) state(w http.ResponseWriter, r *http.Request) {
 		Warnings: pageWarnings{Stop: stopWarning, Remove: removeWarning(), AllowAll: allowAllWarning()}}
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
+	}
+	if s.Mitmweb {
+		out.Mitmweb = mitmwebText(s.MitmwebThisStart)
 	}
 	out.Started = pageStarted
 	out.ServiceCmds = serviceCommands(s.Service, s.Manager, p.st.dir)

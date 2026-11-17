@@ -5,6 +5,7 @@ body { margin: 0 auto; max-width: 52rem; padding: 1rem; font: 15px/1.45 -apple-s
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
 #line, .muted { color: var(--muted); }
+.warn { color: var(--no); font-weight: 600; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }

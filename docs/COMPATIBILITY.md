@@ -45,7 +45,9 @@ with what changed and what to do.
 
 ### What v1.3 adds and changes
 
-Added, each in its place below: `reqcove restart` and its ctl op `restart`;
+Added, each in its place below: `reqcove restart` (`--web` too) and its ctl
+op `restart` (its `web` field); `status`' `mitmweb` and
+`mitmweb_this_start_only`;
 `reqcove console --end` (op `console-end`) and `--tailnet` (the `tailnet`
 field of `console`, answered with `addr`); `console`'s answer's `file`; the
 `confirm` field of `save`; a marker's `source` `console`; `approved_in`'s
@@ -178,6 +180,10 @@ exits 1, saying why on stderr. Its fields:
 - Since v1.2, on this computer only (not over `--mcp-http`): `executable`
   (`run`'s binary, its symlinks resolved) and, on macOS, `keep_awake`
   (`always`, `ac` or `never`). Absent from a run older than v1.2.
+- Since v1.3, on this computer only (not over `--mcp-http`): `mitmweb`
+  (true while `run` runs mitmweb, `--web`) and `mitmweb_this_start_only`
+  (true when a restart turned it on for this start alone,
+  `reqcove restart --web`); absent when false. Never its link or password.
 - Since v1.2, on this computer only (not over `--mcp-http`):
   `capture_requests`, the agents' requests waiting for the user (each as
   `get_capture_request` answers it, without `note`); absent when none.
@@ -263,7 +269,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
 | `reqcove console` (since v1.2) | `--end`, `--tailnet`, `--print` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
-| `reqcove restart` (since v1.3) | `--state` |
+| `reqcove restart` (since v1.3) | `--web`, `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
@@ -297,7 +303,8 @@ The tailnet page's address, port and link are not stable, as this
 computer's ([below](#not-stable)).
 
 `reqcove restart` (since v1.3) asks `run` over `ctl.sock` with a new op,
-`restart` (no other field; in LAN mode too): `run` answers `ok` and starts
+`restart` (no other field but `web`, true for `reqcove restart --web`: the
+next start alone runs mitmweb; in LAN mode too): `run` answers `ok` and starts
 the restart once the answer is sent, or refuses, nothing stopped. A v1.2 or
 older `run` answers it with its usage (in LAN mode, with its LAN refusal),
 and `reqcove restart` then says to stop it and start it again (unit tests

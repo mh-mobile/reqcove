@@ -236,6 +236,21 @@ the pid; not tried under them), so you need not know which started it.
 - In a terminal only, as `reqcove capture`, or from the `reqcove console`
   page's **Restart…** ([below](#change-the-settings-then-restart)).
   A `run` older than v1.3 says to stop it and start it again.
+- **mitmweb for one start (`reqcove restart --web`, since v1.3):** the new
+  start runs [mitmweb](#in-mitmweb---web), as `run --web` does, for that
+  start alone. Nothing is written: `--web` stays refused in the config, and
+  the copy of the start config does not hold it. The checks above are made
+  with `--web` (`--proxy-port 8081` is refused, LAN mode is not: mitmweb is
+  on 127.0.0.1 alone there). The answer adds `+ --web (this start only;
+  unmasked)` and what mitmweb shows. The new start makes a new password
+  (`web-token`), so a link seen before (browser history, a QR code someone
+  saw) stops working; its link is in `run`'s terminal, or `reqcove links`
+  prints it (under a service). A failed start's retry runs without mitmweb,
+  and so does the next restart of any kind (the page, `reqcove restart`,
+  the service, a reboot). With `--web` on `run`'s command line, mitmweb
+  stays on across restarts, as before, and `--web` changes nothing then.
+  While it runs, `reqcove status` says `mitmweb: on — unmasked; this start
+  only` (or `from the command line`).
 
 Tried: unit tests (the checks; the binary's check: a refusal stopping
 nothing, a binary without the mode refused, the mode reading a bare run's file and
@@ -247,7 +262,10 @@ or missing is neither read nor removed, and no retry; the retry made once,
 carrying the page's sessions as they are then (none after `console --end`);
 a stop during the restart or the new start neither execs nor puts the config
 back; a start that served 2 minutes counts as good; the carried page's
-sessions in place before its first request;
+sessions in place before its first request; `--web`: the binary's check
+given it, `--proxy-port 8081` refused, the choice carried to the exec alone,
+not taken by a fresh start, the retry and a later restart without it, a new
+`web-token`, a `--web` on the command line kept;
 the exec of a test binary keeping the page's port, its session and the
 state's lock, the variables and the fds not reaching a child), and E2E with
 real mitmproxy (`run` in LAN mode on the loopback, started through a link:
@@ -256,9 +274,13 @@ mitmproxy, caffeinate and the system proxy are up; the pid, the
 page's port and session kept, the state never free, mitmdump and caffeinate
 stopped before each exec (the failed start's too), the config put back and kept as `config.failed`,
 `reqcove status` saying so; on macOS with `--local-proxy`, the system proxy
-put back at each stop, through a stand-in `networksetup`). Not tried: a
-tailnet node, under launchd, `brew services` or systemd, after `brew upgrade`
-and `brew cleanup`, on Linux.
+put back at each stop, through a stand-in `networksetup`; both restarts
+asked with `--web`: after the first, `status` says mitmweb is on for this
+start and `web-token` is new, the config unchanged; the retry after the
+second runs without it). Not tried: a tailnet node, under launchd,
+`brew services` or systemd (`--web` under a service included), after
+`brew upgrade` and `brew cleanup`, on Linux; mitmweb's page in a browser
+after such a restart.
 
 ### Use one CA on two computers
 
@@ -573,6 +595,22 @@ nothing stopped. This computer's page keeps its session across the
 restart; the tailnet page's sessions end with the run. Before it asks, it
 offers the records as a HAR file ([below](#presets-a-marker-the-ca-the-har-file)).
 
+**Restart with mitmweb (this start only)…** (this computer's page alone)
+restarts as `reqcove restart --web` does ([above](#restart-in-place-reqcove-restart)).
+It asks first in words of its own: mitmweb shows every flow mitmproxy
+decrypts unmasked, bodies included (up to 256 MB kept in memory); anyone
+with its password can edit and replay requests and change its options and
+scripts, which runs code on this computer; it opens on 127.0.0.1:8081 and,
+through the node, to your own devices; its link is printed in `run`'s
+terminal, or by `reqcove links` (under a service); its password is made
+anew; it lasts this start only. Then the restart's list, with
+`+ --web (this start only; unmasked)`, and the restart's own confirm. The
+page never shows mitmweb's link, its password or its port with them. While
+mitmweb runs, both pages say `mitmweb: on — unmasked; this start only` (or
+`from the command line`) at the top and under This run. The tailnet page
+has no such button, and `run` refuses a restart from it, directly or
+through the Remote Proxy (tests).
+
 The Settings panel: unit tests (each setting written through the page and
 read back; a line break, NUL, a leading `@`, another flag in a value, a
 terminal-only flag as the field or a field added, refused, nothing written;
@@ -582,7 +620,8 @@ page that read the config before an edit refused; the device list the own
 devices alone; the restart's list with an edit by hand of a terminal-only
 flag, a changed masking `@FILE` and a hosts file's hosts, a list made stale
 by an edit to the config, a hosts file or a masking file refused, the
-restart asked).
+restart asked; with mitmweb: its words and `+ --web` in the list, the
+restart asked with it, the tailnet page refused, directly and relayed).
 Not tried: the panel in a browser (its script and confirms are from reading
 the code), the device list on a real tailnet.
 
@@ -742,7 +781,7 @@ stays a command or a line you write yourself. From the code:
 | A setting given on `run`'s command line | that command line (the page shows it pinned) | it wins over the file |
 | Any other flag of `run` (`--lan-interface`, say) | a line you write in the config, or the command line | the page writes its fixed list alone |
 | `reqcove capture set`, `reqcove reload` | your terminal | the page takes its own changes alone, one at a time, each with its warning |
-| Save, the Settings panel, **Restart…**, the HAR file | this computer's page; never the tailnet page | they write files on this computer or hand out the records |
+| Save, the Settings panel, **Restart…**, **Restart with mitmweb (this start only)…**, the HAR file | this computer's page; never the tailnet page | they write files on this computer, turn on mitmweb (unmasked) or hand out the records |
 | `reqcove console` itself (`--tailnet`, `--end`, `--print`), `reqcove restart`, `capture`, `setup`, `service`, `cleanup`, `links`, `lan`, `init` | your terminal (restart: also the page's **Restart…**) | the code that opens a page is printed there; the others install, remove, print tokens or let devices in |
 
 The terminal check is a guard against mistakes, not a boundary: a process
@@ -1551,8 +1590,16 @@ code `run` (or `reqcove links`) prints.
   this computer ([security details](#security-web)).
 - It shows bodies up to 2 MB each, and keeps the newest 10,000 flows and
   256 MB of bodies ([what those bounds count](#security-web)).
-- The link is the same at each start (`web-token` in the state directory).
-  After a restart, open it again: a bookmark without the token asks for it.
+- The link is the same at each start (`web-token` in the state directory),
+  but after a restart that turned mitmweb on for one start (below), which
+  makes a new one. After a restart, open it again: a bookmark without the
+  token asks for it.
+- For one start, without retyping `run`: `reqcove restart --web` in your
+  terminal, or **Restart with mitmweb (this start only)…** on this
+  computer's `reqcove console` page (since v1.3;
+  [restart in place](#restart-in-place-reqcove-restart)). `--web` stays
+  refused in the config, so a service never starts with it by itself, and
+  the next restart of any kind starts without it.
 - In its Capture tab, leave "Run SOCKS Proxy" on, or the devices' HTTP(S)
   stops. The other modes there are not Reqcove's. Changes last until reqcove
   starts again.
@@ -1570,8 +1617,9 @@ What it shows, and to whom: [SECURITY](SECURITY.md#mitmweb---web). Beyond
 that:
 
 - It listens on 127.0.0.1. Its password is kept in `web-token` (the same at
-  each start until you delete that file and start again) and passed through a
-  0600 file, never the command line.
+  each start until you delete that file and start again, or a restart turns
+  mitmweb on for one start, which makes it anew) and passed through a 0600
+  file, never the command line.
 - The node relays its port 8081 to mitmweb for your own devices only: not a
   `--device` device of another user, nor anyone else. The password still
   guards it, and it gives what it gives on this computer.

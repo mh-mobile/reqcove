@@ -50,7 +50,7 @@ func settingsRun(t *testing.T, text string, extra ...string) (base, token string
 		t.Fatal(err)
 	}
 	restarted = make(chan string, 1)
-	st.restart = func(s string) { // as run's: the page's server closes, before the handler returns
+	st.restart = func(s string, _ bool) { // as run's: the page's server closes, before the handler returns
 		restarted <- s
 		cancel()
 		time.Sleep(100 * time.Millisecond)
@@ -494,26 +494,26 @@ func TestRestartBinaryCheck(t *testing.T) {
 	state := t.TempDir()
 	st, _, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
 	asked := false
-	st.restart = func(string) { asked = true }
+	st.restart = func(string, bool) { asked = true }
 	script := func(body string) string {
 		p := filepath.Join(t.TempDir(), "reqcove")
 		os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755)
 		return p
 	}
 	startBinary = script(`echo "12:00:00 check-config: --keep-awake: a newer check refuses" >&2; exit 1`)
-	a := restartOp(t.Context(), st, 0)
+	a := restartOp(t.Context(), st, 0, false)
 	if a.OK || a.after != nil || !strings.Contains(a.Message, "refuses the settings") || !strings.Contains(a.Message, "--keep-awake: a newer check refuses") || !strings.HasSuffix(a.Message, "; nothing stopped") {
 		t.Errorf("refused: %q", a.Message)
 	}
 	startBinary = script(`echo "boom" >&2; exit 3`)
-	if a := restartOp(t.Context(), st, 0); a.OK || !strings.Contains(a.Message, "exit status 3: boom") {
+	if a := restartOp(t.Context(), st, 0, false); a.OK || !strings.Contains(a.Message, "exit status 3: boom") {
 		t.Errorf("failed otherwise: %q", a.Message)
 	}
 	if m, _ := filepath.Glob(filepath.Join(state, "restart-*")); len(m) != 0 || asked {
 		t.Errorf("stopped: %v %v", m, asked)
 	}
 	startBinary = script(`echo "flag provided but not defined: -check-config" >&2; echo "Usage: reqcove run [flags]" >&2; exit 2`)
-	a = restartOp(t.Context(), st, 0)
+	a = restartOp(t.Context(), st, 0, false)
 	if a.OK || a.after != nil || !strings.Contains(a.Message, "is older than v1.3") || !strings.Contains(a.Message, "stop run and start it again yourself") || !strings.HasSuffix(a.Message, "; nothing stopped") || strings.Contains(a.Message, "Usage") {
 		t.Errorf("an older binary: %q", a.Message)
 	}
@@ -521,7 +521,7 @@ func TestRestartBinaryCheck(t *testing.T) {
 		t.Errorf("an older binary: stopped: %v %v", m, asked)
 	}
 	startBinary = script(`exit 0`)
-	if a := restartOp(t.Context(), st, 0); !a.OK {
+	if a := restartOp(t.Context(), st, 0, false); !a.OK {
 		t.Errorf("checked: %q", a.Message)
 	}
 }

@@ -166,7 +166,7 @@ var restartSettings = []struct {
 	{"device", func(o *runOpts) string { return strings.Join(o.devices, "\n") }},
 	{"rules", func(o *runOpts) string { return o.rules }},
 	{"rules-reload", func(o *runOpts) string { return fmt.Sprint(o.rulesReload) }},
-	{"web", func(o *runOpts) string { return fmt.Sprint(o.web) }},
+	{"web", func(o *runOpts) string { return fmt.Sprint(o.web && !o.webOnce) }}, // a restart's --web for one start: not run's flags
 	{"no-redact", func(o *runOpts) string { return fmt.Sprint(o.noRedact) }},
 	{"proto", func(o *runOpts) string { return o.proto }},
 	{"mask-names", func(o *runOpts) string { return strings.Join(o.maskNames, "\n") }},

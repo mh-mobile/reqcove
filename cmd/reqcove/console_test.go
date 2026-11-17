@@ -56,6 +56,10 @@ func openUI(t *testing.T, state string) (string, string) {
 	if err != nil || !a.OK || a.Port == 0 || len(a.Code) != 32 {
 		t.Fatalf("ui: %v %+v", err, a)
 	}
+	// Printed above "opened in your browser" as above the link (--print).
+	if strings.Contains(a.Message, "open the link") || !strings.Contains(a.Message, "works once, within 60 s") {
+		t.Errorf("ui: %q", a.Message)
+	}
 	return "http://127.0.0.1:" + strconv.Itoa(a.Port), a.Code
 }
 

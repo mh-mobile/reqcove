@@ -56,6 +56,7 @@ type ctlRequest struct {
 	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or console; deny: console (or none: terminal)
 	Confirm    string   `json:"confirm,omitempty"`     // save: the token of the change to the config run showed, confirmed (since v1.3)
 	Tailnet    bool     `json:"tailnet,omitempty"`     // console: the tailnet page's (reqcove console --tailnet, since v1.3)
+	Web        bool     `json:"web,omitempty"`         // restart: the next start runs mitmweb, that start alone (reqcove restart --web, since v1.3)
 	// Set by reqcove console's page alone, never read from ctl.sock: the scope
 	// revision the page read (a change on an older one is refused), from:
 	// "console", traced as such, and device: the tailnet page's caller's
@@ -121,7 +122,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 	if r.Cmd != "allow-all" && r.Cmd != "discover" && (r.For != "" || r.End) {
 		return r, fmt.Errorf("--for and --end go with capture allow-all and capture discover (usage: %s)", captureUse)
 	}
-	if r.Confirm != "" && r.Cmd != "save" || r.Tailnet && r.Cmd != "console" {
+	if r.Confirm != "" && r.Cmd != "save" || r.Tailnet && r.Cmd != "console" || r.Web && r.Cmd != "restart" {
 		return r, errors.New("usage: " + captureUse)
 	}
 	if requestOps[r.Cmd] {
@@ -409,7 +410,7 @@ type ctlState struct {
 	// with the lines capture save added since (restart.go's snapshot);
 	// restart, run's: it stops and execs again, with that snapshot's path.
 	startConfig []byte
-	restart     func(snapshot string)
+	restart     func(snapshot string, web bool)
 	// originNow is origin as last set (setOrigin), read without mu: status
 	// and the page list the hosts files from it. run and gen make the scope
 	// revision (revision): a change asked bumps gen.
@@ -480,7 +481,7 @@ func consoleFrom(device string) string {
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
 // returns the state it answers from; restart is run's (nil: none), set
 // before anything is served; status is what reqcove console's page shows.
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, restart func(snapshot string), status func() mcpserver.StatusOut) (*ctlState, error) {
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, restart func(snapshot string, web bool), status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
 	st.ctx, st.status, st.dir, st.restart = ctx, status, state, restart
 	if cap != nil { // nil: tests of LAN mode
@@ -556,7 +557,7 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if req.from == "console" && req.rev != restartRevNow(st.o) {
 			return ctlAnswer{Message: "refused: the config or a file it reads changed since the page listed what a restart changes (another tab, or an edit): look again; nothing stopped"}
 		}
-		return restartOp(ctx, st, recordCount(cap))
+		return restartOp(ctx, st, recordCount(cap), req.Web)
 	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {

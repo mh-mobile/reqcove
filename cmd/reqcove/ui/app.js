@@ -117,6 +117,9 @@ function show(d) {
   if (d.config_unused) files += "; also there, not read: " + d.config_unused;
   if (!d.tailnet) row(run, "config", files); // the tailnet page: no path of this computer
   row(run, "keep awake", d.keep_awake);
+  row(run, "mitmweb", d.mitmweb);
+  $("mitmweb").hidden = !d.mitmweb;
+  $("mitmweb").textContent = d.mitmweb ? "mitmweb: " + d.mitmweb : "";
   if (d.mode === "lan") row(run, "mode", "LAN (reqcove status shows its proxy)");
   else row(run, "node", (d.node || "-") + " " + (d.ips || []).join(" ") + "; exit node approved: " + (d.exit_node_approved ? "yes" : "no"));
   row(run, "devices", (d.devices || []).join(", ") || "-");
@@ -484,10 +487,11 @@ async function loadCA() {
 
 // restart lists what a restart changes (every setting the config on disk
 // has otherwise than run started with), the records it empties, then asks.
-async function restart() {
+// web: the next start alone runs mitmweb, after a confirm of its own.
+async function restart(web) {
   let d;
   try {
-    ({ d } = await api("GET", "/api/restart"));
+    ({ d } = await api("GET", web ? "/api/restart?web=1" : "/api/restart"));
   } catch (e) {
     $("settings-result").textContent = "reqcove did not answer";
     return;
@@ -498,18 +502,20 @@ async function restart() {
     const what = x.changed ? "changed (not shown)" : ((x.was || []).join(", ") || "(not set)") + " -> " + ((x.now || []).join(", ") || "(removed)");
     lines.push("--" + x.flag + ": " + what + (x.pinned ? " (given on run's command line too)" : ""));
   }
+  lines.push(...(d.lines || []));
   if (!lines.length) lines.push("no setting changed: run starts again as it is");
+  if (d.web && !confirm("Turn mitmweb on for the next start only?\n\n" + d.web + ".")) return;
   if (!(await beforeRestart(d))) return;
   if (!confirm("Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning)) return;
-  $("restart").disabled = true;
+  $("restart").disabled = $("restart-web").disabled = true;
   try {
-    const { d: a } = await api("POST", "/api/restart", { rev: d.rev });
+    const { d: a } = await api("POST", "/api/restart", web ? { rev: d.rev, web: true } : { rev: d.rev });
     $("settings-result").textContent = a.message || a.error || "";
     if (a.ok && last) restartedFrom = last.started;
   } catch (e) {
     $("settings-result").textContent = "reqcove did not answer: reqcove status says what came of it";
   }
-  $("restart").disabled = false;
+  $("restart").disabled = $("restart-web").disabled = false;
 }
 
 function setup() {
@@ -525,7 +531,8 @@ function setup() {
   $("stop").onclick = () => change({ cmd: "stop" }, last && last.warnings.stop);
   $("start").onclick = () => change({ cmd: "start" });
   $("save").onclick = save;
-  $("restart").onclick = restart;
+  $("restart").onclick = () => restart(false);
+  $("restart-web").onclick = () => restart(true);
   $("har").onclick = saveHAR;
   $("mark").onsubmit = async (e) => {
     e.preventDefault();
