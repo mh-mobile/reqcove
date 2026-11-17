@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -217,6 +218,7 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reqcove is a proxy: send absolute http:// URLs, or CONNECT", http.StatusBadRequest)
 		return
 	}
+	dropFragment(r.URL)
 	if rp.toWeb(r.URL.Host) {
 		rp.web.ServeHTTP(w, r) // mitmweb from a phone on the Remote Proxy, which sends it here too
 		return
@@ -237,6 +239,16 @@ func (rp *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rp.reverseProxy(src, dev).ServeHTTP(w, r)
+}
+
+// dropFragment cuts a #fragment off u: iOS sends it to an HTTP proxy (seen
+// with Safari on the Remote Proxy), and net/http keeps it in the path or the
+// query. It is never the server's (a page's code, a token in it): never sent on.
+func dropFragment(u *url.URL) {
+	for _, s := range []*string{&u.Path, &u.RawPath, &u.RawQuery} {
+		*s, _, _ = strings.Cut(*s, "#")
+	}
+	u.Fragment, u.RawFragment = "", ""
 }
 
 // consoleRelay is reqcove console --tailnet's page while it is open (RelayConsole).
