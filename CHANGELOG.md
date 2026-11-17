@@ -10,16 +10,18 @@ Walked by hand on 2026-11-17 (macOS, a desktop browser on the Mac, the
 iPhone's Safari, an Ubuntu 24.04 VM): this computer's page and parts of its panels,
 `reqcove restart` in a terminal and under `reqcove service install`'s
 launchd and systemd services, the tailnet page in the iPhone's Safari over
-the exit node and through the Remote Proxy; each entry says what. Not
-tried: `brew upgrade` from v1.2 and a `brew services` restart, another
-user's or a tagged device on the tailnet page, Safari on the Mac, a 5th
-session.
+the exit node and through the Remote Proxy; each entry says what. After
+the release (macOS): `brew upgrade` from v1.2.0 to v1.3.0 under `brew
+services`, `brew services restart`, and `reqcove restart` under it. Not
+tried: `reqcove restart` after a `brew upgrade` from one v1.3.x to a later
+one, another user's or a tagged device on the tailnet page, Safari on the
+Mac, a 5th session.
 
 ### Added
 
 - **`reqcove restart`** (in a terminal only) restarts the running `run`
   in the same process (an exec: launchd, systemd and brew services see the
-  same process; seen under launchd and systemd, not under brew services). Before anything stops, it checks
+  same process; seen under launchd, systemd and brew services). Before anything stops, it checks
   the config on disk and the command line as the next start reads them, that
   the binary `run` was started from (its path as started, links kept:
   Homebrew's `opt` path) is still there, and then asks that binary itself
@@ -50,8 +52,12 @@ session.
   systemd user service on Ubuntu 24.04 (the same MainPID, NRestarts 0; `systemctl --user
   stop` during a restart: stayed stopped, the config unchanged, no
   `config.failed`), and another OS user there retrying to bind the page's
-  port throughout a restart never got it; not tried: under brew services,
-  after a real `brew upgrade`.
+  port throughout a restart never got it; after the release, under brew
+  services (after `brew upgrade` from v1.2.0 and `brew services restart`):
+  the same pid in `launchctl list`, exit status 0, the restart exec'd
+  `/opt/homebrew/opt/reqcove/bin/reqcove`, and again after `brew cleanup
+  reqcove`, still v1.3.0; not tried: after a `brew upgrade` from one v1.3.x
+  to a later one (the running version's Cellar gone).
 - **mitmweb for one start: `reqcove restart --web`**, and the
   `reqcove console` page's **Restart with mitmweb (this start only)…** (this
   computer's page alone; the tailnet page has no such button and `run`

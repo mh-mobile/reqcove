@@ -191,7 +191,7 @@ Since v1.3, `reqcove restart` asks the running `run` to stop and start again
 in the same process, as it was started: the same binary path and arguments,
 the config on disk as it is now. Under `reqcove service install`'s service or
 `brew services` it stays the service's process (an exec keeps the pid: seen
-under launchd and systemd; not tried under `brew services`), so you need not
+under launchd, systemd and `brew services`), so you need not
 know which started it.
 
 - **Checked first, nothing stopped when refused:** the config on disk and
@@ -200,7 +200,8 @@ know which started it.
   `run` was started from still being there. That path is the one `run` was
   started with (absolute, as services start it, or found on PATH then), links
   kept: Homebrew's `opt/reqcove` is kept, so after `brew upgrade` a restart
-  starts the new version (read from the code; not tried). Then `run` asks
+  starts the new version (read from the code; not tried after an upgrade from
+  one v1.3.x to a later one). Then `run` asks
   that binary itself to check the same config and command line (a hidden
   check mode of `run`'s: it starts nothing, takes no lock and writes no
   file), so a newer binary that checks more refuses before anything stops. A
@@ -289,8 +290,13 @@ systemd user service on Ubuntu 24.04: the same MainPID, NRestarts 0, and
 `systemctl --user stop` during a restart: stopped, the config unchanged, no
 `config.failed`; another OS user there, retrying to bind the page's
 127.0.0.1 port throughout a restart, never got it; `--web` from the page:
-[the Settings panel](#change-the-settings-then-restart). Not tried: under `brew services` (`--web` under any
-service too), after `brew upgrade` and `brew cleanup`.
+[the Settings panel](#change-the-settings-then-restart); under `brew services` on macOS (v1.3.0, after
+`brew upgrade` from v1.2.0 and `brew services restart`): the same pid in
+`launchctl list`, exit status 0, the restart exec'd
+`/opt/homebrew/opt/reqcove/bin/reqcove`, and after `brew cleanup reqcove`
+it restarted again, still v1.3.0. Not tried: `--web` under any service, a
+restart after a `brew upgrade` from one v1.3.x to a later one (the running
+version's Cellar gone).
 
 ### Use one CA on two computers
 
@@ -3067,7 +3073,9 @@ reqcove status               # "service: sh.brew.reqcove" (homebrew.mxcl.reqcove
 
 Tried: `brew services start` and `stop` on macOS 27 with the formula, an
 iPhone recorded through it (no token or login URL in the log; `links` and
-`login-url` gone after stop). Not tried with `brew services`: a start at
+`login-url` gone after stop); `brew upgrade` from v1.2.0 to v1.3.0 under
+`brew services`, then `brew services restart reqcove` started v1.3.0
+(2026-11-17). Not tried with `brew services`: a start at
 login or after a reboot, sleep, and whether macOS asks for Local Network
 access for a `run` not started from a terminal (all three tried with
 `reqcove service install`, below); whether launchd's default background

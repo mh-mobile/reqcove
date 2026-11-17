@@ -106,7 +106,7 @@ reqcove console --tailnet   # iPhone で開くページの QR コード
 reqcove restart             # config を読み直して、同じプロセスで run を再起動する
 ```
 
-v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）のもとで試しました。`brew services` のもとでは試していません。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
+v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）と `brew services` のもとで試しました。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
 
 ### エージェントにできること
 
