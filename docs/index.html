@@ -81,8 +81,8 @@
     <h1>Reqcove</h1>
     <p class="tagline" data-l="en">Hand your iPhone's HTTP(S) traffic to an AI agent over MCP, from anywhere.</p>
     <p class="tagline" data-l="ja">iPhone の HTTP(S) 通信を、どこからでも、AI エージェントに MCP で渡す。</p>
-    <p class="sub" data-l="en">The iPhone picks your computer as its Tailscale exit node. Reqcove, one binary on that computer, carries the traffic, has mitmproxy decrypt the hosts you allow, and serves the records to your agent. Wi-Fi or 5G, with the iPhone on your desk or far away.</p>
-    <p class="sub" data-l="ja">iPhone は、お使いのコンピュータを Tailscale の Exit Node として選びます。そのコンピュータで動く 1 つのバイナリの Reqcove が通信を中継し、許可したホストを mitmproxy で復号して、記録をエージェントに渡します。Wi-Fi でも 5G でも、iPhone が手元にあっても離れた場所にあっても使えます。</p>
+    <p class="sub" data-l="en">The iPhone picks your computer as its Tailscale exit node, the computer its traffic goes out through. Reqcove, on that computer, decrypts and records the traffic to the hosts you allow, and gives the records to your agent over MCP, the way an agent is given tools. Wi-Fi or 5G, with the iPhone on your desk or far away.</p>
+    <p class="sub" data-l="ja">iPhone は、お使いのコンピュータを Tailscale の Exit Node（iPhone の通信の出口になるコンピュータ）として選びます。そのコンピュータで動く Reqcove が、許可したホストへの通信を復号して記録し、MCP（エージェントにツールを渡す仕組み）でエージェントに渡します。Wi-Fi でも 5G でも、iPhone が手元にあっても離れた場所にあっても使えます。</p>
     <div class="cta">
       <a class="btn primary" href="#install"><span data-l="en">Install</span><span data-l="ja">インストール</span></a>
       <a class="btn ghost" href="https://github.com/mh-mobile/reqcove">GitHub</a>
@@ -94,8 +94,8 @@
   <div class="grid">
     <div class="card">
       <h3 data-l="en">An exit node, not a Wi-Fi proxy</h3><h3 data-l="ja">Wi-Fi のプロキシではなく Exit Node</h3>
-      <p data-l="en">On the iPhone, you choose the exit node and trust a CA once. No proxy to set on each Wi-Fi, and no VPN app on the iPhone in Tailscale's place: Tailscale stays on, and the tailnet with it.</p>
-      <p data-l="ja">iPhone では、Exit Node を選び、CA を一度信頼するだけです。Wi-Fi ごとにプロキシを設定することも、Tailscale の代わりに iPhone で VPN 型のアプリを動かすこともありません。Tailscale はオンのままで、tailnet もそのまま使えます。</p>
+      <p data-l="en">On the iPhone, you choose the exit node and trust Reqcove's CA once, the certificate the iPhone trusts so HTTPS can be decrypted. No proxy to set on each Wi-Fi, and no VPN app on the iPhone in Tailscale's place: Tailscale stays on, and so does your tailnet (your Tailscale network).</p>
+      <p data-l="ja">iPhone では、Exit Node を選び、Reqcove の CA（HTTPS を復号するために iPhone が信頼する証明書）を一度信頼するだけです。Wi-Fi ごとにプロキシを設定することも、Tailscale の代わりに iPhone で VPN 型のアプリを動かすこともありません。Tailscale はオンのままで、tailnet（自分の Tailscale のネットワーク）もそのまま使えます。</p>
     </div>
     <div class="card">
       <h3 data-l="en">Only the hosts you allow</h3><h3 data-l="ja">記録するのは許可したホストだけ</h3>
@@ -104,18 +104,18 @@
     </div>
     <div class="card">
       <h3 data-l="en">Your agent reads it over MCP</h3><h3 data-l="ja">エージェントは MCP で読む</h3>
-      <p data-l="en">A summary of the traffic, lists and search, one request's headers and bodies, and the TLS handshakes a device refused (often certificate pinning). Ask "which requests to api.example.com failed in the last ten minutes?"</p>
-      <p data-l="ja">通信の内訳、一覧と検索、1 件のヘッダーとボディ、デバイスが拒否した TLS ハンドシェイク（多くは証明書ピンニング）を、ツールで読めます。「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」と聞けます。</p>
+      <p data-l="en">Tools give it a summary of the traffic (counts by host and status), lists and search, one request's headers and bodies, and the TLS handshakes a device refused, with clues about certificate pinning or an untrusted CA. Ask "which requests to api.example.com failed in the last ten minutes?"</p>
+      <p data-l="ja">通信の要約（ホストやステータスごとの件数）、一覧と検索、1 件のヘッダーとボディ、デバイスが拒否した TLS ハンドシェイク（証明書ピンニングや、まだ信頼していない CA を調べる手がかり）を、ツールで読めます。「この 10 分間で api.example.com へのリクエストのうち、失敗したものは？」と聞けます。</p>
     </div>
     <div class="card">
-      <h3 data-l="en">See and change it while it runs</h3><h3 data-l="ja">動かしたまま見て変える</h3>
-      <p data-l="en"><code>reqcove console</code> opens Reqcove's control page in your browser: its status, the hosts to add or remove, the settings and a restart. Through MCP, an agent can only ask to record another host; you approve it, on that page or in the terminal. <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.md#the-console-reqcove-console">More</a></p>
-      <p data-l="ja"><code>reqcove console</code> を打つと、Reqcove の管理画面がブラウザで開きます。状態の確認、記録するホストの追加と削除、設定の変更、再起動ができます。エージェントは MCP では記録するホストを足すよう頼むことしかできず、承認するのはあなたです（管理画面か端末で）。<a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.ja.md#コンソールreqcove-console">詳しく</a></p>
+      <h3 data-l="en">Manage what is recorded, and the settings</h3><h3 data-l="ja">記録するホストと設定を管理する</h3>
+      <p data-l="en"><code>reqcove console</code> opens Reqcove's control page in your browser: its status, the hosts to add or remove, the settings and a restart. An agent cannot change these through MCP. It can only ask to record another host, and you approve it on that page or in the terminal. <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.md#the-console-reqcove-console">More</a></p>
+      <p data-l="ja"><code>reqcove console</code> を打つと、Reqcove の管理画面がブラウザで開きます。状態の確認、記録するホストの追加と削除、設定の変更、再起動ができます。エージェントは MCP ではこれらを変えられません。記録するホストを足すよう頼めるだけで、承認するのはあなたです（管理画面かターミナルで）。<a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.ja.md#コンソールreqcove-console">詳しく</a></p>
     </div>
     <div class="card">
       <h3 data-l="en">With RoamRun, the real app</h3><h3 data-l="ja">RoamRun と使えば実機のアプリで</h3>
-      <p data-l="en"><a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a>, a separate tool, lets an agent see and operate an iPhone (iOS 27 or later). Give the agent both: it operates the real app, then reads the requests that action sent with <code>wait_for_flows</code>. <a href="https://github.com/mh-mobile/RoamRun">RoamRun on GitHub</a></p>
-      <p data-l="ja">別のツールの <a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a> を使うと、エージェントが iPhone の画面を見て操作できます（iOS 27 以降）。両方をエージェントに渡せば、エージェントが実機のアプリを操作し、その操作で送られたリクエストを <code>wait_for_flows</code> で読めます。<a href="https://github.com/mh-mobile/RoamRun">GitHub の RoamRun</a></p>
+      <p data-l="en"><a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a>, a separate tool, lets an agent see and operate an iPhone (iOS 27 or later). Register both as MCP tools: the agent operates the real app, then uses <code>wait_for_flows</code> to read the requests that action sent. Starting RoamRun's device control needs the iPhone on Wi-Fi, and a one-time setup for each device. <a href="https://github.com/mh-mobile/RoamRun">RoamRun (GitHub)</a></p>
+      <p data-l="ja">別のツールの <a href="https://mh-mobile.github.io/RoamRun/">RoamRun</a> を使うと、エージェントが iPhone の画面を見て操作できます（iOS 27 以降）。両方を MCP のツールとして登録すると、エージェントが実機のアプリを操作し、その操作で送られたリクエストを <code>wait_for_flows</code> で読めます。RoamRun の画面操作を始めるには、iPhone が Wi-Fi につながっていることと、デバイスごとに一度の設定が必要です。<a href="https://github.com/mh-mobile/RoamRun">RoamRun（GitHub）</a></p>
     </div>
     <div class="card">
       <h3 data-l="en">Open source, one binary</h3><h3 data-l="ja">オープンソースで、1 つのバイナリ</h3>
@@ -139,13 +139,13 @@
   </div>
   <ol class="steps" data-l="en">
     <li>The iPhone picks your computer as its Tailscale exit node. Its traffic goes over the tailnet and out through <code>reqcove run</code>.</li>
-    <li>mitmproxy decrypts the connections to the hosts you allow, with Reqcove's CA that the iPhone trusts. Other connections are carried as they are.</li>
+    <li>mitmproxy decrypts the connections to the hosts you allow, with Reqcove's CA that the iPhone trusts. Other connections pass through without being decrypted.</li>
     <li>Each request to an allowed host is recorded in memory, its secrets masked as it arrives.</li>
     <li><code>reqcove mcp</code> serves the records to your agent as MCP tools.</li>
   </ol>
   <ol class="steps" data-l="ja">
     <li>iPhone は、お使いのコンピュータを Tailscale の Exit Node として選びます。iPhone の通信は tailnet を通り、<code>reqcove run</code> から出ていきます。</li>
-    <li>許可したホストへの接続は、iPhone が信頼した Reqcove の CA を使って、mitmproxy が復号します。ほかの接続はそのまま中継します。</li>
+    <li>許可したホストへの接続は、iPhone が信頼した Reqcove の CA を使って、mitmproxy が復号します。ほかの接続は復号せずに通します。</li>
     <li>許可したホストへのリクエストを、届いた時点でシークレットをマスクして、メモリに記録します。</li>
     <li><code>reqcove mcp</code> が、その記録を MCP のツールとしてエージェントに渡します。</li>
   </ol>
@@ -155,12 +155,12 @@
   <h2 data-l="ja">インストール</h2>
   <pre><code>brew trust --formula mh-mobile/tap/reqcove
 brew install mh-mobile/tap/reqcove</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
-  <p class="note" data-l="en">Then, in a terminal, <code>reqcove setup</code> asks for the iPhone's name in your tailnet and the hosts to record, and writes a config file. Start it with <code>reqcove run</code>; the first time, <code>reqcove links</code> prints the login URL, and <code>reqcove status</code> says what is left.</p>
-  <p class="note" data-l="ja">続いて、ターミナルで <code>reqcove setup</code> を実行します。tailnet での iPhone の名前と記録するホストを聞いて、設定ファイルに書きます。<code>reqcove run</code> で起動します。初回のログイン用の URL は <code>reqcove links</code> が表示し、残っている手順は <code>reqcove status</code> が教えます。</p>
+  <p class="note" data-l="en">Then, in a terminal, <code>reqcove setup</code> asks for the iPhone's name in your tailnet and the hosts to record, and writes a config file. Start it with <code>reqcove run</code>. The first time, open the login URL it prints (<code>reqcove links</code> prints it too) to sign in to Tailscale and add Reqcove to your tailnet. After signing in, approve Reqcove as an exit node in the Tailscale admin console. <code>reqcove status</code> shows the steps left.</p>
+  <p class="note" data-l="ja">続いて、ターミナルで <code>reqcove setup</code> を実行します。tailnet での iPhone の名前と記録するホストを聞いて、設定ファイルに書きます。<code>reqcove run</code> で起動します。初回は、表示されるログイン用の URL（<code>reqcove links</code> でも出せます）を開いて Tailscale にログインし、Reqcove を tailnet に加えます。ログイン後、Tailscale の管理画面で Reqcove を Exit Node として承認します。残っている手順は <code>reqcove status</code> で確認できます。</p>
   <pre><code>reqcove setup</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
   <pre><code>reqcove run</code><button class="copy" type="button"><span data-l="en">Copy</span><span data-l="ja">コピー</span></button></pre>
-  <p class="note" data-l="en">On the iPhone: in the Tailscale app, choose the exit node <code>reqcove</code>; scan the CA's QR code (<code>reqcove links</code> prints it), install the profile and trust it in Settings › General › About › Certificate Trust Settings. For Claude Code, give the agent the tools with <code>claude mcp add reqcove -- reqcove mcp</code>.</p>
-  <p class="note" data-l="ja">iPhone では、Tailscale アプリで Exit Node に <code>reqcove</code> を選び、CA の QR コード（<code>reqcove links</code> が表示します）を読んでプロファイルを入れ、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。Claude Code には <code>claude mcp add reqcove -- reqcove mcp</code> でツールを渡します。</p>
+  <p class="note" data-l="en">On the iPhone: in the Tailscale app, choose the exit node <code>reqcove</code>; scan the CA's QR code (<code>reqcove run</code> shows it; <code>reqcove links</code> prints it too), install the profile in Settings › Profile Downloaded, and trust it in Settings › General › About › Certificate Trust Settings. For Claude Code, give the agent the tools with <code>claude mcp add reqcove -- reqcove mcp</code>.</p>
+  <p class="note" data-l="ja">iPhone では、Tailscale アプリで Exit Node に <code>reqcove</code> を選び、CA の QR コード（<code>reqcove run</code> が表示します。<code>reqcove links</code> でも出せます）を読んで、「設定 › プロファイルがダウンロード済み」でプロファイルを入れ、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。Claude Code には <code>claude mcp add reqcove -- reqcove mcp</code> でツールを渡します。</p>
   <p class="note" data-l="en">Or download a binary from <a href="https://github.com/mh-mobile/reqcove/releases/latest">GitHub Releases</a>. Full steps: <a href="https://github.com/mh-mobile/reqcove#readme">README</a> and <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.md">the guide</a>.</p>
   <p class="note" data-l="ja"><a href="https://github.com/mh-mobile/reqcove/releases/latest">GitHub Releases</a> からバイナリをダウンロードすることもできます。詳しい手順は <a href="https://github.com/mh-mobile/reqcove/blob/main/README.ja.md">README</a> と<a href="https://github.com/mh-mobile/reqcove/blob/main/docs/guide.ja.md">ガイド</a>にあります。</p>
 
@@ -170,19 +170,19 @@ brew install mh-mobile/tap/reqcove</code><button class="copy" type="button"><spa
     <li>macOS on Apple silicon, or Linux (amd64 or arm64)</li>
     <li>uv (Homebrew installs it): Reqcove fetches mitmproxy and Python with it on the first run</li>
     <li>A Tailscale tailnet, and the Tailscale app on the iPhone</li>
-    <li>The computer awake while the iPhone uses it</li>
+    <li>The computer must stay awake while the iPhone uses it</li>
   </ul>
   <ul class="req" data-l="ja">
     <li>Apple シリコンの macOS、または Linux（amd64 または arm64）</li>
     <li>uv（Homebrew で入れれば一緒に入ります）。初回の起動時に、Reqcove が uv で mitmproxy と Python を取得します</li>
     <li>Tailscale の tailnet と、iPhone にインストールした Tailscale アプリ</li>
-    <li>iPhone が使っている間、スリープしていないコンピュータ</li>
+    <li>iPhone が使っている間は、コンピュータをスリープさせないこと</li>
   </ul>
 
   <h2 data-l="en">What it does not do</h2>
   <h2 data-l="ja">しないこと</h2>
-  <p data-l="en">It does not find secrets under names that do not say so, and does not mask personal data such as e-mail addresses. Once trusted, the CA lets this computer read the iPhone's HTTPS to any site, not only the hosts you allow. What the agent reads goes to its model provider. Apps that pin certificates refuse Reqcove's. More in <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">SECURITY</a>.</p>
-  <p data-l="ja">名前からシークレットと分からない値は見つけられず、メールアドレスなどの個人情報はマスクしません。CA を信頼すると、このコンピュータは iPhone の HTTPS を、許可したホストに限らずどのサイトについても読めるようになります。エージェントが読んだものは、そのモデルの提供元に送られます。証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。詳しくは <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">SECURITY</a> にあります。</p>
+  <p data-l="en">It cannot find a secret whose name does not look like one and whose form (such as Bearer or a JWT) does not show it either, and it does not mask personal data such as e-mail addresses. While the iPhone trusts the CA, this computer can read the iPhone's HTTPS to any site, not only the hosts you allow. What the agent reads goes to its model provider. Apps that pin certificates refuse Reqcove's. More in <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">SECURITY</a>.</p>
+  <p data-l="ja">名前からも形（Bearer、JWT など）からもシークレットと分からない値は見つけられず、メールアドレスなどの個人情報はマスクしません。CA を信頼している間、このコンピュータは iPhone の HTTPS を、許可したホストに限らず読めるようになります。エージェントが読んだものは、そのモデルの提供元に送られます。証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。詳しくは <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">SECURITY</a> にあります。</p>
 
   <footer>
     <span>Reqcove · MIT License</span>
