@@ -81,7 +81,7 @@
     <h1>Reqcove</h1>
     <p class="tagline" data-l="en">Hand your iPhone's HTTP(S) traffic to an AI agent over MCP, from anywhere.</p>
     <p class="tagline" data-l="ja">iPhone の HTTP(S) 通信を、どこからでも、AI エージェントに MCP で渡す。</p>
-    <p class="sub" data-l="en">The iPhone picks your computer as its Tailscale exit node, the computer its traffic goes out through. Reqcove, on that computer, decrypts and records the traffic to the hosts you allow, and gives the records to your agent over MCP, the way an agent is given tools. Wi-Fi or 5G, with the iPhone on your desk or far away.</p>
+    <p class="sub" data-l="en">The iPhone picks your computer as its Tailscale exit node, the computer its traffic goes out through. Reqcove, on that computer, decrypts and records the traffic to the hosts you allow, and gives the records to your agent over MCP (the protocol that gives an agent its tools). Wi-Fi or 5G, with the iPhone on your desk or far away.</p>
     <p class="sub" data-l="ja">iPhone は、お使いのコンピュータを Tailscale の Exit Node（iPhone の通信の出口になるコンピュータ）として選びます。そのコンピュータで動く Reqcove が、許可したホストへの通信を復号して記録し、MCP（エージェントにツールを渡す仕組み）でエージェントに渡します。Wi-Fi でも 5G でも、iPhone が手元にあっても離れた場所にあっても使えます。</p>
     <div class="cta">
       <a class="btn primary" href="#install"><span data-l="en">Install</span><span data-l="ja">インストール</span></a>
@@ -94,8 +94,8 @@
   <div class="grid">
     <div class="card">
       <h3 data-l="en">An exit node, not a Wi-Fi proxy</h3><h3 data-l="ja">Wi-Fi のプロキシではなく Exit Node</h3>
-      <p data-l="en">On the iPhone, you choose the exit node and trust Reqcove's CA once, the certificate the iPhone trusts so HTTPS can be decrypted. No proxy to set on each Wi-Fi, and no VPN app on the iPhone in Tailscale's place: Tailscale stays on, and so does your tailnet (your Tailscale network).</p>
-      <p data-l="ja">iPhone では、Exit Node を選び、Reqcove の CA（HTTPS を復号するために iPhone が信頼する証明書）を一度信頼するだけです。Wi-Fi ごとにプロキシを設定することも、Tailscale の代わりに iPhone で VPN 型のアプリを動かすこともありません。Tailscale はオンのままで、tailnet（自分の Tailscale のネットワーク）もそのまま使えます。</p>
+      <p data-l="en">On the iPhone, you choose the exit node and trust Reqcove's CA once (the certificate that lets HTTPS be decrypted). There is no proxy to set on each Wi-Fi and no other VPN app to run instead of Tailscale: Tailscale stays on, and so does your tailnet (your Tailscale network).</p>
+      <p data-l="ja">iPhone では、Exit Node を選び、Reqcove の CA（HTTPS を復号できるようにする証明書）を一度信頼するだけです。Wi-Fi ごとにプロキシを設定することも、Tailscale の代わりに iPhone で VPN 型のアプリを動かすこともありません。Tailscale はオンのままで、tailnet（自分の Tailscale のネットワーク）もそのまま使えます。</p>
     </div>
     <div class="card">
       <h3 data-l="en">Only the hosts you allow</h3><h3 data-l="ja">記録するのは許可したホストだけ</h3>
@@ -119,8 +119,8 @@
     </div>
     <div class="card">
       <h3 data-l="en">Open source, one binary</h3><h3 data-l="ja">オープンソースで、1 つのバイナリ</h3>
-      <p data-l="en">MIT licensed. Decryption is done by mitmproxy, open source too, which Reqcove fetches with uv on the first run. The macOS release binary is signed with a Developer ID and notarized by Apple.</p>
-      <p data-l="ja">MIT ライセンスです。復号はオープンソースの mitmproxy が行い、初回の起動時に Reqcove が uv で取得します。macOS のリリースのバイナリは Developer ID で署名してあり、Apple の公証を受けています。</p>
+      <p data-l="en">MIT licensed. Decryption is done by mitmproxy, open source too, which Reqcove fetches with uv (a tool that installs Python programs) on the first run. The macOS release binary is signed with a Developer ID and notarized by Apple.</p>
+      <p data-l="ja">MIT ライセンスです。復号はオープンソースの mitmproxy が行い、初回の起動時に Reqcove が uv（Python のツールを入れる道具）で取得します。macOS のリリースのバイナリは Developer ID で署名してあり、Apple の公証を受けています。</p>
     </div>
   </div>
 
@@ -170,19 +170,19 @@ brew install mh-mobile/tap/reqcove</code><button class="copy" type="button"><spa
     <li>macOS on Apple silicon, or Linux (amd64 or arm64)</li>
     <li>uv (Homebrew installs it): Reqcove fetches mitmproxy and Python with it on the first run</li>
     <li>A Tailscale tailnet, and the Tailscale app on the iPhone</li>
-    <li>The computer must stay awake while the iPhone uses it</li>
+    <li>The computer must stay awake while the iPhone uses it as its exit node (while the computer sleeps, the iPhone has no internet)</li>
   </ul>
   <ul class="req" data-l="ja">
     <li>Apple シリコンの macOS、または Linux（amd64 または arm64）</li>
     <li>uv（Homebrew で入れれば一緒に入ります）。初回の起動時に、Reqcove が uv で mitmproxy と Python を取得します</li>
     <li>Tailscale の tailnet と、iPhone にインストールした Tailscale アプリ</li>
-    <li>iPhone が使っている間は、コンピュータをスリープさせないこと</li>
+    <li>iPhone が Exit Node として使っている間は、コンピュータをスリープさせないこと（スリープ中、iPhone はインターネットにつながりません）</li>
   </ul>
 
   <h2 data-l="en">What it does not do</h2>
   <h2 data-l="ja">しないこと</h2>
-  <p data-l="en">It cannot find a secret whose name does not look like one and whose form (such as Bearer or a JWT) does not show it either, and it does not mask personal data such as e-mail addresses. While the iPhone trusts the CA, this computer can read the iPhone's HTTPS to any site, not only the hosts you allow. What the agent reads goes to its model provider. Apps that pin certificates refuse Reqcove's. More in <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">SECURITY</a>.</p>
-  <p data-l="ja">名前からも形（Bearer、JWT など）からもシークレットと分からない値は見つけられず、メールアドレスなどの個人情報はマスクしません。CA を信頼している間、このコンピュータは iPhone の HTTPS を、許可したホストに限らず読めるようになります。エージェントが読んだものは、そのモデルの提供元に送られます。証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。詳しくは <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">SECURITY</a> にあります。</p>
+  <p data-l="en">It cannot find a secret that has neither a telling name nor a known form (such as a Bearer token or a JWT), and it does not mask personal data such as e-mail addresses. While the iPhone trusts the CA, this computer can read the iPhone's HTTPS to any site, not only the hosts you allow. What the agent reads goes to its model provider. Apps that pin certificates refuse Reqcove's certificate. More in <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.md">SECURITY</a>.</p>
+  <p data-l="ja">名前からも形（Bearer トークン、JWT など）からもシークレットと分からない値は見つけられず、メールアドレスなどの個人情報はマスクしません。CA を信頼している間、このコンピュータは iPhone の HTTPS を、許可したホストに限らず読めるようになります。エージェントが読んだものは、そのモデルの提供元に送られます。証明書ピンニングをするアプリは、Reqcove の証明書を拒否します。詳しくは <a href="https://github.com/mh-mobile/reqcove/blob/main/docs/SECURITY.ja.md">SECURITY</a> にあります。</p>
 
   <footer>
     <span>Reqcove · MIT License</span>
