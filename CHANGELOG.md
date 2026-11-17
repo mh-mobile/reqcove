@@ -276,8 +276,12 @@ session.
 - **The Remote Proxy drops a URL's `#fragment`**: iOS sends it to an HTTP
   proxy, so the tailnet page's link (`#c=…`) through the Remote Proxy got
   `404 page not found` (found trying it in the iPhone's Safari), and a
-  fragment (a token in it, say) went on to the site. Now nothing after `#`
-  reaches a page, a site or mitmproxy.
+  fragment (a token in it, say) went on to the site. Now the request-target
+  of a plain-HTTP request through the Remote Proxy (and the local and LAN
+  proxies) is cut at its first `#` and read again: nothing after it reaches a
+  page, a site or mitmproxy (a `?` inside the fragment too), and an escaped
+  `%23` in a path is kept. Requests inside a CONNECT tunnel are not touched
+  (whether iOS sends a fragment there was not checked).
 - **Found by the review before v1.3's release** (none of it was released):
   a restart's retry carried the page's sessions handed over at the restart,
   so one ended by `reqcove console --end` meanwhile came back (now the
