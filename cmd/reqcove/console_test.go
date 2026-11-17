@@ -841,6 +841,16 @@ func TestPageFiles(t *testing.T) {
 			t.Errorf("%s: %s", f, m)
 		}
 	}
+	// The page asks in itself: a browser's own dialog shows nothing on a page
+	// opened in a window not in front (Chromium), and the click did nothing.
+	js, _ := pageFiles.ReadFile("ui/app.js")
+	page, _ := pageFiles.ReadFile("ui/index.html")
+	if m := regexp.MustCompile(`\b(confirm|alert|prompt)\(`).Find(js); m != nil {
+		t.Errorf("app.js uses the browser's dialog: %s", m)
+	}
+	if !strings.Contains(string(page), `<div id="ask" class="ask" role="alertdialog" aria-labelledby="ask-text" hidden>`) || !strings.Contains(string(js), `const askBox = $("ask");`) {
+		t.Error("no in-page confirm block (#ask)")
+	}
 }
 
 // TestPageScopeE2E (REQCOVE_E2E=1, real mitmproxy): each change the page

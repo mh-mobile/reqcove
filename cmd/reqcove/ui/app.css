@@ -26,7 +26,9 @@ h3 { font-size: .9rem; margin: 1rem 0 .3rem; color: var(--muted); font-weight: 6
 .list button, #scope p button { padding: .1rem .6rem; }
 .left { margin: 0 .5rem; color: var(--muted); }
 input[type=text], select { font: inherit; padding: .2rem .4rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); }
-#scope-result, #settings-result, #presets-result, #rec-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+.note { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0; }
+.ask { border: 1px solid var(--no); border-radius: 8px; padding: .6rem .8rem; margin: .4rem 0; }
+.ask p { margin: 0 0 .5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 #settings dd .list, #settings dd p { margin: .2rem 0; }
 #settings button { padding: .1rem .6rem; }
 #ca-qr { display: block; margin: .5rem 0; image-rendering: pixelated; }

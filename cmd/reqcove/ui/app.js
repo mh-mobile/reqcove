@@ -25,6 +25,50 @@ function row(dl, name, value) {
 // say puts an answer, word for word, in the status line id.
 function say(id, d) { $(id).textContent = d.message || d.error || ""; }
 
+// note puts text in the status line right under anchor (the row or list of
+// the control pressed), made the first time; the lists' rows are made anew,
+// so a note goes after the list, never in it.
+function note(anchor, text) {
+  let n = anchor.nextElementSibling;
+  if (!n || !n.classList.contains("note")) {
+    n = el("p", null, "note");
+    n.setAttribute("role", "status");
+    anchor.after(n);
+  }
+  n.textContent = text;
+}
+
+// ask shows text in the page, under anchor (and its note), with yes and no
+// (Cancel): true once yes is clicked; false on no, Esc, or another ask. The
+// browser's own dialog shows nothing on a page opened in a window not in
+// front, so the page asks itself. No has the focus: Enter is never yes.
+const askBox = $("ask");
+let asked = null; // the open one's answer
+function ask(anchor, text, yes, no) {
+  if (asked) asked(false);
+  return new Promise((resolve) => {
+    const esc = (e) => { if (e.key === "Escape") done(false); };
+    const done = (v) => {
+      if (asked !== done) return;
+      asked = null;
+      document.removeEventListener("keydown", esc);
+      askBox.hidden = true;
+      resolve(v);
+    };
+    asked = done;
+    const cancel = button(no || "Cancel", () => done(false));
+    const t = el("p", text);
+    t.id = "ask-text";
+    askBox.replaceChildren(t, button(yes, () => done(true)), cancel);
+    const n = anchor.nextElementSibling;
+    (n && n.classList.contains("note") ? n : anchor).after(askBox);
+    askBox.hidden = false;
+    document.addEventListener("keydown", esc);
+    askBox.scrollIntoView({ block: "nearest" });
+    cancel.focus();
+  });
+}
+
 function clock(rfc) {
   const t = new Date(rfc);
   return isNaN(t) ? rfc : t.toLocaleTimeString();
@@ -54,6 +98,7 @@ function show(d) {
   if (restartedFrom && d.started && d.started !== restartedFrom) {
     restartedFrom = "";
     $("settings-result").textContent = "restarted at " + clock(d.started) + "; reqcove status says how it went";
+    notes = {}; // "at its next restart": had
     loadSettings();
   }
   $("line").textContent = "Updated " + new Date().toLocaleTimeString() + " (every 5 s)";
@@ -161,14 +206,14 @@ function showScope(d) {
   if (hosts.length === 0) list.append(el("li", "none", "muted"));
   for (const h of hosts) {
     list.append(li(h, badges(h, d.saved || [], d.pinned || []), button("Remove", () =>
-      change({ cmd: "remove", hosts: [h] }, "Remove " + h + "?\n" + (d.recording === "on" ? w.remove : "")))));
+      change({ cmd: "remove", hosts: [h] }, list, "Remove " + h + "?\n" + (d.recording === "on" ? w.remove : ""), "Remove"))));
   }
   const pl = $("pass");
   pl.replaceChildren();
   if (pass.length === 0) pl.append(el("li", "none", "muted"));
   for (const h of pass) {
     pl.append(li(h, badges(h, d.pass_saved || [], d.pass_pinned || []), button("Remove", () =>
-      change({ cmd: "remove", hosts: [h], pass: true }, "Carry " + h + " decrypted again?"))));
+      change({ cmd: "remove", hosts: [h], pass: true }, pl, "Carry " + h + " decrypted again?", "Carry it decrypted"))));
   }
   const gone = (d.saved || []).filter((h) => !hosts.includes(h)).concat((d.pass_saved || []).filter((h) => !pass.includes(h)));
   $("removed").textContent = gone.length ? "In the hosts files, removed here (unsaved: Save takes them out): " + gone.join(", ") : "";
@@ -189,7 +234,7 @@ function showScope(d) {
   seen.replaceChildren();
   if (!d.discovered || d.discovered.length === 0) seen.append(el("li", disc ? "none seen yet" : "none: Discover keeps the names of the hosts outside the ones recorded that the devices reach", "muted"));
   for (const s of d.discovered || []) {
-    seen.append(li(s.host + " (" + s.count + ")", [], button("Add", () => change({ cmd: "add", hosts: [s.host] }))));
+    seen.append(li(s.host + " (" + s.count + ")", [], button("Add", () => change({ cmd: "add", hosts: [s.host] }, seen))));
   }
   if (d.discovered_kept > (d.discovered || []).length) seen.append(el("li", (d.discovered_kept - d.discovered.length) + " more kept (reqcove status)", "muted"));
 }
@@ -204,21 +249,23 @@ function tick() {
   }
 }
 
-// change asks run for it, with the revision the page read; warning, when
-// given, is the CLI's own, shown before a confirm. The answer, word for word;
-// true when run took it.
-async function change(body, warning) {
+// change asks run for it, with the revision the page showed (read before
+// the ask: the page refreshes while it asks); warning, when given, is the
+// CLI's own, asked under where with yes. The answer, word for word, under
+// where; true when run took it.
+async function change(body, where, warning, yes) {
   if (!last) return false;
-  if (warning && !confirm(warning + "\n\nGo on?")) return false;
-  body.rev = last.rev;
+  if (body.rev == null) body.rev = last.rev;
+  if (warning && !(await ask(where, warning + "\n\nGo on?", yes))) return false;
   let ok = false;
   for (const b of $("scope").querySelectorAll("button")) b.disabled = true;
+  note(where, body.cmd === "save" ? "Saving…" : "Sending…");
   try {
     const { d } = await api("POST", "/api/change", body);
     ok = !!d.ok;
-    $("scope-result").textContent = d.message || d.error || "";
+    note(where, d.message || d.error || "");
   } catch (e) {
-    $("scope-result").textContent = "reqcove did not answer: reqcove status says what came of it";
+    note(where, "reqcove did not answer: reqcove status says what came of it");
   }
   for (const b of $("scope").querySelectorAll("button")) b.disabled = false;
   refresh();
@@ -228,14 +275,16 @@ async function change(body, warning) {
 // save shows what Save writes (the files now, then; the line added to the
 // config; the notes, which name the pinned hosts), then asks.
 async function save() {
+  if (!last) return;
+  const rev = last.rev, where = $("save").parentElement;
   let d;
   try {
     ({ d } = await api("GET", "/api/save"));
   } catch (e) {
-    $("scope-result").textContent = "reqcove did not answer";
+    note(where, "reqcove did not answer");
     return;
   }
-  if (d.message || !d.files) { $("scope-result").textContent = d.message || d.error || ""; return; }
+  if (d.message || !d.files) { note(where, d.message || d.error || ""); return; }
   const lines = [];
   for (const f of d.files) {
     const what = f.pass ? " (passed undecrypted)" : "";
@@ -243,8 +292,8 @@ async function save() {
   }
   if (d.config_add) lines.push("add to " + d.config + " (its other lines kept, the old file kept as .prev):\n  + " + d.config_add.join("\n  + "));
   for (const n of d.notes || []) lines.push(n);
-  if (!confirm("Save writes:\n" + lines.join("\n") + "\n\nWrite it?")) return;
-  change({ cmd: "save", confirm: d.confirm });
+  if (!(await ask(where, "Save writes:\n" + lines.join("\n") + "\n\nWrite it?", "Write it"))) return;
+  change({ cmd: "save", confirm: d.confirm, rev }, where);
 }
 
 // The Settings panel: the config's settings as run's page lists them; a
@@ -253,6 +302,15 @@ async function save() {
 // run's own words for the flag (run -h) and ask.
 const CHOICES = { "keep-awake": ["always", "ac", "never"], verbose: ["true", "false"], ui: ["true", "false"], "mcp-http": ["true", "false"], "local-proxy": ["true", "false"] };
 let conf = null; // the settings shown last: their rev goes with a change
+let notes = {}; // flag: the last answer for it, shown under its row (the rows are made anew)
+
+// inEffect is the value the file gives a setting (its last, as run reads
+// it), else its default; a boolean's as its choice says it (1, t, TRUE: true).
+function inEffect(s) {
+  const v = s.values.length ? s.values[s.values.length - 1] : s.default;
+  if (CHOICES[s.flag] && CHOICES[s.flag][0] === "true") return /^(1|t|true)$/i.test(v) ? "true" : /^(0|f|false)$/i.test(v) ? "false" : v;
+  return v;
+}
 
 async function loadSettings() {
   try {
@@ -276,7 +334,11 @@ function showSettings(d) {
     dd.append(el("div", s.flag === "mask-values" && !s.set ? "not set" : now));
     if (s.pinned && !cmdline) dd.append(el("div", "on run's command line: " + s.pinned.join(", "), "muted"));
     if (s.why) dd.append(el("div", s.why, "muted"));
-    if (s.edit) dd.append(editor(s, d));
+    if (s.edit) {
+      const box = editor(s, d);
+      dd.append(box);
+      if (notes[s.flag]) note(box, notes[s.flag]);
+    }
     dl.append(el("dt", "--" + s.flag), dd);
   }
 }
@@ -285,16 +347,16 @@ function showSettings(d) {
 // flags), a choice or a text with Save, Clear (back to the default).
 function editor(s, d) {
   const box = el("div");
-  const ask = s.edit === "confirm";
+  const asks = s.edit === "confirm";
   if (s.edit === "clear") {
-    box.append(button("Clear", () => setSetting(s, [], false)));
+    box.append(button("Clear", () => setSetting(s, [], false, box)));
     return box;
   }
   if (s.flag === "device" || s.flag === "mask-names") {
     const list = el("ul", null, "list");
     for (const v of s.values) {
       const name = (d.devices.find((x) => x.id === v) || {}).name;
-      list.append(li(name ? v + " (" + name + ")" : v, [], button("Remove", () => setSetting(s, s.values.filter((x) => x !== v), ask))));
+      list.append(li(name ? v + " (" + name + ")" : v, [], button("Remove", () => setSetting(s, s.values.filter((x) => x !== v), asks, box))));
     }
     box.append(list);
     const p = el("p");
@@ -310,39 +372,49 @@ function editor(s, d) {
       input.autocomplete = "off";
       input.spellcheck = false;
     }
-    p.append(input, button("Add", () => { const v = input.value.trim(); if (v) setSetting(s, s.values.concat([v]), true); }));
+    p.append(input, button("Add", () => { const v = input.value.trim(); if (v) setSetting(s, s.values.concat([v]), true, box); }));
     box.append(p);
     return box;
   }
   let input;
   if (CHOICES[s.flag]) {
     input = el("select");
-    for (const v of CHOICES[s.flag]) input.append(el("option", v));
-    input.value = s.values[0] || s.default;
+    const now = inEffect(s);
+    for (const v of CHOICES[s.flag].includes(now) ? CHOICES[s.flag] : CHOICES[s.flag].concat([now])) input.append(el("option", v));
+    input.value = now;
   } else {
     input = el("input");
     input.type = "text";
-    input.value = s.values[0] || "";
+    input.value = s.values.length ? inEffect(s) : "";
     input.placeholder = s.default || "";
     input.autocomplete = "off";
     input.spellcheck = false;
   }
-  box.append(input, button("Save", () => setSetting(s, input.value.trim() ? [input.value.trim()] : [], ask)));
-  if (s.values.length) box.append(button("Clear", () => setSetting(s, [], ask)));
+  const was = input.value, back = () => { input.value = was; }; // Cancel: the file's value again
+  box.append(input, button("Save", () => setSetting(s, input.value.trim() ? [input.value.trim()] : [], asks, box, back)));
+  if (s.values.length) box.append(button("Clear", () => setSetting(s, [], asks, box, back)));
   return box;
 }
 
-// setSetting writes the setting's values; ask: run's words for it first.
-async function setSetting(s, values, ask) {
+// setSetting writes the setting's values, on the revision shown; asked:
+// run's words for it first, under where (its row); back, on Cancel.
+async function setSetting(s, values, asked, where, back) {
   if (!conf) return;
-  if (ask && !confirm("--" + s.flag + ": " + (values.join(", ") || "(removed)") + "\n\n" + s.warning + "\n\nWrite it to the config (taken at the next restart)?")) return;
-  for (const b of $("settings").querySelectorAll("button")) b.disabled = true;
-  try {
-    const { d } = await api("POST", "/api/settings", { flag: s.flag, values, rev: conf.rev, confirmed: ask });
-    $("settings-result").textContent = d.message || d.error || "";
-  } catch (e) {
-    $("settings-result").textContent = "reqcove did not answer";
+  const rev = conf.rev;
+  if (asked && !(await ask(where, "--" + s.flag + ": " + (values.join(", ") || "(removed)") + "\n\n" + s.warning + "\n\nWrite it to the config (taken at the next restart)?", "Write it"))) {
+    if (back) back();
+    return;
   }
+  for (const b of $("settings").querySelectorAll("button")) b.disabled = true;
+  notes = { [s.flag]: "Saving…" };
+  note(where, notes[s.flag]);
+  try {
+    const { d } = await api("POST", "/api/settings", { flag: s.flag, values, rev, confirmed: asked });
+    notes[s.flag] = d.message || d.error || "";
+  } catch (e) {
+    notes[s.flag] = "reqcove did not answer";
+  }
+  note(where, notes[s.flag]);
   loadSettings();
 }
 
@@ -350,16 +422,20 @@ async function setSetting(s, values, ask) {
 // a token in a URL), and saves it from a blob; true when saved.
 async function saveHAR() {
   let r;
+  $("har").disabled = true;
+  $("har-result").textContent = "Saving…";
   try {
     r = await fetch("/api/har", { cache: "no-store", credentials: "omit", headers: { "X-Reqcove-Session": sessionStorage.getItem(KEY) || "" } });
   } catch (e) {
-    $("rec-result").textContent = "reqcove did not answer";
+    $("har-result").textContent = "reqcove did not answer";
     return false;
+  } finally {
+    $("har").disabled = false;
   }
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
     if (r.status === 401) ended(d.error || "no session: " + again);
-    $("rec-result").textContent = d.error || "no HAR file";
+    $("har-result").textContent = d.error || "no HAR file";
     return false;
   }
   const name = (/filename="(reqcove-[0-9-]+\.har)"/.exec(r.headers.get("Content-Disposition") || "") || [])[1] || "reqcove.har";
@@ -371,17 +447,17 @@ async function saveHAR() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  $("rec-result").textContent = "Offered as " + name + " (your browser may name it otherwise), where your browser saves downloads (your Downloads folder, usually), with the permissions it gives files there: it holds what the agents' tools return, masked, body heads only. Check it before you share it.";
+  $("har-result").textContent = "Offered as " + name + " (your browser may name it otherwise), where your browser saves downloads (your Downloads folder, usually), with the permissions it gives files there: it holds what the agents' tools return, masked, body heads only. Check it before you share it.";
   return true;
 }
 
 // beforeRestart offers the records as a HAR file before a restart empties
-// them; true: go on.
-async function beforeRestart(d) {
+// them, asked under where; true: go on.
+async function beforeRestart(d, where) {
   if (!(d.records > 0)) return true;
-  if (!confirm("A restart empties the " + d.records + " records. Save them as a HAR file first (to your browser's downloads)?")) return true;
+  if (!(await ask(where, "A restart empties the " + d.records + " records. Save them as a HAR file first (to your browser's downloads)?", "Save a HAR file", "No"))) return true;
   if (await saveHAR()) return true;
-  return confirm("No HAR file: " + $("rec-result").textContent + "\n\nRestart anyway?");
+  return ask(where, "No HAR file: " + $("har-result").textContent + "\n\nRestart anyway?", "Restart anyway");
 }
 
 // The presets and rules panel: names and kinds alone; a preset turned on
@@ -425,12 +501,12 @@ async function loadPresets() {
         n.setAttribute("aria-label", "requests");
         e.append(n);
       }
-      e.append(button("Turn on", () => {
+      e.append(button("Turn on", async () => {
         const what = (d.warnings[x.kind] || "") + (x.kind === "map_remote" ? ": " + x.target : "");
-        if (!confirm("Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?")) return;
-        const body = { name: x.name, on: true, minutes: Number(m.value) };
+        const body = { name: x.name, on: true, minutes: Number(m.value) }; // as shown when asked
         if (x.kind === "map_remote") body.target = x.target;
         if (n && n.value !== "no count") body.times = Number(n.value);
+        if (!(await ask(list, "Turn on " + x.name + " (" + x.kind + ") for " + m.value + " min?\n\n" + what + ".\n\nGo on?", "Turn on"))) return;
         preset(body);
       }));
     }
@@ -446,6 +522,7 @@ async function loadPresets() {
 
 async function preset(body) {
   for (const b of $("presets").querySelectorAll("button")) b.disabled = true;
+  $("presets-result").textContent = "Sending…";
   try {
     const { d } = await api("POST", "/api/preset", body);
     say("presets-result", d);
@@ -489,6 +566,7 @@ async function loadCA() {
 // has otherwise than run started with), the records it empties, then asks.
 // web: the next start alone runs mitmweb, after a confirm of its own.
 async function restart(web) {
+  const where = $("restart").parentElement;
   let d;
   try {
     ({ d } = await api("GET", web ? "/api/restart?web=1" : "/api/restart"));
@@ -504,10 +582,11 @@ async function restart(web) {
   }
   lines.push(...(d.lines || []));
   if (!lines.length) lines.push("no setting changed: run starts again as it is");
-  if (d.web && !confirm("Turn mitmweb on for the next start only?\n\n" + d.web + ".")) return;
-  if (!(await beforeRestart(d))) return;
-  if (!confirm("Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning)) return;
+  if (d.web && !(await ask(where, "Turn mitmweb on for the next start only?\n\n" + d.web + ".", "Turn mitmweb on"))) return;
+  if (!(await beforeRestart(d, where))) return;
+  if (!(await ask(where, "Restart run?\n\n" + lines.join("\n") + "\n\n" + d.warning, "Restart"))) return;
   $("restart").disabled = $("restart-web").disabled = true;
+  $("settings-result").textContent = "Restarting…";
   try {
     const { d: a } = await api("POST", "/api/restart", web ? { rev: d.rev, web: true } : { rev: d.rev });
     $("settings-result").textContent = a.message || a.error || "";
@@ -526,10 +605,10 @@ function setup() {
     e.preventDefault();
     const h = $("add-host").value.trim();
     if (!h) return;
-    change({ cmd: "add", hosts: [h], pass: $("add-pass").checked }).then((ok) => { if (ok) $("add-host").value = ""; });
+    change({ cmd: "add", hosts: [h], pass: $("add-pass").checked }, $("add")).then((ok) => { if (ok) $("add-host").value = ""; });
   };
-  $("stop").onclick = () => change({ cmd: "stop" }, last && last.warnings.stop);
-  $("start").onclick = () => change({ cmd: "start" });
+  $("stop").onclick = () => change({ cmd: "stop" }, $("stop").parentElement, last && last.warnings.stop, "Stop recording");
+  $("start").onclick = () => change({ cmd: "start" }, $("start").parentElement);
   $("save").onclick = save;
   $("restart").onclick = () => restart(false);
   $("restart-web").onclick = () => restart(true);
@@ -546,10 +625,11 @@ function setup() {
       $("rec-result").textContent = "reqcove did not answer";
     }
   };
-  $("all-on").onclick = () => change({ cmd: "allow-all", for: $("all-for").value }, last && "Record every host for " + $("all-for").value + "?\n" + last.warnings.allow_all);
-  $("all-end").onclick = () => change({ cmd: "allow-all", end: true });
-  $("disc-on").onclick = () => change({ cmd: "discover", for: $("disc-for").value });
-  $("disc-end").onclick = () => change({ cmd: "discover", end: true });
+  const all = $("all-on").parentElement, disc = $("disc-on").parentElement;
+  $("all-on").onclick = () => change({ cmd: "allow-all", for: $("all-for").value }, all, last && "Record every host for " + $("all-for").value + "?\n" + last.warnings.allow_all, "Allow all");
+  $("all-end").onclick = () => change({ cmd: "allow-all", end: true }, all);
+  $("disc-on").onclick = () => change({ cmd: "discover", for: $("disc-for").value }, disc);
+  $("disc-end").onclick = () => change({ cmd: "discover", end: true }, disc);
   setInterval(tick, 1000);
 }
 
@@ -564,6 +644,7 @@ async function refresh() {
 
 async function act(yes, no, path, body) {
   yes.disabled = no.disabled = true;
+  $("result").textContent = "Sending…";
   try {
     const { d } = await api("POST", path, body);
     $("result").textContent = d.message || d.error || "";
