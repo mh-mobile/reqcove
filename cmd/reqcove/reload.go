@@ -34,7 +34,7 @@ func reloadCmd(ctx context.Context, args []string) error {
 // reload answers reqcove reload. Called with st.mu held.
 func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string) ctlAnswer {
 	o := st.o
-	if o.config == "" && len(st.origin.files)+len(st.origin.passFiles) == 0 && o.rules == "" {
+	if o.config == "" && len(st.origin.files)+len(st.origin.passOrigin().files) == 0 && o.rules == "" {
 		return ctlAnswer{Message: "nothing to reload: this run was started from flags alone (no --config, no --allow-hosts=@FILE, no --rules): `reqcove capture` changes its hosts, a restart the rest; nothing changed"}
 	}
 	n, err := reloadFlags(o.args)
@@ -69,7 +69,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 		return ctlAnswer{Message: msg}
 	}
 	lost := undone(st.loaded, cur, n.allow)
-	st.origin, st.loaded = n.origin, n.allow
+	st.setOrigin(n.origin, n.allow)
 	hosts := changes(cur, n.allow)
 	if hosts == "" {
 		hosts = "the hosts as they were"
@@ -101,7 +101,7 @@ func reload(ctx context.Context, cap *capture.Capture, st *ctlState, why string)
 			msg += "; new connections only: reopen the app to see it now"
 		}
 	}
-	return traced(cap, why, msg+otherLine)
+	return traced(cap, why, "", msg+otherLine)
 }
 
 // undone is what next undoes of the changes made since loaded (to cur): the
@@ -166,7 +166,7 @@ var restartSettings = []struct {
 	{"device", func(o *runOpts) string { return strings.Join(o.devices, "\n") }},
 	{"rules", func(o *runOpts) string { return o.rules }},
 	{"rules-reload", func(o *runOpts) string { return fmt.Sprint(o.rulesReload) }},
-	{"web", func(o *runOpts) string { return fmt.Sprint(o.web) }},
+	{"web", func(o *runOpts) string { return fmt.Sprint(o.web && !o.webOnce) }}, // a restart's --web for one start: not run's flags
 	{"no-redact", func(o *runOpts) string { return fmt.Sprint(o.noRedact) }},
 	{"proto", func(o *runOpts) string { return o.proto }},
 	{"mask-names", func(o *runOpts) string { return strings.Join(o.maskNames, "\n") }},

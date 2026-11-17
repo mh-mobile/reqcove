@@ -69,7 +69,7 @@ func TestParseConfig(t *testing.T) {
 	// The file's flags first; the command line's add up (repeatable) or win.
 	fs, devices, allow := testFlags()
 	p := writeConfig(t, "--device \"Taro's iPhone\"\n--allow-hosts api.example.com\n--hostname from-file\n", 0o600)
-	if err := parseConfig(fs, p, allow); err != nil {
+	if err := parseConfig(fs, p, allow, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.Parse([]string{"--config", p, "--device", "ipad", "--hostname", "typed"}); err != nil {
@@ -93,19 +93,19 @@ func TestParseConfig(t *testing.T) {
 		"--device a\n--hostname x stray\n": "line 2: a word that is no flag's value",
 	} {
 		fs, _, allow := testFlags()
-		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow); err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "stray") {
+		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow, nil); err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "stray") {
 			t.Errorf("%q: %v, want %q", text, err, want)
 		}
 	}
 	// Readable and writable by its owner only (it may hold --mask-values patterns).
 	for _, mode := range []os.FileMode{0o666, 0o644, 0o620, 0o604} {
 		fs, _, allow = testFlags()
-		if err := parseConfig(fs, writeConfig(t, "--device a\n", mode), allow); err == nil || !strings.Contains(err.Error(), "others can read or write it") {
+		if err := parseConfig(fs, writeConfig(t, "--device a\n", mode), allow, nil); err == nil || !strings.Contains(err.Error(), "others can read or write it") {
 			t.Errorf("%o: %v", mode, err)
 		}
 	}
 	fs, _, allow = testFlags()
-	if err := parseConfig(fs, t.TempDir(), allow); err == nil || !strings.Contains(err.Error(), "not a plain file") {
+	if err := parseConfig(fs, t.TempDir(), allow, nil); err == nil || !strings.Contains(err.Error(), "not a plain file") {
 		t.Errorf("a directory: %v", err)
 	}
 	// A word or value that does not parse is never quoted (it may be part of a
@@ -119,7 +119,7 @@ func TestParseConfig(t *testing.T) {
 		fs, _, allow = testFlags()
 		fs.Int("proxy-port", 0, "")
 		fs.String("mask", "", "")
-		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow); err == nil || strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "xyz") || !strings.Contains(err.Error(), line) {
+		if err := parseConfig(fs, writeConfig(t, text, 0o600), allow, nil); err == nil || strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "xyz") || !strings.Contains(err.Error(), line) {
 			t.Errorf("%q: %v, want %s", text, err, line)
 		}
 	}
@@ -127,7 +127,7 @@ func TestParseConfig(t *testing.T) {
 	fifo := filepath.Join(t.TempDir(), "fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err == nil {
 		fs, _, allow = testFlags()
-		if err := parseConfig(fs, fifo, allow); err == nil || !strings.Contains(err.Error(), "not a plain file") {
+		if err := parseConfig(fs, fifo, allow, nil); err == nil || !strings.Contains(err.Error(), "not a plain file") {
 			t.Errorf("fifo: %v", err)
 		}
 	}

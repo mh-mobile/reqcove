@@ -34,6 +34,7 @@ type policy struct {
 	onLink   []netip.Prefix        // the networks those addresses are on: the LAN, whatever its range
 	socks    bool                  // send TCP 80/443 to mitmproxy
 	names    []string              // this node's MagicDNS name and its first label, lower case
+	tagged   bool                  // this node is tagged: no user's, so it has no own devices
 
 	// LAN mode (no tsnet): devices are the allowed client addresses.
 	lan     bool

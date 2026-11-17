@@ -65,36 +65,51 @@ func configFile(args []string) (string, bool, error) {
 // a word starting with ~/ starts at the home directory.
 // The file must be yours and not writable by others.
 func readConfig(path string) (words []string, lines []int, err error) {
+	b, err := configBytes(path, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	return configText(path, b)
+}
+
+// configBytes is a --config file's bytes, checked as readConfig says; flags
+// are more open flags (the config writer's O_NOFOLLOW).
+func configBytes(path string, flags int) ([]byte, error) {
 	// Opened once, checked and read through the same descriptor: no swap
 	// between the check and the read; O_NONBLOCK so a FIFO cannot hang it.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|flags, 0)
 	if errors.Is(err, os.ErrNotExist) { // a service started before setup wrote it
-		return nil, nil, fmt.Errorf("--config: %w: reqcove setup writes it (in your terminal)", err)
+		return nil, fmt.Errorf("--config: %w: reqcove setup writes it (in your terminal)", err)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("--config: %w", err)
+		return nil, fmt.Errorf("--config: %w", err)
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil, nil, fmt.Errorf("--config: %w", err)
+		return nil, fmt.Errorf("--config: %w", err)
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("--config %s: not a plain file", path)
+		return nil, fmt.Errorf("--config %s: not a plain file", path)
 	}
 	if fi.Size() > 1<<20 {
-		return nil, nil, fmt.Errorf("--config %s: over 1 MiB", path)
+		return nil, fmt.Errorf("--config %s: over 1 MiB", path)
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return nil, nil, fmt.Errorf("--config %s: not yours: its flags decide what is recorded", path)
+		return nil, fmt.Errorf("--config %s: not yours: its flags decide what is recorded", path)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, nil, fmt.Errorf("--config %s: others can read or write it (chmod 600 %s): its flags decide what is recorded, and may hold --mask-values patterns", path, shellWord(path))
+		return nil, fmt.Errorf("--config %s: others can read or write it (chmod 600 %s): its flags decide what is recorded, and may hold --mask-values patterns", path, shellWord(path))
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
-		return nil, nil, fmt.Errorf("--config: %w", err)
+		return nil, fmt.Errorf("--config: %w", err)
 	}
+	return b, nil
+}
+
+// configText is the words of a --config file's text b, and the line of each.
+func configText(path string, b []byte) (words []string, lines []int, err error) {
 	home, _ := os.UserHomeDir()
 	for n, line := range strings.Split(string(b), "\n") {
 		ws, err := configWords(line, home)
@@ -164,9 +179,13 @@ func configWords(line, home string) ([]string, error) {
 // parseConfig parses a --config file's flags into fs before the command
 // line's, and refuses those that stay on the command line. allowSpecs is
 // --allow-hosts so far (the file's), checked after @FILE is read: '*' there
-// is refused however it is spelled.
-func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string) error {
+// is refused however it is spelled. text, when not nil, is read in place of
+// the file's (the config writer's check of what it would write).
+func parseConfig(fs *flag.FlagSet, path string, allowSpecs *[]string, text []byte) error {
 	words, lines, err := readConfig(path)
+	if text != nil {
+		words, lines, err = configText(path, text)
+	}
 	if err != nil {
 		return err
 	}

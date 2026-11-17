@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"maps"
 	"net"
@@ -16,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -40,7 +45,7 @@ var ctlWait = 15 * time.Second
 
 // ctlRequest is one change asked of run.
 type ctlRequest struct {
-	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload) or console (reqcove console)
+	Cmd        string   `json:"cmd"`                   // add, remove, set, stop, start, save, allow-all, discover, reload (reqcove reload), console (reqcove console), console-end (its --end, since v1.3) or restart (reqcove restart, since v1.3)
 	Hosts      []string `json:"hosts,omitempty"`       // add, remove
 	Pass       bool     `json:"pass,omitempty"`        // add, remove: of --pass-hosts
 	AllowHosts []string `json:"allow_hosts,omitempty"` // set: all of them
@@ -49,6 +54,14 @@ type ctlRequest struct {
 	End        bool     `json:"end,omitempty"`         // allow-all, discover: end it now
 	ID         string   `json:"id,omitempty"`          // requests (one), approve, deny: an agent's request (since v1.2)
 	Via        string   `json:"via,omitempty"`         // approve: terminal, dialog or console; deny: console (or none: terminal)
+	Confirm    string   `json:"confirm,omitempty"`     // save: the token of the change to the config run showed, confirmed (since v1.3)
+	Tailnet    bool     `json:"tailnet,omitempty"`     // console: the tailnet page's (reqcove console --tailnet, since v1.3)
+	Web        bool     `json:"web,omitempty"`         // restart: the next start runs mitmweb, that start alone (reqcove restart --web, since v1.3)
+	// Set by reqcove console's page alone, never read from ctl.sock: the scope
+	// revision the page read (a change on an older one is refused), from:
+	// "console", traced as such, and device: the tailnet page's caller's
+	// machine name, which the trace names (none: this computer's page).
+	rev, from, device string
 }
 
 // ctlAnswer is run's answer, for the user: what happened.
@@ -59,6 +72,10 @@ type ctlAnswer struct {
 	New      bool                       `json:"new,omitempty"`      // request: made now, not pending already
 	Port     int                        `json:"port,omitempty"`     // console: the page's, on 127.0.0.1 (since v1.2)
 	Code     string                     `json:"code,omitempty"`     // ui: the one-use code the link carries
+	File     string                     `json:"file,omitempty"`     // console: the code file's name, in the state directory (since v1.3)
+	Addr     string                     `json:"addr,omitempty"`     // console --tailnet: the tailnet page's IPv4:PORT (since v1.3)
+	Confirm  string                     `json:"confirm,omitempty"`  // save: the change to the config Message shows, to confirm with this token (since v1.3)
+	after    func()                     // run once the answer is sent (restart)
 }
 
 const captureUse = "reqcove capture add [--pass] HOST… | capture remove [--pass] HOST… | capture set --allow-hosts HOSTS [--pass-hosts HOSTS] | capture stop | capture start | capture save | capture allow-all --for D | capture allow-all --end | capture discover --for D | capture discover --end | capture requests | capture approve ID | capture deny ID  [--state DIR]"
@@ -81,7 +98,7 @@ func captureCmd(ctx context.Context, args []string) error {
 		req.Cmd, req.Hosts = words[0], words[1:]
 	}
 	switch req.Cmd {
-	case "request", "console": // the agents' op, through reqcove mcp; reqcove console's
+	case "request", "console", "console-end", "restart": // the agents' op, through reqcove mcp; reqcove console's; reqcove restart's
 		return errors.New("usage: " + captureUse)
 	case "approve", "deny":
 		if len(req.Hosts) != 1 {
@@ -104,6 +121,9 @@ func captureCmd(ctx context.Context, args []string) error {
 func (r ctlRequest) normalized() (ctlRequest, error) {
 	if r.Cmd != "allow-all" && r.Cmd != "discover" && (r.For != "" || r.End) {
 		return r, fmt.Errorf("--for and --end go with capture allow-all and capture discover (usage: %s)", captureUse)
+	}
+	if r.Confirm != "" && r.Cmd != "save" || r.Tailnet && r.Cmd != "console" || r.Web && r.Cmd != "restart" {
+		return r, errors.New("usage: " + captureUse)
 	}
 	if requestOps[r.Cmd] {
 		return r.request()
@@ -136,7 +156,7 @@ func (r ctlRequest) normalized() (ctlRequest, error) {
 		if len(r.AllowHosts)+len(r.PassHosts) > 0 {
 			return r, fmt.Errorf("--allow-hosts and --pass-hosts go with capture set; capture %s takes the hosts (with --pass for those carried undecrypted)", r.Cmd)
 		}
-	case "stop", "start", "save", "console":
+	case "stop", "start", "save", "console", "console-end", "restart":
 		if len(r.Hosts)+len(r.AllowHosts)+len(r.PassHosts) > 0 || r.Pass {
 			return r, fmt.Errorf("capture %s takes no hosts (usage: %s)", r.Cmd, captureUse)
 		}
@@ -223,8 +243,8 @@ func (r ctlRequest) String() string {
 		return s + " --for " + r.For // a duration: ParseDuration took it
 	case r.Cmd == "stop" || r.Cmd == "start" || r.Cmd == "save":
 		return s
-	case r.Cmd == "reload":
-		return "reload"
+	case r.Cmd == "reload" || r.Cmd == "restart":
+		return r.Cmd
 	}
 	if r.Pass {
 		s += " --pass"
@@ -252,7 +272,34 @@ func captureIn(ctx context.Context, in, out *os.File, state string, req ctlReque
 		return approveIn(ctx, in, out, state, req)
 	case "requests":
 		return printRequests(ctx, out, state)
+	case "save":
+		return saveIn(ctx, in, out, state, req)
 	}
+	return sendCapture(ctx, out, state, req)
+}
+
+// saveIn is capture save: when the save would add a line to the config (a
+// hosts file created beside it), run's answer shows the change, and it is
+// asked again with run's token once the user says y.
+func saveIn(ctx context.Context, in io.Reader, out io.Writer, state string, req ctlRequest) error {
+	a, err := askRun(ctx, state, req)
+	if err != nil {
+		return err
+	}
+	if a.Confirm == "" {
+		if !a.OK {
+			return errors.New(a.Message)
+		}
+		fmt.Fprintln(out, a.Message)
+		return nil
+	}
+	fmt.Fprint(out, a.Message+"Go on? [y/N] ")
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	if yes := strings.ToLower(strings.TrimSpace(line)); yes != "y" && yes != "yes" {
+		fmt.Fprintln(out, "nothing written")
+		return nil
+	}
+	req.Confirm = a.Confirm
 	return sendCapture(ctx, out, state, req)
 }
 
@@ -279,7 +326,10 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 	conn, err := d.DialContext(ctx, "unix", filepath.Join(state, ctlSock))
 	if err != nil {
 		need := "v1.1"
-		if requestOps[req.Cmd] || req.Cmd == "console" {
+		switch {
+		case req.Cmd == "console-end" || req.Cmd == "restart":
+			need = "v1.3"
+		case requestOps[req.Cmd] || req.Cmd == "console":
 			need = "v1.2"
 		}
 		return ctlAnswer{}, noCtl(ctx, state, need)
@@ -296,6 +346,11 @@ func askRun(ctx context.Context, state string, req ctlRequest) (ctlAnswer, error
 			return a, fmt.Errorf("the running reqcove (%s) did not answer in %v (stopped, with Ctrl-Z?): whether it took the change, `%s` says", state, ctlWait, withState("reqcove status", state))
 		}
 		return a, fmt.Errorf("the running reqcove did not answer: %w", err)
+	}
+	if older := !a.OK && (strings.HasPrefix(a.Message, v11Usage) || strings.HasPrefix(a.Message, lanRefusal)); older && req.Cmd == "console-end" {
+		return a, errOlderEnd
+	} else if older && req.Cmd == "restart" {
+		return a, errOlderRestart
 	}
 	if !a.OK && strings.HasPrefix(a.Message, v11Usage) {
 		switch {
@@ -345,19 +400,96 @@ type ctlState struct {
 	ctx    context.Context
 	status func() mcpserver.StatusOut
 	page   *page
+	dir    string // the state directory: the code files'
+	// pageNow is page, read without mu (status counts its sessions); tailnet,
+	// the tailnet page once opened (reqcove console --tailnet; never carried
+	// across a restart).
+	pageNow atomic.Pointer[page]
+	tailnet atomic.Pointer[page]
+	// startConfig is the --config file's bytes as run read them at its start,
+	// with the lines capture save added since (restart.go's snapshot);
+	// restart, run's: it stops and execs again, with that snapshot's path.
+	startConfig []byte
+	restart     func(snapshot string, web bool)
+	// originNow is origin as last set (setOrigin), read without mu: status
+	// and the page list the hosts files from it. run and gen make the scope
+	// revision (revision): a change asked bumps gen.
+	originNow atomic.Pointer[hostsOrigin]
+	run       string
+	gen       atomic.Uint64
 }
 
 func newCtlState(o *runOpts) *ctlState {
-	return &ctlState{o: o, origin: o.origin, loaded: o.allow, reqs: newCaptureRequests(o.state), ctx: context.Background()}
+	st := &ctlState{o: o, reqs: newCaptureRequests(o.state), ctx: context.Background(), startConfig: o.configText, run: secret(4)}
+	st.setOrigin(o.origin, o.allow)
+	return st
+}
+
+// setOrigin is where the hosts come from now, and the hosts the files gave
+// (st.mu held, or before serving).
+func (st *ctlState) setOrigin(o hostsOrigin, loaded capture.HostRules) {
+	st.origin, st.loaded = o, loaded
+	st.originNow.Store(&o)
+}
+
+// hostsFiles are the files --allow-hosts=@FILE and --pass-hosts=@FILE name
+// now: a save that created one, or a reload, shows at once.
+func (st *ctlState) hostsFiles() []string {
+	o := st.originNow.Load()
+	return append(slices.Clone(o.files), o.passOrigin().files...)
+}
+
+// revision is the scope's revision: another one after every scope change
+// asked (scopeOps), from a terminal, a page or an agent's request approved,
+// and in another run.
+func (st *ctlState) revision() string {
+	return fmt.Sprintf("%s.%d", st.run, st.gen.Load())
+}
+
+// scopeOps are the ops that may change the scope, or its saved hosts.
+var scopeOps = map[string]bool{"add": true, "remove": true, "set": true, "stop": true, "start": true, "save": true, "allow-all": true, "discover": true, "reload": true, "approve": true}
+
+// consoleSessions are reqcove console's live sessions, for this computer's
+// status: nil before a page is opened.
+func (st *ctlState) consoleSessions() *mcpserver.ConsoleSessions {
+	l, tn := st.pageNow.Load(), st.tailnet.Load()
+	if l == nil && tn == nil {
+		return nil
+	}
+	out := &mcpserver.ConsoleSessions{}
+	if l != nil {
+		out.Local, _ = l.count()
+	}
+	if tn != nil {
+		_, out.Tailnet = tn.count()
+	}
+	return out
+}
+
+// fromConsole ends the trace of a change made on reqcove console's page.
+const fromConsole = " (from the console on this computer)"
+
+// consoleFrom ends the trace of a change made on a page of reqcove console:
+// device, the tailnet page's caller's machine name; "": this computer's.
+func consoleFrom(device string) string {
+	if device == "" {
+		return fromConsole
+	}
+	return " (from the console on " + device + ", over the tailnet)"
 }
 
 // serveCtl serves ctl.sock until ctx ends, for the run o started, and
-// returns the state it answers from; status is what reqcove console's page shows.
-func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, status func() mcpserver.StatusOut) (*ctlState, error) {
+// returns the state it answers from; restart is run's (nil: none), set
+// before anything is served; status is what reqcove console's page shows.
+func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpts, restart func(snapshot string, web bool), status func() mcpserver.StatusOut) (*ctlState, error) {
 	st := newCtlState(o)
-	st.ctx, st.status = ctx, status
+	st.ctx, st.status, st.dir, st.restart = ctx, status, state, restart
 	if cap != nil { // nil: tests of LAN mode
 		st.reqs.redacting = cap.Store.Redacting
+	}
+	if h := carried; h != nil && h.pageLn != nil {
+		st.page = carriedPage(ctx, cap, st, h)
+		st.pageNow.Store(st.page)
 	}
 	path := filepath.Join(state, ctlSock)
 	os.Remove(path) // stale: run holds the state's lock
@@ -385,7 +517,12 @@ func serveCtl(ctx context.Context, state string, cap *capture.Capture, o *runOpt
 				}
 				ctx, cancel := context.WithTimeout(ctx, ctlWait-time.Second) // the answer before the CLI gives up
 				defer cancel()
-				json.NewEncoder(conn).Encode(answerCtl(ctx, cap, st, req))
+				a := answerCtl(ctx, cap, st, req)
+				json.NewEncoder(conn).Encode(a)
+				if a.after != nil {
+					conn.Close() // the answer out before run stops
+					a.after()
+				}
 			}()
 		}
 	}()
@@ -405,25 +542,52 @@ func answerCtl(ctx context.Context, cap *capture.Capture, st *ctlState, req ctlR
 		if _, err := req.normalized(); err != nil {
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 		}
-		return openPage(cap, st)
+		return openPage(cap, st, req.Tailnet)
+	}
+	if req.Cmd == "console-end" { // in LAN mode too, as console
+		if _, err := req.normalized(); err != nil {
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
+		}
+		return endPage(st)
+	}
+	if req.Cmd == "restart" { // in LAN mode too
+		if _, err := req.normalized(); err != nil {
+			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing stopped"}
+		}
+		if req.from == "console" && req.rev != restartRevNow(st.o) {
+			return ctlAnswer{Message: "refused: the config or a file it reads changed since the page listed what a restart changes (another tab, or an edit): look again; nothing stopped"}
+		}
+		return restartOp(ctx, st, recordCount(cap), req.Web)
 	}
 	lan := st.o.lanMode
 	if lan && req.Cmd == "save" {
 		return ctlAnswer{Message: "refused: in LAN mode the hosts recorded are the ones run started with: nothing to save; nothing written"}
 	}
 	if lan {
-		return ctlAnswer{Message: "refused: in LAN mode what is recorded cannot change while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
+		return ctlAnswer{Message: lanRefusal + " while run runs (not in this version): restart run with the hosts you want in --allow-hosts; nothing changed"}
 	}
 	req, err := req.normalized()
 	if err != nil {
 		return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 	}
 	why := req.String()
+	if req.from == "console" {
+		if req.rev != st.revision() {
+			return ctlAnswer{Message: "refused: the hosts changed since this page read them (in another tab, or by reqcove capture in a terminal): the page shows them as they are now; nothing changed"}
+		}
+		why += consoleFrom(req.device)
+	}
+	if req.device != "" && (req.Cmd == "approve" || req.Cmd == "deny") {
+		req.Via = "console on " + req.device + " (tailnet)"
+	}
+	if scopeOps[req.Cmd] {
+		defer st.gen.Add(1)
+	}
 	switch req.Cmd {
 	case "stop", "start":
-		return stopStart(ctx, cap, req.Cmd == "stop", why)
+		return stopStart(ctx, cap, req.Cmd == "stop", why, req.from)
 	case "save":
-		return save(cap, st, why)
+		return save(cap, st, req.Confirm, why, req.from)
 	case "allow-all":
 		return allowAll(ctx, cap, req, why)
 	case "discover":
@@ -484,7 +648,7 @@ func scopeChange(ctx context.Context, cap *capture.Capture, req ctlRequest, why 
 		msg += "; allow-all is on: every host is recorded until" + allAt(cap.AllowAllUntil()) + ", these hosts after; the --rules file's rules apply to these hosts alone"
 	default:
 		if len(minus(cur.Hosts, next.Hosts))+len(minus(next.PassHosts, cur.PassHosts)) > 0 {
-			msg += "; not recorded from now on, but their open connections stay decrypted (unrecorded) until they close" + openNote
+			msg += "; " + removeWarning()
 		}
 		if len(minus(next.Hosts, cur.Hosts))+len(minus(cur.PassHosts, next.PassHosts)) > 0 {
 			msg += "; new connections only: reopen the app to see it now"
@@ -494,17 +658,22 @@ func scopeChange(ctx context.Context, cap *capture.Capture, req ctlRequest, why 
 	if asked {
 		return tracedAs(cap, requestMark(why), "mcp", why+": "+msg, msg)
 	}
-	return traced(cap, why, msg)
+	return traced(cap, why, req.from, msg)
 }
 
 // traced is the answer to a change taken, leaving its trace: run's log line
 // and a cli marker (status's scope_changed_at comes from the change itself).
-func traced(cap *capture.Capture, why, msg string) ctlAnswer {
-	from := "reqcove capture"
-	if why == "reload" {
-		from = "reqcove reload"
+// from is "console" for reqcove console's page (why ends with fromConsole
+// then), else "": a terminal's.
+func traced(cap *capture.Capture, why, from, msg string) ctlAnswer {
+	if from == "console" {
+		return tracedAs(cap, why, "cli", why+": "+msg, msg)
 	}
-	return tracedAs(cap, why, "cli", fmt.Sprintf("%s (%s, from a terminal): %s", why, from, msg), msg)
+	cmd := "reqcove capture"
+	if why == "reload" {
+		cmd = "reqcove reload"
+	}
+	return tracedAs(cap, why, "cli", fmt.Sprintf("%s (%s, from a terminal): %s", why, cmd, msg), msg)
 }
 
 // tracedAs is traced with the marker's text and source and run's log line
@@ -520,7 +689,7 @@ func tracedAs(cap *capture.Capture, mark, source, line, msg string) ctlAnswer {
 // stopStart is capture stop (stop) or capture start. A stop's answer warns
 // that the rules stop too: a mock's or map_remote's requests go to the real
 // servers then. A stop ends allow-all.
-func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string) ctlAnswer {
+func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why, from string) ctlAnswer {
 	wasAll := !cap.AllowAllUntil().IsZero()
 	base, err := cap.SetStopped(ctx, why, stop)
 	pending := errors.Is(err, capture.ErrPending)
@@ -545,7 +714,7 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		case wasAll:
 			msg += "allow-all ended (a stop ends it); "
 		}
-		msg += kept + "; WARNING: the --rules file's rules apply no more (mock, map_local, map_remote, modify_headers, resolve; presets turned off), so the app's requests go to the real servers as it sends them, a mocked API's too" +
+		msg += kept + "; " + stopWarning +
 			"; connections already decrypted stay decrypted (unrecorded) until they close" + openNote + "; not saved: a restart of run records again; `reqcove capture start` records again"
 	} else {
 		msg = "applied: recording started again: " + scopeText(base) + "; "
@@ -554,7 +723,25 @@ func stopStart(ctx context.Context, cap *capture.Capture, stop bool, why string)
 		}
 		msg += kept + "; the rules apply again (presets stay off until turned on); new connections only: reopen the app to see it now (a connection or WebSocket open before the stop is not recorded again)"
 	}
-	return traced(cap, why, msg)
+	return traced(cap, why, from, msg)
+}
+
+// The warnings of stop, remove and allow-all: in their answers, and on
+// reqcove console's page before its confirm (pageWarnings), word for word.
+const stopWarning = "WARNING: the --rules file's rules apply no more (mock, map_local, map_remote, modify_headers, resolve; presets turned off), so the app's requests go to the real servers as it sends them, a mocked API's too"
+
+// removeWarning is a removal's, while recording is on (openNote: run sets it).
+func removeWarning() string {
+	return "not recorded from now on, but their open connections stay decrypted (unrecorded) until they close" + openNote
+}
+
+// allowAllWarning is allow-all's, with run's other flags' (allowAllNotes).
+func allowAllWarning() string {
+	return strings.Join(append([]string{"WARNING: every app's and site's traffic on the devices is recorded (but Apple's, passed through undecrypted), and agents, and their model providers, can read it" +
+		"; apps that pin their certificates (banks, say) fail meanwhile" +
+		"; the --rules file's rules apply to the hosts recorded before alone" +
+		"; new connections only: reopen an app to see it" +
+		"; the records stay after it ends (until evicted, or run restarts), and fill max_flows sooner"}, allowAllNotes...), "; ")
 }
 
 // allowAllNotes are the warnings of run's other flags that apply while every
@@ -606,7 +793,7 @@ func allowAll(ctx context.Context, cap *capture.Capture, req ctlRequest, why str
 		if pending {
 			msg = "applied in reqcove's records (nothing outside these hosts is recorded from now), mitmproxy restarted without allow-all, as it did not answer: allow-all ended: " + scopeText(cap.Base())
 		}
-		return traced(cap, why, msg+"; "+endedText(cap))
+		return traced(cap, why, req.from, msg+"; "+endedText(cap))
 	}
 	d, err := allowAllFor(req.For)
 	if err != nil {
@@ -632,13 +819,8 @@ func allowAll(ctx context.Context, cap *capture.Capture, req ctlRequest, why str
 	if base := cap.Base(); len(base.PassHosts) > 0 {
 		msg += "; still passed undecrypted: " + strings.Join(base.PassHosts, ", ")
 	}
-	msg += "; WARNING: every app's and site's traffic on the devices is recorded (but Apple's, passed through undecrypted), and agents, and their model providers, can read it" +
-		"; apps that pin their certificates (banks, say) fail meanwhile" +
-		"; the --rules file's rules apply to the hosts recorded before alone" +
-		"; new connections only: reopen an app to see it" +
-		"; the records stay after it ends (until evicted, or run restarts), and fill max_flows sooner" +
-		"; `reqcove capture allow-all --end` ends it sooner; not saved: a restart of run ends it"
-	return traced(cap, why, strings.Join(append([]string{msg}, allowAllNotes...), "; "))
+	msg += "; " + allowAllWarning() + "; `reqcove capture allow-all --end` ends it sooner; not saved: a restart of run ends it"
+	return traced(cap, why, req.from, msg)
 }
 
 // allAt is " HH:MM:SS (in 29m)" for allow-all's end t; the date too when
@@ -660,74 +842,313 @@ func endedText(cap *capture.Capture) string {
 		cap.Store.Stats()["flows"], cap.Store.OutsideScope(cap.Base()), openNote)
 }
 
-// save is capture save: the base scope (the hosts a start records) into the
-// one hosts file run's --allow-hosts read, without the hosts given as they
-// are but not in the file (a restart takes those again whatever the file
-// says; one in the file too stays there, and removed, is named): never "*", never
-// none (run refuses a hosts file without hosts). Hosts passed undecrypted are
-// not saved.
-func save(cap *capture.Capture, st *ctlState, why string) ctlAnswer {
-	msg, err := saveHosts(cap.Base(), st.origin)
-	if err != nil {
-		return ctlAnswer{Message: err.Error()}
-	}
-	if n, err := reloadFlags(st.o.args); err == nil { // what the files give now, for reload
-		st.loaded = n.allow
+// save is capture save: the base scope into run's hosts files (saveScope); a
+// save made leaves its trace.
+func save(cap *capture.Capture, st *ctlState, confirm, why, from string) ctlAnswer {
+	a, saved := saveScope(cap.Base(), st, confirm)
+	if !saved {
+		return a
 	}
 	cap.NoteChange(why)
-	return traced(cap, why, msg)
+	t := traced(cap, why, from, a.Message)
+	t.OK = a.OK // a save cut short: what was written, and what not
+	return t
 }
 
-// saveHosts writes base into o's hosts file, and says what it did; an error
-// says why nothing was written.
-func saveHosts(base capture.HostRules, o hostsOrigin) (string, error) {
-	switch {
-	case len(o.files) == 0:
-		return "", errors.New("nothing to save to: this run's hosts do not come from a hosts file; put `--allow-hosts=@FILE` in the config (FILE: one host a line), as reqcove setup writes it; nothing written")
-	case len(o.files) > 1:
-		return "", errors.New("nothing to save to: this run's hosts come from several files (" + strings.Join(o.files, ", ") + "): keep one `--allow-hosts=@FILE`; nothing written")
-	case slices.Contains(o.passFiles, o.files[0]):
-		return "", errors.New("refused: " + o.files[0] + " is run's --pass-hosts file too: saving would change the hosts passed undecrypted; nothing written")
+// hostsSave is a hosts file a save writes: its hosts and text, and the
+// revision of the file the text was made from ("" for none); created: new,
+// beside the config, which gets its line.
+type hostsSave struct {
+	path, text    string
+	rev           string
+	hosts         []string
+	pass, created bool
+}
+
+const (
+	savedHostsHead = "# The hosts reqcove records, one a line (# starts a comment); the config reads them\n" +
+		"# with --allow-hosts=@FILE. Written by reqcove capture save, which rewrites the hosts,\n" +
+		"# keeping the comments.\n"
+	savedPassHead = "# The hosts reqcove carries undecrypted (--pass-hosts), one a line (# starts a\n" +
+		"# comment); the config reads them with --pass-hosts=@FILE. Written by reqcove capture\n" +
+		"# save, which rewrites the hosts, keeping the comments.\n"
+)
+
+// saveScope writes base into run's hosts files: --allow-hosts=@FILE's the
+// hosts recorded, --pass-hosts=@FILE's those passed undecrypted, without the
+// hosts given as they are but not in the file (pinned: a restart takes those
+// again whatever the file says; one in the file too stays there, and removed,
+// is named). Never "*". A file may be left without hosts when the next start
+// would still take the whole flag set (checkFlags), as written. When the
+// config names no such file and there are hosts to write, the file is created
+// beside it (hostsFileFor; refused when one is there already) and its line
+// added to the config through the writer, once confirm is the token of the
+// change, which an answer without it shows (a token given is always
+// checked: reqcove console's page gives the one of the change it showed).
+// saved: something was written. Called with st.mu held.
+func saveScope(base capture.HostRules, st *ctlState, confirm string) (ctlAnswer, bool) {
+	refuse := func(msg string) (ctlAnswer, bool) { return ctlAnswer{Message: msg + "; nothing written"}, false }
+	sp, no := planSave(base, st)
+	if no != "" {
+		return refuse(no)
 	}
-	file, pinned := o.files[0], o.given
-	if base.All {
-		return "", errors.New(`refused: this run records every host ("*"), which a hosts file never holds; nothing written`)
+	saves, plan, notes, config := sp.saves, sp.plan, sp.notes, st.o.config
+	if len(saves) == 0 {
+		return ctlAnswer{OK: true, Message: strings.Join(append([]string{"nothing to save: the hosts are all given as they are (a start takes them again)"}, notes...), "; ")}, false
 	}
-	var hosts []string
-	for _, h := range base.Hosts {
-		if _, ok := pinned[h]; (!ok || o.inFiles[h]) && !slices.Contains(hosts, h) { // one given in the file too stays there
-			hosts = append(hosts, h)
+	if confirm != "" && confirm != sp.token {
+		return refuse("refused: the config or the hosts changed since the change was shown: save again")
+	}
+	if plan != nil && confirm == "" {
+		var b strings.Builder
+		fmt.Fprintf(&b, "The config names no hosts file to save these to, so capture save would:\n")
+		for _, s := range saves {
+			what := "create %s (yours only, 0600) with: %s\n"
+			if !s.created {
+				what = "write %s: %s\n"
+			}
+			fmt.Fprintf(&b, "  "+what, s.path, cmp.Or(strings.Join(s.hosts, ", "), "no hosts"))
+		}
+		fmt.Fprintf(&b, "  add to %s (its other lines kept, the old file kept as %s.prev):\n", config, filepath.Base(config))
+		b.WriteString(indent(plan.diff(), "    ", "\n"))
+		return ctlAnswer{Message: b.String(), Confirm: sp.token}, false
+	}
+	var created []string
+	undo := func() {
+		for _, c := range created {
+			os.Remove(c)
 		}
 	}
-	if len(hosts) == 0 {
-		return "", errors.New("refused: no hosts to write, and run refuses a hosts file without hosts at its next start (whatever --rules, --pass-hosts or --upstream-proxy need): add one first (reqcove capture add HOST), or take the --allow-hosts=@" + file + " line out of the config; nothing written")
+	for _, s := range saves {
+		if !s.created {
+			continue
+		}
+		if err := createPrivate(s.path, s.text); err != nil {
+			undo()
+			return refuse("refused: " + err.Error())
+		}
+		created = append(created, s.path)
 	}
-	if err := writeHosts(file, hosts, ""); err != nil {
-		return "", errors.New("refused: " + err.Error() + "; nothing written")
+	if plan != nil {
+		if err := plan.commit(); err != nil {
+			undo() // so that a retry's exclusive create works
+			return refuse("refused: the config: " + err.Error())
+		}
+		// A failed start after a restart puts back the start config with it:
+		// the config never loses the hosts file saved to.
+		st.startConfig = withLines(st.startConfig, plan.added)
 	}
-	msg := "saved to " + file + ": " + strings.Join(hosts, ", ")
-	for _, from := range []string{"the command line", "the --config file"} {
-		var on, back []string
-		for _, h := range slices.Sorted(maps.Keys(pinned)) {
-			switch {
-			case pinned[h] != from, slices.Contains(hosts, h):
-			case slices.Contains(base.Hosts, h):
-				on = append(on, h)
-			default:
-				back = append(back, h)
+	var did []string // what was written, the files created first
+	if plan != nil {
+		did = append(did, "added to "+config+": "+strings.Join(plan.added, ", "))
+	}
+	for _, s := range saves {
+		if s.created {
+			did = append(did, savedText(s))
+		}
+	}
+	for _, s := range saves {
+		if s.created {
+			continue
+		}
+		if err := writeHostsText(s.path, s.text, s.hosts, s.rev); err != nil {
+			if len(did) == 0 {
+				return refuse("refused: " + err.Error())
+			}
+			refreshOrigin(st, saves)
+			return ctlAnswer{Message: "partly saved: " + strings.Join(did, "; ") + "; but " + s.path + " was not written: " + err.Error()}, true
+		}
+		did = append(did, savedText(s))
+	}
+	refreshOrigin(st, saves)
+	return ctlAnswer{OK: true, Message: strings.Join(append(did, notes...), "; ")}, true
+}
+
+// savePlan is a save worked out, nothing written: the files (their text
+// made), the config's change for the files created (nil: none), the notes,
+// and the token of it all (a save confirms it).
+type savePlan struct {
+	saves []hostsSave
+	plan  *configPlan
+	notes []string
+	token string
+}
+
+// planSave is saveScope's save worked out, or why it is refused (no: the
+// answer's words, "nothing written" left out). Called with st.mu held.
+func planSave(base capture.HostRules, st *ctlState) (sp savePlan, no string) {
+	o, pass, config := st.origin, st.origin.passOrigin(), st.o.config
+	switch {
+	case base.All:
+		return sp, `refused: this run records every host ("*"), which a hosts file never holds`
+	case len(o.files) > 1:
+		return sp, "nothing to save to: this run's hosts come from several files (" + strings.Join(o.files, ", ") + "): keep one `--allow-hosts=@FILE`"
+	case len(pass.files) > 1:
+		return sp, "nothing to save to: this run's hosts passed undecrypted come from several files (" + strings.Join(pass.files, ", ") + "): keep one `--pass-hosts=@FILE`"
+	case len(o.files) == 1 && slices.Contains(pass.files, o.files[0]):
+		return sp, "refused: " + o.files[0] + " is run's --pass-hosts file too: saving would change the hosts passed undecrypted"
+	case len(o.files) == 0 && config == "":
+		return sp, "nothing to save to: this run's hosts do not come from a hosts file, nor from a --config file beside which one could be made; put `--allow-hosts=@FILE` on run's command line (FILE: one host a line), or start run from a --config file, as reqcove setup writes it"
+	}
+	for _, l := range []struct {
+		o     hostsOrigin
+		hosts []string
+		pass  bool
+	}{{o, base.Hosts, false}, {pass, base.PassHosts, true}} {
+		hosts := savable(l.hosts, l.o)
+		switch {
+		case len(l.o.files) == 1:
+			sp.saves = append(sp.saves, hostsSave{path: l.o.files[0], hosts: hosts, pass: l.pass})
+		case len(hosts) > 0 && config != "":
+			sp.saves = append(sp.saves, hostsSave{path: hostsFileFor(config, l.pass), hosts: hosts, pass: l.pass, created: true})
+		}
+	}
+	files := map[string]string{}
+	var edits []configEdit
+	for i, s := range sp.saves {
+		head := savedHostsHead
+		if s.pass {
+			head = savedPassHead
+		}
+		if s.created {
+			if _, err := os.Lstat(s.path); !errors.Is(err, fs.ErrNotExist) {
+				line := "--" + hostsFileLine(config, s.pass).Flag + "=@" + s.path
+				return sp, "refused: " + s.path + " is there already, and the config does not name it: capture save never takes over a file it did not make. Either add the line " + line + " to " + config + " yourself (then `reqcove reload`), or move " + s.path + " away and save again"
+			}
+			edits = append(edits, hostsFileLine(config, s.pass))
+		}
+		text, rev, err := hostsText(s.path, s.hosts, head)
+		if err != nil {
+			return sp, "refused: " + err.Error()
+		}
+		sp.saves[i].text, sp.saves[i].rev, files[s.path] = text, rev, text
+	}
+	sp.notes = saveNotes(base, o, pass, sp.saves)
+	if len(sp.saves) == 0 {
+		return sp, ""
+	}
+	var err error
+	if len(edits) > 0 {
+		sp.plan, err = planConfig(config, st.o.args, files, edits...)
+	} else if _, err = checkFlags(st.o.args, nil, files); err != nil {
+		err = fmt.Errorf("the next start of run would refuse it: %w", err)
+	}
+	if err != nil {
+		return sp, "refused: " + err.Error()
+	}
+	// The token of the files read as well as of what is written: an edit to
+	// one since the change was shown refuses it, whatever it would write.
+	h := sha256.New()
+	if sp.plan != nil {
+		fmt.Fprintf(h, "%s\x00", sp.plan.rev)
+		h.Write(sp.plan.new)
+	} else {
+		fmt.Fprintf(h, "%s\x00", configRevNow(config))
+	}
+	for _, s := range sp.saves {
+		fmt.Fprintf(h, "\x00%s\x00%s\x00%s", s.path, s.rev, s.text)
+	}
+	sp.token = hex.EncodeToString(h.Sum(nil))
+	return sp, ""
+}
+
+// savedText says what s saved.
+func savedText(s hostsSave) string {
+	what := "no hosts (a start records none from it)"
+	if s.pass {
+		what = "no hosts (a start passes none from it)"
+	}
+	if len(s.hosts) > 0 {
+		what = strings.Join(s.hosts, ", ")
+	}
+	return "saved to " + s.path + ": " + what
+}
+
+// refreshOrigin makes run's hosts origin and loaded hosts the files' now, as
+// reload does: a second save writes a file the first created.
+func refreshOrigin(st *ctlState, saves []hostsSave) {
+	if n, err := reloadFlags(st.o.args); err == nil {
+		st.setOrigin(n.origin, n.allow)
+		return
+	}
+	o := st.origin
+	for _, s := range saves { // the new files at least
+		switch {
+		case s.created && s.pass:
+			p := o.passOrigin()
+			p.files = []string{s.path}
+			o.pass = &p
+		case s.created:
+			o.files = []string{s.path}
+		}
+	}
+	st.setOrigin(o, st.loaded)
+}
+
+// savable is list without the hosts given as they are (o.given), but those
+// in o's file too.
+func savable(list []string, o hostsOrigin) []string {
+	var out []string
+	for _, h := range list {
+		if _, ok := o.given[h]; (!ok || o.inFiles[h]) && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// saveNotes say what a save leaves to the hosts given as they are, and the
+// hosts passed undecrypted it cannot save.
+func saveNotes(base capture.HostRules, o, pass hostsOrigin, saves []hostsSave) []string {
+	var notes []string
+	saved := map[bool]bool{}
+	for _, s := range saves {
+		saved[s.pass] = true
+	}
+	for _, l := range []struct {
+		o    hostsOrigin
+		base []string
+		pass bool
+		does string
+	}{{o, base.Hosts, false, "records"}, {pass, base.PassHosts, true, "passes"}} {
+		written := savable(l.base, l.o)
+		for _, from := range []string{"the command line", "the --config file"} {
+			var on, back []string
+			for _, h := range slices.Sorted(maps.Keys(l.o.given)) {
+				switch {
+				case l.o.given[h] != from, slices.Contains(written, h):
+				case slices.Contains(l.base, h):
+					on = append(on, h)
+				default:
+					back = append(back, h)
+				}
+			}
+			if len(on) > 0 {
+				notes = append(notes, fmt.Sprintf("not written, as given on %s (a start with it %s them again): %s", from, l.does, strings.Join(on, ", ")))
+			}
+			if len(back) > 0 {
+				notes = append(notes, fmt.Sprintf("removed now, but given on %s, so a start with it %s them again: %s", from, l.does, strings.Join(back, ", ")))
 			}
 		}
-		if len(on) > 0 {
-			msg += fmt.Sprintf("; not written, as given on %s (a start with it records them again): %s", from, strings.Join(on, ", "))
-		}
-		if len(back) > 0 {
-			msg += fmt.Sprintf("; removed now, but given on %s, so a start with it records them again: %s", from, strings.Join(back, ", "))
+		if l.pass && len(written) > 0 && !saved[true] {
+			notes = append(notes, "the hosts passed undecrypted are not saved: no --config file to name a hosts file in (a start passes run's --pass-hosts)")
 		}
 	}
-	if len(base.PassHosts) > 0 {
-		msg += "; the hosts passed undecrypted are not saved: a start passes run's --pass-hosts"
+	return notes
+}
+
+// createPrivate writes text to path as a new file of this user's only (0600):
+// never one there already, nor through a link.
+func createPrivate(path, text string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
 	}
-	return msg, nil
+	_, err = f.WriteString(text)
+	if err = errors.Join(err, f.Close()); err != nil {
+		os.Remove(path)
+	}
+	return err
 }
 
 // scopeText says what base records.

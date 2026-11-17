@@ -257,8 +257,10 @@ second user). Another user can still:
   or mitmweb's password;
 - send requests through `--local-proxy`, whose port takes any user's;
 - reach the node's ports, when this computer itself is on your tailnet as
-  you: the tokens are what keep them out of `--ui`, `--web` and `--mcp-http`
-  (from reading the code);
+  you: the tokens are what keep them out of `--ui`, `--web` and `--mcp-http`,
+  and the one-use code out of `reqcove console --tailnet`'s page (from
+  reading the code; to that page they are one of your own devices, this
+  computer);
 - read what you write outside the state directory: a HAR file gets your
   shell's file mode, usually readable by others.
 
@@ -289,7 +291,8 @@ more hosts, every host for up to 24 hours with `allow-all`. `run` checks each
 request itself: `"*"` is refused (but as `allow-all --for`, time-limited),
 and so is a change in LAN mode (tests). Each change leaves a line in `run`'s log, a
 marker with source `cli` and `scope_change` in `status` (an E2E test), so
-one you did not make shows.
+one you did not make shows. Since v1.3 the `reqcove console` page makes the
+same changes but `set` ([below](#reqcove-console-page)).
 
 `reqcove reload` (since v1.1) goes the same way, with the same guards and
 trace: it reads the config, its hosts files and the `--rules` file again and
@@ -345,10 +348,14 @@ the **names** of the hosts outside the ones recorded that the devices reach
 recorded) and how often: never content, a URL path or a time. So while it is
 on, "counted, never recorded" holds for what those hosts carry, not for their
 names.
-- **Local only:** the names reach `reqcove status` and this computer's
-  agents (`status`, `summarize`), never `--mcp-http` nor the `--ui` page (an
-  E2E test: not in what `--mcp-http` and `--ui` read; a unit test of the two
-  servers). Agents read them as data,
+- **Local only:** the names reach `reqcove status`, this computer's
+  agents (`status`, `summarize`) and, since v1.3, the `reqcove console` page
+  on 127.0.0.1 (host names alone, put in as text: tests; at most 30, from
+  the code), never
+  `--mcp-http`, the `--ui` page nor the tailnet page of `reqcove console
+  --tailnet`, which shows how many (an E2E test: not in what `--mcp-http`,
+  `--ui` and the tailnet page read; unit tests of the two servers and of the
+  tailnet page). Agents read them as data,
   not instructions, as other names from the traffic; they are masked as
   other host fields, Apple's hosts and mitm.it are left out, and a command
   to add one is built by Reqcove only for a plain host name.
@@ -388,30 +395,178 @@ through `reqcove mcp`).
   dialog is the client's: whatever answers it for you (hooks can, in Claude Code, as
   reported by others; not tried here) approves. A client that
   declines without showing it leaves the request pending (a test with an
-  in-memory client; a real client's dialog not tried).
+  in-memory client). In Claude Code's terminal CLI (2026-11-16), Esc and
+  Accept with the box unticked left the request pending; ticked, it was
+  approved ("approved in the dialog").
 - **The trace:** each state is a line in `run`'s log; an approval is a
   marker with source `mcp` and `scope_change` ("capture add HOST (asked by an
   agent, approved in the terminal)" or "in the dialog"), as a change of yours
   (an E2E test). Requests live in memory only, and a restart of `run` drops
   them.
 
-Since v1.2 **`reqcove console`** opens a page of `run`'s state and of these
-requests, with Approve and Deny, in this computer's browser
-([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). It changes nothing but
-that: an approval goes as `reqcove capture approve` does, for the hosts the
-request holds, traced "approved in the console"; a denial as `capture deny`.
+Since v1.3 **`reqcove restart`** (a terminal only, as `capture`; an agent
+with a shell can run it, as it can `capture`) makes `run` stop as Ctrl-C does
+and exec the binary it was started from, in the same process
+([guide](guide.md#restart-in-place-reqcove-restart)). Before it stops, it
+checks the config and the command line itself, then asks the binary it would
+exec to check them (a hidden check mode of `run`'s, with the same
+arguments: it reads them as a start would, and starts nothing, takes no
+lock, creates no state directory and writes no file; tests). Refused by
+either, nothing stops (a test); a binary without the mode (older than v1.3)
+is refused too, nothing stopped (a test): it could not take over the
+state's lock. A stop (Ctrl-C, a service's SIGTERM) during the restart or the
+new start is a stop: no exec, no config put back, the copy removed (tests).
+With `--web` (since v1.3; or this computer's page's **Restart with mitmweb**)
+the new start runs mitmweb, that start alone ([mitmweb](#mitmweb---web)),
+with the same checks, made with `--web` too. So any process of your user
+that can reach `ctl.sock` (an agent with a shell among them), or get a page
+session through it, can turn mitmweb on for a start and read `web-token`
+(yours, 0600), and so see every decrypted flow unmasked and use mitmweb's
+page. Before, it would have had to restart `run` with `--web` on its
+command line itself. The restart's answer, `run`'s log, `reqcove status`
+and both pages say mitmweb is on (tests).
+What crosses the exec:
+- **The state's lock and this computer's page's port**, as open files: no other `run`
+  takes the state, and no other process the port, in between (an E2E test
+  tries the lock throughout; by hand on Ubuntu 24.04, another OS user
+  retrying to bind the page's port throughout a restart never got it). The new process makes them close-on-exec again before
+  it starts anything, so mitmdump and caffeinate never get them (tests: a
+  child of the new process holds neither).
+- **In its environment:** their numbers, the page's sessions as hashes with
+  how long each was unused (never a token or a code: the hashes let no one
+  in, and nothing logs them; tests), the path of the start config's copy,
+  and after `restart --web` a mark that the new start runs mitmweb (no
+  secret; unset at start, never passed on: the retry and later restarts do
+  not get it; tests).
+  The new process unsets them before it starts anything (tests: a child's
+  environment holds none), but its own initial environment stays readable to
+  your user and root for its life (`ps -E`, `/proc/PID/environ`); hence
+  nothing secret goes there. Without the port, no session is taken.
+- **The start config's copy:** the bytes `run` read from `--config` at its
+  start, held in memory, written at the restart to a new file in the state
+  directory (0600, created anew, never through a symlink, a random name),
+  so that a failed start can put that config back. It can hold what the
+  config holds (`--mask-values` patterns): the same exposure as the config.
+  The new process reads it only from the path in its environment, and only a
+  plain file of your user's, mode 0600, named as a copy, directly in a
+  reqcove state directory; anything else is neither read nor removed, and no
+  start is retried (tests). It is removed once the new start is up (ready, or
+  2 minutes after it serves its tools: tests), or when
+  the retry fails and `run` stays down; a copy a crash left is removed by the
+  next start in that state directory, after the same checks, never the one
+  handed over before the retry is decided (tests).
+- **Not carried:** the records, markers and the agents' requests (in memory),
+  the console's links not opened yet, the tailnet page and its sessions
+  (they end with the run: `reqcove restart` ended the iPhone's session, by
+  hand). The retry is made once (marked in the
+  environment): a start that fails again stays down.
+
+### The `reqcove console` pages
+
+<a id="reqcove-console-page"></a>
+`run` serves two pages, both opened from your terminal and both served by
+`run` itself, their sessions in its memory alone: since v1.2
+**`reqcove console`**'s, on 127.0.0.1 for this computer, and since v1.3
+**`reqcove console --tailnet`**'s, for your own devices on the tailnet. This
+section says what each lets in, then, in one place, what neither guards
+against and what never reaches a page. Each point says whether a test
+checks it or it comes from reading the code.
+
+Since v1.2 **`reqcove console`** opens a page of `run`'s state and of the
+agents' requests (above), with Approve and Deny, in this computer's browser
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)). An approval goes as
+`reqcove capture approve` does, for the hosts the request holds, traced
+"approved in the console"; a denial as `capture deny`. Since v1.3 the page
+also changes the hosts, as `reqcove capture` does and through the same
+checks in `run` (an E2E test: each change answers as through `ctl.sock`):
+add and remove (recorded or passed undecrypted), stop and start, allow-all
+and discovery for 30 minutes to 24 hours and their end, and save, which
+writes the hosts files and, on a config without `--allow-hosts=@FILE`,
+creates the hosts file beside it and adds that line, after showing it. Its
+endpoint for the hosts takes those changes alone: never `capture set`,
+`reload`, a restart, a rule, a setting, a path, or a field other than the
+change's (tests: each refused before it reaches `run`); the settings and the
+restart have endpoints of their own (below). Stop, remove and allow-all
+show `run`'s own warnings before a confirm. A change made on a page that read
+the hosts before another change (another tab, the CLI) is refused (tests).
+Each is traced "(from the console on this computer)": `run`'s log, a `cli`
+marker and `scope_change` (an E2E test).
+
+Since v1.3 the page also writes some of `run`'s settings to the `--config`
+file, for the next start, and restarts `run`
+([guide](guide.md#see-the-state-and-approve-in-a-page-reqcove-console)):
+`--device` (the own untagged devices `run`'s node sees; another device is
+refused), `--keep-awake`, `--proxy-port`, `--hostname`, `--verbose`, and,
+after showing `run -h`'s words for the flag and asking, `--ui`,
+`--mcp-http`, `--local-proxy`, `--dns`, `--upstream-proxy` (a URL without
+user or password), a `--device` added and `--mask-names`; `--upstream-ca`
+may be taken out. It goes through the config writer alone, which writes
+those flags only, refuses a line break, a control character or a leading
+`@` in a value, keeps the other lines, keeps the file before as
+`config.prev`, checks the whole config as the next start would, and refuses
+a page that read the config before another change (tests). It never writes
+the flags that stay on the command line, the ones naming code or a file to
+read or trust (`--rules`, `--proto`, `--upstream-ca`, `--uvx`, `--state`,
+…) or `--mask-values`, nor a setting given on `run`'s command line (tests).
+It shows `--mask-values` as "set" and a count, never a pattern, and an
+`@FILE` by its path, never what it holds (a test: no pattern in any answer
+or log line). A restart from the page lists first every setting that
+differs from the ones `run` started with and asks; it is the op of
+`reqcove restart`, with its checks ([above](#other-processes-on-this-computer)).
+
+Since v1.3 the page also turns the `--rules` file's presets on (for 1 to 5
+minutes; a mock for a count too) and off, as `activate_preset` and
+`deactivate_preset` do, with their limits: mitmproxy refuses one while
+recording is stopped (an E2E test). Before it turns one on, it says what
+the preset's kind changes and, for a `map_remote` preset, the destination
+the requests then go to with their cookies and tokens: a scheme and a host
+name or IPv4 address alone, anything else "not shown". That destination goes
+back with the request, and one changed since (the file reloaded) is refused
+(tests). It lists the rules by kind, index and preset name, never a value:
+no URL, filter, regex, header, body, address, path, description or the
+file's error text (tests, unit and E2E). It puts a marker, source `console`
+(a help, not proof, as `cli` and `mcp` are). Its CA panel shows the CA's
+name, SHA-256 fingerprint and expiry, a QR code of http://mitm.it and how
+to add and remove it on an iPhone: the certificate's public fields alone,
+never the private key the state directory holds (a test). It gives the
+records as a HAR file, the one `reqcove har` writes (what the MCP tools
+return: masked, body heads), fetched with the session header and saved from
+a blob; no route takes a token in its URL (tests). The answer is an
+attachment of `application/json`, with `nosniff` and `no-store`, and it is
+refused while `run` masks nothing (`--no-redact`) (tests). The file lands
+where the browser saves downloads, with the permissions the browser gives
+it there (not checked; a desktop browser on macOS renamed the downloaded
+file). A restart
+from the page offers that file first. With `--ui`, the page links to that
+page's bare address, never its token. Presets turned on or off and HAR
+files given are logged "(from the console on this computer)".
 - **Where:** `run` listens on 127.0.0.1 alone, on a port the system picks,
-  from the first `reqcove console` until it ends; never on the tailnet node, the
+  from the first `reqcove console` until it ends (`reqcove restart` keeps it,
+  below); never on the tailnet node, the
   LAN, the Remote Proxy or `--ui`'s page (a test checks the address).
+  `reqcove console --tailnet` opens another page on the node, with codes and
+  sessions of its own ([below](#tailnet-console-page)).
 - **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
-  code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
-  prints and opens `http://127.0.0.1:PORT/#c=CODE`. The code is after `#`,
+  code from `run` over `ctl.sock`, good for 60 seconds by either clock, for
+  the link `http://127.0.0.1:PORT/#c=CODE`. Since v1.3 the browser gets the
+  link from a file `run` writes in the state directory (0600, created anew,
+  never through a symlink, a random name; tests), which sends it on, and
+  `open` or `xdg-open` is given that file's path, never the link (a test
+  checks their arguments). `run` removes the file after 60 seconds, at
+  `reqcove console --end`, when it ends, and when it starts (one a killed
+  `run` left) (tests). Once the opener succeeded, the terminal shows neither
+  the link nor the code, so it is not used twice by mistake; it prints the
+  link when the opener fails, against a v1.2 `run` (no file), and with
+  `reqcove console --print`, which opens nothing and removes the file at
+  once (tests). The code is after `#`,
   which the browser does not send; the page trades it once for a session
   token, kept in that tab's sessionStorage and sent in a header, never a
   cookie, and takes the code out of the address bar. A code traded a second
-  time ends every session and the page says so. At most 4 sessions, in
+  time ends every session and the page says so; so does
+  `reqcove console --end`, which also ends every code not traded yet (tests).
+  At most 4 sessions, in
   `run`'s memory only, each ending after 12 hours unused and all at `run`'s
-  end. The code and tokens are never logged and never in an answer but the
+  end (but at `reqcove restart`, below). The code and tokens are never logged and never in an answer but the
   trade's own (tests); `run` keeps them as hashes (from the code).
 - **What it guards against:** a page open in the browser (another site, or
   one pointing its own name at 127.0.0.1): every request must name exactly
@@ -424,25 +579,154 @@ request holds, traced "approved in the console"; a denial as `capture deny`.
   text. Another user of this computer reaches the port (127.0.0.1 is every
   user's) but without a session gets the page's own files alone (tests
   without a session; another user was not tried); a tailnet device or the
-  LAN does not reach 127.0.0.1. The page was not tried in a real browser.
-- **What it does not guard against:** an agent that can run commands as your
-  user: it can run `reqcove console` itself through a pseudo terminal and trade the
-  code before you, or write to `ctl.sock` directly, as above (if you then open
-  the link, it was used: every session ends and the page says so). While
-  `open` or `xdg-open` runs, the link with its code is in their process
-  arguments, which `ps` shows to the other users of this computer (not
-  tried here), for a moment; a code traded by someone else first shows as
-  above. In the moment before your tab's trade fails and ends every session,
-  that other session can approve a pending request: `reqcove capture
-  requests` then shows it approved in the console (read from the code; that a
-  second trade ends every session is tested). What it shows is not secret beyond `reqcove status`: never the flows'
-  contents, a token, a link or a login URL, or text from an agent or an MCP
-  client.
+  LAN does not reach 127.0.0.1. Tried by hand in a Chromium-based browser on
+  macOS (2026-11-16): the page showed the state and the requests, and Approve
+  applied the hosts ("approved in the console"); parts of its v1.3 panels in
+  a desktop browser on macOS (2026-11-17; [the guide](guide.md#the-console-reqcove-console)
+  says which); Safari on the Mac was not tried.
+
+<a id="tailnet-console-page"></a>
+Since v1.3 **`reqcove console --tailnet`** opens a second page, for your
+own devices on the tailnet
+([guide](guide.md#tailnet-page)). It serves only what ends with the run: the
+state without this computer's paths, Approve and Deny, the Scope panel's
+changes but Save, presets on and off, a marker and the CA panel; never Save,
+a setting, a restart or the HAR file, which `run` refuses there, not only
+hides (tests: every other route of this computer's page refused, Save too).
+- **Where:** on the node's tailnet IPv4 address, on a port of its own (not
+  `--ui`'s 80: another origin), from the first `reqcove console --tailnet`
+  until `run` ends; `reqcove restart` does not carry it nor its sessions.
+  Refused in LAN mode and on a tagged node (tests).
+- **The way in:** a one-use code, 60 seconds, as for this computer's page,
+  shown in the terminal alone, as a QR code and a link: no opener is run and
+  no file written (a test). Its codes and sessions are its own: one page's
+  code or token is refused by the other (tests).
+- **Every request:** who calls is taken from the connection's address, never
+  a header, and checked against the tailnet as it is now: one of your own
+  devices (your user's, as Reqcove's node is, neither tagged, not a node
+  shared in), so another user's device, a tagged one or one shared in is
+  refused, even when `--device` carries it, and on a connection kept alive
+  too once that changes (tests, with a stand-in for the tailnet; the
+  listener and the connection's address with real tsnet nodes). A session
+  is the device's that traded the code (its StableID): used from another
+  device, it is refused and ends (a test). The Host must be the page's
+  address and port (the MagicDNS name or another port is refused), and an
+  Origin, when one is sent, the page's own (`--ui`'s is another; tests).
+  Sessions: 1 hour unused and 12 hours in all, in memory only, at most 4
+  (from reading the code); `reqcove console --end` ends them, and
+  `reqcove status` counts them by page and device (tests). The tailnet as
+  `run` sees it is read every 3 seconds: a change counts from then (the
+  delay not measured). Changes are traced with the device's machine
+  name, "(from the console on NAME, over the tailnet)" (an E2E test).
+- **Through the Remote Proxy** (an iPhone whose Wi-Fi proxy is the node's
+  `:8080`): a request to the page's address and port goes to the page's own
+  handler, in the same process, as it came: never a reverse proxy to its
+  listener, never a header added or read. Who calls is the proxy's client,
+  from its connection's address, and the page's checks above run unchanged
+  (the Remote Proxy itself takes `--device` devices alone, then refuses one
+  not your own; a forwarded header naming one of yours counts for nothing).
+  A tunnel (CONNECT) to the page's port is refused; the local proxy
+  (`--local-proxy`) and LAN mode never serve it. These requests never reach
+  mitmproxy, so they make no flow, under allow-all too, and the page's
+  session header (`X-Reqcove-Session`) is masked in any record, with
+  `--no-redact` too, as a second guard (unit tests; an E2E test with real
+  mitmproxy under allow-all; tried in the iPhone's Safari with its Wi-Fi
+  proxy set to the Remote Proxy: the state, a host added, an agent's request
+  approved, allow-all on and End).
+
+<a id="console-limits"></a>
+
+#### What the pages do not guard against
+
+- **The code is the boundary, on both pages.** Whoever trades a link's
+  one-use code first has the session. A code traded a second time ends
+  every session of that page and the page says so (tests), but in the
+  moment before your tab's trade fails, the other session can act, an
+  approval of a pending request included (`reqcove capture requests` then
+  shows it approved in the console; read from the code). On the tailnet
+  page the own-device check comes on top of the code, not in its place.
+- **A device shared on your account is not told apart.** The own-device
+  check tells your user's devices from others', not one of your devices
+  from another: a device signed in as you that someone else uses (a family
+  iPad), this computer's other OS users (when this computer is on the
+  tailnet as you, they reach the node from it), and a cloud or CI machine
+  signed in to the tailnet as you (an agent's host) are your own devices to
+  it. Each still needs the code (from reading the code; not tried with a
+  second user or a device shared on your account).
+- **An agent with a shell, or one that drives the browser or the phone's
+  screen, is not kept out.** `reqcove console`, `--tailnet`, `--end`, `--print`,
+  `capture` and `restart` run only in a terminal, and the skill and the
+  server's instructions tell agents never to run them; that is a guard
+  against mistakes, not a boundary. A process of your user can give them a
+  pseudo terminal and trade the code before you, or write to `ctl.sock`
+  directly (above). An agent that drives the browser or the phone's screen
+  acts as you on a page you opened, and nothing tells it apart. An agent
+  with the MCP tools alone gets no code nor any way to make one: no tool
+  opens a page or reads the code file (the tool list has none; from reading
+  the code).
+- **What a session can do**, yours or one someone else traded first:
+  everything the page offers. On either page: change the hosts as
+  `reqcove capture` does, allow-all for up to 24 hours (every app's traffic
+  recorded for agents to read) or stop recording; approve an agent's
+  request; turn on one of your `--rules` file's presets for up to 5 minutes
+  (a `map_remote` preset sends the device's matching requests, with their
+  cookies and tokens, to the destination your file names). On this
+  computer's page also: restart `run` with mitmweb for one start (every
+  decrypted flow unmasked, to whoever has its password, which the page never
+  shows; reading `web-token` or `run`'s terminal gives it; from the code);
+  write the settings above for the next start and
+  restart `run`, so send the decrypted requests on to a proxy it names
+  (`--upstream-proxy`, unmasked there), serve the records to your devices on
+  the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
+  name out of `--mask-names`, and restart, which empties the records; and
+  download the records as a HAR file, masked. Each change is traced: `run`'s
+  log "(from the console on this computer)" or "(from the console on NAME,
+  over the tailnet)", a `cli` marker and `scope_change` for the hosts, and
+  `config.prev` for the file before a settings write (E2E and unit tests).
+- **The link on this computer:** the file that holds it is 0600 in the 0700
+  state directory, so root and your user can read it for up to 60 seconds
+  (`--print` removes it at once; a
+  `run` killed meanwhile leaves it until its next start, its code expired
+  long before). v1.2's `reqcove console`, against any `run`, still gives the
+  link in the opener's arguments, which `ps` shows other users for a moment;
+  v1.3's, against a v1.2 `run` (no file), opens nothing and prints the link
+  alone (a test). The tailnet page's link is shown in your terminal alone (a
+  test).
+
+<a id="console-never-shown"></a>
+
+#### What never reaches a page
+
+- **On either page:** a token, a link with a token, a login URL, the
+  `--mask-values` patterns ("set" and a count), what a masking `@FILE` holds
+  (its path at most; a hosts file's hosts are shown, as hosts), an `--upstream-proxy` value `run` would refuse (a password
+  written in by hand), and text from an agent or an MCP client (the hosts it
+  asked for are checked as host names first); tests: no code or token in an
+  answer or `run`'s log, no pattern in any answer or log line, no rule's
+  value, description or error text. The flows' contents are never on the
+  page itself; this computer's page hands out the records as a HAR file,
+  masked, when you ask, and refuses it while `run` masks nothing (tests).
+- **Not on the tailnet page:** this computer's paths: the binary, the config
+  and hosts files (left out of its state), the state directory (taken out
+  whole wherever an answer names it, a command's `--state` among them; a test
+  with a `--state` not the default), a next step that names another path
+  (left out whole; a test with a path with a space); and discovery's names
+  (their count alone; tests, unit and E2E). Any other path in an answer's
+  words is replaced up to its first space, quote, comma, semicolon or
+  parenthesis, so one with any of those in it would leave its tail (from
+  reading the code).
+- **What a page shows beyond `reqcove status` and the config:** the list of
+  your own devices on the tailnet (their machine names), to pick from on
+  this computer's page; the presets' names, kinds and `map_remote`
+  destinations (a scheme and host, as `list_presets` gives an agent); the
+  rules' kinds and preset names; the CA's name and fingerprint.
 
 ## Masking
 
 The secrets Reqcove recognises are masked as they arrive, so no tool can
-return them. `--no-redact` turns masking off.
+return them. `--no-redact` turns masking off, but for the console's
+session header (`X-Reqcove-Session`, Reqcove's own credential), masked
+always (a test).
 
 - **By name.** A header, query parameter or body field whose name says it is
   a secret (`token`, `password`, `apiKey`, …) has its value masked. Cookie
@@ -526,6 +810,21 @@ requests and change options (scripts included), which runs code on this
 computer. It is open on this computer and, through the node, to your own
 devices only. The password is the same at each start: to change it, delete
 `web-token` and start again. [Details](guide.md#security-web).
+
+Since v1.3 it can also be on for one start, turned on without a terminal for
+`run`: `reqcove restart --web`, or this computer's `reqcove console` page
+([guide](guide.md#restart-in-place-reqcove-restart)). It never lasts past
+that start: `--web` stays refused in the config, the copy of the start
+config does not hold it, and the retry of a failed start and the next
+restart of any kind start without it (unit tests and an E2E test). Such a
+start makes a new password, so links seen before stop working (tests). Under
+a service its link is in `reqcove links` alone: off a terminal `run`'s
+output names that command, as for `--ui` (from the code; a service run was
+not tried). `reqcove status`, the MCP `status` (`mitmweb`,
+`mitmweb_this_start_only`: booleans) and both `reqcove console` pages say it
+is on, never its link, password or port with them (tests for the fields;
+seen by hand on this computer's page and in `reqcove status`). Who can turn it on that way:
+[`reqcove restart`](#other-processes-on-this-computer).
 
 ### The page (`--ui`)
 
@@ -621,12 +920,16 @@ flags. Since v1.1, a `reqcove run` with no arguments at all reads
 `~/.config/reqcove/config` too (else Homebrew's `etc/reqcove/config`), with
 the same checks. The file must be yours and readable by you only. Five flags are
 refused in it and stay on the command line: `--no-redact`, `--web`,
-`--allow-hosts '*'`, `--rules-reload` and `--lan`.
+`--allow-hosts '*'`, `--rules-reload` and `--lan` (`--web` can still be on
+for one start, by a restart: [mitmweb](#mitmweb---web)).
 Since v1.1, `reqcove setup` puts the hosts in a file beside it (`hosts`,
 0600), which the file reads with `--allow-hosts=@FILE`: what can write that
 file decides what the next start records too. `run` does not check its owner
 or mode (from reading the code); `reqcove capture save` writes it only when
-it is a plain file of yours.
+it is a plain file of yours. Since v1.3, on a config that names no hosts file,
+`capture save` asks y/N, then creates one beside it (0600, never over a file
+or link there) and adds its `--allow-hosts=@FILE` line to the config: only
+that line, never through a link nor to a config not yours (unit tests).
 [Details](guide.md#security-config).
 
 ## Prompt injection

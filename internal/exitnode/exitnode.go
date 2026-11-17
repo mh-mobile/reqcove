@@ -6,6 +6,7 @@ package exitnode
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -115,9 +116,56 @@ type Status struct {
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
 	// a login URL only while starting, so only a restart brings one.
 	WasRunning bool `json:"-"`
+	// Own are the user's own devices (ownDevices: untagged, of reqcove's
+	// user; none when reqcove's node is tagged): StableID -> machine name.
+	// Never in an answer: the console's local page alone lists them.
+	Own map[string]string `json:"-"`
 }
 
 var current atomic.Pointer[policy]
+
+// node is the tsnet node while Run serves it (after login), for ListenConsole.
+var node atomic.Pointer[tsnet.Server]
+
+// ListenConsole listens on a free port of the node's tailnet IPv4 address, for
+// reqcove console --tailnet: connections from this user's own devices alone
+// (onlyViewers, as --mcp-http's). Refused in LAN mode, before the node is up,
+// and on a tagged node (no user's: it has no own devices).
+func ListenConsole() (net.Listener, error) {
+	p, s := current.Load(), node.Load()
+	switch {
+	case p != nil && p.lan:
+		return nil, errors.New("in LAN mode there is no tailnet node")
+	case p != nil && p.tagged:
+		return nil, errors.New("reqcove's node is tagged: a tagged node is no user's, so none of the tailnet's devices is your own to it")
+	case p == nil || s == nil:
+		return nil, errors.New("the node is not up yet (reqcove status says what is missing)")
+	}
+	ip4, _ := s.TailscaleIPs()
+	if !ip4.IsValid() {
+		return nil, errors.New("the node has no tailnet IPv4 address yet")
+	}
+	ln, err := s.Listen("tcp", netip.AddrPortFrom(ip4, 0).String())
+	if err != nil {
+		return nil, err
+	}
+	return onlyViewers{Listener: ln, policy: current.Load, ownOnly: true}, nil
+}
+
+// OwnDeviceAt is the device at addr (a connection's remote address, never a
+// header) when it is one of this user's own (ownDevices: untagged, of the
+// node's user, the node itself untagged), by the policy now: one retagged or
+// removed is refused at its next request. Not viewerAt's ok, which also
+// takes --device devices of other users.
+func OwnDeviceAt(addr string) (Device, bool) {
+	src, err := netip.ParseAddrPort(addr)
+	p := current.Load()
+	if err != nil || p == nil {
+		return Device{}, false
+	}
+	d, ok := p.own[src.Addr().Unmap()]
+	return d, ok
+}
 
 // Run brings the node up and serves until ctx ends. It logs what the user
 // must do (log in, sign under Tailnet Lock, approve the exit node) and keeps
@@ -201,6 +249,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}); err != nil {
 		return err
 	}
+	node.Store(s)
+	defer node.CompareAndSwap(s, nil)
 	ip4, ip6 := s.TailscaleIPs()
 	log.Printf("up as %s (%v, %v), advertising exit routes", cfg.Hostname, ip4, ip6) // approval, if missing, is the next step logged
 	if cfg.ProxyPort != 0 {
@@ -320,7 +370,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 			}
 			devices, problems := matchDevices(cfg.Devices, st.Self, peers)
 			local, onLink := interfaceAddrs()
-			p := &policy{devices: devices, own: ownDevices(st.Self, peers), self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != ""}
+			p := &policy{devices: devices, own: ownDevices(st.Self, peers), self: self, local: local, onLink: onLink, socks: cfg.SocksAddr != "", tagged: st.Self != nil && st.Self.IsTagged()}
 			if st.Self != nil {
 				if fqdn := strings.ToLower(strings.TrimSuffix(st.Self.DNSName, ".")); fqdn != "" {
 					short, _, _ := strings.Cut(fqdn, ".")
@@ -351,6 +401,7 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.Own = ownList(p.own)
 			status.DeviceOS = map[string]string{}
 			for _, p := range peers {
 				if names[string(p.ID)] != "" && p.OS != "" {

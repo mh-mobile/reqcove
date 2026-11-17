@@ -1,9 +1,11 @@
 :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --muted: #6e6e73; --line: #d2d2d7; --ok: #0a7d32; --no: #b3261e; }
 @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --muted: #a1a1a6; --line: #3a3a3c; --ok: #4cd964; --no: #ff6961; } }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; } /* iOS Safari enlarges text in landscape otherwise, past the width */
 body { margin: 0 auto; max-width: 52rem; padding: 1rem; font: 15px/1.45 -apple-system, system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
 #line, .muted { color: var(--muted); }
+.warn { color: var(--no); font-weight: 600; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }
@@ -15,3 +17,16 @@ button { font: inherit; padding: .3rem 1rem; margin-right: .5rem; border-radius:
 button.approve { border-color: var(--ok); color: var(--ok); }
 button.deny { border-color: var(--no); color: var(--no); }
 button:disabled { opacity: .5; cursor: default; }
+h3 { font-size: .9rem; margin: 1rem 0 .3rem; color: var(--muted); font-weight: 600; }
+.list { list-style: none; padding: 0; margin: 0; }
+.list li { display: flex; align-items: center; gap: .5rem; margin-bottom: .25rem; }
+.list li span:first-child { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.badge { font-size: .75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; color: var(--muted); }
+.badge.unsaved { border-color: var(--no); color: var(--no); }
+.list button, #scope p button { padding: .1rem .6rem; }
+.left { margin: 0 .5rem; color: var(--muted); }
+input[type=text], select { font: inherit; padding: .2rem .4rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); }
+#scope-result, #settings-result, #presets-result, #rec-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+#settings dd .list, #settings dd p { margin: .2rem 0; }
+#settings button { padding: .1rem .6rem; }
+#ca-qr { display: block; margin: .5rem 0; image-rendering: pixelated; }

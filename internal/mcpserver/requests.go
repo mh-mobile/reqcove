@@ -23,7 +23,7 @@ type CaptureRequest struct {
 	State      string `json:"state"`
 	CreatedAt  string `json:"created_at"`            // RFC 3339
 	ExpiresAt  string `json:"expires_at"`            // RFC 3339: a pending one expires then
-	ApprovedIn string `json:"approved_in,omitempty"` // terminal, dialog or console (reqcove console)
+	ApprovedIn string `json:"approved_in,omitempty"` // terminal, dialog, console (reqcove console) or console on DEVICE (tailnet) (console --tailnet)
 	Result     string `json:"result,omitempty"`      // applied, failed: run's answer to the change
 	// Approve, while pending: the command the user runs in their terminal.
 	Approve string `json:"approve,omitempty"`

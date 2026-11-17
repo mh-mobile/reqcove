@@ -90,11 +90,14 @@ Usage:
                      (it shows them and asks y/N) adds them as capture add does; in
                      your terminal only
   reqcove console    open a page of run's state and the agents' requests (Approve,
-                     Deny) in this computer's browser, on 127.0.0.1 only; in your
-                     terminal only
+                     Deny) in this computer's browser, on 127.0.0.1 only; --end ends
+                     every page and link; in your terminal only
   reqcove reload     read the config, its hosts files and the --rules file again, and
                      put their hosts and rules in force together (all or nothing), in
                      your terminal only; other settings take a restart
+  reqcove restart    stop the running reqcove and start it again, as it was started, with
+                     the config on disk (checked first); the records start empty; in
+                     your terminal only
   reqcove mark [TEXT]
                      a marker among the records (now I tap Pay), in your terminal only;
                      reqcove mark -- TEXT for a text starting with -
@@ -155,7 +158,7 @@ func main() {
 // commands are reqcove's commands with flags; the docs test parses what the
 // docs write with each one's own flags.
 var commands = map[string]func(context.Context, []string) error{
-	"run":     run,
+	"run":     runRestartable,
 	"mcp":     func(ctx context.Context, args []string) error { return runMCP(ctx, args, &mcp.StdioTransport{}) },
 	"status":  status,
 	"har":     har,
@@ -170,6 +173,7 @@ var commands = map[string]func(context.Context, []string) error{
 	"capture": captureCmd,
 	"reload":  reloadCmd,
 	"console": consoleCmd,
+	"restart": restartCommand,
 }
 
 // noFlags are the commands that take nothing.

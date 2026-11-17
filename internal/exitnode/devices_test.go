@@ -94,13 +94,82 @@ func TestOwnDevices(t *testing.T) {
 	tagged := peer("ci", 1, "100.101.0.3")
 	tagged.Tags = &tags
 	peers := []*ipnstate.PeerStatus{peer("macbook", 1, "100.101.0.1"), peer("colleague", 2, "100.101.0.2"), tagged}
+	shared := peer("shared", 3, "100.101.0.4") // shared in from another tailnet: its owner's user
+	shared.DNSName = "shared.other.ts.net."
+	peers = append(peers, shared)
 	got := ownDevices(self, peers)
 	if len(got) != 1 || got[netip.MustParseAddr("100.101.0.1")] != (Device{"macbook", "macbook"}) {
 		t.Errorf("own: %v", got)
 	}
+	// The console's device picker (Status.Own): the same devices, by StableID.
+	if l := ownList(got); len(l) != 1 || l["macbook"] != "macbook" {
+		t.Errorf("own list: %v", l)
+	}
 	taggedSelf := *self
 	taggedSelf.Tags = &tags
-	if got := ownDevices(&taggedSelf, peers); len(got) != 0 {
+	if got := ownDevices(&taggedSelf, peers); len(got) != 0 || len(ownList(got)) != 0 {
 		t.Errorf("reqcove tagged: %v", got)
+	}
+}
+
+// The console's tailnet page takes this user's own devices alone: a tagged
+// peer, another user's, one shared in and one there as a sharee are refused,
+// though each is a --device device viewerAt lets in; one retagged is refused
+// at once (the policy of now); none on a tagged node. ListenConsole refuses a
+// tagged node, LAN mode and a node not up.
+func TestOwnDeviceAt(t *testing.T) {
+	peer := func(id string, user tailcfg.UserID, ip string) *ipnstate.PeerStatus {
+		return &ipnstate.PeerStatus{ID: tailcfg.StableNodeID(id), DNSName: id + ".tail.ts.net.", UserID: user, TailscaleIPs: []netip.Addr{netip.MustParseAddr(ip)}}
+	}
+	self := peer("reqcove", 1, "100.101.0.100")
+	tags := views.SliceOf([]string{"tag:ci"})
+	tagged := peer("ci", 1, "100.101.0.3")
+	tagged.Tags = &tags
+	shared := peer("shared", 3, "100.101.0.4")
+	shared.DNSName = "shared.other.ts.net."
+	sharee := peer("sharee", 1, "100.101.0.5")
+	sharee.ShareeNode = true
+	mine := peer("macbook", 1, "100.101.0.1")
+	peers := []*ipnstate.PeerStatus{mine, peer("colleague", 2, "100.101.0.2"), tagged, shared, sharee}
+	devices := map[netip.Addr]Device{}
+	for _, p := range peers {
+		devices[p.TailscaleIPs[0]] = Device{ID: string(p.ID), Name: machineName(p)}
+	}
+	was := current.Load()
+	defer current.Store(was)
+	current.Store(&policy{devices: devices, own: ownDevices(self, peers)})
+	for _, p := range peers {
+		addr := p.TailscaleIPs[0].String() + ":51000"
+		if _, _, ok := viewerAt(current.Load(), addr); !ok {
+			t.Fatalf("%s: not a viewer: the test would not tell viewerAt from OwnDeviceAt", p.ID)
+		}
+		d, ok := OwnDeviceAt(addr)
+		if want := p == mine; ok != want || ok && d != (Device{"macbook", "macbook"}) {
+			t.Errorf("%s: %v %v", p.ID, d, ok)
+		}
+	}
+	if _, ok := OwnDeviceAt("macbook.tail.ts.net:51000"); ok {
+		t.Error("a name, not an address")
+	}
+	retagged := *mine
+	retagged.Tags = &tags
+	current.Store(&policy{devices: devices, own: ownDevices(self, []*ipnstate.PeerStatus{&retagged})})
+	if _, ok := OwnDeviceAt("100.101.0.1:51000"); ok {
+		t.Error("retagged: still own")
+	}
+	taggedSelf := *self
+	taggedSelf.Tags = &tags
+	current.Store(&policy{devices: devices, own: ownDevices(&taggedSelf, peers), tagged: true})
+	if _, ok := OwnDeviceAt("100.101.0.1:51000"); ok {
+		t.Error("a tagged node: own devices")
+	}
+	for _, c := range []struct {
+		p    *policy
+		want string
+	}{{&policy{tagged: true}, "tagged"}, {&policy{lan: true}, "LAN mode"}, {nil, "not up"}} {
+		current.Store(c.p)
+		if _, err := ListenConsole(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: %v", c.p, err)
+		}
 	}
 }

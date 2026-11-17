@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/proxy"
 
@@ -177,7 +179,8 @@ time.sleep(600)
 
 // When mitmproxy fails for good (here the restarted one's rules no longer
 // load), run returns an error (exits non-zero), not nil as for Ctrl-C: a
-// service sees it failed.
+// service sees it failed. reqcove console's code files, a killed run's and
+// its own, are removed when it starts and ends.
 func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "rcvf-") // short: macOS caps socket paths at 104 bytes
 	if err != nil {
@@ -196,6 +199,8 @@ func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 	for _, f := range capture.CAFiles { // a CA there already: run does not ask the fake to make one
 		os.WriteFile(filepath.Join(state, "mitmproxy", f), nil, 0o600)
 	}
+	leftover := filepath.Join(state, "console-"+strings.Repeat("0", 32)+".html")
+	os.WriteFile(leftover, nil, 0o600)
 	restartDelay = time.Millisecond
 	t.Cleanup(func() { restartDelay = 0 })
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -225,6 +230,14 @@ func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 			t.Fatal("run's LAN proxy never listened")
 		}
 	}
+	if _, err := os.Lstat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a killed run's code file at the start: %v", err)
+	}
+	if a, err := askRun(ctx, state, ctlRequest{Cmd: "console"}); err != nil || a.File == "" {
+		t.Errorf("console: %v %+v", err, a)
+	} else if _, err := os.Lstat(filepath.Join(state, a.File)); err != nil {
+		t.Errorf("the code file: %v", err)
+	}
 	b, _ := os.ReadFile(filepath.Join(dir, "runs", "1"))
 	pid, _ := strconv.Atoi(string(b))
 	if pid == 0 {
@@ -236,7 +249,23 @@ func TestRunFailsWhenMitmproxyFailsForGood(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "no longer load") {
 			t.Errorf("run: %v, want mitmproxy's failure", err)
 		}
+		if m, _ := filepath.Glob(filepath.Join(state, "console-*")); len(m) > 0 {
+			t.Errorf("code files after run ended: %v", m)
+		}
 	case <-ctx.Done():
 		t.Fatal("run did not stop after mitmproxy failed for good")
+	}
+}
+
+// A long host name (CI's Macs have them) is cut short: mitmproxy refuses a CA
+// whose name is over 64 characters, and run would not start.
+func TestCANameFits(t *testing.T) {
+	day := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	if got := caNameFor("macbook-2.local", day); got != "Reqcove CA (macbook-2, 2026-11-16)" {
+		t.Errorf("short: %q", got)
+	}
+	got := caNameFor(strings.Repeat("ホ", 100)+".local", day)
+	if n := utf8.RuneCountInString(got); n != 64 || !strings.HasSuffix(got, ", 2026-11-16)") {
+		t.Errorf("long: %d characters: %q", n, got)
 	}
 }

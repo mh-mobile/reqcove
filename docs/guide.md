@@ -14,16 +14,18 @@ option's security points is folded under "Security details" in its section
 directory" and "your own devices" mean; those blocks add to it and do not
 repeat it.
 
-1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
-2. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [allow the tools](#allow-the-tools) · [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
-3. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
-4. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [connections not read as HTTP](#connections-not-read-as-http-raw-tcp) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
-5. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
-6. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
-7. [Run it in the background](#run-it-in-the-background): [start, update, stop](#start-update-stop) · [the config file](#the-config-file---config) · [`brew services`](#with-homebrew-brew-services) · [`reqcove service install`](#without-homebrew-reqcove-service-install)
-8. [Containers](#containers)
-9. [Troubleshooting](#troubleshooting)
-10. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security) · [Compatibility](COMPATIBILITY.md)
+1. [Set up](#set-up): [first start](#first-start) · [stop, restart, update](#stop-restart-update) · [restart in place](#restart-in-place-reqcove-restart) · [one CA on two computers](#use-one-ca-on-two-computers) · [undo everything](#undo-everything-reqcove-cleanup)
+2. [The console](#the-console-reqcove-console): [open it, approve](#see-the-state-and-approve-in-a-page-reqcove-console) · [the hosts and Save](#change-the-hosts-the-scope-panel) · [settings and restart](#change-the-settings-then-restart) · [presets, the CA, the HAR file](#presets-a-marker-the-ca-the-har-file) · [the page on the tailnet](#the-page-on-the-tailnet-reqcove-console---tailnet) · [what stays in the terminal](#what-stays-in-the-terminal-and-why)
+3. [Change what is recorded while it runs](#change-what-is-recorded-while-it-runs): [save](#keep-the-hosts-for-the-next-start-reqcove-capture-save) · [reload](#edit-the-files-then-reqcove-reload) · [stop](#stop-recording-for-a-while) · [allow-all](#see-what-every-app-sends-for-a-while) · [discover](#find-the-hosts-an-app-reaches-reqcove-capture-discover) · [an agent asks](#let-an-agent-ask-for-a-host-reqcove-capture-approve)
+4. [Read the traffic with an agent](#read-the-traffic-with-an-agent): [allow the tools](#allow-the-tools) · [the skill](#teach-the-agent-the-skill-reqcove-init) · [markers](#mark-a-moment-reqcove-mark) · [agents on other devices](#agents-on-other-devices---mcp-http)
+5. [Look at the flows yourself](#look-at-the-flows-yourself): [on the iPhone](#on-the-iphone---ui) · [as a HAR file](#as-a-har-file-reqcove-har) · [in mitmweb](#in-mitmweb---web)
+6. [Record clients other than iPhone apps](#record-clients-other-than-iphone-apps): [apps that pin certificates](#apps-that-pin-certificates---pass-hosts) · [connections not read as HTTP](#connections-not-read-as-http-raw-tcp) · [gRPC](#grpc) · [Android](#android) · [the iOS Simulator](#the-ios-simulator---local-proxy) · [a web app's backend](#a-web-apps-backend) · [the Wi-Fi proxy](#without-the-exit-node-the-wi-fi-proxy) · [another Mac](#another-mac)
+7. [Change where requests go](#change-where-requests-go): [rules](#rules---rules) · [mocks](#answer-a-request-here-mock) · [presets](#presets-an-agent-can-turn-on) · [why a rule applied](#why-a-rule-did-or-did-not-apply-list_rules-explain_rules) · [an upstream proxy](#an-upstream-proxy---upstream-proxy)
+8. [Without Tailscale: LAN mode](#without-tailscale-lan-mode---lan)
+9. [Run it in the background](#run-it-in-the-background): [start, update, stop](#start-update-stop) · [the config file](#the-config-file---config) · [`brew services`](#with-homebrew-brew-services) · [`reqcove service install`](#without-homebrew-reqcove-service-install)
+10. [Containers](#containers)
+11. [Troubleshooting](#troubleshooting)
+12. Reference: [Options](#options) · [MCP tools](#mcp-tools) · [Limits](#limits) · [Security](#security) · [Compatibility](COMPATIBILITY.md)
 
 ## Set up
 
@@ -41,15 +43,23 @@ with an empty answer. It starts nothing and removes nothing.
   the service reads, and the hosts to their own file beside it, which that
   file reads with `--allow-hosts=@FILE` (since v1.1; `reqcove capture save`
   writes it).
+  - Since v1.3, where the Tailscale CLI answers on this computer
+    (`tailscale`, or the Mac app's), it lists your own devices in the
+    tailnet, untagged, iPhones first: answer with a number, or type a name.
   - The file is `~/.config/reqcove/config` (`reqcove service install`'s). For
     a brew install (this binary under `Cellar/reqcove/`), it is Homebrew's
     `$(brew --prefix)/etc/reqcove/config` (`brew services`').
   - The hosts file is `hosts` beside it: `~/.config/reqcove/hosts`, or
     `$(brew --prefix)/etc/reqcove/hosts`. One host a line; `#` starts a
-    comment. No hosts answered: no hosts file, and the `--allow-hosts` line
-    stays a comment.
+    comment. No hosts answered: since v1.3 the hosts file is written all the
+    same, comments alone (no hosts: nothing is recorded), with its
+    `--allow-hosts=@FILE` line, so `reqcove capture save` and the console's
+    Save fill it later (before v1.3: no hosts file, and the line stayed a
+    comment).
   - Both are 0600, and their directory 0700 when new. Before they take the
-    files' place, they are checked as `run` reads them.
+    files' place, they are checked as `run` reads them; since v1.3 both are
+    checked together, as the next start reads them, before anything is
+    written: one that start would refuse writes nothing.
   - `*` and a name starting with `-` are asked again. A pasted URL keeps its
     host only.
   - No hosts yet: once `run` runs, `reqcove status` (or an agent's
@@ -104,7 +114,11 @@ at once, nothing written). Tried too: `reqcove links` from Claude Code's `!`.
 Tried by hand with a v1.1 build from a local formula (macOS, 2026-11-16):
 setup wrote Homebrew's config and its hosts file and pointed to `brew services
 start reqcove`, whose run read them and recorded the iPhone. The hosts file
-otherwise: unit tests (the file, its `@` line, an old one kept).
+otherwise: unit tests (the file, its `@` line, an old one kept; since v1.3
+the file of comments alone when no host is answered, a set the next start
+refuses writing nothing (with a stand-in for the check: nothing setup
+writes today is one a start refuses), the device list from a stand-in for `tailscale
+status`). Not tried by hand: v1.3's setup.
 
 <a id="security-login-url"></a>
 
@@ -163,421 +177,120 @@ nothing from `reqcove links`.
   empties the records.
 
 Tried: a restart under a Claude Code session. What `reqcove status` says
-after an update: unit tests only (a v1.0.0 `run` faked).
+after an update: unit tests (a v1.0.0 `run` faked), and by hand (2026-11-16)
+after `brew upgrade` from v1.1.0 to a v1.2 build under `brew services`: it
+named the version difference, then `brew services restart reqcove`.
 
-### Change what is recorded while it runs
-
-Since v1.1, the hosts recorded change without a restart, so the records stay.
-The commands change the `run` that is running, whether a terminal or a
-service started it (`--state DIR` for another one). Type them in a terminal:
+### Restart in place (`reqcove restart`)
 
 ```sh
-reqcove capture add api.example.com          # record it too
-reqcove capture remove api.example.com       # stop recording it
-reqcove capture add --pass pinned.example.com     # carry it undecrypted (as --pass-hosts)
-reqcove capture remove --pass pinned.example.com  # decrypt it again
-reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # all of them at once
+reqcove restart    # in your terminal; --state DIR for another node
 ```
 
-Hosts are written as `--allow-hosts` takes them; `--state DIR` for a node
-other than the default one. Each answer says what happened: applied, or
-pending (mitmproxy took the change but did not acknowledge it: reqcove tells
-it again every few seconds, and when mitmproxy starts again), how many
-records are kept, and the limits below. While mitmproxy restarts, `add`,
-`remove` and `set` are refused, nothing changed ("mitmproxy is restarting:
-try again in a moment"): each is checked first against the rules mitmproxy
-holds.
+Since v1.3, `reqcove restart` asks the running `run` to stop and start again
+in the same process, as it was started: the same binary path and arguments,
+the config on disk as it is now. Under `reqcove service install`'s service or
+`brew services` it stays the service's process (an exec keeps the pid: seen
+under launchd and systemd; not tried under `brew services`), so you need not
+know which started it.
 
-- **New connections only.** An added host is decrypted on new connections:
-  an app keeps its connection open for a while, so reopen it to see the host
-  now. A removed host is no longer recorded from the next event on, and a
-  body under way is copied no more, but its open connections stay decrypted
-  (unrecorded) until they close. With `--web`, mitmweb still lists the
-  requests on them (URLs and headers, unmasked), without their bodies (from
-  reading the code).
-- **Not saved** until `reqcove capture save` (below): a restart of `run`
-  goes back to the hosts it was started with (its flags or `--config`).
-- **Refused:** `"*"`, removing a host a wildcard takes in (the answer names
-  the wildcard: remove that, or use `set`), a change that takes out a host a
-  `mock` rule names (the answer names the rules), and any change in LAN mode
-  (not in this version: restart `run` there). A `run` older than v1.1 says so.
-- **Only in a terminal**, as `reqcove mark`: agents never run it. A tool's
-  note, or a step in `next_steps`, gives `reqcove capture add HOST` for you to
-  run. That is a guard against mistakes, not a boundary
-  ([SECURITY](SECURITY.md#other-processes-on-this-computer)).
-- **A trace:** each change is a line in `run`'s log, a marker with source
-  `cli` (`list_markers`), and in `reqcove status` "last changed at … (capture
-  add api.example.com)" (`scope_change`, `scope_changed_at` in `--json`).
+- **Checked first, nothing stopped when refused:** the config on disk and
+  `run`'s command line as the next start reads them (a flag or file it would
+  refuse, with the reason, as `reqcove reload` checks them), and the binary
+  `run` was started from still being there. That path is the one `run` was
+  started with (absolute, as services start it, or found on PATH then), links
+  kept: Homebrew's `opt/reqcove` is kept, so after `brew upgrade` a restart
+  starts the new version (read from the code; not tried). Then `run` asks
+  that binary itself to check the same config and command line (a hidden
+  check mode of `run`'s: it starts nothing, takes no lock and writes no
+  file), so a newer binary that checks more refuses before anything stops. A
+  binary without that mode (older than v1.3) is refused, nothing stopped: it
+  could not take over the state `run` holds, so stop `run` and start it
+  again yourself.
+- **Then it stops as Ctrl-C stops it:** the system's web proxies put back
+  (`--local-proxy`), mitmproxy, the node and caffeinate stopped. Devices lose
+  the internet until it is up again.
+- **What a restart empties:** the records (flow ids and cursors too), the
+  markers, the agents' requests, the hosts changed by `reqcove capture` and
+  not saved, allow-all and discovery, the presets turned on, the
+  `reqcove console` links not opened yet, the tailnet page and its sessions
+  (`reqcove console --tailnet` again opens a new one). **What it keeps:** the
+  state directory and its tokens, the CA, the node; this computer's
+  `reqcove console` page's port, and its sessions (a page open stays open);
+  no other `run` can take the state meanwhile.
+- **When the new start fails** (a file it reads is gone, say `--uvx`'s),
+  `run` puts back the config it had started from (a copy it kept from its
+  start, with the hosts file line `capture save` added; not `config.prev`),
+  keeps the one that failed as `config.failed` beside it, and starts once
+  more. If that fails too, it stays down, as a failed start always does (no
+  service restarts it: none of them is set to; from the code). `reqcove status` says what happened (a `restart:`
+  line), until `run` is next started by hand or by its service. A run
+  started from flags alone (no `--config`) has no config to put back: a
+  failed start stays down. A stop (Ctrl-C, or a service's SIGTERM) while
+  `run` restarts or while the new start is under way is a stop, not a
+  failure: `run` stays stopped and puts nothing back. The new start counts
+  as good once it is ready, or 2 minutes after it serves its tools (a node
+  waiting for a login, a new `--state`): a failure later is no failed start
+  and puts nothing back.
+- **The config names another `--state`:** the new start uses it, and
+  `reqcove status --state DIR` for it says how it went.
+- In a terminal only, as `reqcove capture`, or from the `reqcove console`
+  page's **Restart…** ([below](#change-the-settings-then-restart)).
+  A `run` older than v1.3 says to stop it and start it again.
+- **mitmweb for one start (`reqcove restart --web`, since v1.3):** the new
+  start runs [mitmweb](#in-mitmweb---web), as `run --web` does, for that
+  start alone. Nothing is written: `--web` stays refused in the config, and
+  the copy of the start config does not hold it. The checks above are made
+  with `--web` (`--proxy-port 8081` is refused, LAN mode is not: mitmweb is
+  on 127.0.0.1 alone there). The answer adds `+ --web (this start only;
+  unmasked)` and what mitmweb shows. The new start makes a new password
+  (`web-token`), so a link seen before (browser history, a QR code someone
+  saw) stops working; its link is in `run`'s terminal, or `reqcove links`
+  prints it (under a service). A failed start's retry runs without mitmweb,
+  and so does the next restart of any kind (the page, `reqcove restart`,
+  the service, a reboot). With `--web` on `run`'s command line, mitmweb
+  stays on across restarts, as before, and `--web` changes nothing then.
+  While it runs, `reqcove status` says `mitmweb: on — unmasked; this start
+  only` (or `from the command line`).
 
-Tried by tests (unit, and E2E with real mitmproxy: add, then a new
-connection is recorded; remove, then one is not; the marker and status), and
-by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): add, remove and `set`, each answered and marked, a host recorded
-after `add` and `set` and not after `remove`. The pending answer and a `mock` rule's refusal, as `reqcove
-capture` gives them, are from reading the code (the change underneath, its
-pending state and the refusal, has tests of its own); the refusal while
-mitmproxy restarts, telling a pending change again, and a body under way
-copied no more (with mitmproxy's Python) have unit tests.
-
-#### Keep the hosts for the next start (`reqcove capture save`)
-
-```sh
-reqcove capture save     # write the hosts recorded now to the hosts file
-```
-
-It writes the hosts recorded (those `capture start` records, while stopped)
-into the hosts file `run` read them from: the `--allow-hosts=@FILE` that
-`reqcove setup` puts in the config. The next start from that config records
-them. The file is replaced whole (0600). Its comments stay, and so do its
-lines whose hosts are all kept; new hosts go at the end.
-
-- **Hosts given as they are** (on `run`'s command line, or as
-  `--allow-hosts HOST` in the config) are not written: a start with them
-  records them again whatever the file says (one in the hosts file too stays
-  there). The answer names them, and says which of them you removed now
-  that come back that way, in the hosts file too or not.
-- **Nothing to save to** when `run`'s hosts do not come from a hosts file, or
-  come from several: the answer says to put one `--allow-hosts=@FILE` in the
-  config. Nothing is written.
-- **Refused**, nothing written: `"*"` (never in the file); no hosts to write
-  (`run` refuses a hosts file without hosts, so the next start would fail);
-  a file that is not a plain file (a link, say) or not yours; the file
-  `--pass-hosts` reads too. In LAN mode, as the others.
-- **Hosts passed undecrypted** (`--pass`) are not saved: the answer says so,
-  and a start passes those of `run`'s `--pass-hosts`.
-- **A trace**, as a change: `run`'s log, a `cli` marker, and `reqcove status`
-  "last changed at … (capture save)".
-
-Tried by tests only (unit: what is written and kept, each refusal; E2E with
-real mitmproxy: `run` started from a config with a hosts file and a host on
-the command line, add, remove that host, save, then a new `run` from the
-config records the host added), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): Homebrew's hosts file
-rewritten with the hosts added live, its comments kept.
-
-#### Edit the files, then `reqcove reload`
-
-```sh
-reqcove reload     # read the config, its hosts files and the --rules file again
-```
-
-Since v1.1, after you edit the config, the hosts file it names
-(`--allow-hosts=@FILE`) or the `--rules` file, `reqcove reload` puts their
-hosts and rules in force without a restart, so the records stay. `--state
-DIR` for a node other than the default one.
-
-- **All or nothing.** It reads the files first and checks them together: the
-  config's flags, the hosts files, and the rules against the new hosts (a
-  host and the `mock` naming it can go in, or out, in one edit). If anything
-  does not load, nothing changes, and the answer says why (a line number, never
-  a line's text).
-- **The hosts** replace those recorded now (the base, while stopped or during
-  allow-all: what is recorded once it ends). Hosts given on `run`'s command
-  line stay. Changes made with `reqcove capture` and not saved are replaced by
-  the files': the answer names them.
-- **The rules** are read again and loaded with the hosts at once; the answer
-  says how many of each kind are loaded. Presets go off (new rules turn them
-  off; an agent turns one on again). `--rules-reload` works as before.
-- **Other settings** (`--device`, `--mcp-http`, `--proto`, `--mask-values`,
-  …) take a restart: the answer names, in one line, those that changed
-  (never their values), and applies none of them. So does a `--rules` file
-  added, removed or moved to another path.
-- **Nothing to reload** for a `run` started from flags alone (no `--config`,
-  no `--allow-hosts=@FILE`, no `--rules`).
-- **Refused**, nothing changed: a hosts file that now gives `"*"` (every
-  host) while the hosts recorded are not `"*"`, as `capture set` refuses it
-  (`reqcove capture allow-all --for D` records every host for a while); and
-  while mitmproxy restarts, as `capture add` ("try again in a moment"). New
-  hosts and rules that mitmproxy then does not acknowledge restart it with
-  both, never one without the other.
-- **New connections only**, as `capture add` and `remove`.
-- As the `capture` commands: in a terminal only, refused in LAN mode, an
-  older `run` named, and a trace (`run`'s log, a `cli` marker, `scope_change`
-  `reload`).
-
-Tried by tests only (unit: the parse of `run`'s arguments again, which never
-exits nor logs, the settings named, `"*"` refused, mitmproxy restarted when it
-does not acknowledge new rules; E2E with real mitmproxy: a host and a
-mock for it added together, then answered by the mock; a broken rules file
-changing nothing, the hosts file's edit neither; the host and its mock taken
-out together; an unsaved `capture add` named as replaced; a preset off after;
-`--mcp-http` added named), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): the hosts file edited by hand,
-then `reload`: the host added recorded, the one taken out not, the records
-kept.
-
-#### Stop recording for a while
-
-```sh
-reqcove capture stop     # record nothing new; the records stay readable
-reqcove capture start    # record the same hosts again
-```
-
-While stopped, mitmproxy decrypts nothing new (mitm.it only, for the CA),
-nothing new is recorded, and **no rule of the `--rules` file applies**: mock,
-map_local, map_remote, modify_headers and resolve, presets included (the
-ones on are turned off, and `activate_preset` is refused). So the app's
-requests go to the real servers as it sends them, a mocked API's too: the
-answer of `stop` warns of it and says how many records are kept.
-
-- Connections already decrypted stay decrypted until they close, but nothing
-  on them is recorded, and no rule applies to their new requests (a request
-  already under way when you stop ends as it began, from reading the code;
-  its body is copied no more, a unit test). An open WebSocket's flow
-  is closed with "recording stopped: its host left the scope". With `--web`,
-  mitmweb still lists the requests on those connections (URLs and headers,
-  unmasked), without their bodies (from reading the code).
-- `start` says the hosts it records again. It records new connections and
-  WebSockets only (reopen the app): one open before the stop is not recorded
-  again. Presets stay off until an agent turns one on.
-- `capture add`, `remove` and `set` while stopped change the hosts `start`
-  records (the answer says so); nothing is recorded until then.
-- A restart of mitmproxy keeps it stopped; a restart of `run` records again
-  (not saved).
-- `reqcove status` says "recorded: nothing: stopped" and the hosts kept;
-  `--json` and the MCP `status` say `"recording": "stopped"`, `allow_hosts: []`
-  and the hosts kept in `base_allow_hosts` (`base_pass_hosts`); `next_steps`
-  gives `reqcove capture start`. Refused in LAN mode, as the others.
-
-Tried by tests only (E2E with real mitmproxy: an open WebSocket records
-nothing more and does not resume after the start, a new one records; a mocked
-URL reaches the server, on a new connection and on one decrypted before the
-stop; a preset is turned off and cannot be turned on; mitmproxy killed while
-stopped comes back stopped; the CLI's answers, status, markers), and
-by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): nothing recorded while stopped, recorded again after `start`.
-
-#### See what every app sends, for a while
-
-```sh
-reqcove capture allow-all --for 30m   # record every host for 30 minutes (at most 24h)
-reqcove capture allow-all --end       # end it sooner
-```
-
-For a while every host is decrypted and recorded, as `--allow-hosts '*'`
-does, not only the ones you allowed: to see what the other apps send. Apple's
-hosts still pass through undecrypted, and so do the `--pass-hosts` ones. The
-answer repeats what `'*'` warns of: every app's and site's traffic is
-recorded and readable by agents and their model providers; apps that pin
-their certificates (banks, say) fail meanwhile; and, when they apply,
-`--upstream-proxy` (every request goes on to it), `--mcp-http`, `--web`,
-`--local-proxy`.
-
-- **Time-limited.** It ends at the time the answer gives, by this computer's
-  clock or by `run`'s own running time, whichever comes first (a sleeping Mac
-  does not keep it on longer), within a second or so. `--for` again moves the
-  end to now plus the new time.
-- **The records made meanwhile stay** after it ends, until evicted or `run`
-  restarts. Other apps' traffic fills `max_flows` and `max_bytes` too, so your
-  app's older records are evicted sooner (from reading the code).
-- **The rules** (`--rules`) apply to the hosts you allowed alone, never to
-  the other hosts recorded meanwhile: a `modify_headers` rule naming no host
-  does not send its header to them.
-- **New connections only**, both ways: reopen an app to see it; once it
-  ends, connections decrypted meanwhile stay decrypted (unrecorded) until
-  they close.
-- `capture add`, `remove` and `set` meanwhile change the hosts recorded after
-  it (the answer says so). `capture stop` ends it; `allow-all` while stopped
-  is refused (`capture start` first). A run started with `--allow-hosts '*'`
-  has nothing to add ("nothing changed").
-- **Never kept past its end:** a restart of mitmproxy meanwhile keeps it
-  until its end, not longer; when its end comes and mitmproxy does not
-  answer, reqcove stops recording the other hosts first, then restarts
-  mitmproxy without it. So does a `capture stop` meanwhile that mitmproxy
-  does not acknowledge: restarted stopped (a unit test). A restart of `run`
-  ends it (not saved).
-- `reqcove status` says "every host: allow-all until …" with the time left
-  and the hosts recorded after it; `--json` and the MCP `status` say
-  `"recording": "allow-all"`, `allow_hosts: ["*"]`, `allow_all_until`,
-  `allow_all_left` and `base_allow_hosts`; `next_steps` gives the time left
-  and `reqcove capture allow-all --end`. After it, `records_outside_scope`
-  counts the records of hosts outside the ones recorded. The trace, the LAN
-  refusal and "in a terminal only" as the others; the end by time is in
-  `run`'s log and `scope_change` ("allow-all ended: its time is up"), with no
-  marker.
-
-Tried by tests only (unit: the arguments, the order, a stop ending it, the
-end by either clock with mitmproxy silent; E2E with real mitmproxy: a host
-outside the ones allowed recorded, with no rule applied, and not after the
-end, its records kept; a `--pass-hosts` host still undecrypted; mitmproxy
-killed just before the end comes back without it; the CLI's answers, status,
-markers), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16) for a minute: another site and another app's
-requests recorded, none after the end, the records kept. Not across a real
-sleep of the Mac.
-
-#### Find the hosts an app reaches (`reqcove capture discover`)
-
-```sh
-reqcove capture discover --for 30m   # keep the names of the other hosts for 30 minutes (at most 24h)
-reqcove capture discover --end       # end it sooner
-```
-
-Since v1.1, for a while, Reqcove keeps the **names** of the hosts outside the
-ones recorded that the devices reach, and how often: the name a TLS
-connection asks for (its SNI), and the Host of a request on a connection that
-is decrypted but not recorded. Nothing they send is kept: no content, no URL
-path, no time. So you can see which hosts your app talks to, then add the
-ones you want.
-
-- **Where it shows:** `reqcove status` ("outside:", each with the `reqcove
-  capture add HOST` command that records it), and for this computer's agents
-  `status` and `summarize` (`out_of_scope_hosts`, `out_of_scope_hosts_kept`,
-  `discover_until`, `discover_left`). Never over `--mcp-http` nor on the
-  `--ui` page. It shows on once mitmproxy has acknowledged it: until then
-  (mitmproxy restarting, say) `next_steps` says it is asked, not on yet, and
-  reqcove tells mitmproxy again every few seconds and when it starts again
-  (unit tests).
-- **Counts:** TLS connections and requests together. The 30 most seen are
-  shown, of at most 1,000 kept (past that, a new name takes the place of the
-  least seen). A host you add drops off the list.
-- **Left out:** Apple's hosts, mitm.it, names that are not plain host names
-  (shown masked, without a command, if masking changed them).
-- **Not every host:** a connection without a name (an address dialed), one
-  with ECH (only its outer, public name is seen) and connections that are not
-  TLS on a host outside the scope are missed (from reading the code, not
-  tried).
-- **Time-limited**, as allow-all: it ends by this computer's clock or by
-  `run`'s running time, whichever comes first; `--for` again moves the end.
-  A run with `--allow-hosts '*'` has nothing outside ("nothing changed").
-  At the end no name is taken from then on, whether mitmproxy was told or
-  not. The names seen **stay** until `run` restarts or discovery starts
-  again (a new `--for` after the end begins a new list). A restart of `run`
-  ends it (not saved).
-- The cost: each TLS connection's ClientHello is read once more (mitmproxy
-  reads it anyway to decide what to decrypt): about 22 µs for a 1.5 KB one,
-  from a micro-benchmark on an M1 Max Mac (mitmproxy 12.3.1, Python 3.14);
-  nothing when off (from reading the code).
-- As the other `capture` commands: in a terminal only (agents never run
-  it), refused in LAN mode, an older `run` named, and a trace (`run`'s log,
-  a `cli` marker, `scope_change`).
-
-Tried by tests only (unit: the names taken only while on, Apple's, mitm.it and
-bad names left out, masking, the bound, the end by either clock with
-mitmproxy silent; E2E with real mitmproxy: a TLS connection's SNI and a
-request's Host counted, once a connection, none of Apple's, nothing recorded
-of them, not in what `--mcp-http` and `--ui` read, none taken before or after,
-a host added dropping off; the summarize and status tools: on the local
-server alone), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): a site's names listed in `reqcove status`
-and `summarize` with their `capture add` command, one added and then recorded.
-
-#### Let an agent ask for a host (`reqcove capture approve`)
-
-```sh
-reqcove capture requests            # what agents asked, and what came of it
-reqcove capture approve 0a1b2c3d    # shows the hosts, asks y/N, then adds them
-reqcove capture deny 0a1b2c3d       # refuses it
-```
-
-Since v1.2, an agent connected through `reqcove mcp` can ask for hosts to be
-recorded (the `request_capture_add` tool): 1 to 5 host names. It records
-nothing by itself. `run` keeps the request, with an id and its hosts fixed,
-and the agent's answer gives you the command to run, such as
-`reqcove capture approve 0a1b2c3d`. The agent is told never to run it.
-
-- **Approve** shows the hosts and asks `Approve? [y/N]`; only `y` or `yes`
-  approves. It adds exactly those hosts, as `reqcove capture add` does:
-  new connections only, not saved, the hosts passed undecrypted kept, and a
-  stopped recording stays stopped (the hosts are the ones `capture start`
-  records). The id is bound to its hosts: an approval for other hosts is
-  refused.
-- **The client's dialog:** when the agent's client says it can show a form
-  (MCP elicitation), `reqcove mcp` also shows one for a new request. Its text
-  is Reqcove's: the hosts (run's, checked as host names), that agents will
-  read their traffic, masked (unmasked, it says, under `--no-redact`; so does
-  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. It has one box, "Record these hosts", off at
-  first: accept with the box ticked approves it as `approve` does (Enter on
-  Accept alone, where Claude Code's cursor starts, approves nothing). Decline,
-  close it, accept without the box, an error or no answer within 2 minutes
-  leaves it pending, for the terminal or `reqcove console`. Tried in Claude
-  Code's terminal (2026-11-16): the dialog shows, Esc leaves it pending, the
-  console approves it; the box, by unit tests only. It is not
-  shown again when the agent asks again for the same hosts. A client that
-  declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
-  protocol the client shows the dialog between two calls: its answer counts
-  only for a dialog `reqcove mcp` showed on that connection, once, within 2
-  minutes by either clock; any other answer leaves the request pending. If
-  the client fails there, the agent's call ends in an error and the request
-  stays pending: asking again for the same hosts gives its id and command.
-- **What is asked:** host names only (letters, digits, `-` and `.`; no
-  wildcard, no IP address), lowercased, each once, sorted. Refused: hosts all
-  recorded already, a host passed undecrypted (`--pass-hosts`), any host
-  you denied in the last 10 minutes (alone or with other hosts), a 4th pending request, an 11th made in
-  10 minutes, and any in LAN mode. Asking again for the same hosts while
-  pending gives the same request.
-- **Time-limited:** a request expires 10 minutes after it was made, by this
-  computer's clock or by `run`'s running time, whichever comes first. One
-  that ended (applied, failed, denied, expired) is kept 10 minutes more for
-  `capture requests` and `get_capture_request`. A restart of `run` drops
-  them all.
-- **Where it shows:** `reqcove status` ("asked:", with the command), this
-  computer's `status` (`capture_requests`), and the agent's
-  `get_capture_request` (`pending`, `approved`, `applied`, `failed`,
-  `denied`, `expired`). Never over `--mcp-http`, which has neither tool.
-- **A trace:** each state is a line in `run`'s log; an approval is also a
-  marker with source `mcp` and `scope_change`, both "capture add HOST (asked
-  by an agent, approved in the terminal)" (or "in the dialog").
-- As the other `capture` commands: in a terminal only, and a `run` older than
-  v1.2 says to restart it with v1.2.
-
-Tried by tests only: unit (the hosts taken and refused, the limits, expiry
-by either clock, the denial kept, a restart, an approval for other hosts, the
-y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check, a denied
-host asked with another, `unmasked` in every view under `--no-redact`; the
-dialog with an in-memory client accepting, declining, cancelling, failing,
-not answering in time, or without the capability, over MCP's newest
-protocol and older ones; a client declaring URL elicitation alone; an answer
-made up, replayed, from another connection, or late by either clock; a raw
-client asking 2026-07-28 in `initialize` (answered 2025-11-25, and given the
-dialog between two calls, as the SDK treats it); neither tool over `--mcp-http`), and E2E with real
-mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
-not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
-marker and `scope_change`; approved while stopped). A real client's dialog
-(Claude Code, Codex) was not tried.
-
-#### See the state and approve in a page (`reqcove console`)
-
-```sh
-reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
-```
-
-Since v1.2, `reqcove console` asks the running `run` for a page of its state and
-of the agents' requests, and opens it with `open` (macOS) or `xdg-open`
-(Linux); when that fails, open the printed link yourself. The page shows
-what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
-binary, the service, the config and hosts files, keep awake, the node and its
-devices, what is recorded (on, stopped, or allow-all and until when, with the
-hosts) and a change pending, and the next steps; and the requests waiting,
-each with its hosts, until when, and **Approve** and **Deny**. Approve adds
-the hosts the page showed, as `reqcove capture approve` does (`run` refuses
-other hosts), traced "capture add HOST (asked by an agent, approved in the
-console)"; Deny is `reqcove capture deny`. Nothing else changes from the page:
-the hosts, stop and start, save, allow-all and discovery stay commands.
-
-- **This computer only:** `run` listens on 127.0.0.1, on a port the system
-  picks, from the first `reqcove console` until `run` ends; never on the tailnet
-  node, the LAN, or `--ui`'s page. In LAN mode it shows the state too (the
-  requests are refused there, as ever).
-- **The link works once, for 60 seconds:** it carries a one-use code after
-  `#`, which the page trades for a session kept in that tab alone (the
-  browser forgets it when the tab closes; `run` keeps it until the limits
-  below) and then takes out of the address bar. `reqcove console` again
-  gives a new link. A link opened a second time closes every page of
-  `reqcove console` and says so: someone else may have had it. At most 4 pages
-  at once (a 5th closes the one used least recently); one unused for 12
-  hours closes; a restart of `run` closes them all.
-- **Never shown:** the flows' contents, any token, link or login URL, and any
-  text from an agent or an MCP client (the hosts it asked for are checked as
-  host names first).
-- In a terminal only, as the `capture` commands; a `run` older than v1.2 says
-  to restart it with v1.2.
-
-Tried by tests only: unit (the listener on 127.0.0.1 only; a wrong Host, a
-cross-site or missing Origin, a body other than JSON, a GET or PUT where a
-change is a POST, no session, a wrong one, a cookie alone, the code once,
-60 seconds by either clock, a code used twice closing every session, 4
-sessions, 12 hours idle by either clock; an approval for other hosts refused,
-approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
-`no-referrer` on every answer; no code or token in the answers or `run`'s
-log; LAN mode; the terminal check, the link printed and handed to a stand-in for `open`, a v1.1
-`run`), and E2E with real mitmproxy (approved in the console through its
-listener, the `mcp` marker "approved in the console"). The page was not tried
-in a real browser.
+Tried: unit tests (the checks; the binary's check: a refusal stopping
+nothing, a binary without the mode refused, the mode reading a bare run's file and
+leaving no file, lock or state directory; the copy of the start config, after two writes
+and after a write then an edit by hand, after a `capture save` that added the
+hosts file line, with a leftover copy and with `--state` changed; a copy that
+is a link, another user's, not 0600, wrongly named, outside a state directory
+or missing is neither read nor removed, and no retry; the retry made once,
+carrying the page's sessions as they are then (none after `console --end`);
+a stop during the restart or the new start neither execs nor puts the config
+back; a start that served 2 minutes counts as good; the carried page's
+sessions in place before its first request; `--web`: the binary's check
+given it, `--proxy-port 8081` refused, the choice carried to the exec alone,
+not taken by a fresh start, the retry and a later restart without it, a new
+`web-token`, a `--web` on the command line kept;
+the exec of a test binary keeping the page's port, its session and the
+state's lock, the variables and the fds not reaching a child), and E2E with
+real mitmproxy (`run` in LAN mode on the loopback, started through a link:
+two restarts, the second after an edit its start refuses late, once
+mitmproxy, caffeinate and the system proxy are up; the pid, the
+page's port and session kept, the state never free, mitmdump and caffeinate
+stopped before each exec (the failed start's too), the config put back and kept as `config.failed`,
+`reqcove status` saying so; on macOS with `--local-proxy`, the system proxy
+put back at each stop, through a stand-in `networksetup`; both restarts
+asked with `--web`: after the first, `status` says mitmweb is on for this
+start and `web-token` is new, the config unchanged; the retry after the
+second runs without it). By hand (2026-11-17): in a terminal, the pid,
+the page's port and session kept, and a rebuilt binary taken; a failed new
+start (`--uvx=/usr/bin/false` in the config): the config put back,
+`config.failed` kept, `status`'s `restart:` line, the page's session kept;
+Ctrl-C during the new start: `run` stayed down, the config untouched, no
+copy of the start config left; from the page under `reqcove service
+install`'s launchd service: the same pid, no exit seen by launchd; under its
+systemd user service on Ubuntu 24.04: the same MainPID, NRestarts 0, and
+`systemctl --user stop` during a restart: stopped, the config unchanged, no
+`config.failed`; another OS user there, retrying to bind the page's
+127.0.0.1 port throughout a restart, never got it; `--web` from the page:
+[the Settings panel](#change-the-settings-then-restart). Not tried: under `brew services` (`--web` under any
+service too), after `brew upgrade` and `brew cleanup`.
 
 ### Use one CA on two computers
 
@@ -678,6 +391,823 @@ Checked: tests (the refusals to delete, the proxies put back, the CA copies
 it names).
 
 </details>
+
+## The console (`reqcove console`)
+
+Since v1.3 a page of `run`'s is the place to see and change a running `run`
+without its commands: the hosts, the settings, the agents' requests and a
+restart. You open it from your terminal. A path through it:
+
+1. **Open it** with `reqcove console`, which opens it in your browser
+   (`reqcove console --print` prints a link instead): a page on this computer showing what
+   `reqcove status` shows, and the agents' requests to Approve or Deny
+   ([below](#see-the-state-and-approve-in-a-page-reqcove-console)).
+2. **Change the hosts** in its Scope panel, as `reqcove capture` does, and
+   **Save** them for the next start, to the hosts file `reqcove setup`
+   writes, or, on a config with its hosts inline, to a hosts file Save
+   creates once it showed you how ([the Scope panel](#change-the-hosts-the-scope-panel)).
+3. **Change a setting** in its Settings panel, written to the config file,
+   then **Restart…** ([settings and restart](#change-the-settings-then-restart)).
+4. **On the iPhone**, `reqcove console --tailnet` prints a QR code for a page
+   of what ends with the run: approvals, the hosts, presets, the CA; never
+   Save, a setting or a restart ([the page on the tailnet](#tailnet-page)),
+   also through the Remote Proxy.
+5. **What stays in your terminal**, and why: [below](#what-stays-in-the-terminal-and-why).
+
+The pages are `run`'s and live while it runs (`--state DIR` for another
+`run`). Agents never open them: the skill and the server's instructions tell
+them never to run `reqcove console`. Tried: this computer's page in a
+Chromium-based browser on macOS for its state and Approve (2026-11-16), and
+parts of its v1.3 panels in a desktop browser on macOS (2026-11-17; not Safari);
+the tailnet page in the iPhone's Safari, over the exit node and through the
+Remote Proxy, and in no other browser; what they ask of `run`, by unit and
+E2E tests; each section's "Tried:" says what. The guards and their limits:
+[SECURITY](SECURITY.md#the-reqcove-console-pages).
+
+### See the state and approve in a page (`reqcove console`)
+
+```sh
+reqcove console    # opens a page on 127.0.0.1 in the browser
+reqcove console --print    # prints a link to it instead, and opens nothing
+reqcove console --end    # ends every page open and every link not opened yet
+reqcove console --tailnet    # a QR code and a link to a page for your own devices on the tailnet (below)
+```
+
+Since v1.2, `reqcove console` asks the running `run` for a page of its state and
+of the agents' requests. Since v1.3 it opens a file
+`run` wrote in the state directory with `open` (macOS) or `xdg-open`
+(Linux), never the link itself, which other users of this computer would see
+in `ps`: the file sends the browser on to the link, and `run` removes it
+after 60 seconds. Once the opener succeeded, it prints neither the link nor its code:
+the link works once, and opened again it would close every page, the one
+just opened too. When the opener fails, it prints the link and why: open it
+yourself; against a v1.2 `run`, which writes no file, it opens nothing and
+prints the link alone. When the file opens in an app other than the browser
+(`open` picks the app for `.html` files, which may not be your web
+browser), when the browser cannot read the state directory (a sandboxed one
+may not read `~/.reqcove`), or for another browser, run
+`reqcove console --print`: it prints a new link, opens nothing, and removes
+the file `run` wrote for it. The page shows
+what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
+binary, the service, the config and hosts files, keep awake, the node and its
+devices, what is recorded (on, stopped, or allow-all and until when, with the
+hosts) and a change pending, and the next steps; and the requests waiting,
+each with its hosts, until when, and **Approve** and **Deny**. Approve adds
+the hosts the page showed, as `reqcove capture approve` does (`run` refuses
+other hosts), traced "capture add HOST (asked by an agent, approved in the
+console)"; Deny is `reqcove capture deny`.
+
+- **This computer only:** `run` listens on 127.0.0.1, on a port the system
+  picks, from the first `reqcove console` until `run` ends (`reqcove restart`
+  keeps it); never on the tailnet
+  node, the LAN, or `--ui`'s page (`reqcove console --tailnet` opens a page
+  of its own there, [below](#tailnet-page)). In LAN mode it shows the state too (the
+  requests are refused there, as ever).
+- **The link works once, for 60 seconds:** it carries a one-use code after
+  `#`, which the page trades for a session kept in that tab alone (the
+  browser forgets it when the tab closes; `run` keeps it until the limits
+  below) and then takes out of the address bar. `reqcove console` again
+  gives a new link. A link opened a second time closes every page of
+  `reqcove console` and says so: someone else may have had it. At most 4 pages
+  at once (a 5th closes the one used least recently); one unused for 12
+  hours closes; a restart of `run` closes them all, but `reqcove restart`
+  (since v1.3), which keeps them, each as long unused as it was.
+- **`reqcove console --end`** (since v1.3) closes every page and ends every
+  link not opened yet; the pages say so. `reqcove console` again opens a new
+  one. A `run` older than v1.3 says to restart it with v1.3.
+- **Never shown:** the flows' contents on the page (the HAR file, below,
+  gives the records, masked, when you ask), any token, link or login URL, the
+  `--mask-values` patterns, what a masking `@FILE` holds (a hosts file's
+  hosts are shown, as hosts), and any
+  text from an agent or an MCP client (the hosts it asked for are checked as
+  host names first). Discovery's names are shown when they are host names
+  (others are left out).
+- In a terminal only, as the `capture` commands, `--print` too; a `run`
+  older than v1.2 says to restart it with v1.2. `--print` is refused with
+  `--end`, and with `--tailnet`, which prints its link already.
+
+Tried: unit tests (the listener on 127.0.0.1 only; a wrong Host, a
+cross-site or missing Origin, a body other than JSON, a GET or PUT where a
+change is a POST, no session, a wrong one, a cookie alone, the code once,
+60 seconds by either clock, a code used twice closing every session, 4
+sessions, 12 hours idle by either clock; an approval for other hosts refused,
+approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
+`no-referrer` on every answer; no code or token in the answers or `run`'s
+log; LAN mode; the terminal check, the code file handed to a stand-in for
+`open`, the code never in its arguments, and neither the link nor the code
+printed once it opened; the link printed when it could not open, with no
+file, and with `--print` (nothing opened, the file removed); a v1.1
+`run`; the code file 0600, never through a symlink nor over a file, removed
+after its time, at `--end` and when `run` starts and ends; `--end` ending
+sessions and codes, in LAN mode too, and a v1.2 `run`'s answers), and E2E
+with real mitmproxy (approved in the console through its listener, the
+`mcp` marker "approved in the console"); by hand in a Chromium-based browser
+on macOS (2026-11-16): the page showed the state and the agents' requests,
+and Approve applied the hosts (traced "approved in the console"). The file's
+link, its `#c=` kept, reached a page on 127.0.0.1 in headless Chromium and
+Firefox on macOS (2026-11-16). By hand in a desktop browser on macOS
+(2026-11-17): `reqcove console` printed no link once the browser opened the
+page, `--print` printed one, `--end` ended the open page, and an agent's
+request (`request_capture_add`) was approved on the page. Not tried: the
+file in Safari, Linux's `xdg-open`, Safari on the Mac, another user of this
+computer, a 5th session.
+
+### Change the hosts: the Scope panel
+
+Since v1.3 the page's **Scope** panel changes the hosts as `reqcove capture`
+does ([change what is recorded](#change-what-is-recorded-while-it-runs);
+`run` checks each change again; in LAN mode it refuses them, as ever):
+- the hosts recorded and those passed undecrypted, each with **Remove**, and
+  **Add** (a host, with "pass undecrypted" for `--pass`);
+- **Stop recording** and **Start recording**;
+- **Allow all** and **Discover** for 30 minutes to 24 hours, each with
+  **End** and the time left;
+- the names discovery saw (host names alone, at most 30), each with **Add**;
+- **Save**.
+
+Stop, Remove (while recording is on) and Allow all first show the warning
+`reqcove capture` gives, word for word, and ask; every answer is shown as
+`run` gave it. A change made on a page that read the hosts before another
+change (in another tab, or `reqcove capture` in a terminal) is refused, and
+the page shows them as they are now. Changes are traced as `capture`'s,
+"(from the console on this computer)": `run`'s log, a `cli` marker and
+`scope_change`. `capture set` and `reqcove reload` stay commands.
+
+**Save** keeps the hosts for the next start, as `reqcove capture save` does
+([its details](#keep-the-hosts-for-the-next-start-reqcove-capture-save)).
+Where they go depends on the config:
+- **A config with a hosts file** (`--allow-hosts=@FILE`, which `reqcove
+  setup` writes, always since v1.3): Save writes that file.
+- **A config with its hosts inline** (`--allow-hosts=HOSTS`: v1.0's setup,
+  or one written by hand): the first Save creates the hosts file beside the
+  config and adds one line, `--allow-hosts=@FILE`, at the config's end (the
+  same for the hosts passed undecrypted, `--pass-hosts=@FILE`). The inline
+  hosts stay where they are.
+- **A `run` started from flags alone**: nothing to save to.
+
+Before it writes, Save shows what it would write: each hosts file's hosts
+now and once saved, the hosts that are pinned (given on `run`'s command
+line or inline in the config: a start takes them again whatever the file
+says; Save never writes them), and, on a config with its hosts inline, the
+file it creates and the line it adds (the page asks where `capture save`
+asks y/N). What the page confirms is the change and the files as read: an
+edit to the config or to a hosts file after it was shown refuses the save,
+even one the save would not change, and a hosts file changed since it was
+read is never replaced. Hosts not in their hosts file yet are marked "unsaved". After a
+first save, the page and `reqcove status` name the new hosts file at once,
+and the next Save writes it.
+
+Tried: unit tests (the panel's endpoints: each of the checks above, the
+page's changes alone (`set`, `reload`, `restart` and the others refused,
+none reaching `run`), an older scope refused, a save refused after an edit to the config or the
+hosts file since it was shown, discovery's names checked as
+host names, the warnings `run`'s own, LAN mode) and E2E with real mitmproxy
+(each change answering as through `ctl.sock`, traced "(from the console on
+this computer)", the warnings shown before the confirm in the answers, an
+older scope refused, Save's diff then a first save on a config with its
+hosts inline, the new hosts file in the page and in `status` at once, a
+second Save writing it; discovery's names on the page), and by hand in a
+desktop browser on macOS (2026-11-17): add, remove, a host "unsaved"; Save
+on a config with its hosts inline, which added the `--allow-hosts=@FILE`
+line, created the hosts file 0600 and kept `config.prev`, its confirm
+listing the change; Save refused, nothing written, after another tab added
+a host and after an edit by hand to the hosts file between the confirm and
+OK. Not tried in a browser: stop and start, allow-all and discovery (their
+confirms and countdowns are from reading the code; allow-all and End were
+tried on the tailnet page).
+
+### Change the settings, then restart
+
+Since v1.3 the page's **Settings** panel writes `run`'s settings to the `--config`
+file, for the next start, and restarts `run`:
+- `--device` (a list of your own devices on the tailnet, untagged, as
+  `run`'s node sees them: the page writes the device's StableID and shows its
+  name; any other device in your terminal), `--keep-awake`, `--proxy-port`,
+  `--hostname` and `--verbose`;
+- `--ui`, `--mcp-http`, `--local-proxy`, `--dns`, `--upstream-proxy` (a URL,
+  no user or password), a `--device` added, and `--mask-names` (names; one
+  taken out too): the page first shows `run`'s own words for the flag (as
+  `reqcove run -h` gives them) and asks;
+- shown, never written, with the reason: `--upstream-ca` (its path;
+  **Clear** takes it out), `--rules` and `--proto` (their paths),
+  `--mask-values` ("set" and how many, never the patterns), and a setting
+  read from a file (`@FILE`: its path, never what it holds). A setting given
+  on `run`'s command line wins over the file: shown as given there, never
+  written. A `run` started from flags alone (no `--config`) has every setting
+  read-only, and the page says why.
+
+A change goes through the writer `capture save` uses: the values checked (a
+line break, a control character or a leading `@` refused, and every flag but
+these), the config's other lines and comments kept, the file before kept as
+`config.prev`, the whole config checked as the next start would read it. A
+change made on a page that read the config before another change (another
+tab, an edit by hand) is refused. `run`'s log names the flag written, never
+its values. **Restart…** first lists every setting the config on disk has
+otherwise than `run` started with (edits by hand and the terminal's own
+flags included; `--mask-values` and what a masking `@FILE` holds only as
+"changed"; a hosts file's hosts as they are now against when `run` last read
+or wrote them), the records there are now, and that a restart empties them;
+then it asks, and restarts as `reqcove restart` does
+([above](#restart-in-place-reqcove-restart)). An edit made after the list was
+shown, to the config or to a hosts or masking file it reads, is refused,
+nothing stopped. This computer's page keeps its session across the
+restart; the tailnet page's sessions end with the run. Before it asks, it
+offers the records as a HAR file ([below](#presets-a-marker-the-ca-the-har-file)).
+
+**Restart with mitmweb (this start only)…** (this computer's page alone)
+restarts as `reqcove restart --web` does ([above](#restart-in-place-reqcove-restart)).
+It asks first in words of its own: mitmweb shows every flow mitmproxy
+decrypts unmasked, bodies included (up to 256 MB kept in memory); anyone
+with its password can edit and replay requests and change its options and
+scripts, which runs code on this computer; it opens on 127.0.0.1:8081 and,
+through the node, to your own devices; its link is printed in `run`'s
+terminal, or by `reqcove links` (under a service); its password is made
+anew; it lasts this start only. Then the restart's list, with
+`+ --web (this start only; unmasked)`, and the restart's own confirm. The
+page never shows mitmweb's link, its password or its port with them. While
+mitmweb runs, both pages say `mitmweb: on — unmasked; this start only` (or
+`from the command line`) at the top and under This run. The tailnet page
+has no such button, and `run` refuses a restart from it, directly or
+through the Remote Proxy (tests).
+
+The Settings panel: unit tests (each setting written through the page and
+read back; a line break, NUL, a leading `@`, another flag in a value, a
+terminal-only flag as the field or a field added, refused, nothing written;
+pinned settings and a flags-only run read-only; the warnings `run -h`'s own,
+refused until confirmed; `--mask-values` in no answer and no log line; a
+page that read the config before an edit refused; the device list the own
+devices alone; the restart's list with an edit by hand of a terminal-only
+flag, a changed masking `@FILE` and a hosts file's hosts, a list made stale
+by an edit to the config, a hosts file or a masking file refused, the
+restart asked; with mitmweb: its words and `+ --web` in the list, the
+restart asked with it, the tailnet page refused, directly and relayed).
+By hand in a desktop browser on macOS (2026-11-17): `--keep-awake` written
+and Restart… with its list; a change in the hosts file alone shown in that
+list; a run from flags alone read-only; Restart with mitmweb (this start
+only)…: its confirm, `mitmweb: on — unmasked; this start only` on the page
+and in `reqcove status`, mitmweb opened from the iPhone over the tailnet,
+and a plain Restart… dropping it. Not tried in a
+browser: the other settings (their confirms are from reading the code), the
+device list.
+
+### Presets, a marker, the CA, the HAR file
+
+Since v1.3 the page has these panels too:
+- **Presets and rules**: the `--rules` file's presets by name and kind,
+  whether each is on, until when and (a mock) how many requests are left;
+  **Turn on** for 1 to 5 minutes (a mock: or until 1 to 20 requests),
+  **Turn off**, as an agent's
+  `activate_preset` and `deactivate_preset` do (while recording is stopped,
+  mitmproxy refuses, as it does an agent). Before turning one on, the page
+  says what that kind changes; for a `map_remote` preset, where the requests
+  go then, with their cookies and tokens (its scheme and host; "not shown"
+  when it is not a plain one). If the file changed that destination since
+  the page showed it, the page's request is refused. The rules are listed by
+  kind, index (`mock[0]`) and preset name, never their values (no URL,
+  filter, header, body, address or path); a file that does not load is said
+  to, without its error (run's log has it).
+- **Add a marker**, as `reqcove mark` does, with source `console`
+  (`list_markers`).
+- **CA**: its name, SHA-256 fingerprint and expiry, a QR code of
+  http://mitm.it for the iPhone's camera, and how to add it on an iPhone and
+  remove it, as `reqcove status` prints them.
+- **Save the records as a HAR file…**: the file `reqcove har` writes (what
+  the agents' tools return, masked, body heads only), saved where your
+  browser saves downloads (your Downloads folder, usually), with the
+  permissions the browser gives files there: check them, and where it is,
+  before sharing it. The page asks for it with its session, in a header,
+  never a link with a token. Refused while `run` masks nothing
+  (`--no-redact`): use `reqcove har` in your terminal then.
+- **This run** also shows the service's commands (how to stop it, its log,
+  how to restart it; or, from a terminal, how to install one; read-only),
+  and with `--ui` a link to its page's address, without its token (open the
+  link `reqcove links` prints once in that browser).
+
+The other panels: unit tests (with a stand-in for mitmproxy: no rule's value,
+description or error text in an answer, a `map_remote` destination a plain
+scheme and host or "not shown", turned on only with the destination shown,
+1 to 5 minutes, a field added refused; the marker's source `console`; the
+CA's fields alone, its key in the state directory never; the HAR an
+attachment of JSON with `nosniff` and `no-store`, masked, refused without
+masking, no token taken in a URL; v1.2's guards on each new request; the
+`--ui` link without a token) and an E2E test with real mitmproxy (presets
+and rules from a real file, none of its values shown; on with the
+destination, off; refused once recording stopped), and by hand in a
+desktop browser on macOS (2026-11-17): a marker, and the HAR download (the
+browser renamed the file). Not tried in a browser: the presets, the CA
+panel (the QR code drawn), This run (from reading the code).
+
+<a id="tailnet-page"></a>
+
+### The page on the tailnet (`reqcove console --tailnet`)
+
+```sh
+reqcove console --tailnet    # prints a QR code and http://100.x.y.z:PORT/#c=CODE
+```
+
+Since v1.3, `reqcove console --tailnet` opens a second page of `run`, for
+your own devices on the tailnet: scan its QR code with the iPhone's camera
+(the iPhone on the tailnet: the Tailscale app connected), or open the link
+it prints. It prints both in the terminal alone: it opens no browser and
+writes no file. The page has what ends with the run:
+- the state, the next steps and the warnings, without this computer's paths
+  (the binary, the config and hosts files, a `--state` in a command: "(a
+  path on this computer)"; a next step that names another path of this
+  computer is left out);
+- the agents' requests, with **Approve** and **Deny**;
+- the Scope panel: add and remove, stop and start, allow-all and discovery
+  with **End**, with their warnings and confirms; discovery's names only as
+  how many (listed, with **Add**, on this computer's page);
+- presets on and off and the rules by kind and name, a marker, and the CA
+  panel.
+
+Save, the Settings panel, **Restart…** and the HAR file are this computer's
+page's alone: `run` refuses them on the tailnet page, which does not show
+them. Changes are traced with the device's name: "(from the console on
+iphone, over the tailnet)", and an approval "approved in the console on
+iphone (tailnet)".
+
+- **Your own devices only, and the one that opened the link:** `run` checks
+  every request from its connection (never a header): the device must be
+  one of your own (your user's, as `run`'s node is, neither tagged), as the
+  tailnet has it now (`run` reads it every 3 seconds), so a device tagged or
+  removed meanwhile is refused once `run` sees it, on a connection kept
+  alive too (the check on every request is tested, the delay not
+  measured); and the session is the device's that traded the code
+  (its StableID): the same token from another device is refused and ends.
+  Another user's device, a tagged one and one shared in from another
+  tailnet are refused, even when `--device` carries them.
+- **Its own address and port:** `run` listens on the node's tailnet IPv4
+  address, on a port of its own (not `--ui`'s 80: another origin), from the
+  first `reqcove console --tailnet` until `run` ends. A request must name
+  that address and port (the node's MagicDNS name is refused), and one
+  carrying another page's Origin is refused.
+- **The link works once, for 60 seconds,** as this computer's page's does;
+  a link opened twice ends every session of the tailnet page. A session
+  lasts 1 hour unused and 12 hours in all, at most 4 at once (from reading
+  the code), and ends with
+  `run` (`reqcove restart` does not carry them). `reqcove console --end` ends
+  them too. `reqcove status` counts each page's sessions, the tailnet page's
+  by device.
+- Refused in LAN mode and on a tagged node (a tagged node is no user's, so
+  no device is your own to it). In a terminal only; agents never run it. A
+  `run` older than v1.3 says to restart it with v1.3.
+- **Through the Remote Proxy:** with the iPhone's Wi-Fi proxy set to the
+  Remote Proxy (the node's `:8080`), Safari sends the page's requests to the proxy, which serves them itself, with the page's
+  own checks: who calls is the proxy's client, from its connection (a
+  forwarded header counts for nothing), and only `--device` devices reach
+  the Remote Proxy at all, so there the page works on an own device that
+  `--device` also carries. They never reach mitmproxy, so they make no
+  flow, under allow-all too. A tunnel (CONNECT) to the page's port is
+  refused, and the local proxy (`--local-proxy`) never serves the page
+  (tests; tried in the iPhone's Safari with its Wi-Fi proxy set to the
+  Remote Proxy: the QR link opened the page).
+
+Who counts as your own device, and what the code guards:
+[SECURITY](SECURITY.md#tailnet-console-page).
+
+Tried: unit tests (with stand-ins for the node's listener and its
+own-device check: a device not your own refused, also on a connection kept
+alive once the check changes, which then closes; a session used from
+another of your devices refused and ended; this computer's page's codes and
+tokens refused on the tailnet page, and the reverse; a Host by name or by
+another port, and another Origin (`--ui`'s among them) refused; every route
+of this computer's page but the tailnet page's refused, Save too; no path of
+this computer in the answers, with a `--state` not the default, a next step
+naming a path with a space left out; discovery's
+names absent, their count there; 1 hour unused and 12 hours in all; the
+counts for `status`; `--end`; LAN mode and a tagged node refused; the
+terminal check, the QR code and link printed, no opener run and no file
+written, a `run` older than v1.3), the own-device check on a netmap (a
+tagged device, another user's, one shared in and a sharee refused, though
+`--device` lets each in; one retagged refused; none on a tagged node), with
+real tsnet nodes on a local control server (the listener on the node's
+tailnet IPv4 address, another user's `--device` device refused there, and a
+connection's remote address the peer's tailnet address), and E2E with real
+mitmproxy (the Scope panel's changes from the tailnet page, traced with the
+device's name, their answers without the state directory; discovery's names
+absent from it; the page's requests through the Remote Proxy answered by
+the page and no flow, under allow-all), and by hand in the iPhone's Safari
+(2026-11-17), over the exit node and with the Wi-Fi proxy set to the Remote
+Proxy: the state with no path of the Mac, a host added, an agent's request
+approved, allow-all on and End; `reqcove restart` ended its session (a new
+QR code needed). Not tried: another user's or a tagged device, presets, a
+5th session, any other browser.
+
+### What stays in the terminal, and why
+
+The page writes only what a typed list in `run` allows (the config writer's:
+the settings above, and the hosts files beside the config); everything else
+stays a command or a line you write yourself. From the code:
+
+| What | Where | Why |
+|---|---|---|
+| `--upstream-ca`, `--rules`, `--proto` | your terminal; the page shows their paths, and may take `--upstream-ca` out | a file `run` reads, or a CA it trusts |
+| `--mask-values`, what any `@FILE` holds | your terminal; never shown ("set" and a count) | patterns can be secrets |
+| `--no-redact`, `--web`, `--rules-reload`, `--lan`, `--allow-hosts '*'` | `run`'s command line (a config refuses them, since v1.0) | they unmask the records or widen who reaches them |
+| `--state`, `--config`, `--uvx`, `--python`, `--mitmproxy-spec` | your terminal | the state's lock, the file itself, the code `run` runs |
+| A setting given on `run`'s command line | that command line (the page shows it pinned) | it wins over the file |
+| Any other flag of `run` (`--lan-interface`, say) | a line you write in the config, or the command line | the page writes its fixed list alone |
+| `reqcove capture set`, `reqcove reload` | your terminal | the page takes its own changes alone, one at a time, each with its warning |
+| Save, the Settings panel, **Restart…**, **Restart with mitmweb (this start only)…**, the HAR file | this computer's page; never the tailnet page | they write files on this computer, turn on mitmweb (unmasked) or hand out the records |
+| `reqcove console` itself (`--tailnet`, `--end`, `--print`), `reqcove restart`, `capture`, `setup`, `service`, `cleanup`, `links`, `lan`, `init` | your terminal (restart: also the page's **Restart…**) | the code that opens a page is printed there; the others install, remove, print tokens or let devices in |
+
+The terminal check is a guard against mistakes, not a boundary: a process
+of your user can give a command a terminal
+([SECURITY](SECURITY.md#console-limits)).
+
+
+## Change what is recorded while it runs
+
+Since v1.1, the hosts recorded change without a restart, so the records stay.
+The commands change the `run` that is running, whether a terminal or a
+service started it (`--state DIR` for another one). Type them in a terminal,
+or make the same changes but `set` on the `reqcove console` page
+([its Scope panel](#change-the-hosts-the-scope-panel)):
+
+```sh
+reqcove capture add api.example.com          # record it too
+reqcove capture remove api.example.com       # stop recording it
+reqcove capture add --pass pinned.example.com     # carry it undecrypted (as --pass-hosts)
+reqcove capture remove --pass pinned.example.com  # decrypt it again
+reqcove capture set --allow-hosts 'api.example.com,*.example.net'  # all of them at once
+```
+
+Hosts are written as `--allow-hosts` takes them; `--state DIR` for a node
+other than the default one. Each answer says what happened: applied, or
+pending (mitmproxy took the change but did not acknowledge it: reqcove tells
+it again every few seconds, and when mitmproxy starts again), how many
+records are kept, and the limits below. While mitmproxy restarts, `add`,
+`remove` and `set` are refused, nothing changed ("mitmproxy is restarting:
+try again in a moment"): each is checked first against the rules mitmproxy
+holds.
+
+- **New connections only.** An added host is decrypted on new connections:
+  an app keeps its connection open for a while, so reopen it to see the host
+  now. A removed host is no longer recorded from the next event on, and a
+  body under way is copied no more, but its open connections stay decrypted
+  (unrecorded) until they close. With `--web`, mitmweb still lists the
+  requests on them (URLs and headers, unmasked), without their bodies (from
+  reading the code).
+- **Not saved** until `reqcove capture save` (below): a restart of `run`
+  goes back to the hosts it was started with (its flags or `--config`).
+- **Refused:** `"*"`, removing a host a wildcard takes in (the answer names
+  the wildcard: remove that, or use `set`), a change that takes out a host a
+  `mock` rule names (the answer names the rules), and any change in LAN mode
+  (not in this version: restart `run` there). A `run` older than v1.1 says so.
+- **Only in a terminal**, as `reqcove mark`: agents never run it. A tool's
+  note, or a step in `next_steps`, gives `reqcove capture add HOST` for you to
+  run. That is a guard against mistakes, not a boundary
+  ([SECURITY](SECURITY.md#other-processes-on-this-computer)).
+- **A trace:** each change is a line in `run`'s log, a marker with source
+  `cli` (`list_markers`), and in `reqcove status` "last changed at … (capture
+  add api.example.com)" (`scope_change`, `scope_changed_at` in `--json`).
+
+Tried by tests (unit, and E2E with real mitmproxy: add, then a new
+connection is recorded; remove, then one is not; the marker and status), and
+by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): add, remove and `set`, each answered and marked, a host recorded
+after `add` and `set` and not after `remove`. The pending answer and a `mock` rule's refusal, as `reqcove
+capture` gives them, are from reading the code (the change underneath, its
+pending state and the refusal, has tests of its own); the refusal while
+mitmproxy restarts, telling a pending change again, and a body under way
+copied no more (with mitmproxy's Python) have unit tests.
+
+### Keep the hosts for the next start (`reqcove capture save`)
+
+```sh
+reqcove capture save     # write the hosts recorded now to the hosts file
+```
+
+It writes the hosts recorded (those `capture start` records, while stopped)
+into the hosts file `run` read them from: the `--allow-hosts=@FILE` that
+`reqcove setup` puts in the config. Since v1.3 the hosts passed undecrypted
+(`--pass`) go the same way into the `--pass-hosts=@FILE`. The next start from
+that config records them. The file is replaced whole (0600). Its comments
+stay, and so do its lines whose hosts are all kept; new hosts go at the end.
+
+- **A config with its hosts inline** (since v1.3: `reqcove setup` of v1.0
+  wrote `--allow-hosts=HOSTS`, or one written by hand): the first save shows
+  what it would do and asks y/N. It creates the hosts file beside the config
+  (`hosts`, and `pass-hosts` for hosts passed undecrypted; 0600, never over a
+  file or link already there) and adds one line to the config,
+  `--allow-hosts=@FILE` (or `--pass-hosts=@FILE`), at its end. The config's
+  other lines are not changed; the file before is kept as `config.prev`
+  (0600). If writing the config fails, the file created is removed. From then
+  on `run` saves to that file (a second save asks nothing). Refused when a
+  file of that name is there already and the config does not name it: add the
+  line yourself (then `reqcove reload`), or move the file away.
+
+- **Hosts given as they are** (on `run`'s command line, or as
+  `--allow-hosts HOST` in the config) are not written: a start with them
+  records them again whatever the file says (one in the hosts file too stays
+  there). The answer names them, and says which of them you removed now
+  that come back that way, in the hosts file too or not.
+- **Nothing to save to** when `run`'s hosts come from several files, or,
+  started from flags alone, from no hosts file: the answer says to put one
+  `--allow-hosts=@FILE` on the command line, or to start `run` from a config.
+  Nothing is written. (Started from flags alone, the hosts passed
+  undecrypted are not saved, unless `--pass-hosts=@FILE` names a file.)
+- **No hosts left** (since v1.3): the file keeps its comments and no host,
+  when the next start would still take it. Before writing, the save checks the
+  whole set of `run`'s flags it would leave, as the next start reads them:
+  `--rules`, `--upstream-proxy` and hosts passed undecrypted need hosts
+  recorded (hosts given as they are count), so a save leaving none with
+  `--rules` is refused.
+- **Refused**, nothing written: `"*"` (never in the file); what the next
+  start would refuse; a file that is not a plain file (a link, say) or not
+  yours; the file `--pass-hosts` reads too. In LAN mode, as the others.
+- **A trace**, as a change: `run`'s log, a `cli` marker, and `reqcove status`
+  "last changed at … (capture save)".
+
+Tried by tests only (unit: what is written and kept, each refusal; E2E with
+real mitmproxy: `run` started from a config with a hosts file and a host on
+the command line, add, remove that host, save, then a new `run` from the
+config records the host added), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): Homebrew's hosts file
+rewritten with the hosts added live, its comments kept. The v1.3 changes
+(the first save on an inline config with its y/N, a file without hosts, pass
+hosts saved, the check of the flags left) have unit tests only, not tried by
+hand.
+
+### Edit the files, then `reqcove reload`
+
+```sh
+reqcove reload     # read the config, its hosts files and the --rules file again
+```
+
+Since v1.1, after you edit the config, the hosts file it names
+(`--allow-hosts=@FILE`) or the `--rules` file, `reqcove reload` puts their
+hosts and rules in force without a restart, so the records stay. `--state
+DIR` for a node other than the default one.
+
+- **All or nothing.** It reads the files first and checks them together: the
+  config's flags, the hosts files, and the rules against the new hosts (a
+  host and the `mock` naming it can go in, or out, in one edit). If anything
+  does not load, nothing changes, and the answer says why (a line number, never
+  a line's text).
+- **The hosts** replace those recorded now (the base, while stopped or during
+  allow-all: what is recorded once it ends). Hosts given on `run`'s command
+  line stay. Changes made with `reqcove capture` and not saved are replaced by
+  the files': the answer names them.
+- **The rules** are read again and loaded with the hosts at once; the answer
+  says how many of each kind are loaded. Presets go off (new rules turn them
+  off; an agent turns one on again). `--rules-reload` works as before.
+- **Other settings** (`--device`, `--mcp-http`, `--proto`, `--mask-values`,
+  …) take a restart: the answer names, in one line, those that changed
+  (never their values), and applies none of them. So does a `--rules` file
+  added, removed or moved to another path.
+- **Nothing to reload** for a `run` started from flags alone (no `--config`,
+  no `--allow-hosts=@FILE`, no `--rules`).
+- **Refused**, nothing changed: a hosts file that now gives `"*"` (every
+  host) while the hosts recorded are not `"*"`, as `capture set` refuses it
+  (`reqcove capture allow-all --for D` records every host for a while); and
+  while mitmproxy restarts, as `capture add` ("try again in a moment"). New
+  hosts and rules that mitmproxy then does not acknowledge restart it with
+  both, never one without the other.
+- **New connections only**, as `capture add` and `remove`.
+- As the `capture` commands: in a terminal only, refused in LAN mode, an
+  older `run` named, and a trace (`run`'s log, a `cli` marker, `scope_change`
+  `reload`).
+
+Tried by tests only (unit: the parse of `run`'s arguments again, which never
+exits nor logs, the settings named, `"*"` refused, mitmproxy restarted when it
+does not acknowledge new rules; E2E with real mitmproxy: a host and a
+mock for it added together, then answered by the mock; a broken rules file
+changing nothing, the hosts file's edit neither; the host and its mock taken
+out together; an unsaved `capture add` named as replaced; a preset off after;
+`--mcp-http` added named), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): the hosts file edited by hand,
+then `reload`: the host added recorded, the one taken out not, the records
+kept.
+
+### Stop recording for a while
+
+```sh
+reqcove capture stop     # record nothing new; the records stay readable
+reqcove capture start    # record the same hosts again
+```
+
+While stopped, mitmproxy decrypts nothing new (mitm.it only, for the CA),
+nothing new is recorded, and **no rule of the `--rules` file applies**: mock,
+map_local, map_remote, modify_headers and resolve, presets included (the
+ones on are turned off, and `activate_preset` is refused). So the app's
+requests go to the real servers as it sends them, a mocked API's too: the
+answer of `stop` warns of it and says how many records are kept.
+
+- Connections already decrypted stay decrypted until they close, but nothing
+  on them is recorded, and no rule applies to their new requests (a request
+  already under way when you stop ends as it began, from reading the code;
+  its body is copied no more, a unit test). An open WebSocket's flow
+  is closed with "recording stopped: its host left the scope". With `--web`,
+  mitmweb still lists the requests on those connections (URLs and headers,
+  unmasked), without their bodies (from reading the code).
+- `start` says the hosts it records again. It records new connections and
+  WebSockets only (reopen the app): one open before the stop is not recorded
+  again. Presets stay off until an agent turns one on.
+- `capture add`, `remove` and `set` while stopped change the hosts `start`
+  records (the answer says so); nothing is recorded until then.
+- A restart of mitmproxy keeps it stopped; a restart of `run` records again
+  (not saved).
+- `reqcove status` says "recorded: nothing: stopped" and the hosts kept;
+  `--json` and the MCP `status` say `"recording": "stopped"`, `allow_hosts: []`
+  and the hosts kept in `base_allow_hosts` (`base_pass_hosts`); `next_steps`
+  gives `reqcove capture start`. Refused in LAN mode, as the others.
+
+Tried by tests only (E2E with real mitmproxy: an open WebSocket records
+nothing more and does not resume after the start, a new one records; a mocked
+URL reaches the server, on a new connection and on one decrypted before the
+stop; a preset is turned off and cannot be turned on; mitmproxy killed while
+stopped comes back stopped; the CLI's answers, status, markers), and
+by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): nothing recorded while stopped, recorded again after `start`.
+
+### See what every app sends, for a while
+
+```sh
+reqcove capture allow-all --for 30m   # record every host for 30 minutes (at most 24h)
+reqcove capture allow-all --end       # end it sooner
+```
+
+For a while every host is decrypted and recorded, as `--allow-hosts '*'`
+does, not only the ones you allowed: to see what the other apps send. Apple's
+hosts still pass through undecrypted, and so do the `--pass-hosts` ones. The
+answer repeats what `'*'` warns of: every app's and site's traffic is
+recorded and readable by agents and their model providers; apps that pin
+their certificates (banks, say) fail meanwhile; and, when they apply,
+`--upstream-proxy` (every request goes on to it), `--mcp-http`, `--web`,
+`--local-proxy`.
+
+- **Time-limited.** It ends at the time the answer gives, by this computer's
+  clock or by `run`'s own running time, whichever comes first (a sleeping Mac
+  does not keep it on longer), within a second or so. `--for` again moves the
+  end to now plus the new time.
+- **The records made meanwhile stay** after it ends, until evicted or `run`
+  restarts. Other apps' traffic fills `max_flows` and `max_bytes` too, so your
+  app's older records are evicted sooner (from reading the code).
+- **The rules** (`--rules`) apply to the hosts you allowed alone, never to
+  the other hosts recorded meanwhile: a `modify_headers` rule naming no host
+  does not send its header to them.
+- **New connections only**, both ways: reopen an app to see it; once it
+  ends, connections decrypted meanwhile stay decrypted (unrecorded) until
+  they close.
+- `capture add`, `remove` and `set` meanwhile change the hosts recorded after
+  it (the answer says so). `capture stop` ends it; `allow-all` while stopped
+  is refused (`capture start` first). A run started with `--allow-hosts '*'`
+  has nothing to add ("nothing changed").
+- **Never kept past its end:** a restart of mitmproxy meanwhile keeps it
+  until its end, not longer; when its end comes and mitmproxy does not
+  answer, reqcove stops recording the other hosts first, then restarts
+  mitmproxy without it. So does a `capture stop` meanwhile that mitmproxy
+  does not acknowledge: restarted stopped (a unit test). A restart of `run`
+  ends it (not saved).
+- `reqcove status` says "every host: allow-all until …" with the time left
+  and the hosts recorded after it; `--json` and the MCP `status` say
+  `"recording": "allow-all"`, `allow_hosts: ["*"]`, `allow_all_until`,
+  `allow_all_left` and `base_allow_hosts`; `next_steps` gives the time left
+  and `reqcove capture allow-all --end`. After it, `records_outside_scope`
+  counts the records of hosts outside the ones recorded. The trace, the LAN
+  refusal and "in a terminal only" as the others; the end by time is in
+  `run`'s log and `scope_change` ("allow-all ended: its time is up"), with no
+  marker.
+
+Tried by tests only (unit: the arguments, the order, a stop ending it, the
+end by either clock with mitmproxy silent; E2E with real mitmproxy: a host
+outside the ones allowed recorded, with no rule applied, and not after the
+end, its records kept; a `--pass-hosts` host still undecrypted; mitmproxy
+killed just before the end comes back without it; the CLI's answers, status,
+markers), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16) for a minute: another site and another app's
+requests recorded, none after the end, the records kept. Not across a real
+sleep of the Mac.
+
+### Find the hosts an app reaches (`reqcove capture discover`)
+
+```sh
+reqcove capture discover --for 30m   # keep the names of the other hosts for 30 minutes (at most 24h)
+reqcove capture discover --end       # end it sooner
+```
+
+Since v1.1, for a while, Reqcove keeps the **names** of the hosts outside the
+ones recorded that the devices reach, and how often: the name a TLS
+connection asks for (its SNI), and the Host of a request on a connection that
+is decrypted but not recorded. Nothing they send is kept: no content, no URL
+path, no time. So you can see which hosts your app talks to, then add the
+ones you want.
+
+- **Where it shows:** `reqcove status` ("outside:", each with the `reqcove
+  capture add HOST` command that records it), and for this computer's agents
+  `status` and `summarize` (`out_of_scope_hosts`, `out_of_scope_hosts_kept`,
+  `discover_until`, `discover_left`). Never over `--mcp-http` nor on the
+  `--ui` page. It shows on once mitmproxy has acknowledged it: until then
+  (mitmproxy restarting, say) `next_steps` says it is asked, not on yet, and
+  reqcove tells mitmproxy again every few seconds and when it starts again
+  (unit tests).
+- **Counts:** TLS connections and requests together. The 30 most seen are
+  shown, of at most 1,000 kept (past that, a new name takes the place of the
+  least seen). A host you add drops off the list.
+- **Left out:** Apple's hosts, mitm.it, names that are not plain host names
+  (shown masked, without a command, if masking changed them).
+- **Not every host:** a connection without a name (an address dialed), one
+  with ECH (only its outer, public name is seen) and connections that are not
+  TLS on a host outside the scope are missed (from reading the code, not
+  tried).
+- **Time-limited**, as allow-all: it ends by this computer's clock or by
+  `run`'s running time, whichever comes first; `--for` again moves the end.
+  A run with `--allow-hosts '*'` has nothing outside ("nothing changed").
+  At the end no name is taken from then on, whether mitmproxy was told or
+  not. The names seen **stay** until `run` restarts or discovery starts
+  again (a new `--for` after the end begins a new list). A restart of `run`
+  ends it (not saved).
+- The cost: each TLS connection's ClientHello is read once more (mitmproxy
+  reads it anyway to decide what to decrypt): about 22 µs for a 1.5 KB one,
+  from a micro-benchmark on an M1 Max Mac (mitmproxy 12.3.1, Python 3.14);
+  nothing when off (from reading the code).
+- As the other `capture` commands: in a terminal only (agents never run
+  it), refused in LAN mode, an older `run` named, and a trace (`run`'s log,
+  a `cli` marker, `scope_change`).
+
+Tried by tests only (unit: the names taken only while on, Apple's, mitm.it and
+bad names left out, masking, the bound, the end by either clock with
+mitmproxy silent; E2E with real mitmproxy: a TLS connection's SNI and a
+request's Host counted, once a connection, none of Apple's, nothing recorded
+of them, not in what `--mcp-http` and `--ui` read, none taken before or after,
+a host added dropping off; the summarize and status tools: on the local
+server alone), and by hand on an iPhone (Safari over the exit node, a `run` under `brew services`, 2026-11-16): a site's names listed in `reqcove status`
+and `summarize` with their `capture add` command, one added and then recorded.
+
+### Let an agent ask for a host (`reqcove capture approve`)
+
+```sh
+reqcove capture requests            # what agents asked, and what came of it
+reqcove capture approve 0a1b2c3d    # shows the hosts, asks y/N, then adds them
+reqcove capture deny 0a1b2c3d       # refuses it
+```
+
+Since v1.2, an agent connected through `reqcove mcp` can ask for hosts to be
+recorded (the `request_capture_add` tool): 1 to 5 host names. It records
+nothing by itself. `run` keeps the request, with an id and its hosts fixed,
+and the agent's answer gives you the command to run, such as
+`reqcove capture approve 0a1b2c3d`. The agent is told never to run it.
+
+- **Approve** shows the hosts and asks `Approve? [y/N]`; only `y` or `yes`
+  approves. It adds exactly those hosts, as `reqcove capture add` does:
+  new connections only, not saved, the hosts passed undecrypted kept, and a
+  stopped recording stays stopped (the hosts are the ones `capture start`
+  records). The id is bound to its hosts: an approval for other hosts is
+  refused.
+- **The client's dialog:** when the agent's client says it can show a form
+  (MCP elicitation), `reqcove mcp` also shows one for a new request. Its text
+  is Reqcove's: the hosts (run's, checked as host names), that agents will
+  read their traffic, masked (unmasked, it says, under `--no-redact`; so does
+  `approve`, and every view of the request, `unmasked`), and that it is not saved; never the agent's words. It has one box, "Record these hosts", off at
+  first: accept with the box ticked approves it as `approve` does (Enter on
+  Accept alone, where Claude Code's cursor starts, approves nothing). Decline,
+  close it, accept without the box, an error or no answer within 2 minutes
+  leaves it pending, for the terminal or `reqcove console`. Tried in Claude
+  Code's terminal CLI (2026-11-16): the dialog shows, with the box; Esc
+  leaves the request pending, and so does Accept with the box unticked;
+  ticked, Accept approves it ("approved in the dialog"). It is not
+  shown again when the agent asks again for the same hosts. A client that
+  declares URL elicitation alone (no form) gets no dialog. Over MCP's newest
+  protocol the client shows the dialog between two calls: its answer counts
+  only for a dialog `reqcove mcp` showed on that connection, once, within 2
+  minutes by either clock; any other answer leaves the request pending. If
+  the client fails there, the agent's call ends in an error and the request
+  stays pending: asking again for the same hosts gives its id and command.
+- **What is asked:** host names only (letters, digits, `-` and `.`; no
+  wildcard, no IP address), lowercased, each once, sorted. Refused: hosts all
+  recorded already, a host passed undecrypted (`--pass-hosts`), any host
+  you denied in the last 10 minutes (alone or with other hosts), a 4th pending request, an 11th made in
+  10 minutes, and any in LAN mode. Asking again for the same hosts while
+  pending gives the same request.
+- **Time-limited:** a request expires 10 minutes after it was made, by this
+  computer's clock or by `run`'s running time, whichever comes first. One
+  that ended (applied, failed, denied, expired) is kept 10 minutes more for
+  `capture requests` and `get_capture_request`. A restart of `run` drops
+  them all.
+- **Where it shows:** `reqcove status` ("asked:", with the command), this
+  computer's `status` (`capture_requests`), and the agent's
+  `get_capture_request` (`pending`, `approved`, `applied`, `failed`,
+  `denied`, `expired`). Never over `--mcp-http`, which has neither tool.
+- **A trace:** each state is a line in `run`'s log; an approval is also a
+  marker with source `mcp` and `scope_change`, both "capture add HOST (asked
+  by an agent, approved in the terminal)" (or "in the dialog").
+- As the other `capture` commands: in a terminal only, and a `run` older than
+  v1.2 says to restart it with v1.2.
+
+Tried: unit tests (the hosts taken and refused, the limits, expiry
+by either clock, the denial kept, a restart, an approval for other hosts, the
+y/N prompt, a v1.1 and a v1.0 `run`, LAN mode, the terminal check, a denied
+host asked with another, `unmasked` in every view under `--no-redact`; the
+dialog with an in-memory client accepting, declining, cancelling, failing,
+not answering in time, or without the capability, over MCP's newest
+protocol and older ones; a client declaring URL elicitation alone; an answer
+made up, replayed, from another connection, or late by either clock; a raw
+client asking 2026-07-28 in `initialize` (answered 2025-11-25, and given the
+dialog between two calls, as the SDK treats it); neither tool over `--mcp-http`), and E2E with real
+mitmproxy (asked through `reqcove mcp`, shown in this computer's status and
+not in `--mcp-http`'s, approved, then a new connection recorded; the `mcp`
+marker and `scope_change`; approved while stopped); by hand in Claude Code's
+terminal CLI (2026-11-16): its dialog as above, a request left pending
+approved in `reqcove console`, and one that expired by itself; approved on
+this computer's page and on the iPhone's tailnet page (2026-11-17). Not
+tried: Codex's dialog.
 
 ## Read the traffic with an agent
 
@@ -1089,8 +1619,16 @@ code `run` (or `reqcove links`) prints.
   this computer ([security details](#security-web)).
 - It shows bodies up to 2 MB each, and keeps the newest 10,000 flows and
   256 MB of bodies ([what those bounds count](#security-web)).
-- The link is the same at each start (`web-token` in the state directory).
-  After a restart, open it again: a bookmark without the token asks for it.
+- The link is the same at each start (`web-token` in the state directory),
+  but after a restart that turned mitmweb on for one start (below), which
+  makes a new one. After a restart, open it again: a bookmark without the
+  token asks for it.
+- For one start, without retyping `run`: `reqcove restart --web` in your
+  terminal, or **Restart with mitmweb (this start only)…** on this
+  computer's `reqcove console` page (since v1.3;
+  [restart in place](#restart-in-place-reqcove-restart)). `--web` stays
+  refused in the config, so a service never starts with it by itself, and
+  the next restart of any kind starts without it.
 - In its Capture tab, leave "Run SOCKS Proxy" on, or the devices' HTTP(S)
   stops. The other modes there are not Reqcove's. Changes last until reqcove
   starts again.
@@ -1108,8 +1646,9 @@ What it shows, and to whom: [SECURITY](SECURITY.md#mitmweb---web). Beyond
 that:
 
 - It listens on 127.0.0.1. Its password is kept in `web-token` (the same at
-  each start until you delete that file and start again) and passed through a
-  0600 file, never the command line.
+  each start until you delete that file and start again, or a restart turns
+  mitmweb on for one start, which makes it anew) and passed through a 0600
+  file, never the command line.
 - The node relays its port 8081 to mitmweb for your own devices only: not a
   `--device` device of another user, nor anyone else. The password still
   guards it, and it gives what it gives on this computer.
@@ -2401,7 +2940,8 @@ no internet; turn the exit node off then.
 | Start | `reqcove run` (Ctrl-C stops it) | `reqcove service install`: now and at each login | `brew services start reqcove`: now and at each login |
 | After it ended | `reqcove run` | `reqcove service restart` (after stopping it until the next login too) | `brew services restart reqcove` |
 | After an update | Ctrl-C, then `reqcove run` | `reqcove service restart`; after moving to another binary (a new path, or Homebrew's), `reqcove service install` | `brew upgrade reqcove`, then `brew services restart reqcove` |
-| After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove service restart` | `reqcove reload`; for the rest, `brew services restart reqcove` |
+| After editing the config, hosts or rules file | `reqcove reload` for the hosts and rules; for the rest, `reqcove restart`, or Ctrl-C, then `reqcove run` | `reqcove reload`; for the rest, `reqcove restart` or `reqcove service restart` | `reqcove reload`; for the rest, `reqcove restart` or `brew services restart reqcove` |
+| Restart in the same process (since v1.3) | `reqcove restart` ([restart in place](#restart-in-place-reqcove-restart)) | `reqcove restart` | `reqcove restart` |
 | Stop until the next login | Ctrl-C | `launchctl bootout gui/$(id -u)/io.github.mh-mobile.reqcove`, or `systemctl --user stop reqcove` | `brew services kill reqcove` (from Homebrew's help, not tried) |
 | Stop and remove | Ctrl-C | `reqcove service uninstall` | `brew services stop reqcove` |
 | The log | the terminal | macOS: `service.log` in the state directory; Linux: `journalctl --user -u reqcove` | `$(brew --prefix)/var/log/reqcove.log` |
@@ -2410,7 +2950,9 @@ no internet; turn the exit node off then.
   with `reqcove har > flows.har`.
 - **To change the hosts recorded, no restart**: `reqcove capture add HOST`
   (`remove`, `set`), then `reqcove capture save` to keep them for the next
-  start ([change what is recorded](#change-what-is-recorded-while-it-runs)).
+  start ([change what is recorded](#change-what-is-recorded-while-it-runs)),
+  or the same on the `reqcove console` page, whose Settings panel also
+  writes some settings and restarts ([the console](#the-console-reqcove-console)).
   After editing the config, its hosts file or the rules file, `reqcove reload`
   takes their hosts and rules, no restart
   ([edit, then reload](#edit-the-files-then-reqcove-reload)); any other
@@ -2424,6 +2966,10 @@ no internet; turn the exit node off then.
   read, and warns when two services for reqcove are installed at once, or
   when `reqcove service install`'s service runs a binary that is gone or is
   not this one (`reqcove service install` again points it at this one).
+  Since v1.3 it also names the other `reqcove` files on your shell's PATH
+  (none of them run; `type reqcove` says which one your shell runs); this
+  computer's agents and `reqcove status --json` get the same from `run`'s
+  own PATH (a service's may differ). Unit tests.
 - **A `run` in your terminal** on the same state as a service finds it in
   use: stop the service first.
 - **Sleep**: `run` keeps the Mac from idle sleep while it runs
@@ -2450,13 +2996,17 @@ no internet; turn the exit node off then.
   each, status); two `caffeinate` assertions seen side by side in `pmset -g
   assertions`; `run --keep-awake=ac` on AC power holding `PreventSystemSleep`
   (not `always`'s `PreventUserIdleSystemSleep`) and `reqcove status` saying
-  so. Not tried: a real sleep with `ac` or `never`.
+  so; on battery with `ac`, the Mac slept (lid closed, and the menu's
+  Sleep; 2026-11-17). Not tried: a real sleep with `ac` on AC power, nor
+  with `never`.
 
 Tried: unit tests of what `reqcove status` prints for each case (a v1.0.0
 `run` and a newer CLI, each service, two services at once, a binary gone or
-another one), with service files written in a temporary home. Not tried by
-hand: the journeys of this table with v1.1 (`brew upgrade` with a service
-running, `reqcove service install` over an installed one).
+another one), with service files written in a temporary home. By hand
+(2026-11-16): `brew upgrade` from v1.1.0 to a v1.2 build with `brew services`
+running, `reqcove status` naming the version difference, then `brew services
+restart reqcove`. Not tried by hand: `reqcove service install` over an
+installed one.
 
 ### The config file (`--config`)
 
@@ -2622,8 +3172,15 @@ flags. Since v1.1 a `reqcove run` with no arguments reads one too
   change where requests go while running) and `--lan` (an open proxy on the
   LAN).
 - Others, such as `--upstream-proxy` or `--rules`, are allowed there.
+- Since v1.3, reqcove writes the file itself in one case: `capture save` on a
+  config naming no hosts file adds its `--allow-hosts=@FILE` (or
+  `--pass-hosts=@FILE`) line, after y/N ([capture save](#keep-the-hosts-for-the-next-start-reqcove-capture-save)).
+  It writes only that line, the file whole (0600, the one before kept as
+  `config.prev`), never through a link nor to a file not yours, and checks
+  first that the next start would take it.
 
-Checked: tests (the refusals).
+Checked: tests (the refusals; the line added, and a link or another user's
+file refused).
 
 <a id="security-logs"></a>
 
@@ -2705,7 +3262,7 @@ said there.
 | | |
 |---|---|
 | `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
-| `--allow-hosts HOSTS` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), `'*'` for all, or `@FILE`, one a line (`#` for comments). Without it, traffic is carried but nothing is recorded |
+| `--allow-hosts HOSTS` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), `'*'` for all, or `@FILE`, one a line (`#` for comments; a file without hosts gives none, since v1.3). Without it, traffic is carried but nothing is recorded |
 | `--pass-hosts HOSTS` | allowed hosts carried undecrypted, written the same way (not `'*'`): [pinning](#apps-that-pin-certificates---pass-hosts) |
 | `--rules FILE` | [rules](#rules---rules) for allowed hosts |
 | `--rules-reload` | read that file again whenever it changes |

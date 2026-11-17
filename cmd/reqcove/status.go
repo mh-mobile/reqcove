@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"golang.org/x/net/publicsuffix"
 	"io"
+	"maps"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -91,16 +92,60 @@ func runService() (service, manager string) {
 	return service, manager
 }
 
-// withFiles adds what only this computer's agents get: the files run read,
+// withFiles adds what only this computer's agents get: the config run read (the
+// hosts files are ctlState's, as they are now: hostsFiles),
 // and what is wrong with the services installed.
 func withFiles(out mcpserver.StatusOut, o *runOpts) mcpserver.StatusOut {
 	out.ConfigFile, out.ConfigUnused = o.config, o.configUnused
-	out.HostsFiles = append(slices.Clone(o.origin.files), o.origin.passFiles...)
+	out.Mitmweb, out.MitmwebThisStart = o.web, o.webOnce
 	out.Executable, _ = selfExe()
 	if runtime.GOOS == "darwin" {
 		out.KeepAwake = o.keepAwake
 	}
 	out.NextSteps = append(out.NextSteps, serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), "")...)
+	if s := otherOnPathStep(out.Executable, os.Getenv("PATH")); s != "" { // run's PATH: a service's may not be your shell's
+		out.NextSteps = append(out.NextSteps, s)
+	}
+	return out
+}
+
+const otherOnPathPrefix = "other reqcove on PATH: "
+
+// otherOnPathStep names the reqcove executables on path other than self (its
+// symlinks resolved), or "" when there are none.
+func otherOnPathStep(self, path string) string {
+	others := otherOnPath(self, path)
+	if len(others) == 0 {
+		return ""
+	}
+	return otherOnPathPrefix + strings.Join(others, ", ") + " (your shell runs the first one; `type reqcove`)"
+}
+
+// otherOnPath are the executable files named reqcove in path's absolute
+// directories, as path names them, but self and duplicates (by their
+// symlinks resolved). None of them is run.
+func otherOnPath(self, path string) []string {
+	if r, err := filepath.EvalSymlinks(self); err == nil {
+		self = r
+	}
+	seen := map[string]bool{self: true}
+	var out []string
+	for _, dir := range filepath.SplitList(path) {
+		if !filepath.IsAbs(dir) {
+			continue // "" and relative entries: they depend on the directory you are in
+		}
+		p := filepath.Join(dir, "reqcove")
+		fi, err := os.Stat(p)
+		if err != nil || !fi.Mode().IsRegular() || fi.Mode()&0o111 == 0 {
+			continue
+		}
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, p)
+	}
 	return out
 }
 
@@ -317,6 +362,9 @@ func status(ctx context.Context, args []string) error {
 	if n := staleSkillNote(); n != "" {
 		fmt.Fprintln(os.Stderr, "note: "+n) // stderr: --json stays clean
 	}
+	if !*asJSON {
+		defer printRestartNote(os.Stdout, *state)
+	}
 
 	session, err := dialRun(ctx, *state, "reqcove-status")
 	// brew services start (or a login) returns before its run takes the
@@ -383,10 +431,13 @@ func status(ctx context.Context, args []string) error {
 		HostsFiles   []string                   `json:"hosts_files"`
 		Executable   string                     `json:"executable"`
 		KeepAwake    string                     `json:"keep_awake"`
+		Mitmweb      bool                       `json:"mitmweb"`
+		MitmwebOnce  bool                       `json:"mitmweb_this_start_only"`
 		Seen         []mcpserver.OutHost        `json:"out_of_scope_hosts"`
 		SeenKept     int                        `json:"out_of_scope_hosts_kept"`
 		DiscUntil    string                     `json:"discover_until"`
 		Requests     []mcpserver.CaptureRequest `json:"capture_requests"`
+		Console      *mcpserver.ConsoleSessions `json:"console_sessions"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
@@ -440,10 +491,21 @@ func status(ctx context.Context, args []string) error {
 	if out.KeepAwake != "" {
 		fmt.Printf("  keep awake:  %s\n", keepAwakeText(out.KeepAwake))
 	}
+	if out.Mitmweb {
+		fmt.Printf("  mitmweb:     %s\n", mitmwebText(out.MitmwebOnce))
+	}
+	if c := out.Console; c != nil {
+		fmt.Printf("  console:     %s\n", consoleText(c))
+	}
 	for _, w := range serviceWarnings(runtime.GOOS, installedServices(runtime.GOOS), self) {
 		if !slices.Contains(out.NextSteps, w) { // run gives those it sees too
 			out.NextSteps = append(out.NextSteps, w)
 		}
+	}
+	// Your shell's PATH and this binary, not run's (a service's PATH is its own).
+	out.NextSteps = slices.DeleteFunc(out.NextSteps, func(s string) bool { return strings.HasPrefix(s, otherOnPathPrefix) })
+	if s := otherOnPathStep(self, os.Getenv("PATH")); s != "" {
+		out.NextSteps = append(out.NextSteps, s)
 	}
 	if out.Mode == "lan" {
 		printLANStatus(os.Stdout, out.LAN)
@@ -626,19 +688,29 @@ func printCA(w io.Writer, state string, lan bool) {
 		return
 	}
 	fmt.Fprintf(w, "  CA:          %q, SHA-256 %s, until %s\n", ca.Name, ca.SHA256, ca.NotAfter.Format("2006-01-02"))
+	add, remove := caSteps(ca.Name, lan)
+	fmt.Fprintf(w, "    add on an iPhone:    %s\n", add[0])
+	fmt.Fprintf(w, "                         %s\n", add[1])
+	if lan {
+		fmt.Fprintf(w, "                         %s\n", lanCAAdvice(caPEM(state), ca.SHA256))
+	}
+	fmt.Fprintf(w, "    remove from iPhone:  %s\n", remove)
+	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
+		fmt.Fprintf(w, "    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
+	}
+}
+
+// caSteps are how an iPhone adds the CA name (two lines) and removes it, as
+// status prints them and reqcove console's page shows them; lan: through the
+// LAN proxy.
+func caSteps(name string, lan bool) (add [2]string, remove string) {
 	with := "with the exit node on"
 	if lan {
 		with = "with the Wi-Fi proxy set to the LAN proxy"
 	}
-	fmt.Fprintf(w, "    add on an iPhone:    %s, open http://mitm.it in Safari (type http:// yourself), get the iOS profile,\n", with)
-	fmt.Fprintln(w, "                         install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)")
-	if lan {
-		fmt.Fprintf(w, "                         %s\n", lanCAAdvice(caPEM(state), ca.SHA256))
-	}
-	fmt.Fprintf(w, "    remove from iPhone:  Settings, General, VPN & Device Management, %q, Remove Profile\n", ca.Name)
-	if macTrusts(filepath.Join(confdir, "mitmproxy-ca-cert.pem")) {
-		fmt.Fprintf(w, "    this Mac trusts it (--local-proxy); to stop: %s\n", macUntrustCommand(ca.SHA256))
-	}
+	return [2]string{with + ", open http://mitm.it in Safari (type http:// yourself), get the iOS profile,",
+			"install it (Settings, Profile Downloaded), then trust it (General, About, Certificate Trust Settings)"},
+		fmt.Sprintf("Settings, General, VPN & Device Management, %q, Remove Profile", name)
 }
 
 // cleanup lists how to undo reqcove, and with --delete-state removes the state directory.
@@ -807,4 +879,35 @@ func keepAwakeText(mode string) string {
 		return "never: the Mac sleeps as the Energy settings say (other apps can keep it awake: pmset -g assertions); while it sleeps, a phone using its exit node has no internet"
 	}
 	return "always: no idle sleep, on battery too (--keep-awake=ac holds it on AC power only)"
+}
+
+// printRestartNote says what came of a failed start after the last restart
+// (restart.go), until a fresh start.
+func printRestartNote(w io.Writer, state string) {
+	if b, err := os.ReadFile(filepath.Join(state, restartNote)); err == nil && len(b) > 0 {
+		fmt.Fprintln(w, "restart: "+strings.TrimSpace(string(b)))
+	}
+}
+
+// consoleText is reqcove console's sessions, for status: this computer's
+// page's, the tailnet page's by device.
+func consoleText(c *mcpserver.ConsoleSessions) string {
+	s := fmt.Sprintf("%d sessions on this computer's page", c.Local)
+	if len(c.Tailnet) == 0 {
+		return s + "; none on the tailnet page (reqcove console --end ends them all)"
+	}
+	var by []string
+	for _, name := range slices.Sorted(maps.Keys(c.Tailnet)) {
+		by = append(by, fmt.Sprintf("%s %d", name, c.Tailnet[name]))
+	}
+	return s + "; on the tailnet page: " + strings.Join(by, ", ") + " (reqcove console --end ends them all)"
+}
+
+// mitmwebText is status's and the pages' line while mitmweb runs: never its
+// link or password.
+func mitmwebText(thisStart bool) string {
+	if thisStart {
+		return "on — unmasked; this start only"
+	}
+	return "on — unmasked; from the command line"
 }

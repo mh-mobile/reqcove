@@ -77,7 +77,8 @@ func machineName(p *ipnstate.PeerStatus) string {
 	return name
 }
 
-// ownDevices are the peers of this node's user (untagged, as sameUser has it),
+// ownDevices are the peers of this node's user (untagged, as sameUser has it;
+// never one in the netmap only because this node is shared with its owner),
 // by each of their tailnet IPs.
 func ownDevices(self *ipnstate.PeerStatus, peers []*ipnstate.PeerStatus) map[netip.Addr]Device {
 	out := map[netip.Addr]Device{}
@@ -85,12 +86,21 @@ func ownDevices(self *ipnstate.PeerStatus, peers []*ipnstate.PeerStatus) map[net
 		return out
 	}
 	for _, p := range peers {
-		if sameUser(p, self) {
+		if sameUser(p, self) && !p.ShareeNode {
 			d := Device{ID: string(p.ID), Name: machineName(p)}
 			for _, ip := range p.TailscaleIPs {
 				out[ip.Unmap()] = d
 			}
 		}
+	}
+	return out
+}
+
+// ownList is own (ownDevices) by StableID: the machine names.
+func ownList(own map[netip.Addr]Device) map[string]string {
+	out := map[string]string{}
+	for _, d := range own {
+		out[d.ID] = d.Name
 	}
 	return out
 }

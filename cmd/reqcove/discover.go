@@ -29,7 +29,7 @@ func discover(ctx context.Context, cap *capture.Capture, req ctlRequest, why str
 		case err != nil && !errors.Is(err, capture.ErrPending):
 			return ctlAnswer{Message: "refused: " + err.Error() + "; nothing changed"}
 		}
-		return traced(cap, why, fmt.Sprintf("applied: host discovery ended: no name is taken from now; the %d names seen stay (reqcove status, and this computer's agents) until run restarts or discovery starts again", len(cap.Store.SeenHosts(func(string) bool { return false }))))
+		return traced(cap, why, req.from, fmt.Sprintf("applied: host discovery ended: no name is taken from now; the %d names seen stay (reqcove status, and this computer's agents) until run restarts or discovery starts again", len(cap.Store.SeenHosts(func(string) bool { return false }))))
 	}
 	d, err := allowAllFor(req.For)
 	if err != nil {
@@ -54,7 +54,7 @@ func discover(ctx context.Context, cap *capture.Capture, req ctlRequest, why str
 		"; shown to this computer's agents (status, summarize) and in reqcove status, never over --mcp-http or on the --ui page" +
 		"; not every host: a connection without a name (an address dialed) or with ECH (its outer name only) is missed, and Apple's are left out" +
 		"; `reqcove capture add HOST` records one; `reqcove capture discover --end` ends it sooner; not saved: a restart of run ends it"
-	return traced(cap, why, msg)
+	return traced(cap, why, req.from, msg)
 }
 
 // outsideHosts are the names discovery saw that the base scope does not

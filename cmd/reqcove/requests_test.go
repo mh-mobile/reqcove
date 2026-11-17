@@ -416,7 +416,7 @@ func TestCaptureRequestsRefused(t *testing.T) {
 	defer cancel()
 	lanDir, _ := os.MkdirTemp("/tmp", "rcvq-")
 	defer os.RemoveAll(lanDir)
-	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}, nil); err != nil {
+	if _, err := serveCtl(ctx, lanDir, nil, &runOpts{lanMode: true}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := (ctlRequests{state: lanDir}).Ask(ctx, []string{"a.com"}); err == nil || !strings.Contains(err.Error(), "LAN mode") {
@@ -444,7 +444,7 @@ func TestCaptureRequestsUnmasked(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	store := capture.NewStore(1, 1)
 	store.SetScope(capture.HostRules{}, false) // --no-redact
-	st, err := serveCtl(ctx, dir, &capture.Capture{Store: store}, &runOpts{}, nil)
+	st, err := serveCtl(ctx, dir, &capture.Capture{Store: store}, &runOpts{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,11 +497,11 @@ func TestCaptureRequestE2E(t *testing.T) {
 	o := &runOpts{state: state, mcpHTTP: true}
 	var node nodeState
 	node.set(exitnode.Status{Backend: "Running"})
-	ctl, err := serveCtl(ctx, state, c, o, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
+	ctl, err := serveCtl(ctx, state, c, o, nil, func() mcpserver.StatusOut { return withDiscovery(withFiles(liveStatus(node.get(), c), o), c) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := serveMCP(ctx, o, c, &node, ctl.reqs, "tok")
+	handler, err := serveMCP(ctx, o, c, &node, ctl, "tok")
 	if err != nil {
 		t.Fatal(err)
 	}

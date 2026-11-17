@@ -254,9 +254,19 @@ type StatusOut struct {
 	// --keep-awake on macOS (always, ac or never). On this computer only.
 	Executable string `json:"executable,omitempty"`
 	KeepAwake  string `json:"keep_awake,omitempty"`
+	// Mitmweb: run runs mitmweb (--web), whose page shows the traffic
+	// unmasked to whoever has its password; MitmwebThisStart: for this start
+	// alone (a restart asked it), else from run's command line. Booleans
+	// alone: never its link or password. On this computer only.
+	Mitmweb          bool `json:"mitmweb,omitempty"`
+	MitmwebThisStart bool `json:"mitmweb_this_start_only,omitempty"`
 	// CaptureRequests are the agents' requests to record more hosts that
 	// wait for the user (request_capture_add). On this computer only.
 	CaptureRequests []CaptureRequest `json:"capture_requests,omitempty"`
+	// ConsoleSessions are reqcove console's live sessions (this computer's
+	// status alone, never --mcp-http's): its page's, and the tailnet page's
+	// by device; none before a page is opened.
+	ConsoleSessions *ConsoleSessions `json:"console_sessions,omitempty"`
 	// DiscoverUntil (RFC 3339) and DiscoverLeft: when host discovery
 	// (reqcove capture discover) ends; none when off. OutOfScopeHosts: the
 	// names it saw outside the scope, most seen first (at most MaxOutHosts of
@@ -685,4 +695,11 @@ func Serve(ctx context.Context, path string, server *mcp.Server) error {
 		}
 	}()
 	return nil
+}
+
+// ConsoleSessions are reqcove console's live sessions: on this computer's page,
+// and on the tailnet page by device (machine name).
+type ConsoleSessions struct {
+	Local   int            `json:"local"`
+	Tailnet map[string]int `json:"tailnet,omitempty"`
 }

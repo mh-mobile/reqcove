@@ -62,7 +62,7 @@ go build -o reqcove ./cmd/reqcove
    reqcove setup
    ```
 
-   setup は uv があるかを確かめ、tailnet での iPhone の名前（`tailscale status` に表示される名前）と記録するホストを聞いて、設定ファイルに書きます。ファイルは `~/.config/reqcove/config` で、Homebrew で入れた場合は Homebrew の `etc/reqcove/config` です（ホストは隣の `hosts` に書きます）。`y` と答えるとエージェントの Skill も入れます。Claude Code にツールを渡すコマンドは、答えに関係なく表示します。setup 自身は何も起動しません（[聞くことと書くもの](docs/guide.ja.md#初回の起動ログインと承認)）。
+   setup は uv があるかを確かめ、tailnet での iPhone の名前（`tailscale status` に表示される名前）と記録するホストを聞いて、設定ファイルに書きます。ファイルは `~/.config/reqcove/config` で、Homebrew で入れた場合は Homebrew の `etc/reqcove/config` です（ホストは隣の `hosts` に書きます。ホストを答えなくても書くので、あとから足せます）。`y` と答えるとエージェントの Skill も入れます。Claude Code にツールを渡すコマンドは、答えに関係なく表示します。setup 自身は何も起動しません（[聞くことと書くもの](docs/guide.ja.md#初回の起動ログインと承認)）。
 
    続いて、ターミナルで起動します（Ctrl-C で止まります）。
 
@@ -70,13 +70,13 @@ go build -o reqcove ./cmd/reqcove
    reqcove run
    ```
 
-   引数なしの `run` は、そのファイルを読みます（v1.1 から）。代わりにログイン時にバックグラウンドで起動させるには、`reqcove service install` を実行します。Homebrew で入れた場合は `brew services start reqcove` です（[バックグラウンド](docs/guide.ja.md#バックグラウンドで動かす)）。動かしている間は、`reqcove capture add HOST` で、再起動せずにホストを 1 つ足して記録できます（[詳しく](docs/guide.ja.md#動かしたまま記録するものを変える)）。
+   引数なしの `run` は、そのファイルを読みます（v1.1 から）。代わりにログイン時にバックグラウンドで起動させるには、`reqcove service install` を実行します。Homebrew で入れた場合は `brew services start reqcove` です（[バックグラウンド](docs/guide.ja.md#バックグラウンドで動かす)）。動かしている間は、`reqcove capture add HOST` で、再起動せずにホストを 1 つ足して記録できます（[詳しく](docs/guide.ja.md#動かしたまま記録するものを変える)）。`reqcove console` で、見たり変えたりするページも開けます（[下](#動かしたまま見て変える)）。
 
    初回はログインが必要です。ログイン用の URL は `reqcove links` で表示できます。Exit Node の承認など、残っている手順は `reqcove status` で確認できます。
 2. **iPhone で Exit Node を選びます。** Tailscale アプリで、Exit Node に `reqcove` を選びます。
 3. **iPhone で Reqcove の CA を信頼します。** この CA を信頼すると、プロファイルが iPhone にある間、このコンピュータは iPhone の HTTPS を、許可したホストに限らずどのサイトについても読めるようになります（[SECURITY](docs/SECURITY.ja.md#ca-の秘密鍵)）。
 
-   CA の QR コードをカメラで読み取ります。QR コードは `reqcove links` が表示し、ターミナルで起動した `reqcove run` も表示します。Safari で `http://mitm.it` を開く方法もあります（`http://` から入力します）。続いて「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です。
+   CA の QR コードをカメラで読み取ります。QR コードは `reqcove links` が表示し、ターミナルで起動した `reqcove run` も表示します。Safari で `http://mitm.it` を開く方法もあります（`http://` から入力します）。続いて「設定 › プロファイルがダウンロード済み」でプロファイルをインストールし、「設定 › 一般 › 情報 › 証明書信頼設定」で信頼します。CA の名前は `Reqcove CA (<コンピュータ名>, <日付>)` です（コンピュータ名は 39 文字までで切ります）。
 4. **エージェントにツールを渡します。** ツールの使い方を教える Skill も入れます。Claude Code の場合は次のとおりです。
 
    ```sh
@@ -97,6 +97,16 @@ reqcove run --device iphone --allow-hosts 'api.example.com,*.example-cdn.com'
 ```
 
 初回はターミナルにログイン用の URL が表示されます（`reqcove links` でもう一度表示できます）。続けて、ほかに必要なこと（Exit Node の承認、Tailnet Lock）が表示されます。不足しているものは `reqcove status` でいつでも確認できます。手順 2 から 4 は同じです。
+
+### 動かしたまま見て変える
+
+```sh
+reqcove console             # このコンピュータのページ
+reqcove console --tailnet   # iPhone で開くページの QR コード
+reqcove restart             # config を読み直して、同じプロセスで run を再起動する
+```
+
+v1.3 から、`reqcove console` は動いている `run` のページを、このコンピュータのブラウザで開きます。`reqcove status` と同じ内容、承認を待つエージェントの頼み、足したり外したりして次の起動のために Save するホスト、config のファイルに書く `run` の設定と **Restart…**、プリセット、CA を扱えます。`reqcove console --tailnet` は、tailnet に入っている iPhone で開くページの QR コードを表示します。そのページにあるのは `run` が終われば終わるものだけで、承認、ホスト、プリセット、CA です。Save、設定、再起動はありません。`reqcove restart` は config を確かめてから、`run` を同じプロセスで再起動します。サービスのもとでも同じで、記録は空になります。どのリンクも 1 回だけ、60 秒使えます。エージェントはこれらのコマンドを実行しません。確認状況：ページと v1.3 の欄の一部は、macOS のデスクトップのブラウザで試しました（Safari ではありません。どれを試したかはガイドにあります）。iPhone のページは、Exit Node を通して、また Remote Proxy を通して、iPhone の Safari で試しました。`reqcove restart` は、端末と `reqcove service install` のサービス（launchd と、Ubuntu の systemd）のもとで試しました。`brew services` のもとでは試していません。使い方と、端末だけに残るもの：[ガイド](docs/guide.ja.md#コンソールreqcove-console)。
 
 ### エージェントにできること
 
@@ -146,6 +156,7 @@ reqcove run --lan --allow-hosts api.example.com
 - Reqcove が見分けられるシークレット（トークン、鍵、Cookie、パスワード）は、届いた時点でマスクします。**ボディの中にあって、名前からシークレットと分からないものは見つけられません**（`--mask-names` や `--mask-values` で足せます）。メールアドレスなどの個人情報もマスクしません。
 - エージェントが読んだものは、そのモデルの提供元に送られます。ボディは外部のサイトが書いたもので、サイトがその中でエージェントに指示しようとすることがあります。
 - Exit Node はこのコンピュータ、LAN、tailnet を宛先として拒否します。
+- `reqcove console` のページは、記録するものと `run` の設定を変えられます。鍵は 1 回だけ使えるリンクです。先に開いた人がページを持ち、あなたのユーザーとして動くもの（シェルを使えるエージェントなど）もリンクを頼めます（[SECURITY](docs/SECURITY.ja.md#reqcove-console-のページ)）。
 - LAN モード（`--lan`）にはパスワードがありません。このコンピュータで許可したアドレスは、このコンピュータを通って、あなたのアドレスからインターネット（80 番と 443 番ポート）と、`--allow-hosts` に完全な名前で書いたプライベートなホストに届きます。
 
 詳しくは [docs/SECURITY.ja.md](docs/SECURITY.ja.md) を見てください。

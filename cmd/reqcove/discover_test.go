@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +79,9 @@ func TestDiscoverE2E(t *testing.T) {
 	defer c.Stop()
 	mcpserver.CaptureAddCmd = withState("reqcove capture add", state)
 	defer func() { mcpserver.CaptureAddCmd = "" }()
-	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil); err != nil {
+	node := exitnode.Status{Backend: "Running"}
+	local := func() mcpserver.StatusOut { return withDiscovery(liveStatus(node, c), c) }
+	if _, err := serveCtl(ctx, state, c, &runOpts{}, nil, local); err != nil {
 		t.Fatal(err)
 	}
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
@@ -113,8 +117,6 @@ func TestDiscoverE2E(t *testing.T) {
 		io.Copy(io.Discard, r.Body)
 		r.Body.Close()
 	}
-	node := exitnode.Status{Backend: "Running"}
-	local := func() mcpserver.StatusOut { return withDiscovery(liveStatus(node, c), c) }
 	count := func(host string) int {
 		for _, h := range local().OutOfScopeHosts {
 			if h.Host == host {
@@ -155,6 +157,27 @@ func TestDiscoverE2E(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(s.NextSteps, "\n"), "host discovery is on until") {
 		t.Errorf("steps: %q", s.NextSteps)
+	}
+	// reqcove console's page (this computer's): the names, as hosts.
+	base, code := openUI(t, state)
+	if _, ps := pageStateOf(t, base, trade(t, base, code)); !slices.Contains(ps.Discovered, pageHost{Host: "out.example.net", Count: 2}) ||
+		!slices.Contains(ps.Discovered, pageHost{Host: "viahost.example.net", Count: 1}) || len(ps.Discovered) != 2 || ps.DiscoverUntil == "" {
+		t.Errorf("the page: %+v, until %q", ps.Discovered, ps.DiscoverUntil)
+	}
+	// The tailnet page: their count alone, in none of its answers.
+	wasL, wasO := listenTailnet, ownDeviceAt
+	listenTailnet = func() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
+	ownDeviceAt = func(string) (exitnode.Device, bool) { return exitnode.Device{ID: "nIPHONE", Name: "iphone"}, true }
+	defer func() { listenTailnet, ownDeviceAt = wasL, wasO }()
+	tbase, tcode := openTailnetUI(t, state)
+	ttok := trade(t, tbase, tcode)
+	if _, ps := pageStateOf(t, tbase, ttok); len(ps.Discovered) != 0 || ps.DiscoveredKept != 2 || !ps.Tailnet {
+		t.Errorf("the tailnet page: %+v, %d", ps.Discovered, ps.DiscoveredKept)
+	}
+	for _, path := range []string{"/api/state", "/api/presets", "/api/ca"} {
+		if _, b := call(t, tbase, "GET", path, "", map[string]string{sessionHeader: ttok}); strings.Contains(b, "example.net") {
+			t.Errorf("names on the tailnet page, %s: %s", path, b)
+		}
 	}
 	// Nothing of what they carry; nothing of them where --mcp-http and --ui read.
 	if st := c.Store.Stats(); st["flows"] != 0 {

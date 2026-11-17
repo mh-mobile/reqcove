@@ -43,6 +43,39 @@ tool's answer, or turn something off, even something this page lists as stable.
 It is not held back for a major release. The CHANGELOG says so under "Security",
 with what changed and what to do.
 
+### What v1.3 adds and changes
+
+Added, each in its place below: `reqcove restart` (`--web` too) and its ctl
+op `restart` (its `web` field); `status`' `mitmweb` and
+`mitmweb_this_start_only`;
+`reqcove console --end` (op `console-end`) and `--tailnet` (the `tailnet`
+field of `console`, answered with `addr`); `console`'s answer's `file`; the
+`confirm` field of `save`; a marker's `source` `console`; `approved_in`'s
+`console on NAME (tailnet)`; a hosts file without hosts taken; the line
+`capture save` may add to a config and the hosts file it creates;
+`reqcove setup`'s hosts file always written. Not stable, so not promised:
+the `reqcove console` pages and their requests (`/api/…`), `status`'
+`console_sessions`, `run --check-config`, and what a restart hands over and
+leaves ([below](#not-stable)).
+
+What v1.0 promised that v1.3 changes:
+
+- **`--no-redact` masks one header:** the console's session header
+  (`X-Reqcove-Session`), Reqcove's own credential, is masked in every record
+  with `--no-redact` too, which otherwise masks nothing. A security fix,
+  under the clause above (CHANGELOG, "Security"); nothing to do.
+- **A hosts file without hosts is taken** (comments only, or empty), giving
+  none; v1.0 to v1.2 refused it. And `--pass-hosts`, `--rules` and
+  `--upstream-proxy` are checked against the hosts given, not the flags: a
+  set of flags v1.2 refused may now start (`--pass-hosts=@FILE` with an
+  empty file and no `--allow-hosts`, say). Nothing that started before is
+  refused now (from reading the code: a hosts file had to hold a host
+  before, so a flag present meant hosts given; the new cases have unit
+  tests).
+
+Nothing else listed here as stable changed: the tools and their fields, the
+rules file, the commands and flags, `status --json`'s fields.
+
 ## Stable within a major version
 
 Within a major version, what is listed here is not removed and does not change
@@ -63,7 +96,7 @@ to 5 host names) and `get_capture_request` (`id`), 21 tools there: never on
 `run`'s socket's own list, never over `--mcp-http`. Both answer a request:
 `id`, `hosts`, `state` (`pending`, `approved`, `applied`, `failed`,
 `denied`, `expired`; more values may come), `created_at` and `expires_at`
-(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`), `result` (text for
+(RFC 3339), `approved_in` (`terminal` or `dialog`; `console` from `reqcove console`; since v1.3 `console on NAME (tailnet)` from its tailnet page, NAME a device's machine name), `result` (text for
 people), `approve` (while pending, the command the user runs), `unmasked`
 (true while `run` masks nothing, `--no-redact`) and `note`.
 
@@ -94,7 +127,7 @@ Each tool's fields:
 - These values keep their meaning: `status`' `mode` (`tailnet`, `lan`),
   `capture_stats`' `state` (`starting`, `ready`, `restarting`, `failed`), a
   preset's `kind` (`mock`, `map_remote`, `modify_headers`, `resolve`), a marker's
-  `source` (`cli`, `mcp`), a `list_passthrough` connection's `reason`
+  `source` (`cli`, `mcp`; since v1.3 `console` too), a `list_passthrough` connection's `reason`
   (`pass_hosts`, `raw_tcp`). A minor release may add a value (a new mode, say).
 - A field that holds text written for people (`next_steps`, `note`, `msg`,
   error fields such as `list_rules`' and `explain_rules`' `rules_error`, and
@@ -147,6 +180,10 @@ exits 1, saying why on stderr. Its fields:
 - Since v1.2, on this computer only (not over `--mcp-http`): `executable`
   (`run`'s binary, its symlinks resolved) and, on macOS, `keep_awake`
   (`always`, `ac` or `never`). Absent from a run older than v1.2.
+- Since v1.3, on this computer only (not over `--mcp-http`): `mitmweb`
+  (true while `run` runs mitmweb, `--web`) and `mitmweb_this_start_only`
+  (true when a restart turned it on for this start alone,
+  `reqcove restart --web`); absent when false. Never its link or password.
 - Since v1.2, on this computer only (not over `--mcp-http`):
   `capture_requests`, the agents' requests waiting for the user (each as
   `get_capture_request` answers it, without `note`); absent when none.
@@ -230,8 +267,9 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
-| `reqcove console` (since v1.2) | `--state` |
+| `reqcove console` (since v1.2) | `--end`, `--tailnet`, `--print` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
+| `reqcove restart` (since v1.3) | `--web`, `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |
 | `reqcove setup` | none |
 | `reqcove service install` | `--config`, `--state` |
@@ -248,7 +286,46 @@ stable ([below](#not-stable)).
 `run` older than v1.2 answers it with its usage, and `reqcove console` then says
 to restart `run` with v1.2 or later (a unit test with a v1.1 answer). The
 page's link (`http://127.0.0.1:PORT/#c=CODE`) and what it shows are not
-stable, nor its requests to `run` ([below](#not-stable)).
+stable, nor its requests to `run` ([below](#not-stable)). Since v1.3 `run`'s
+answer to `console` also names a file in the state directory that opens the
+page (`file`; a v1.2 `reqcove console` ignores it and opens the link, in its
+arguments, as before; a v1.3 one against a v1.2 `run` opens nothing and
+prints the link), and `reqcove console --end` asks with another new op,
+`console-end`: a v1.2 `run` answers it with its usage (in LAN mode, with its
+LAN refusal), and `reqcove console --end` then says to restart `run` with
+v1.3 or later (unit tests with both answers). `reqcove console --tailnet`
+asks with `console` and a new field, `tailnet: true`; a v1.3 `run` answers
+with the page's address on the tailnet (`addr`, `100.x.y.z:PORT`) and no
+`port` nor `file`. A v1.2 `run` ignores the field and opens its page on
+127.0.0.1: with no `addr` in the answer, `reqcove console --tailnet` says to
+restart `run` with v1.3 or later, and prints and opens nothing (unit tests).
+The tailnet page's address, port and link are not stable, as this
+computer's ([below](#not-stable)).
+
+`reqcove restart` (since v1.3) asks `run` over `ctl.sock` with a new op,
+`restart` (no other field but `web`, true for `reqcove restart --web`: the
+next start alone runs mitmweb; in LAN mode too): `run` answers `ok` and starts
+the restart once the answer is sent, or refuses, nothing stopped. A v1.2 or
+older `run` answers it with its usage (in LAN mode, with its LAN refusal),
+and `reqcove restart` then says to stop it and start it again (unit tests
+with both answers). The variables `REQCOVE_RESTART_*` that a restart sets
+for the new process, the copy of the config it keeps in the state
+directory (`restart-*.config`), `config.failed` and the `restart-note`
+file that `reqcove status` reads are not stable ([below](#not-stable)).
+Before it stops, a v1.3 `run` runs the binary it would exec as
+`run --check-config` followed by its own arguments (a hidden mode, not in
+`run -h`, not stable: for the restart alone), which exits 0, or 1 with the
+reason; a binary without the mode (older than v1.3) answers with its usage
+(an unknown flag), and the restart is refused, nothing stopped: stop `run`
+and start it again yourself (unit tests).
+
+`reqcove capture save` (since v1.3), on a config that names no hosts file,
+gets from `run` the change it would make (text for people) and a new field,
+`confirm`, a token; once you answer y, it sends `save` again with that token
+in `confirm`, and `run` writes only the change it showed (a config or hosts
+file changed since is refused). A `capture save` older than v1.3 never sends
+the token back, so nothing is written (from reading the code). The token
+and the text are not stable.
 
 ### The `--config` file
 
@@ -277,6 +354,25 @@ stable, nor its requests to `run` ([below](#not-stable)).
   `--allow-hosts=@FILE` for it; `reqcove capture save` rewrites that file.
   A config written before (hosts on the `--allow-hosts` line) is read as
   before.
+- Since v1.3, a hosts file (`--allow-hosts=@FILE`, `--pass-hosts=@FILE`)
+  without hosts (comments only, or empty) is taken, giving none (refused
+  before: "has no hosts"). An `@FILE` of `--mask-names` or `--mask-values`
+  without lines is still refused. What needs hosts recorded (`--pass-hosts`'
+  hosts, `--rules`, `--upstream-proxy`) is checked against the hosts given,
+  not the flags: `--pass-hosts=@FILE` with an empty file and no
+  `--allow-hosts` is taken (refused before).
+- Since v1.3, `reqcove capture save` may add one line to a config that names
+  no hosts file (`--allow-hosts=@FILE`, or `--pass-hosts=@FILE`), at its end,
+  after asking y/N, and create that file beside it; the config before is kept
+  as `config.prev`. It changes no other line.
+- Since v1.3, `reqcove setup` always writes the `--allow-hosts=@FILE` line
+  and the hosts file beside the config: with no host answered, a file of
+  comments alone, which gives no hosts (before: a commented-out
+  `--allow-hosts` line and no file). It checks the config and the hosts
+  file it would write as the next start reads them, and writes nothing if
+  that start would refuse them. Where the Tailscale CLI answers on this
+  computer, it lists your own untagged devices to pick by number (a name
+  can still be typed).
 
 ### The state directory
 
@@ -328,7 +424,16 @@ These may change in any release, a patch release included:
   `rules`, `rules_error`, `resolve`, `upstream`. They may change or go in a
   minor release.
 - `reqcove console`'s page: its port, its layout, its `/api/` requests and their
-  answers.
+  answers (v1.3's `/api/change`, `/api/save`, `/api/settings`,
+  `/api/restart`, `/api/presets`, `/api/preset`, `/api/marker`, `/api/ca` and
+  `/api/har` among them), and so the tailnet page's (`reqcove console
+  --tailnet`: its port, which of those it serves, `status`'s
+  `console_sessions`).
+- `run --check-config`, the hidden check mode a restart asks of the binary
+  it would exec.
+- What `reqcove restart` hands the new process (the `REQCOVE_RESTART_*`
+  variables, the fds) and the files it leaves in the state directory and
+  beside the config (`restart-*.config`, `restart-note`, `config.failed`).
 - The `poc/` folder: the maintainer's notes, not in the repository.
 - Anything else this page does not list as stable.
 

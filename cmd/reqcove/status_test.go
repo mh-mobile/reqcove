@@ -520,7 +520,7 @@ func TestRawTCPStep(t *testing.T) {
 }
 
 // --pass-hosts and @FILE: hosts one a line, comments, ~/; a line that is not
-// a host stops run, nothing in it run.
+// a host stops run, nothing in it run; a file without hosts gives none.
 func TestPassHostsFlag(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -544,9 +544,10 @@ func TestPassHostsFlag(t *testing.T) {
 	if _, err := hostList("@~/evil.txt"); err == nil || !strings.Contains(err.Error(), "line 2 is not a host list") || strings.Contains(err.Error(), "rm -rf") || strings.Contains(err.Error(), "S3CRET") {
 		t.Errorf("evil.txt: %v", err)
 	}
+	// A file without hosts gives none (capture save may leave one so).
 	os.WriteFile(filepath.Join(home, "empty.txt"), []byte("# nothing\n\n"), 0o600)
-	if _, err := hostList("@~/empty.txt"); err == nil || !strings.Contains(err.Error(), "has no hosts") {
-		t.Errorf("empty.txt: %v", err)
+	if got, err := hostList("@~/empty.txt"); err != nil || got != "" {
+		t.Errorf("empty.txt: %q %v", got, err)
 	}
 	args := func(extra ...string) []string {
 		return append([]string{"--device", "phone", "--state", t.TempDir(), "--uvx", "/nonexistent/uvx"}, extra...)
@@ -769,6 +770,13 @@ func TestStatusUpgrade(t *testing.T) {
 	// v1.2: an agent's request waiting for the user.
 	answer = mcpserver.StatusOut{Version: version, CaptureRequests: []mcpserver.CaptureRequest{{ID: "0a1b2c3d", Hosts: []string{"a.com", "b.com"}, State: "pending", ExpiresAt: "2026-11-16T10:10:00Z", Approve: "reqcove capture approve 0a1b2c3d"}}}
 	check("v1.2, a request", []string{"asked:       a.com, b.com, by an agent (until " + localClock("2026-11-16T10:10:00Z") + "): reqcove capture approve 0a1b2c3d approves it"})
+	// v1.3: the other reqcove on your shell's PATH, in place of run's (its
+	// PATH may be a service's).
+	bin, _ := filepath.EvalSymlinks(t.TempDir())
+	os.WriteFile(filepath.Join(bin, "reqcove"), nil, 0o755)
+	t.Setenv("PATH", bin)
+	answer = mcpserver.StatusOut{Version: version, NextSteps: []string{otherOnPathPrefix + "/svc/reqcove (your shell runs the first one; `type reqcove`)"}}
+	check("v1.3, another on PATH", []string{"  - " + otherOnPathPrefix + filepath.Join(bin, "reqcove") + " (your shell runs the first one; `type reqcove`)\n"}, "/svc/reqcove")
 }
 
 // What started run, and the command that restarts it there: install
@@ -827,13 +835,19 @@ func TestRunService(t *testing.T) {
 func TestWithFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fakeServices(t, "/gone/reqcove", true)
-	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, passFiles: []string{"/c/pass"}}}
+	o := &runOpts{config: "/c/config", configUnused: "/b/config", origin: hostsOrigin{files: []string{"/c/hosts"}, pass: &hostsOrigin{files: []string{"/c/pass"}}}}
 	out := withFiles(mcpserver.StatusOut{NextSteps: []string{"first"}}, o)
-	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(out.HostsFiles, []string{"/c/hosts", "/c/pass"}) {
+	if out.ConfigFile != "/c/config" || out.ConfigUnused != "/b/config" || !slices.Equal(newCtlState(o).hostsFiles(), []string{"/c/hosts", "/c/pass"}) {
 		t.Errorf("files: %+v", out)
 	}
 	if steps := strings.Join(out.NextSteps, "\n"); !strings.HasPrefix(steps, "first\n") || !strings.Contains(steps, "two services for reqcove are installed") || !strings.Contains(steps, "runs /gone/reqcove, which is gone") {
 		t.Errorf("steps:\n%s", steps)
+	}
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "reqcove"), nil, 0o755)
+	t.Setenv("PATH", bin)
+	if steps := strings.Join(withFiles(mcpserver.StatusOut{}, o).NextSteps, "\n"); !strings.Contains(steps, otherOnPathPrefix+filepath.Join(bin, "reqcove")) {
+		t.Errorf("no other reqcove on run's PATH in:\n%s", steps)
 	}
 }
 
@@ -845,5 +859,72 @@ func TestWithFilesBinary(t *testing.T) {
 	self, _ := selfExe()
 	if out.Executable != self || (out.KeepAwake == "ac") != (runtime.GOOS == "darwin") {
 		t.Errorf("%q %q", out.Executable, out.KeepAwake)
+	}
+}
+
+// TestOtherOnPath: the reqcove files on PATH but this one (also through a
+// symlink), each once, never a file that cannot run or a directory.
+func TestOtherOnPath(t *testing.T) {
+	root := t.TempDir() // under /var on macOS, a symlink: self is resolved too
+	dir := func(name string) string {
+		d := filepath.Join(root, name)
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	write := func(p string, mode os.FileMode) {
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	self, link, other, otherLink, noExec, isDir := dir("self"), dir("link"), dir("other"), dir("otherlink"), dir("noexec"), dir("isdir")
+	write(filepath.Join(self, "reqcove"), 0o755)
+	write(filepath.Join(other, "reqcove"), 0o755)
+	write(filepath.Join(noExec, "reqcove"), 0o644)
+	if err := os.Mkdir(filepath.Join(isDir, "reqcove"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for to, from := range map[string]string{filepath.Join(self, "reqcove"): link, filepath.Join(other, "reqcove"): otherLink} {
+		if err := os.Symlink(to, filepath.Join(from, "reqcove")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := strings.Join([]string{"", "relative", self, link, noExec, isDir, other, otherLink, other}, string(os.PathListSeparator))
+	want := filepath.Join(other, "reqcove")
+	if got := otherOnPath(filepath.Join(self, "reqcove"), path); !slices.Equal(got, []string{want}) {
+		t.Errorf("otherOnPath = %q, want [%q]", got, want)
+	}
+	if got, w := otherOnPathStep(filepath.Join(self, "reqcove"), path), "other reqcove on PATH: "+want+" (your shell runs the first one; `type reqcove`)"; got != w {
+		t.Errorf("step = %q, want %q", got, w)
+	}
+	if got := otherOnPathStep(filepath.Join(self, "reqcove"), strings.Join([]string{self, link, noExec, isDir}, string(os.PathListSeparator))); got != "" {
+		t.Errorf("step without another = %q, want none", got)
+	}
+}
+
+// What needs hosts recorded (--pass-hosts' hosts, --rules, --upstream-proxy)
+// is checked against the hosts given, not the flags: a hosts file without
+// hosts gives none, the hosts given as they are count.
+func TestDependsOnHostsGiven(t *testing.T) {
+	dir := t.TempDir()
+	empty, rules := filepath.Join(dir, "empty"), filepath.Join(dir, "rules.yaml")
+	os.WriteFile(empty, []byte("# none yet\n"), 0o600)
+	os.WriteFile(rules, []byte("mock: []\n"), 0o600)
+	for _, c := range []struct {
+		extra []string
+		want  string // "": taken
+	}{
+		{[]string{"--pass-hosts", "@" + empty}, ""},
+		{[]string{"--allow-hosts", "@" + empty, "--pass-hosts", "@" + empty}, ""},
+		{[]string{"--allow-hosts", "@" + empty, "--pass-hosts", "api.x.com"}, "--pass-hosts needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--rules", rules}, "--rules needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--upstream-proxy", "http://127.0.0.1:1"}, "--upstream-proxy needs --allow-hosts"},
+		{[]string{"--allow-hosts", "@" + empty, "--allow-hosts", "api.x.com", "--rules", rules, "--pass-hosts", "api.x.com"}, ""},
+	} {
+		_, err := reloadFlags(append([]string{"--device", "phone", "--state", dir}, c.extra...))
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%q: %v, want %q", c.extra, err, c.want)
+		}
 	}
 }

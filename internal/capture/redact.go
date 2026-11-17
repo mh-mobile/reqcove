@@ -618,9 +618,21 @@ func (s *Store) maskError(v string) string {
 // One cut before its closing quote (the addon cuts messages at 1 KiB) runs to the end.
 var quotedBytesRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])b(?:'(?:[^'\\]|\\.)*(?:'|\\?$)|"(?:[^"\\]|\\.)*(?:"|\\?$))`)
 
+// ConsoleSessionHeader carries a session of reqcove console's pages: Reqcove's
+// own credential, masked even with --no-redact (with masking on, its name says
+// "session"). The tailnet page's requests never reach mitmproxy (the Remote
+// Proxy serves them in-process): this is a second guard.
+const ConsoleSessionHeader = "X-Reqcove-Session"
+
 func (s *Store) maskHeaders(h [][2]string) [][2]string {
 	if !s.redact.Load() {
-		return h
+		out := append([][2]string(nil), h...)
+		for i, kv := range out {
+			if strings.EqualFold(kv[0], ConsoleSessionHeader) {
+				out[i][1] = "[redacted]"
+			}
+		}
+		return out
 	}
 	out := make([][2]string, len(h))
 	for i, kv := range h {
