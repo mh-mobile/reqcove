@@ -215,3 +215,20 @@ func TestConsoleRelayNoFlowE2E(t *testing.T) {
 		}
 	}
 }
+
+// dropFragment cuts the raw request-target at its first literal '#': a
+// fragment holding '?' sends nothing on (Go would read it as the query), and
+// an escaped %23 stays the path's.
+func TestDropFragment(t *testing.T) {
+	for target, want := range map[string]string{
+		"http://example.com/#/callback?access_token=SECRET":  "/",
+		"http://example.com/a?b=1#c?d=SECRET":                "/a?b=1",
+		"http://example.com/files/report%23draft?download=1": "/files/report%23draft?download=1",
+		"http://example.com/plain?q=1":                       "/plain?q=1",
+	} {
+		r := httptest.NewRequest("GET", target, nil)
+		if !dropFragment(r) || r.URL.RequestURI() != want || strings.Contains(r.URL.String(), "SECRET") || r.URL.Host != "example.com" {
+			t.Errorf("%s: %q (%s)", target, r.URL.RequestURI(), r.URL)
+		}
+	}
+}

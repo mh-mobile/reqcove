@@ -315,8 +315,9 @@ file that `reqcove status` reads are not stable ([below](#not-stable)).
 Before it stops, a v1.3 `run` runs the binary it would exec as
 `run --check-config` followed by its own arguments (a hidden mode, not in
 `run -h`, not stable: for the restart alone), which exits 0, or 1 with the
-reason; a binary without the mode answers with its usage (an unknown flag),
-and the restart then checks in `run` alone and says so (unit tests).
+reason; a binary without the mode (older than v1.3) answers with its usage
+(an unknown flag), and the restart is refused, nothing stopped: stop `run`
+and start it again yourself (unit tests).
 
 `reqcove capture save` (since v1.3), on a config that names no hosts file,
 gets from `run` the change it would make (text for people) and a new field,
