@@ -443,6 +443,12 @@ func TestConsoleTailnetCmd(t *testing.T) {
 	if err := consoleCmd(ctx, []string{"--tailnet", "--end", "--state", dir}); err == nil || !strings.Contains(err.Error(), "give it alone") {
 		t.Errorf("--tailnet --end: %v", err)
 	}
+	if err := consoleCmd(ctx, []string{"--print", "--end", "--state", dir}); err == nil || !strings.Contains(err.Error(), "give it alone") {
+		t.Errorf("--print --end: %v", err)
+	}
+	if err := consoleCmd(ctx, []string{"--tailnet", "--print", "--state", dir}); err == nil || !strings.Contains(err.Error(), "without --print") {
+		t.Errorf("--tailnet --print: %v", err)
+	}
 }
 
 // The Remote Proxy's relay: the tailnet page opened, run hands the Remote

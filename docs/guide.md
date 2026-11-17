@@ -366,7 +366,8 @@ Since v1.3 a page of `run`'s is the place to see and change a running `run`
 without its commands: the hosts, the settings, the agents' requests and a
 restart. You open it from your terminal. A path through it:
 
-1. **Open it** with `reqcove console`: a page on this computer showing what
+1. **Open it** with `reqcove console`, which opens it in your browser
+   (`reqcove console --print` prints a link instead): a page on this computer showing what
    `reqcove status` shows, and the agents' requests to Approve or Deny
    ([below](#see-the-state-and-approve-in-a-page-reqcove-console)).
 2. **Change the hosts** in its Scope panel, as `reqcove capture` does, and
@@ -385,30 +386,36 @@ The pages are `run`'s and live while it runs (`--state DIR` for another
 `run`). Agents never open them: the skill and the server's instructions tell
 them never to run `reqcove console`. Tried: this computer's page in a
 Chromium-based browser on macOS for its state and Approve (2026-11-16);
-its v1.3 panels and the tailnet page in no browser and not on an iPhone
-(their scripts are from reading the code); what they ask of `run`, by unit
+its v1.3 panels in no browser; the tailnet page in the iPhone's Safari
+through the Remote Proxy, where its QR link opened the page, and in no other
+browser (their scripts are from reading the code); what they ask of `run`, by unit
 and E2E tests (each section's "Tried:"). The guards and their limits:
 [SECURITY](SECURITY.md#the-reqcove-console-pages).
 
 ### See the state and approve in a page (`reqcove console`)
 
 ```sh
-reqcove console    # prints a link to a page on 127.0.0.1 and opens it in the browser
+reqcove console    # opens a page on 127.0.0.1 in the browser
+reqcove console --print    # prints a link to it instead, and opens nothing
 reqcove console --end    # ends every page open and every link not opened yet
 reqcove console --tailnet    # a QR code and a link to a page for your own devices on the tailnet (below)
 ```
 
 Since v1.2, `reqcove console` asks the running `run` for a page of its state and
-of the agents' requests, and prints its link. Since v1.3 it opens a file
+of the agents' requests. Since v1.3 it opens a file
 `run` wrote in the state directory with `open` (macOS) or `xdg-open`
 (Linux), never the link itself, which other users of this computer would see
 in `ps`: the file sends the browser on to the link, and `run` removes it
-after 60 seconds. When that fails, when the file opens in an app other than
-the browser (`open` picks the app for `.html` files, which may not be your
-web browser), or when the browser cannot read the state directory (a
-sandboxed one may not read `~/.reqcove`), open the printed link yourself;
-against a v1.2 `run`, which writes no file, it opens nothing and prints the
-link alone. The page shows
+after 60 seconds. Once it opened, it prints neither the link nor its code:
+the link works once, and opened again it would close every page, the one
+just opened too. When the opener fails, it prints the link and why: open it
+yourself; against a v1.2 `run`, which writes no file, it opens nothing and
+prints the link alone. When the file opens in an app other than the browser
+(`open` picks the app for `.html` files, which may not be your web
+browser), when the browser cannot read the state directory (a sandboxed one
+may not read `~/.reqcove`), or for another browser, run
+`reqcove console --print`: it prints a new link, opens nothing, and removes
+the file `run` wrote for it. The page shows
 what `reqcove status` shows, refreshed every 5 seconds: the version, `run`'s
 binary, the service, the config and hosts files, keep awake, the node and its
 devices, what is recorded (on, stopped, or allow-all and until when, with the
@@ -443,8 +450,9 @@ console)"; Deny is `reqcove capture deny`.
   text from an agent or an MCP client (the hosts it asked for are checked as
   host names first). Discovery's names are shown when they are host names
   (others are left out).
-- In a terminal only, as the `capture` commands; a `run` older than v1.2 says
-  to restart it with v1.2.
+- In a terminal only, as the `capture` commands, `--print` too; a `run`
+  older than v1.2 says to restart it with v1.2. `--print` is refused with
+  `--end`, and with `--tailnet`, which prints its link already.
 
 Tried: unit tests (the listener on 127.0.0.1 only; a wrong Host, a
 cross-site or missing Origin, a body other than JSON, a GET or PUT where a
@@ -453,8 +461,10 @@ change is a POST, no session, a wrong one, a cookie alone, the code once,
 sessions, 12 hours idle by either clock; an approval for other hosts refused,
 approve and deny traced as the page's; no CORS header, the CSP, `no-store`,
 `no-referrer` on every answer; no code or token in the answers or `run`'s
-log; LAN mode; the terminal check, the link printed and the code file
-handed to a stand-in for `open`, the code never in its arguments, a v1.1
+log; LAN mode; the terminal check, the code file handed to a stand-in for
+`open`, the code never in its arguments, and neither the link nor the code
+printed once it opened; the link printed when it could not open, with no
+file, and with `--print` (nothing opened, the file removed); a v1.1
 `run`; the code file 0600, never through a symlink nor over a file, removed
 after its time, at `--end` and when `run` starts and ends; `--end` ending
 sessions and codes, in LAN mode too, and a v1.2 `run`'s answers), and E2E
@@ -463,7 +473,8 @@ with real mitmproxy (approved in the console through its listener, the
 on macOS (2026-11-16): the page showed the state and the agents' requests,
 and Approve applied the hosts (traced "approved in the console"). The file's
 link, its `#c=` kept, reached a page on 127.0.0.1 in headless Chromium and
-Firefox on macOS (2026-11-16). Not tried: the file in Safari, Linux's
+Firefox on macOS (2026-11-16). Not tried: `--print` and the output once
+opened by hand, the file in Safari, Linux's
 `xdg-open`, the page in another browser, another user of this computer.
 
 ### Change the hosts: the Scope panel
@@ -684,7 +695,8 @@ iphone (tailnet)".
   `--device` also carries. They never reach mitmproxy, so they make no
   flow, under allow-all too. A tunnel (CONNECT) to the page's port is
   refused, and the local proxy (`--local-proxy`) never serves the page
-  (tests; not tried in the iPhone's Safari).
+  (tests; tried in the iPhone's Safari with its Wi-Fi proxy set to the
+  Remote Proxy: the QR link opened the page).
 
 Who counts as your own device, and what the code guards:
 [SECURITY](SECURITY.md#tailnet-console-page).
@@ -710,7 +722,8 @@ connection's remote address the peer's tailnet address), and E2E with real
 mitmproxy (the Scope panel's changes from the tailnet page, traced with the
 device's name, their answers without the state directory; discovery's names
 absent from it; the page's requests through the Remote Proxy answered by
-the page and no flow, under allow-all). Not tried: the page on an iPhone (Safari, the QR code), a
+the page and no flow, under allow-all). Not tried: the page on an iPhone (Safari, the QR code) but through the
+Remote Proxy (above), a
 real tailnet with devices of your own, the page in any browser (its script:
 from reading the code).
 

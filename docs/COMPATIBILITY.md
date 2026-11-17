@@ -261,7 +261,7 @@ The commands and their flags, from each command's flag set:
 | `reqcove capture allow-all` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture discover` (since v1.1) | `--for D` (at most `24h`) or `--end`, `--state` |
 | `reqcove capture requests`, `capture approve ID`, `capture deny ID` (since v1.2) | `--state` |
-| `reqcove console` (since v1.2) | `--end`, `--tailnet` (since v1.3), `--state` |
+| `reqcove console` (since v1.2) | `--end`, `--tailnet`, `--print` (since v1.3), `--state` |
 | `reqcove reload` (since v1.1) | `--state` |
 | `reqcove restart` (since v1.3) | `--state` |
 | `reqcove mock add` | `--rules`, `--url`, `--method`, `--operation`, `--status`, `--header`, `--body`, `--body-file`, `--delay-ms`, `--fault`, `--preset`, `--description`, `--print`, `--state` |

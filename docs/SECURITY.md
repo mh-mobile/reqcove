@@ -533,14 +533,18 @@ files given are logged "(from the console on this computer)".
   `reqcove console --tailnet` opens another page on the node, with codes and
   sessions of its own ([below](#tailnet-console-page)).
 - **The way in:** `reqcove console` (a terminal only, as `capture`) gets a one-use
-  code from `run` over `ctl.sock`, good for 60 seconds by either clock, and
-  prints `http://127.0.0.1:PORT/#c=CODE`. Since v1.3 the browser gets the
+  code from `run` over `ctl.sock`, good for 60 seconds by either clock, for
+  the link `http://127.0.0.1:PORT/#c=CODE`. Since v1.3 the browser gets the
   link from a file `run` writes in the state directory (0600, created anew,
   never through a symlink, a random name; tests), which sends it on, and
   `open` or `xdg-open` is given that file's path, never the link (a test
   checks their arguments). `run` removes the file after 60 seconds, at
   `reqcove console --end`, when it ends, and when it starts (one a killed
-  `run` left) (tests). The code is after `#`,
+  `run` left) (tests). Once the browser opened, the terminal shows neither
+  the link nor the code, so it is not used twice by mistake; it prints the
+  link when the opener fails, against a v1.2 `run` (no file), and with
+  `reqcove console --print`, which opens nothing and removes the file at
+  once (tests). The code is after `#`,
   which the browser does not send; the page trades it once for a session
   token, kept in that tab's sessionStorage and sent in a header, never a
   cookie, and takes the code out of the address bar. A code traded a second
@@ -611,7 +615,8 @@ hides (tests: every other route of this computer's page refused, Save too).
   mitmproxy, so they make no flow, under allow-all too, and the page's
   session header (`X-Reqcove-Session`) is masked in any record, with
   `--no-redact` too, as a second guard (unit tests; an E2E test with real
-  mitmproxy under allow-all; not tried in an iPhone's Safari).
+  mitmproxy under allow-all; tried in the iPhone's Safari with its Wi-Fi
+  proxy set to the Remote Proxy: the QR link opened the page).
 
 <a id="console-limits"></a>
 
@@ -660,7 +665,8 @@ hides (tests: every other route of this computer's page refused, Save too).
   over the tailnet)", a `cli` marker and `scope_change` for the hosts, and
   `config.prev` for the file before a settings write (E2E and unit tests).
 - **The link on this computer:** the file that holds it is 0600 in the 0700
-  state directory, so root and your user can read it for up to 60 seconds (a
+  state directory, so root and your user can read it for up to 60 seconds
+  (`--print` removes it at once; a
   `run` killed meanwhile leaves it until its next start, its code expired
   long before). v1.2's `reqcove console`, against any `run`, still gives the
   link in the opener's arguments, which `ps` shows other users for a moment;
