@@ -219,6 +219,8 @@ v1.3 からは、**Settings** の欄で `run` の設定を `--config` のファ�
 - `--ui`、`--mcp-http`、`--local-proxy`、`--dns`、`--upstream-proxy`（URL。ユーザー名とパスワードは書けません）、`--device` を足すこと、`--mask-names`（名前。1 つ外すときも）：ページは先にそのフラグについての `run` 自身の言葉（`reqcove run -h` が出すもの）を表示し、確かめます。
 - 表示だけで書かないもの（理由も表示します）：`--upstream-ca`（パス。**Clear** で外せます）、`--rules` と `--proto`（パス）、`--mask-values`（「set」といくつあるかだけで、パターンは表示しません）、ファイルから読む設定（`@FILE`。パスだけで、中身は表示しません）。`run` のコマンドラインで渡した設定はファイルより優先されるので、そこで渡したとおりに表示し、書きません。フラグだけで起動した `run`（`--config` なし）では、どの設定も読むだけで、ページはその理由を伝えます。
 
+<img src="images/console-confirm.png" width="650" alt="Settings の欄で --local-proxy: true を書く前に確かめるダイアログ。フラグについての run の言葉と、Cancel、Write it">
+
 変更は `capture save` と同じ書き込みの仕組みを通ります。値を確かめ（改行、制御文字、先頭の `@` は拒否し、これら以外のフラグも拒否します）、config のほかの行とコメントを残し、書く前のファイルを `config.prev` として残し、次の起動と同じように config 全体を確かめます。ほかの変更（ほかのタブ、手での編集）より前に config を読んだページからの変更は拒否します。`run` のログには書いたフラグの名前だけを残し、値は残しません。**Restart…** は、まず、ディスクの config が `run` の起動時と違う設定をすべて並べ（手での編集も、端末だけのフラグも含みます。`--mask-values` とマスクの `@FILE` の中身は「changed」とだけ表示します。ホストのファイルのホストは、`run` が最後に読むか書いたときと今とを並べます）、今ある記録の数と、再起動で記録が空になることを示します。そのうえで確かめ、`reqcove restart` と同じように再起動します（[上](#同じプロセスで再起動するreqcove-restart)）。一覧を表示したあとに、config か、それが読むホストやマスクのファイルを編集すると拒否し、何も止めません。このコンピュータのページのセッションは再起動のあとも続き、tailnet のページのセッションは `run` とともに終わります。確かめる前に、記録を HAR ファイルとして保存するよう勧めます（[下](#プリセットマーカーcahar-ファイル)）。
 
 **Restart with mitmweb (this start only)…**（このコンピュータのページだけ）は、`reqcove restart --web` と同じように再起動します（[上](#同じプロセスで再起動するreqcove-restart)）。まず専用の言葉で確かめます。mitmweb は mitmproxy が復号したすべてのフローをマスクせずに、ボディも含めて見せること（メモリに最大 256 MB 残します）。パスワードを持つ人は誰でもリクエストを編集・再送し、オプションやスクリプトを変えられ、それはこのコンピュータでコードを動かすこと。127.0.0.1:8081 と、ノードを通して自分のデバイスに開くこと。リンクは `run` のターミナルに出るか、`reqcove links`（サービスのもと）が表示すること。パスワードは新しく作ること。この起動だけであること。そのあと再起動の一覧（`+ --web (this start only; unmasked)` を含みます）と、再起動の確認です。ページは mitmweb のリンク、パスワード、それらを含むポートを表示しません。mitmweb が動いている間、どちらのページも上部と This run に `mitmweb: on — unmasked; this start only`（または `from the command line`）と表示します。tailnet のページにはこのボタンがなく、`run` はそこからの再起動を、直接でも Remote Proxy を通しても拒否します（テスト）。
@@ -249,6 +251,8 @@ v1.3 から、`reqcove console --tailnet` は `run` の 2 つめのページを�
 - エージェントの頼みと、**Approve** と **Deny**。
 - Scope の欄：足すことと外すこと、止めることと始めること、allow-all と発見と **End**。それぞれの警告と確認も出します。発見の名前は数だけです（名前と **Add** は、このコンピュータのページにあります）。
 - プリセットのオンとオフ、種類と名前によるルールの一覧、マーカー、CA の欄。
+
+<img src="images/console-tailnet.png" width="600" alt="tailnet のページ。エージェントの頼み、記録するホスト、Stop recording、Allow all、Discover、プリセット。Save、設定、再起動はない">
 
 Save、Settings の欄、**Restart…**、HAR ファイルは、このコンピュータのページだけのものです。tailnet のページでは `run` が拒否し、ページにも出しません。変更はデバイスの名前とともに残ります：「(from the console on iphone, over the tailnet)」、承認は「approved in the console on iphone (tailnet)」。
 
@@ -580,6 +584,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --ui
 
 `run` は、ノードの 80 番ポートで読み取り専用のページを提供し、そのリンクを QR コードと一緒に表示します。リンクは `reqcove links` でもう一度表示でき、ターミナルでないときは `reqcove links` だけが表示します。iPhone のカメラで読み取ると、Safari で一覧が開きます。一覧は 1 秒ごとに新しいフローを追います。Split View でアプリと並べることもできます。フローをタップすると、ヘッダーとボディを確認できます。MCP ツールが返すものと同じく、マスク済みです。
 
+<img src="images/ui-list.png" width="650" alt="--ui の一覧。検索欄、ステータスの絞り込み、Live と Clear、iphone-duo からのフロー POST /anything/login（200）が 1 つ">
+
 - 検索欄に入力すると、その場で URL とヘッダーを絞り込みます。「bodies too」をオンにすると、保持しているボディの先頭も対象になり、一覧は新しいフローを追わなくなります（すべての記録を調べるためです）。ステータス（2xx〜5xx、応答なし）や、フローのページからホストでも絞り込めます。
 - Clear はそれまでのフローを一覧から隠します。「Show all」で戻ります。削除はしないので、エージェントからは引き続き見えます。
 - Live / Paused で、新しいフローを追うかどうかを切り替えます。下にスクロールしている間は一覧を動かさず、新しいフローの件数を表示します。件数をタップすると、新しいフローが表示されます。
@@ -639,6 +645,8 @@ reqcove run --device iphone --allow-hosts 'api.example.com' --web
 ```
 
 mitmdump の代わりに mitmweb が起動します。開くには、`run` か `reqcove links` が表示するリンクか QR コードを使います。このコンピュータからは `http://127.0.0.1:8081`（ほかの run が 8081 を使っていれば 8091〜8099。[アドレスは 2 つ](several-exit-nodes.ja.md#ポート)）、tailnet にある自分のデバイスからはノードの 8081 番ポートで開けます。
+
+<img src="images/mitmweb.png" width="650" alt="mitmweb の Flow List。httpbin.org と example.com へのリクエストのメソッド、ステータス、サイズ。mitmweb が見せるものはマスクされない">
 
 - 何もマスクされません。パスワードを持つ人は誰でも、リクエストを編集してリプレイでき、mitmweb のオプション（スクリプトを含みます）を変えられます。オプションを変えると、このコンピュータでコードが動きます（[セキュリティの詳細](#security-web)）。
 - ボディは 1 つ 2 MB まで表示し、新しい 1 万件のフローと、合計 256 MB までのボディを保持します（[この上限の数え方](#security-web)）。
