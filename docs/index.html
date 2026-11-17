@@ -4,10 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reqcove</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="images/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="images/apple-touch-icon.png">
 <meta name="description" content="Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent over MCP, through a Tailscale exit node.">
 <meta property="og:title" content="Reqcove">
 <meta property="og:description" content="Hand the HTTP(S) traffic of an iPhone, on your desk or far away, to an AI agent over MCP.">
 <meta property="og:url" content="https://mh-mobile.github.io/reqcove/">
+<meta property="og:image" content="https://mh-mobile.github.io/reqcove/images/icon-1024.png">
 <meta name="twitter:card" content="summary">
 <script>
   // Before the page renders, so Japanese readers don't see English first.
@@ -36,6 +40,7 @@
                  padding: 4px 12px; cursor: pointer; font: inherit; }
   .lang button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
   header { text-align: center; padding: 72px 0 24px; }
+  .icon { display: block; margin: 0 auto 8px; border-radius: 24%; }
   h1 { font-size: 44px; margin: 8px 0 4px; letter-spacing: -0.02em; }
   .tagline { font-size: 22px; font-weight: 600; margin: 0 auto 8px; max-width: 680px; }
   .sub { color: var(--muted); margin: 0 auto 24px; max-width: 620px; }
@@ -78,6 +83,7 @@
 </div>
 <main>
   <header>
+    <img class="icon" src="images/icon.svg" alt="" width="112" height="112">
     <h1>Reqcove</h1>
     <p class="tagline" data-l="en">Hand your iPhone's HTTP(S) traffic to an AI agent over MCP, from anywhere.</p>
     <p class="tagline" data-l="ja">iPhone の HTTP(S) 通信を、どこからでも、AI エージェントに MCP で渡す。</p>
