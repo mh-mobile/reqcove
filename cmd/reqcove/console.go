@@ -692,6 +692,7 @@ type pageState struct {
 	ConfigUnused string        `json:"config_unused,omitempty"`
 	HostsFiles   []string      `json:"hosts_files,omitempty"`
 	KeepAwake    string        `json:"keep_awake,omitempty"`
+	Mitmweb      string        `json:"mitmweb,omitempty"` // while it runs (mitmwebText): never its link or password
 	Mode         string        `json:"mode"`
 	Node         string        `json:"node,omitempty"`
 	IPs          []string      `json:"ips,omitempty"`
@@ -768,6 +769,9 @@ func (p *page) state(w http.ResponseWriter, r *http.Request) {
 		Warnings: pageWarnings{Stop: stopWarning, Remove: removeWarning(), AllowAll: allowAllWarning()}}
 	if s.KeepAwake != "" {
 		out.KeepAwake = keepAwakeText(s.KeepAwake)
+	}
+	if s.Mitmweb {
+		out.Mitmweb = mitmwebText(s.MitmwebThisStart)
 	}
 	out.Started = pageStarted
 	out.ServiceCmds = serviceCommands(s.Service, s.Manager, p.st.dir)

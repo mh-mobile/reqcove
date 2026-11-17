@@ -26,6 +26,7 @@ type runOpts struct {
 	allow                               capture.HostRules
 	rules                               string
 	rulesReload, web, noRedact          bool
+	webOnce                             bool // web for this start alone (restart --web: webThisStart), not in args
 	state, hostname                     string
 	dns                                 []netip.AddrPort
 	mitmSpec, python, uvx               string
@@ -369,8 +370,10 @@ func runFlags(args []string, chk *flagCheck) (*runOpts, error) {
 	if *uiFlag && *proxyPort == 80 {
 		return nil, errors.New("--ui uses the node's port 80: give --proxy-port another")
 	}
-	if *web && *proxyPort == exitnode.WebPort && !*lanMode { // LAN mode serves no node port
-		return nil, fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
+	if *web {
+		if err := webPortClash(*proxyPort, *lanMode); err != nil {
+			return nil, err
+		}
 	}
 	if *mcpHTTP && *proxyPort == exitnode.MCPPort {
 		return nil, fmt.Errorf("--mcp-http uses the node's port %d: give --proxy-port another", exitnode.MCPPort)
@@ -479,4 +482,27 @@ func iosDevices() []string {
 	slices.Sort(online)
 	slices.Sort(offline)
 	return append(online, offline...)
+}
+
+// webPortClash: --web serves the node's WebPort too, so --proxy-port cannot
+// be it (LAN mode serves no node port).
+func webPortClash(proxyPort int, lan bool) error {
+	if proxyPort == exitnode.WebPort && !lan {
+		return fmt.Errorf("--web uses the node's port %d too, for your own devices: give --proxy-port another", exitnode.WebPort)
+	}
+	return nil
+}
+
+// webThisStart turns mitmweb on for this start alone, as restart --web asked
+// (envWeb): o.args stay as run was started, so the next restart, the retry
+// and reload take run's own flags.
+func webThisStart(o *runOpts) error {
+	if o.web {
+		return nil // on run's command line: as it is
+	}
+	if err := webPortClash(o.proxyPort, o.lanMode); err != nil {
+		return err
+	}
+	o.web, o.webOnce = true, true
+	return nil
 }

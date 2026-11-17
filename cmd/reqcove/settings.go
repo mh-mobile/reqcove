@@ -258,6 +258,11 @@ type pageRestart struct {
 	Diff    []pageDiff `json:"diff"`
 	Records any        `json:"records"`
 	Warning string     `json:"warning"`
+	// Web (asked with ?web=1): what mitmweb for the next start alone means,
+	// for its own confirm; none when --web is on run's command line anyway.
+	// Lines: what the restart does to mitmweb, shown with the diff.
+	Web   string   `json:"web,omitempty"`
+	Lines []string `json:"lines,omitempty"`
 }
 
 // pageDiff is a setting the config on disk has otherwise than run started
@@ -340,7 +345,7 @@ func recordCount(cap *capture.Capture) any {
 // @FILEs hold as changed alone, and the hosts that hosts files give otherwise
 // than when run last read or wrote them. Its rev covers the config and those
 // files (restartInputs).
-func (p *page) restartDiff(w http.ResponseWriter, _ *http.Request) {
+func (p *page) restartDiff(w http.ResponseWriter, r *http.Request) {
 	st := p.st
 	records := recordCount(p.cap)
 	out := pageRestart{Diff: []pageDiff{}, Records: records, Warning: "A restart empties the records: " + restartEmpties(records) + " (the markers, the agents' requests, hosts not saved, allow-all and discovery, the presets turned on go too)"}
@@ -364,6 +369,20 @@ func (p *page) restartDiff(w http.ResponseWriter, _ *http.Request) {
 		out.Message = "a restart would be refused: the next start would refuse the settings: " + err.Error()
 		answer(w, http.StatusOK, out)
 		return
+	}
+	switch web := r.URL.Query().Get("web") == "1"; {
+	case web && n.web:
+		out.Lines = append(out.Lines, "--web: on already, from run's command line: kept, as a restart keeps it")
+	case web:
+		if _, err := checkFlags(withWeb(st.o.args, true), now, texts); err != nil {
+			out.Message = "a restart with mitmweb would be refused: the next start would refuse the settings with --web: " + err.Error()
+			answer(w, http.StatusOK, out)
+			return
+		}
+		out.Web = webOnceWarning(n.lanMode)
+		out.Lines = append(out.Lines, "+ --web (this start only; unmasked)")
+	case st.o.webOnce:
+		out.Lines = append(out.Lines, "- --web: mitmweb goes off (it was for the last start only)")
 	}
 	fs := runFlagSet()
 	was, _, _ := configUses(fs, config, start)
@@ -409,6 +428,7 @@ func (p *page) restartDiff(w http.ResponseWriter, _ *http.Request) {
 func (p *page) restartNow(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Rev string `json:"rev"`
+		Web bool   `json:"web"` // the next start alone runs mitmweb
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -418,7 +438,7 @@ func (p *page) restartNow(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), ctlWait-time.Second)
 	defer cancel()
-	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: "restart", rev: in.Rev, from: "console"})
+	a := answerCtl(ctx, p.cap, p.st, ctlRequest{Cmd: "restart", Web: in.Web, rev: in.Rev, from: "console"})
 	// Whole, with its length, before the restart closes the server's
 	// connections: not chunked, whose last chunk waits for the handler's end.
 	b, _ := json.Marshal(map[string]any{"ok": a.OK, "message": a.Message})

@@ -254,6 +254,12 @@ type StatusOut struct {
 	// --keep-awake on macOS (always, ac or never). On this computer only.
 	Executable string `json:"executable,omitempty"`
 	KeepAwake  string `json:"keep_awake,omitempty"`
+	// Mitmweb: run runs mitmweb (--web), whose page shows the traffic
+	// unmasked to whoever has its password; MitmwebThisStart: for this start
+	// alone (a restart asked it), else from run's command line. Booleans
+	// alone: never its link or password. On this computer only.
+	Mitmweb          bool `json:"mitmweb,omitempty"`
+	MitmwebThisStart bool `json:"mitmweb_this_start_only,omitempty"`
 	// CaptureRequests are the agents' requests to record more hosts that
 	// wait for the user (request_capture_add). On this computer only.
 	CaptureRequests []CaptureRequest `json:"capture_requests,omitempty"`

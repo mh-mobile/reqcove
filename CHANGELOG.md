@@ -38,6 +38,28 @@ v1.3 panels, which were not.
   tests (an exec of a test binary among them) and an E2E test with real
   mitmproxy (LAN mode on the loopback); not tried: a tailnet node, under a
   service manager, after a real `brew upgrade`.
+- **mitmweb for one start: `reqcove restart --web`**, and the
+  `reqcove console` page's **Restart with mitmweb (this start only)…** (this
+  computer's page alone; the tailnet page has no such button and `run`
+  refuses a restart from it, directly or through the Remote Proxy). The new
+  start runs with `--web`, that start alone: the choice crosses the exec in
+  the environment (unset at start), never in the config, where `--web` stays
+  refused, or in the start config's copy. A failed start's retry, and the
+  next restart of any kind (the page, `reqcove restart`, the service, a
+  reboot), start without it; `--web` on `run`'s command line stays on as
+  before. Before anything stops, the restart's checks are made with `--web`
+  (`--proxy-port 8081` refused; LAN mode allowed, mitmweb on 127.0.0.1
+  there; the binary's `run --check-config` given `--web`). The new start
+  makes a new `web-token`, so earlier links stop working. The page asks
+  first in words of its own (unmasked flows with bodies, up to 256 MB in
+  memory; editing, replaying and scripts, which run code here; where it
+  opens; where its link is; this start only), and the restart's list shows
+  `+ --web (this start only; unmasked)`. `reqcove status` (`mitmweb: on —
+  unmasked; this start only` or `from the command line`), the MCP `status`
+  (`mitmweb`, `mitmweb_this_start_only`: booleans) and both pages say it is
+  on, never its link or password. Unit tests and the E2E restart test with
+  real mitmproxy (LAN mode); not tried: the page's button in a browser,
+  under a service.
 - **`reqcove console --end`** (in a terminal only, as `console`) ends every
   session of the pages and every link not opened yet; the pages say so, the
   links say they were ended. A new ctl op, `console-end`, in LAN mode too; a

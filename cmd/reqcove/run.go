@@ -29,6 +29,11 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if h := carried; h != nil && h.web { // restart --web: this start alone, never in o.args
+		if err := webThisStart(o); err != nil {
+			return err
+		}
+	}
 
 	var lanCfg *exitnode.LAN
 	if o.lanMode {
@@ -55,6 +60,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	// Asked for by the restart op (restart.go): the snapshot's path.
 	var restartTo atomic.Pointer[string]
+	var restartWeb atomic.Bool
 	defer func() {
 		if restartTo.Load() == nil && (h == nil || lock != h.lock) { // carried on, or still the retry's
 			lock.Close()
@@ -145,6 +151,9 @@ func run(ctx context.Context, args []string) error {
 		if webLocal != exitnode.WebPort && !o.lanMode {
 			log.Printf("(%d is taken here, by another run maybe; on the node it is still %d)", exitnode.WebPort, exitnode.WebPort)
 		}
+		if o.webOnce {
+			log.Print("--web for this start only (asked by a restart): mitmweb has a new password, and the next restart starts without it")
+		}
 		log.Print("WARN: --web: mitmweb shows traffic unmasked (cookies, tokens), and from its page flows can be edited, replayed and options changed. It keeps the newest 10,000 flows, with bodies up to 2 MB each and 256 MB in all (finished flows: one in progress counts once it ends)")
 	}
 
@@ -160,7 +169,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	// ctl.sock before mcp.sock: `reqcove capture` takes a run with mcp.sock
 	// and no ctl.sock for one older than v1.1.
-	restart := func(snapshot string) { restartTo.Store(&snapshot); cancel() }
+	restart := func(snapshot string, web bool) { restartWeb.Store(web); restartTo.Store(&snapshot); cancel() }
 	ctl, err := serveCtl(ctx, o.state, cap, o, restart, func() mcpserver.StatusOut { // reqcove console's page
 		return withDiscovery(withFiles(liveStatus(node.get(), cap), o), cap)
 	})
@@ -217,7 +226,7 @@ func run(ctx context.Context, args []string) error {
 		})
 	})
 	if snap := restartTo.Load(); snap != nil { // stopped as below: the exec follows run's defers
-		r := &restartExec{lock: lock, snapshot: *snap}
+		r := &restartExec{lock: lock, snapshot: *snap, web: restartWeb.Load()}
 		ctl.mu.Lock()
 		if p := ctl.page; p != nil {
 			r.page, r.sessions = p.sock, p.carry()
@@ -307,8 +316,14 @@ func upstreamCA(o *runOpts) (string, error) {
 }
 
 // runTokens are the page's, mitmweb's and --mcp-http's tokens, kept across
-// starts (tokens.go); "" for those not on.
+// starts (tokens.go); "" for those not on. mitmweb's is made anew when a
+// restart turned it on (webThisStart): links seen before stop working.
 func runTokens(o *runOpts) (uiToken, webToken, mcpToken string, err error) {
+	if o.webOnce {
+		if err := os.Remove(filepath.Join(o.state, "web-token")); err != nil && !os.IsNotExist(err) {
+			return "", "", "", fmt.Errorf("web-token: %w", err)
+		}
+	}
 	for _, t := range []struct {
 		on   bool
 		name string

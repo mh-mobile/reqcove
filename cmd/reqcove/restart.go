@@ -44,6 +44,12 @@ import (
 // more; that one failing too, run stays down. The new process unsets every
 // handover variable and makes the fds close-on-exec again before anything
 // else, so no child (mitmdump, caffeinate) gets them.
+//
+// `reqcove restart --web` (and the local page's "Restart with mitmweb")
+// starts the next run with --web for that start alone: the choice crosses the
+// exec in envWeb, never in the config or the snapshot; the retry of a failed
+// start and every later restart start without it, and the new start makes a
+// new web-token (earlier links stop working).
 
 const (
 	envSnapshot = "REQCOVE_RESTART_SNAPSHOT" // the start config's snapshot's path
@@ -51,9 +57,12 @@ const (
 	envLock     = "REQCOVE_RESTART_LOCK"     // the state lock's fd
 	envSessions = "REQCOVE_RESTART_SESSIONS" // the page's sessions: local:HASH:IDLE_SECONDS,...
 	envRetry    = "REQCOVE_RESTART_RETRY"    // 1: this start is the retry, never retried again
+	envWeb      = "REQCOVE_RESTART_WEB"      // 1: this start runs mitmweb (restart --web), this start alone
 )
 
-var handoverVars = []string{envSnapshot, envListener, envLock, envSessions, envRetry}
+// handoverVars are all unset at start, and none is passed on but what the
+// exec sets anew: the retry and any later restart never inherit envWeb.
+var handoverVars = []string{envSnapshot, envListener, envLock, envSessions, envRetry, envWeb}
 
 // snapshotName is a snapshot's name in the state directory; restartNote the
 // file that says what came of a failed start after a restart (status shows it).
@@ -98,13 +107,14 @@ func checkConfigMode(args []string) error {
 // goes out first).
 var checkTimeout = 8 * time.Second
 
-// binaryCheck runs startBinary's check mode with run's arguments. old: the
-// binary has no such mode (older than v1.3): a restart refuses it, as it
-// could not take on the state's lock carried across, nor retry.
-func binaryCheck(ctx context.Context) (old bool, err error) {
+// binaryCheck runs startBinary's check mode with args (run's, as the next
+// start takes them). old: the binary has no such mode (older than v1.3): a
+// restart refuses it, as it could not take on the state's lock carried
+// across, nor retry.
+func binaryCheck(ctx context.Context, args []string) (old bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, startBinary, append([]string{"run", checkConfigArg}, startArgs...)...)
+	cmd := exec.CommandContext(ctx, startBinary, append([]string{"run", checkConfigArg}, args...)...)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -150,6 +160,7 @@ func binaryPath(argv0 string) (string, error) {
 type handover struct {
 	restarted bool     // a start after a restart (any handover variable set)
 	retry     bool     // the retry of a failed one
+	web       bool     // run mitmweb this start (restart --web): never carried on
 	lock      *os.File // the state lock carried in
 	adopted   bool     // lock is this run's state's: run's own lock
 	page      *os.File // the page's socket carried in, kept for the next restart
@@ -183,6 +194,11 @@ func takeHandover() *handover {
 		os.Unsetenv(k)
 	}
 	h := &handover{restarted: v[envSnapshot] != "" || v[envListener] != "" || v[envLock] != "", retry: v[envRetry] == "1"}
+	if v[envWeb] != "" {
+		if h.web = v[envWeb] == "1" && h.restarted; !h.web {
+			log.Print("restart: " + envWeb + " set without a restart's handover: mitmweb stays off")
+		}
+	}
 	h.lock = carriedFD(v[envLock], "the state lock", syscall.S_IFREG)
 	if f := carriedFD(v[envListener], "the page's port", syscall.S_IFSOCK); f != nil {
 		ln, err := net.FileListener(f)
@@ -490,6 +506,7 @@ type restartExec struct {
 	sessions   []carriedSession
 	snapshot   string
 	retry      bool
+	web        bool // the next start runs mitmweb, that start alone
 }
 
 func (*restartExec) Error() string { return "restart" }
@@ -576,7 +593,11 @@ func (h *handover) failed(args []string, err error) error {
 	if aside != "" {
 		kept = " (the one that failed kept as " + aside + ")"
 	}
-	note("the start after a restart failed (" + err.Error() + "); " + config + " is back as run had started from it" + kept + ", and run starts once more with it.")
+	without := ""
+	if h.web {
+		without = ", without mitmweb (restart --web was for that start alone)"
+	}
+	note("the start after a restart failed (" + err.Error() + "); " + config + " is back as run had started from it" + kept + ", and run starts once more with it" + without + ".")
 	// The page's sessions as they are now: --end, or a session traded, while
 	// it served. Never served: the ones handed over, unchanged (nothing could
 	// change them: ctl.sock serves only after the page).
@@ -623,6 +644,9 @@ func execRestart(r *restartExec) error {
 	if r.retry {
 		env = append(env, envRetry+"=1")
 	}
+	if r.web {
+		env = append(env, envWeb+"=1")
+	}
 	if startBinary == "" {
 		return fmt.Errorf("restart: run is stopped, and not started again: the path it was started from is not known (%v)", startBinaryErr)
 	}
@@ -640,12 +664,31 @@ func execRestart(r *restartExec) error {
 	return fmt.Errorf("restart: run is stopped, and %s did not start again: %v", startBinary, err)
 }
 
+// webOnceWarning is what mitmweb for one start means, before it is asked
+// (the page's confirm) and in the restart's answer (reqcove restart --web).
+func webOnceWarning(lan bool) string {
+	where := "on 127.0.0.1:8081 (8091-8099 while another run has 8081) and, through the node, to your own devices on the tailnet"
+	if lan {
+		where = "on 127.0.0.1:8081 (8091-8099 while another run has 8081), on this computer alone (LAN mode has no node)"
+	}
+	return "mitmweb shows every flow mitmproxy decrypts unmasked, bodies included (up to 256 MB kept in memory); anyone with its password can edit and replay requests and change its options and scripts, which runs code on this computer. It opens " + where + ". Its link is printed in run's terminal, or by `reqcove links` (under a service); its password is made anew, so earlier links stop working. It lasts this start only: the next restart of any kind (the page, reqcove restart, the service, a reboot) starts without it"
+}
+
+// withWeb is args with --web at the end: the next start's, asked with web.
+func withWeb(args []string, web bool) []string {
+	if !web {
+		return args
+	}
+	return append(slices.Clone(args), "--web")
+}
+
 // restartOp is the restart op (st.mu held): refused, with nothing stopped,
 // unless the binary run started from is there and the config on disk and
 // run's command line would start, as this run checks them and as that binary
 // does (binaryCheck); else the start config's snapshot written, and the
-// restart starts once the answer is sent (ctlAnswer.after).
-func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
+// restart starts once the answer is sent (ctlAnswer.after). web: the next
+// start runs mitmweb, that start alone (handed over in envWeb, never written).
+func restartOp(ctx context.Context, st *ctlState, records any, web bool) ctlAnswer {
 	refuse := func(why string) ctlAnswer { return ctlAnswer{Message: "refused: " + why + "; nothing stopped"} }
 	if st.restart == nil {
 		return refuse("this run cannot restart itself")
@@ -656,11 +699,24 @@ func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 	if fi, err := os.Stat(startBinary); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
 		return refuse(startBinary + ", which run was started from, is not there to start again (removed by an upgrade?): stop run and start it again yourself")
 	}
-	n, err := checkFlags(st.o.args, nil, nil)
-	if err != nil {
-		return refuse("the next start would refuse the settings (the --config file on disk and run's command line): " + err.Error())
+	if web { // on run's command line already: kept across restarts, as it is
+		if n, err := checkFlags(st.o.args, nil, nil); err == nil && n.web {
+			web = false
+		}
 	}
-	old, err := binaryCheck(ctx)
+	n, err := checkFlags(withWeb(st.o.args, web), nil, nil)
+	if err != nil {
+		with := ""
+		if web {
+			with = ", with --web"
+		}
+		return refuse("the next start would refuse the settings (the --config file on disk and run's command line" + with + "): " + err.Error())
+	}
+	args := startArgs
+	if web { // a bare run's are none: its --config FILE in place, then --web
+		args = withWeb(st.o.args, true)
+	}
+	old, err := binaryCheck(ctx, args)
 	if err != nil {
 		return refuse(startBinary + ", which a restart starts, refuses the settings (the --config file on disk and run's command line): " + err.Error())
 	}
@@ -685,9 +741,17 @@ func restartOp(ctx context.Context, st *ctlState, records any) ctlAnswer {
 	if st.page != nil {
 		msg += "; the console's page keeps its port and sessions"
 	}
+	switch {
+	case web:
+		msg += "; + --web (this start only; unmasked): " + webOnceWarning(n.lanMode)
+	case st.o.webOnce && !n.web:
+		msg += "; mitmweb goes off (--web was for the last start only)"
+	case st.o.web && n.web:
+		msg += "; mitmweb stays on (--web on run's command line)"
+	}
 	msg += ". If the new start fails, " + failed + "; " + withState("reqcove status", n.state) + " says how it went"
 	log.Print("restart: asked; " + strings.TrimPrefix(msg, "restarting: "))
-	return ctlAnswer{OK: true, Message: msg, after: func() { st.restart(snap) }}
+	return ctlAnswer{OK: true, Message: msg, after: func() { st.restart(snap, web) }}
 }
 
 // restartEmpties is what a restart loses, for its answer and the page's confirm.
@@ -699,17 +763,18 @@ func restartEmpties(records any) string {
 func restartCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ExitOnError)
 	state := fs.String("state", defaultState(), "state directory")
+	web := fs.Bool("web", false, "start run with mitmweb (--web) this start only: unmasked flows, bodies included, and a page that can edit and replay requests and run code here, for whoever has its password (made anew); the next restart of any kind starts without it")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	return restartIn(ctx, os.Stdin, os.Stdout, *state)
+	return restartIn(ctx, os.Stdin, os.Stdout, *state, *web)
 }
 
 var errRestartNotTerminal = errors.New("reqcove restart runs only in a terminal: it empties the records and stops the devices' traffic for a moment, which is the user's choice (an agent never runs it). Run it in your own terminal")
 
-func restartIn(ctx context.Context, in, out *os.File, state string) error {
+func restartIn(ctx context.Context, in, out *os.File, state string, web bool) error {
 	if !terminal(in) || !terminal(out) {
 		return errRestartNotTerminal
 	}
-	return sendCapture(ctx, out, state, ctlRequest{Cmd: "restart"})
+	return sendCapture(ctx, out, state, ctlRequest{Cmd: "restart", Web: web})
 }

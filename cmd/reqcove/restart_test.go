@@ -44,12 +44,12 @@ func restartable(t *testing.T, text string) (st *ctlState, config string, args [
 	}
 	st = newCtlState(o)
 	var asked string
-	st.restart = func(s string) { asked = s }
+	st.restart = func(s string, _ bool) { asked = s }
 	startBinary, startBinaryErr, startArgs = os.Args[0], nil, args
 	t.Cleanup(func() { startBinary, startArgs = "", nil })
 	return st, config, args, func() string {
 		t.Helper()
-		a := restartOp(t.Context(), st, 0)
+		a := restartOp(t.Context(), st, 0, false)
 		if !a.OK || a.after == nil {
 			t.Fatalf("restart refused: %q", a.Message)
 		}
@@ -256,7 +256,7 @@ func TestRestartStateEdited(t *testing.T) {
 	start := "--device phone\n--state=" + stateA + "\n"
 	st, config, args, restart := restartable(t, start)
 	os.WriteFile(config, []byte("--device phone\n--state="+stateB+"\n"), 0o600)
-	a := restartOp(t.Context(), st, 0)
+	a := restartOp(t.Context(), st, 0, false)
 	if !strings.Contains(a.Message, "the config names another --state now: "+stateB) {
 		t.Errorf("answer: %q", a.Message)
 	}
@@ -479,12 +479,12 @@ func TestRestartRefused(t *testing.T) {
 	st, config, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
 	snaps := func() int { m, _ := filepath.Glob(filepath.Join(state, "restart-*")); return len(m) }
 	startBinary = filepath.Join(t.TempDir(), "gone")
-	if a := restartOp(t.Context(), st, 0); a.OK || a.after != nil || !strings.Contains(a.Message, "is not there to start again") || !strings.HasSuffix(a.Message, "; nothing stopped") {
+	if a := restartOp(t.Context(), st, 0, false); a.OK || a.after != nil || !strings.Contains(a.Message, "is not there to start again") || !strings.HasSuffix(a.Message, "; nothing stopped") {
 		t.Errorf("binary gone: %q", a.Message)
 	}
 	startBinary = os.Args[0]
 	os.WriteFile(config, []byte("--device phone\n--state="+state+"\n--web\n"), 0o600)
-	if a := restartOp(t.Context(), st, 0); a.OK || !strings.Contains(a.Message, "the next start would refuse the settings") || !strings.Contains(a.Message, "--web only on the command line") {
+	if a := restartOp(t.Context(), st, 0, false); a.OK || !strings.Contains(a.Message, "the next start would refuse the settings") || !strings.Contains(a.Message, "--web only on the command line") {
 		t.Errorf("config refused: %q", a.Message)
 	}
 	if snaps() != 0 {
@@ -505,7 +505,7 @@ func TestRestartRefused(t *testing.T) {
 func TestRestartAnswerFlagsOnly(t *testing.T) {
 	state := t.TempDir()
 	st, _, _, _ := restartable(t, "--device phone\n--state="+state+"\n")
-	if a := restartOp(t.Context(), st, 0); !a.OK || !strings.Contains(a.Message, "with the config on disk and the same command line") || !strings.Contains(a.Message, "run puts back the config it had started from") {
+	if a := restartOp(t.Context(), st, 0, false); !a.OK || !strings.Contains(a.Message, "with the config on disk and the same command line") || !strings.Contains(a.Message, "run puts back the config it had started from") {
 		t.Errorf("with a config: %q", a.Message)
 	}
 	o, err := parseRunFlags([]string{"--device", "phone", "--state=" + state})
@@ -513,9 +513,9 @@ func TestRestartAnswerFlagsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	st = newCtlState(o)
-	st.restart = func(string) {}
+	st.restart = func(string, bool) {}
 	startArgs = []string{"--device", "phone", "--state=" + state}
-	a := restartOp(t.Context(), st, 0)
+	a := restartOp(t.Context(), st, 0, false)
 	if !a.OK || !strings.Contains(a.Message, "starts again with the same command line;") || !strings.Contains(a.Message, "If the new start fails, run stays down") || strings.Contains(a.Message, "puts back") {
 		t.Errorf("flags alone: %q", a.Message)
 	}
@@ -864,12 +864,25 @@ esac
 		t.Fatalf("caffeinate: %q", caff)
 	}
 
-	a, err = askRun(ctx, state, ctlRequest{Cmd: "restart"})
-	if err != nil || !a.OK || !strings.Contains(a.Message, link+" starts again") || !strings.Contains(a.Message, "keeps its port and sessions") {
+	// restart --web: mitmweb this start alone, with a new password.
+	oldToken := "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+	writePrivate(filepath.Join(state, "web-token"), []byte(oldToken))
+	status := func() string { out, _ := exec.Command(bin, "status", "--state", state).Output(); return string(out) }
+	if strings.Contains(status(), "mitmweb:") {
+		t.Fatalf("mitmweb before:\n%s", status())
+	}
+	a, err = askRun(ctx, state, ctlRequest{Cmd: "restart", Web: true})
+	if err != nil || !a.OK || !strings.Contains(a.Message, link+" starts again") || !strings.Contains(a.Message, "keeps its port and sessions") || !strings.Contains(a.Message, "+ --web (this start only; unmasked)") {
 		t.Fatalf("restart: %v %+v", err, a)
 	}
 	waitReady(2, held)
 	pageWorks("after the restart")
+	if s := status(); !strings.Contains(s, "mitmweb:     on — unmasked; this start only") {
+		t.Errorf("status after restart --web:\n%s", s)
+	}
+	if tok := read(t, filepath.Join(state, "web-token")); tok == oldToken || !tokenForm.MatchString(tok) || read(t, config) != start {
+		t.Errorf("web-token %q (was %q); config:\n%s", tok, oldToken, read(t, config))
+	}
 	if !gone(mitm) || pidOf() == mitm {
 		t.Errorf("the first mitmdump (%d) not stopped", mitm)
 	}
@@ -887,13 +900,17 @@ esac
 	failing := strings.Replace(start, fmt.Sprintf("--proxy-port=%d", port), fmt.Sprintf("--proxy-port=%d", taken.Addr().(*net.TCPAddr).Port), 1)
 	os.WriteFile(config, []byte(failing), 0o600)
 	mitm = pidOf()
-	if a, err := askRun(ctx, state, ctlRequest{Cmd: "restart"}); err != nil || !a.OK {
+	// Asked with --web again: the retry starts without it.
+	if a, err := askRun(ctx, state, ctlRequest{Cmd: "restart", Web: true}); err != nil || !a.OK {
 		t.Fatalf("second restart: %v %+v", err, a)
 	}
 	waitReady(3, held)
 	pageWorks("after the retry")
-	if l := logged(); !strings.Contains(l, "restart: the start after a restart failed (LAN proxy on 127.0.0.1:") || !strings.Contains(l, config+" is back as run had started from it") {
+	if l := logged(); !strings.Contains(l, "restart: the start after a restart failed (LAN proxy on 127.0.0.1:") || !strings.Contains(l, config+" is back as run had started from it") || !strings.Contains(l, "without mitmweb") {
 		t.Errorf("log:\n%s", l)
+	}
+	if s := status(); strings.Contains(s, "mitmweb:") {
+		t.Errorf("the retry runs mitmweb:\n%s", s)
 	}
 	if read(t, config) != start || read(t, config+".failed") != failing || !gone(mitm) {
 		t.Errorf("config:\n%s\nfailed:\n%s", read(t, config), read(t, config+".failed"))
@@ -947,26 +964,29 @@ func TestRestartCmd(t *testing.T) {
 	r, w, _ := os.Pipe()
 	defer r.Close()
 	defer w.Close()
-	if err := restartIn(ctx, r, w, dir); !errors.Is(err, errRestartNotTerminal) || len(*got) != 0 {
+	if err := restartIn(ctx, r, w, dir, false); !errors.Is(err, errRestartNotTerminal) || len(*got) != 0 {
 		t.Errorf("off a terminal: %v %+v", err, *got)
 	}
 	terminal = func(*os.File) bool { return true }
 	out, _ := os.Create(filepath.Join(t.TempDir(), "out"))
 	defer out.Close()
-	if err := restartIn(ctx, r, out, dir); err != nil || len(*got) != 1 || (*got)[0].Cmd != "restart" {
+	if err := restartIn(ctx, r, out, dir, false); err != nil || len(*got) != 1 || (*got)[0].Cmd != "restart" || (*got)[0].Web {
 		t.Errorf("%v %+v", err, *got)
 	}
-	if b, _ := os.ReadFile(out.Name()); string(b) != "restarting: run stops\n" {
+	if err := restartIn(ctx, r, out, dir, true); err != nil || len(*got) != 2 || !(*got)[1].Web {
+		t.Errorf("--web: %v %+v", err, *got)
+	}
+	if b, _ := os.ReadFile(out.Name()); string(b) != "restarting: run stops\nrestarting: run stops\n" {
 		t.Errorf("%q", b)
 	}
 	for _, lan := range []bool{false, true} {
 		v12 := answerCtl(ctx, nil, newCtlState(&runOpts{lanMode: lan}), ctlRequest{Cmd: "restart-unknown"})
 		old, _ := fakeCtlSock(t, func(ctlRequest) ctlAnswer { return v12 })
-		if err := restartIn(ctx, r, out, old); !errors.Is(err, errOlderRestart) {
+		if err := restartIn(ctx, r, out, old, false); !errors.Is(err, errOlderRestart) {
 			t.Errorf("lan %v: %v (%s)", lan, err, v12.Message)
 		}
 	}
-	if err := restartIn(ctx, r, out, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") {
+	if err := restartIn(ctx, r, out, t.TempDir(), false); err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Errorf("no run: %v", err)
 	}
 }
@@ -1083,7 +1103,7 @@ func TestCarriedPageSessionsBeforeServing(t *testing.T) {
 // is never refused as one this run cannot make.
 func TestCtlRestartBeforeServing(t *testing.T) {
 	state := shortDir(t)
-	if _, err := serveCtl(t.Context(), state, nil, &runOpts{}, func(string) {}, nil); err != nil {
+	if _, err := serveCtl(t.Context(), state, nil, &runOpts{}, func(string, bool) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	a, err := askRun(t.Context(), state, ctlRequest{Cmd: "restart"})

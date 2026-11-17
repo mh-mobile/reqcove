@@ -416,6 +416,15 @@ either, nothing stops (a test); a binary without the mode (older than v1.3)
 is refused too, nothing stopped (a test): it could not take over the
 state's lock. A stop (Ctrl-C, a service's SIGTERM) during the restart or the
 new start is a stop: no exec, no config put back, the copy removed (tests).
+With `--web` (since v1.3; or this computer's page's **Restart with mitmweb**)
+the new start runs mitmweb, that start alone ([mitmweb](#mitmweb---web)),
+with the same checks, made with `--web` too. So any process of your user
+that can reach `ctl.sock` (an agent with a shell among them), or get a page
+session through it, can turn mitmweb on for a start and read `web-token`
+(yours, 0600), and so see every decrypted flow unmasked and use mitmweb's
+page. Before, it would have had to restart `run` with `--web` on its
+command line itself. The restart's answer, `run`'s log, `reqcove status`
+and both pages say mitmweb is on (tests).
 What crosses the exec:
 - **The state's lock and this computer's page's port**, as open files: no other `run`
   takes the state, and no other process the port, in between (an E2E test
@@ -425,7 +434,10 @@ What crosses the exec:
   child of the new process holds neither).
 - **In its environment:** their numbers, the page's sessions as hashes with
   how long each was unused (never a token or a code: the hashes let no one
-  in, and nothing logs them; tests), and the path of the start config's copy.
+  in, and nothing logs them; tests), the path of the start config's copy,
+  and after `restart --web` a mark that the new start runs mitmweb (no
+  secret; unset at start, never passed on: the retry and later restarts do
+  not get it; tests).
   The new process unsets them before it starts anything (tests: a child's
   environment holds none), but its own initial environment stays readable to
   your user and root for its life (`ps -E`, `/proc/PID/environ`); hence
@@ -655,7 +667,10 @@ hides (tests: every other route of this computer's page refused, Save too).
   request; turn on one of your `--rules` file's presets for up to 5 minutes
   (a `map_remote` preset sends the device's matching requests, with their
   cookies and tokens, to the destination your file names). On this
-  computer's page also: write the settings above for the next start and
+  computer's page also: restart `run` with mitmweb for one start (every
+  decrypted flow unmasked, to whoever has its password, which the page never
+  shows; reading `web-token` or `run`'s terminal gives it; from the code);
+  write the settings above for the next start and
   restart `run`, so send the decrypted requests on to a proxy it names
   (`--upstream-proxy`, unmasked there), serve the records to your devices on
   the tailnet (`--ui`, `--mcp-http`), carry one more of your devices, take a
@@ -792,6 +807,21 @@ computer. It is open on this computer and, through the node, to your own
 devices only. The password is the same at each start: to change it, delete
 `web-token` and start again. [Details](guide.md#security-web).
 
+Since v1.3 it can also be on for one start, turned on without a terminal for
+`run`: `reqcove restart --web`, or this computer's `reqcove console` page
+([guide](guide.md#restart-in-place-reqcove-restart)). It never lasts past
+that start: `--web` stays refused in the config, the copy of the start
+config does not hold it, and the retry of a failed start and the next
+restart of any kind start without it (unit tests and an E2E test). Such a
+start makes a new password, so links seen before stop working (tests). Under
+a service its link is in `reqcove links` alone: off a terminal `run`'s
+output names that command, as for `--ui` (from the code; a service run was
+not tried). `reqcove status`, the MCP `status` (`mitmweb`,
+`mitmweb_this_start_only`: booleans) and both `reqcove console` pages say it
+is on, never its link, password or port with them (tests for the fields;
+the browser was not tried). Who can turn it on that way:
+[`reqcove restart`](#other-processes-on-this-computer).
+
 ### The page (`--ui`)
 
 `--ui` serves a read-only page of the records, masked as the MCP tools return
@@ -886,7 +916,8 @@ flags. Since v1.1, a `reqcove run` with no arguments at all reads
 `~/.config/reqcove/config` too (else Homebrew's `etc/reqcove/config`), with
 the same checks. The file must be yours and readable by you only. Five flags are
 refused in it and stay on the command line: `--no-redact`, `--web`,
-`--allow-hosts '*'`, `--rules-reload` and `--lan`.
+`--allow-hosts '*'`, `--rules-reload` and `--lan` (`--web` can still be on
+for one start, by a restart: [mitmweb](#mitmweb---web)).
 Since v1.1, `reqcove setup` puts the hosts in a file beside it (`hosts`,
 0600), which the file reads with `--allow-hosts=@FILE`: what can write that
 file decides what the next start records too. `run` does not check its owner

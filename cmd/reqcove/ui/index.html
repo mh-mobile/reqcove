@@ -9,7 +9,7 @@
 <script src="/app.js" defer></script>
 </head>
 <body>
-<header><h1>Reqcove</h1><p id="line">Opening…</p><p id="tailnet-note" class="muted" hidden>The page on the tailnet, for your own devices: what ends with the run. Saving the hosts, the settings, a restart and the HAR file are on this computer's page (reqcove console in its terminal).</p></header>
+<header><h1>Reqcove</h1><p id="line">Opening…</p><p id="mitmweb" class="warn" hidden></p><p id="tailnet-note" class="muted" hidden>The page on the tailnet, for your own devices: what ends with the run. Saving the hosts, the settings, a restart and the HAR file are on this computer's page (reqcove console in its terminal).</p></header>
 <main id="main" hidden>
 <section><h2>Asked by agents</h2><div id="requests"></div><p id="result" role="status"></p></section>
 <section><h2>Recorded</h2><dl id="recorded"></dl>
@@ -48,7 +48,7 @@
 <p id="settings-how" class="muted">Written to the config file; run takes them at its next restart. The config's other lines are kept, the file before as config.prev.</p>
 <p id="settings-ro" class="muted"></p>
 <dl id="settings"></dl>
-<p><button id="restart" type="button">Restart…</button></p>
+<p><button id="restart" type="button">Restart…</button> <button id="restart-web" type="button">Restart with mitmweb (this start only)…</button></p>
 <p id="settings-result" role="status"></p>
 </section>
 <section><h2>Next steps</h2><ol id="steps"></ol></section>
