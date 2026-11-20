@@ -25,11 +25,11 @@ import (
 // The page's steps are the viewing device's: names that overlap (iphone,
 // iphone-1) keep its own, and another device's problem or step is not there.
 func TestPageSteps(t *testing.T) {
-	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, Problems: []string{`"ipad": no such device`}}
+	ok := exitnode.Status{Backend: "Running", Node: "reqcove.ts.net", ExitApproved: true, Problems: []string{`"ipad": no such device`}, Refused: []string{"laptop"}}
 	allow, _ := capture.ParseAllowHosts([]string{"api.example.com"})
 	devices := []capture.DeviceInfo{{ID: "a", Name: "iphone", Carried: true}, {ID: "b", Name: "iphone-1", Carried: true, TLSFailures: 2}}
 	got := strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "a"), "\n")
-	if !strings.Contains(got, "no traffic from iphone yet") || strings.Contains(got, "iphone-1") || strings.Contains(got, "ipad") {
+	if !strings.Contains(got, "no traffic from iphone yet") || strings.Contains(got, "iphone-1") || strings.Contains(got, "ipad") || strings.Contains(got, "laptop") {
 		t.Errorf("a's steps: %q", got)
 	}
 	got = strings.Join(pageSteps(ok, map[string]any{"state": "ready"}, allow, capture.CA{}, devices, "b"), "\n")
@@ -60,6 +60,7 @@ func TestNextSteps(t *testing.T) {
 		{"lock, not checked yet", exitnode.Status{Backend: "Running", LockEnabled: true, NodeKey: "nodekey:ab", ExitApproved: true, Devices: map[string]string{"n1": "phone"}}, ready, allow, nil, nil},
 		{"approve", exitnode.Status{Backend: "Running", Node: "reqcove.ts.net"}, ready, allow, nil, []string{"approve the exit node", "reqcove.ts.net", "autoApprovers"}},
 		{"device missing", exitnode.Status{Backend: "Running", ExitApproved: true, Problems: []string{`"phone": no such device`}}, ready, allow, nil, []string{`device "phone": no such device`}},
+		{"refused device", exitnode.Status{Backend: "Running", ExitApproved: true, Devices: map[string]string{"n1": "phone"}, Refused: []string{"iphone-2", "100.64.0.9"}, RefusedMore: 3}, ready, allow, nil, []string{"refused traffic from iphone-2, 100.64.0.9 and 3 more: not in --device", "add it to --device"}},
 		{"mitmproxy down", ok, map[string]any{"state": "restarting", "state_detail": "exit 1"}, allow, nil, []string{"mitmproxy is restarting: exit 1"}},
 		{"mitmproxy retrying", ok, map[string]any{"state": "restarting", "state_detail": "exit 1", "retries": int64(7), "next_attempt": "2026-11-15T10:00:00.000Z"}, allow, nil, []string{"mitmproxy is restarting: exit 1; retry 7, the next at 2026-11-15T10:00:00.000Z"}},
 		{"no allow-hosts", ok, ready, capture.HostRules{}, nil, []string{"--allow-hosts"}},

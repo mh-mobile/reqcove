@@ -112,7 +112,13 @@ type Status struct {
 	Devices      map[string]string `json:"devices"`             // carried: StableID -> name
 	DeviceOS     map[string]string `json:"device_os,omitempty"` // carried: StableID -> OS, as Tailscale has it (iOS, android, macOS, ...)
 	Problems     []string          `json:"device_problems,omitempty"`
-	Health       []string          `json:"health,omitempty"` // tsnet's own warnings
+	// Refused are the devices not in --device whose traffic through the exit
+	// node or the Remote Proxy was refused this run: machine names (an
+	// address when the tailnet no longer lists it), the last seen first, at
+	// most maxRefusedShown; RefusedMore is how many more.
+	Refused     []string `json:"refused_devices,omitempty"`
+	RefusedMore int      `json:"refused_devices_more,omitempty"`
+	Health      []string `json:"health,omitempty"` // tsnet's own warnings
 	// WasRunning: logged out after running (key expired, removed). tsnet prints
 	// a login URL only while starting, so only a restart brings one.
 	WasRunning bool `json:"-"`
@@ -172,6 +178,7 @@ func OwnDeviceAt(addr string) (Device, bool) {
 // looking for the devices instead of failing.
 func Run(ctx context.Context, cfg Config) error {
 	envknob.SetNoLogsNoSupport() // keep tsnet from uploading logs (they carry destination IPs)
+	refusedSrc.clear()           // the status's refused devices are this Run's alone
 	if cfg.LAN == nil {
 		preflight(cfg.DNS)
 	}
@@ -218,6 +225,9 @@ func Run(ctx context.Context, cfg Config) error {
 		p := current.Load()
 		v := decideTCP(p, src, dst)
 		if v == reject {
+			if refusedDevice(p, src, dst) {
+				refusedSrc.first(src.Addr().Unmap(), "refused")
+			}
 			if cfg.Verbose {
 				logEvent("tcp %v -> %v reject", src, dst)
 			}
@@ -345,8 +355,12 @@ func logCarrying(names map[string]string) {
 	}
 }
 
+// refusedSrc holds the tailnet addresses refused this run (refusedDevice, and
+// the Remote Proxy's onlyDevices), for the status.
+var refusedSrc = &onceSet{}
+
 func watch(ctx context.Context, lc *local.Client, cfg Config) {
-	var lastProblems string
+	var lastProblems, lastRefused string
 	var steps settled
 	var wasRunning bool
 	lastIDs := fmt.Sprint(map[string]string{}) // no "carrying traffic from map[]" before login
@@ -401,6 +415,13 @@ func watch(ctx context.Context, lc *local.Client, cfg Config) {
 				}
 			}
 			status.Devices, status.Problems = names, problems
+			status.Refused, status.RefusedMore = refusedDevices(refusedSrc, devices, peers)
+			if r := strings.Join(status.Refused, ", "); r != lastRefused {
+				lastRefused = r
+				if r != "" {
+					log.Printf("refused traffic from %s: not in --device, so nothing it sends through this computer is carried (to carry it, add it to --device)", r)
+				}
+			}
 			status.Own = ownList(p.own)
 			status.DeviceOS = map[string]string{}
 			for _, p := range peers {

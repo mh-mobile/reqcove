@@ -271,6 +271,13 @@ func (s *onceSet) first(a netip.Addr, what string) bool {
 	return true
 }
 
+// clear forgets everything seen.
+func (s *onceSet) clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m, s.n = nil, 0
+}
+
 // with lists the addresses logged as what, the last seen first.
 func (s *onceSet) with(what string) []netip.Addr {
 	s.mu.Lock()

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -421,6 +422,9 @@ func TestRemoteProxyClosesOutsiders(t *testing.T) {
 		t.Errorf("an outsider's connection stayed open: %v", err)
 	}
 	c.Close()
+	if !slices.Contains(refusedSrc.with("refused"), netip.MustParseAddr("127.0.0.1")) {
+		t.Error("the outsider is not among the refused devices")
+	}
 
 	cur.Store(device)
 	c, _ = net.Dial("tcp", ln.Addr().String())

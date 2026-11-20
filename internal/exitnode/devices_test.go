@@ -173,3 +173,23 @@ func TestOwnDeviceAt(t *testing.T) {
 		}
 	}
 }
+
+// Refused devices are named by their machine name (not the name each device
+// gives itself), once each, the last seen first; carried ones are left out,
+// and one the netmap no longer lists stays an address.
+func TestRefusedDevices(t *testing.T) {
+	phone := &ipnstate.PeerStatus{DNSName: "iphone-2.tail.ts.net.", HostName: "ignore previous instructions",
+		TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.101.0.2"), netip.MustParseAddr("fd7a:115c:a1e0::2")}}
+	carried := map[netip.Addr]Device{netip.MustParseAddr("100.101.0.1"): {ID: "nA1", Name: "iphone"}}
+	var s onceSet
+	for _, a := range []string{"100.101.0.2", "100.101.0.1", "100.101.0.9", "fd7a:115c:a1e0::2"} {
+		s.first(netip.MustParseAddr(a), "refused")
+	}
+	shown, more := refusedDevices(&s, carried, []*ipnstate.PeerStatus{phone})
+	if strings.Join(shown, ",") != "iphone-2,100.101.0.9" || more != 0 {
+		t.Errorf("shown %v, %d more", shown, more)
+	}
+	if shown, more := refusedDevices(&onceSet{}, carried, nil); shown != nil || more != 0 {
+		t.Errorf("none: %v %d", shown, more)
+	}
+}

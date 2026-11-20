@@ -176,7 +176,7 @@ func liveStatus(n exitnode.Status, cap *capture.Capture) mcpserver.StatusOut {
 // pageSteps are the next steps the --ui page shows the device id: built from it
 // alone, so no other device's name or problem gets into them.
 func pageSteps(n exitnode.Status, stats map[string]any, allow capture.HostRules, ca capture.CA, devices []capture.DeviceInfo, id string) []string {
-	n.Problems = nil
+	n.Problems, n.Refused, n.RefusedMore = nil, nil, 0
 	var mine []capture.DeviceInfo
 	for _, d := range devices {
 		if d.ID == id {
@@ -248,6 +248,13 @@ func nextSteps(node exitnode.Status, stats map[string]any, allow capture.HostRul
 	if node.Backend == "Running" {
 		for _, p := range node.Problems {
 			steps = append(steps, "device "+p+" (see `tailscale status` for names)")
+		}
+		if len(node.Refused) > 0 {
+			who := strings.Join(node.Refused, ", ")
+			if node.RefusedMore > 0 {
+				who += fmt.Sprintf(" and %d more", node.RefusedMore)
+			}
+			steps = append(steps, "refused traffic from "+who+": not in --device, so it reaches nothing through this computer (names still resolve). To carry a device, add it to --device and restart `reqcove run`")
 		}
 	}
 	if st, _ := stats["state"].(string); st != "ready" {

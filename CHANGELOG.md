@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The devices the exit node refused.** A device on the tailnet that picks
+  this exit node but is not in `--device` gets nothing carried, yet its names
+  still resolve, so it looked online and reached nothing; only `--verbose`
+  logged it. `reqcove status` and the `status` tool now name the devices
+  refused this run, through the exit node or the Remote Proxy, by machine name
+  (`refused_devices`, the last seen first, at most 50, then
+  `refused_devices_more`; an address when the tailnet no longer lists it), with
+  a next step: add it to `--device` and restart `run`. `run` logs each new set
+  once. Refusing them is unchanged. `--ui`'s page for another user's device
+  does not show them. Tried: unit tests, and two tsnet nodes on a local control
+  server (a device not in `--device` going out through the exit node). Not
+  tried on an iPhone.
+
 ## v1.3.1 — 2026-11-17
 
 ### Fixed

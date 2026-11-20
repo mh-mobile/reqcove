@@ -114,10 +114,20 @@ func carried(p *policy, src, dst netip.AddrPort) bool {
 	if p == nil {
 		return false // not configured yet
 	}
-	s, d := src.Addr().Unmap(), dst.Addr().Unmap()
+	return slices.Contains(p.allowSrc, src.Addr().Unmap()) && outward(p, dst.Addr().Unmap())
+}
+
+// refusedDevice reports whether a flow is refused only because its device is
+// not one carried (not in --device): one that picked this exit node to reach
+// the internet. Flows to this node, the LAN or the tailnet are not counted.
+func refusedDevice(p *policy, src, dst netip.AddrPort) bool {
+	return p != nil && !p.lan && !slices.Contains(p.allowSrc, src.Addr().Unmap()) && outward(p, dst.Addr().Unmap())
+}
+
+// outward reports whether d is an address carried devices may reach: a public
+// IPv4 address, not this computer's own nor its LAN's.
+func outward(p *policy, d netip.Addr) bool {
 	switch {
-	case !slices.Contains(p.allowSrc, s):
-		return false
 	case !d.Is4():
 		return false // IPv6: the Linux setup rejected it too; this Mac has no IPv6 uplink
 	case slices.Contains(p.self, d), slices.Contains(p.local, d):

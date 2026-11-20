@@ -3263,6 +3263,7 @@ Start with `reqcove status`: it says what reqcove is doing, and the next steps
 | Over `--mcp-http`: a device is refused, calls get `429`, or Grok Bot's settings show the connector with an error | [Agents on other devices](#agents-on-other-devices---mcp-http) |
 | LAN mode: the iPhone's first connection is refused, something blocks it, or a development server on another port is refused | [LAN mode](#without-tailscale-lan-mode---lan) |
 | An iPhone on the exit node has no internet while the Mac sleeps | [Run it in the background](#run-it-in-the-background) |
+| A device on the exit node reaches nothing, and `reqcove status` says its traffic was refused | `--device` in [Options](#options) |
 | A service ended and did not start again, or a `run` in your terminal finds the state in use | [Start, update, stop](#start-update-stop) |
 | The log says `did not answer within 10s (through mitmproxy)` or `the client left before … answered (through mitmproxy)` | [Limits](#limits) |
 | reqcove restarts mitmproxy again and again, or `run` stops on mitmproxy | [Limits](#limits) (a huge WebSocket message; when mitmproxy exits or does not start), [Rules](#rules---rules) (a very large body to a host a `map_local` rule matches; rules that no longer load) |
@@ -3277,7 +3278,7 @@ said there.
 
 | | |
 |---|---|
-| `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more |
+| `--device NAME` | a device to carry: machine name, device name (your own untagged devices only), tailnet IP or StableID; repeat for more. Other devices' traffic through the exit node or the Remote Proxy is refused (names still resolve); `reqcove status` and the `status` tool name the devices refused this run, by machine name (`refused_devices`: the last seen first, at most 50, then `refused_devices_more`; never on `--ui`'s page for another user's device). Tried: unit tests, and two tsnet nodes on a local control server (a device not in `--device` going out through the exit node) |
 | `--allow-hosts HOSTS` | hosts to decrypt and record: `api.example.com`, `*.example.com` (the domain itself and every subdomain), `'*'` for all, or `@FILE`, one a line (`#` for comments; a file without hosts gives none, since v1.3). Without it, traffic is carried but nothing is recorded |
 | `--pass-hosts HOSTS` | allowed hosts carried undecrypted, written the same way (not `'*'`): [pinning](#apps-that-pin-certificates---pass-hosts) |
 | `--rules FILE` | [rules](#rules---rules) for allowed hosts |
