@@ -193,3 +193,14 @@ func TestRefusedDevices(t *testing.T) {
 		t.Errorf("none: %v %d", shown, more)
 	}
 }
+
+// At most maxRefusedShown names, then how many more.
+func TestRefusedDevicesBounded(t *testing.T) {
+	var s onceSet
+	for i := range maxRefusedShown + 7 {
+		s.first(netip.AddrFrom4([4]byte{100, 101, 1, byte(i)}), "refused")
+	}
+	if shown, more := refusedDevices(&s, nil, nil); len(shown) != maxRefusedShown || more != 7 {
+		t.Errorf("%d shown, %d more", len(shown), more)
+	}
+}

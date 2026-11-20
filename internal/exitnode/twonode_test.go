@@ -416,7 +416,7 @@ func TestTwoNodes(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for s := lastStatus.Load(); s == nil || !slices.Contains(s.Refused, "outsider"); s = lastStatus.Load() {
 		if time.Now().After(deadline) {
-			t.Fatalf("the status's refused devices: %v, want outsider", s.Refused)
+			t.Fatalf("the status's refused devices (%+v): want outsider", s)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

@@ -1456,7 +1456,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 | | |
 |---|---|
-| `--device NAME` | 中継するデバイス。マシン名、デバイス名（タグのない自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数は繰り返して指定。ほかのデバイスの通信は、Exit Node でも Remote Proxy でも拒否します（名前の解決はできます）。この実行で拒否したデバイスは、`reqcove status` と `status` ツールがマシン名で示します（`refused_devices`。最後に見たものから最大 50 件で、残りの件数は `refused_devices_more`。ほかのユーザーのデバイスが開く `--ui` のページには出しません）。確認状況：単体テストと、ローカルの制御サーバーにつないだ 2 つの tsnet のノード（`--device` にないデバイスが Exit Node を通して外に出るもの）で確かめました |
+| `--device NAME` | 中継するデバイス。マシン名、デバイス名（タグのない自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数は繰り返して指定。ほかのデバイスの通信は、Exit Node でも Remote Proxy でも拒否します（Exit Node を通した名前の解決はできます。Tailscale のコードから判断したものです。[SECURITY](SECURITY.ja.md)）。この実行で拒否したデバイスは、`reqcove status` と `status` ツールがマシン名で示します（`refused_devices`。最後に見たものから最大 50 件で、残りの件数は `refused_devices_more`。ほかのユーザーのデバイスが開く `--ui` のページには出しません）。数えるのは拒否した TCP の接続だけなので、UDP（QUIC）や ping しか送らないデバイスは示しません。確認状況：単体テストと、ローカルの制御サーバーにつないだ 2 つの tsnet のノード（`--device` にないデバイスが Exit Node を通して外に出るもの）で確かめました |
 | `--allow-hosts HOSTS` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身とすべてのサブドメイン）、すべてを対象にする `'*'`、または `@FILE`（1 行に 1 つ。`#` 以降はコメント。v1.3 から、ホストのないファイルはホストを足さない）。指定しない場合、通信は中継するが記録しない |
 | `--pass-hosts HOSTS` | 許可したホストのうち、復号せずに通すもの。書き方は同じ（`'*'` は不可）。[証明書ピンニング](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | `--rules FILE` | 許可したホストに適用する[ルール](#ルールを書く--rules) |
