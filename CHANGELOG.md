@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The devices the exit node refused.** A device on the tailnet that picks
+  this exit node but is not in `--device` gets nothing carried, yet its names
+  still resolve (from reading Tailscale's code), so it looked online and
+  reached nothing; only `--verbose` logged it. `reqcove status` and the `status` tool now name the devices
+  refused this run, through the exit node or the Remote Proxy, by machine name
+  (`refused_devices`, the last seen first, at most 50, then
+  `refused_devices_more`; an address when the tailnet no longer lists it), with
+  a next step: add it to `--device` and restart `run`. `run` logs each new set
+  once. Counted from refused TCP connections alone: a device that sends only
+  UDP (QUIC) or pings is not named. Refusing them is unchanged. `--ui`'s page
+  for another user's device does not show them. Any device's owner chooses
+  its machine name, so it reaches what agents read
+  ([SECURITY](docs/SECURITY.md)). Tried: unit tests, and two tsnet nodes on a local control
+  server (a device not in `--device` going out through the exit node). Not
+  tried on an iPhone.
+
 ## v1.3.1 — 2026-11-17
 
 ### Fixed

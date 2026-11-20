@@ -65,6 +65,15 @@ than a public issue.
 - Besides the traffic, the `status` and `list_devices` tools carry the node's
   MagicDNS name (which includes the tailnet's name), its tailnet addresses and
   the devices' machine names; not your login (from reading the code).
+- `status` also names the devices whose traffic was refused this run
+  (`refused_devices`, and its next step): any device on the tailnet that
+  picked this exit node or connected to the Remote Proxy without being in
+  `--device`, whoever's it is (another user's, a tagged one, a node shared in).
+  Its machine name, never the name each device gives itself: lowercase
+  letters, digits and hyphens, chosen by that device's owner, so a device you
+  do not control can put a short word of its choosing into what agents read
+  (tested: the machine name, not the device's own name). `--ui`'s page for
+  another user's device does not show them (tested).
 - It stays there. The provider keeps what it received for as long as its
   terms say.
 - It stays with the agent too, which keeps its conversations on the computer

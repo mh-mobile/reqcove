@@ -1,6 +1,7 @@
 package exitnode
 
 import (
+	"cmp"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -103,4 +104,33 @@ func ownList(own map[netip.Addr]Device) map[string]string {
 		out[d.ID] = d.Name
 	}
 	return out
+}
+
+// refusedDevices are the devices refused this run (seen as "refused") and not
+// carried now, by machine name, the last seen first: at most maxRefusedShown,
+// and how many more. An address the netmap no longer lists stays an address.
+func refusedDevices(seen *onceSet, carried map[netip.Addr]Device, peers []*ipnstate.PeerStatus) (shown []string, more int) {
+	byIP := map[netip.Addr]string{}
+	for _, p := range peers {
+		for _, ip := range p.TailscaleIPs {
+			byIP[ip.Unmap()] = machineName(p)
+		}
+	}
+	done := map[string]bool{}
+	for _, a := range seen.with("refused") {
+		if _, ok := carried[a]; ok {
+			continue
+		}
+		name := cmp.Or(byIP[a], a.String())
+		if done[name] {
+			continue
+		}
+		done[name] = true
+		if len(shown) == maxRefusedShown {
+			more++
+			continue
+		}
+		shown = append(shown, name)
+	}
+	return shown, more
 }

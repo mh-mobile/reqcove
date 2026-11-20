@@ -59,6 +59,33 @@ func TestDecideTCP(t *testing.T) {
 	}
 }
 
+// Only a device not in --device going out to the internet counts as refused:
+// not a carried one, nor one reaching this node, its LAN or the tailnet.
+func TestRefusedDevice(t *testing.T) {
+	iphone := netip.MustParseAddr("100.101.0.1")
+	other := netip.MustParseAddr("100.101.0.2")
+	p := &policy{allowSrc: []netip.Addr{iphone}, self: []netip.Addr{netip.MustParseAddr("100.101.0.3")}, local: []netip.Addr{netip.MustParseAddr("192.168.1.10")}}
+	for _, tt := range []struct {
+		p    *policy
+		src  netip.Addr
+		dst  string
+		want bool
+	}{
+		{p, other, "1.1.1.1:443", true},
+		{p, iphone, "1.1.1.1:443", false},    // carried
+		{p, other, "100.101.0.3:22", false},  // this node
+		{p, other, "100.101.0.4:22", false},  // another tailnet node
+		{p, other, "192.168.1.10:22", false}, // this Mac on the LAN
+		{p, other, "[2606:4700::1111]:443", false},
+		{nil, other, "1.1.1.1:443", false}, // before startup
+		{&policy{lan: true}, other, "1.1.1.1:443", false},
+	} {
+		if got := refusedDevice(tt.p, netip.AddrPortFrom(tt.src, 50000), netip.MustParseAddrPort(tt.dst)); got != tt.want {
+			t.Errorf("refusedDevice(%v, %v) = %v, want %v", tt.src, tt.dst, got, tt.want)
+		}
+	}
+}
+
 func TestDecideUDP(t *testing.T) {
 	iphone := netip.MustParseAddr("100.101.0.1")
 	other := netip.MustParseAddr("100.101.0.2")

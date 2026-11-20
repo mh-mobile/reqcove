@@ -1442,6 +1442,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 | `--mcp-http` で、デバイスが拒否される、`429` が返る、Grok Bot の設定画面でコネクタが「エラー」と表示される | [ほかのデバイスのエージェントから使う](#ほかのデバイスのエージェントから使う--mcp-http) |
 | LAN モードで、iPhone の最初の接続が拒否される、何かに妨げられてつながらない、別のポートの開発サーバーが拒否される | [LAN モード](#tailscale-を使わずに同じネットワークでつなぐ--lan) |
 | Mac がスリープしている間、Exit Node を使っている iPhone がインターネットにつながらない | [バックグラウンドで動かす](#バックグラウンドで動かす) |
+| Exit Node を使っているデバイスがどこにもつながらず、`reqcove status` がその通信を拒否したと言う | [オプション](#オプション)の `--device` |
 | サービスが終わったまま起動し直されない、ターミナルから起動した `run` が「使用中」と断られる | [起動・アップデート・停止](#起動アップデート停止) |
 | ログに `did not answer within 10s (through mitmproxy)` や `the client left before … answered (through mitmproxy)` と出る | [制限事項](#制限事項) |
 | reqcove が mitmproxy を何度も再起動する、mitmproxy のせいで `run` が止まる | [制限事項](#制限事項)（巨大な WebSocket のメッセージ、mitmproxy が終了したとき・起動しないとき）、[ルール](#ルールを書く--rules)（`map_local` のルールに合うホストへのとても大きなボディ、読み込めなくなったルール） |
@@ -1455,7 +1456,7 @@ reqcove service uninstall     # 止めて、ファイルを消す
 
 | | |
 |---|---|
-| `--device NAME` | 中継するデバイス。マシン名、デバイス名（タグのない自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数は繰り返して指定 |
+| `--device NAME` | 中継するデバイス。マシン名、デバイス名（タグのない自分のデバイスに限る）、tailnet の IP アドレス、StableID のいずれか。複数は繰り返して指定。ほかのデバイスの通信は、Exit Node でも Remote Proxy でも拒否します（Exit Node を通した名前の解決はできます。Tailscale のコードから判断したものです。[SECURITY](SECURITY.ja.md)）。この実行で拒否したデバイスは、`reqcove status` と `status` ツールがマシン名で示します（`refused_devices`。最後に見たものから最大 50 件で、残りの件数は `refused_devices_more`。ほかのユーザーのデバイスが開く `--ui` のページには出しません）。数えるのは拒否した TCP の接続だけなので、UDP（QUIC）や ping しか送らないデバイスは示しません。確認状況：単体テストと、ローカルの制御サーバーにつないだ 2 つの tsnet のノード（`--device` にないデバイスが Exit Node を通して外に出るもの）で確かめました |
 | `--allow-hosts HOSTS` | 復号して記録するホスト。`api.example.com`、`*.example.com`（そのドメイン自身とすべてのサブドメイン）、すべてを対象にする `'*'`、または `@FILE`（1 行に 1 つ。`#` 以降はコメント。v1.3 から、ホストのないファイルはホストを足さない）。指定しない場合、通信は中継するが記録しない |
 | `--pass-hosts HOSTS` | 許可したホストのうち、復号せずに通すもの。書き方は同じ（`'*'` は不可）。[証明書ピンニング](#証明書ピンニングをするアプリを通す--pass-hosts) |
 | `--rules FILE` | 許可したホストに適用する[ルール](#ルールを書く--rules) |

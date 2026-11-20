@@ -175,8 +175,12 @@ func (l onlyDevices) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		if ra := c.RemoteAddr(); ra != nil {
-			if _, ok := deviceAt(l.policy(), ra.String()); ok {
+			p := l.policy()
+			if _, ok := deviceAt(p, ra.String()); ok {
 				return c, nil
+			}
+			if ap, err := netip.ParseAddrPort(ra.String()); err == nil && p != nil {
+				refusedSrc.first(ap.Addr().Unmap(), "refused")
 			}
 		}
 		c.Close()

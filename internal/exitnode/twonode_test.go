@@ -16,8 +16,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,6 +75,7 @@ func TestTwoNodes(t *testing.T) {
 	phone := startPeer(t, ctx, url, "phone")
 	outsider := startPeer(t, ctx, url, "outsider")
 	matched := make(chan map[string]string, 4)
+	var lastStatus atomic.Pointer[Status]
 	runErr := make(chan error, 1)
 	localProxy, err := net.Listen("tcp", "127.0.0.1:0") // as run listens before Run, for --local-proxy
 	if err != nil {
@@ -89,6 +92,7 @@ func TestTwoNodes(t *testing.T) {
 			MCP:        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "mcp") }),
 			LocalProxy: localProxy, StatusCmd: "reqcove status --state /s",
 			OnDevices: func(m map[string]string) { matched <- m },
+			OnStatus:  func(s Status) { lastStatus.Store(&s) },
 		})
 	}()
 	var names map[string]string
@@ -302,13 +306,19 @@ func TestTwoNodes(t *testing.T) {
 		}
 	}
 
-	// A peer that is not one of --device: nothing, either way.
+	// A peer that is not one of --device: nothing, either way, and the exit
+	// node's refusal counts it among the refused devices (seen again: later).
+	o4, _ := outsider.TailscaleIPs()
+	seenBefore := refusedSrc.lastSeen(o4.String() + " refused")
 	if c, err := dialExit(t, ctx, outsider, "203.0.113.5:443", false); err == nil {
 		if got := echo(c); got == "ping" {
 			t.Error("the outsider was carried through the exit node")
 		}
 	} else if errors.Is(err, errSystemDial) {
 		t.Errorf("the outsider never got the exit route: %v", err)
+	}
+	if refusedSrc.lastSeen(o4.String()+" refused") <= seenBefore {
+		t.Error("the exit node's refusal of the outsider was not counted")
 	}
 	if pc, err := outsider.Dial(ctx, "tcp", fmt.Sprintf("%v:8080", rcIP)); err == nil {
 		if code, _ := connect(pc, "203.0.113.6:443"); code != 0 {
@@ -395,12 +405,26 @@ func TestTwoNodes(t *testing.T) {
 		t.Error("a flow reached this Mac's own service")
 	default:
 	}
-	o4, _ := outsider.TailscaleIPs()
 	if l := logBuf.String(); !strings.Contains(l, "-> [2001:db8::1]:443 reject") {
 		t.Error("the IPv6 refusal was not reqcove's")
 	}
 	if l := logBuf.String(); !strings.Contains(l, fmt.Sprintf("tcp %v:", o4)) || !strings.Contains(l, "-> 203.0.113.5:443 reject") {
 		t.Errorf("no reject logged for the outsider (%v)", o4)
+	}
+	// The status names the outsider among the refused devices (watch reads it
+	// every 3 s), and run's log says so once; the phone is carried, never there.
+	deadline := time.Now().Add(10 * time.Second)
+	for s := lastStatus.Load(); s == nil || !slices.Contains(s.Refused, "outsider"); s = lastStatus.Load() {
+		if time.Now().After(deadline) {
+			t.Fatalf("the status's refused devices (%+v): want outsider", s)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if s := lastStatus.Load(); slices.Contains(s.Refused, "phone") || len(s.Refused) != 1 {
+		t.Errorf("refused devices %v, want outsider alone", s.Refused)
+	}
+	if l := logBuf.String(); strings.Count(l, "refused traffic from outsider: not in --device") != 1 {
+		t.Errorf("the refusal is not logged once:\n%s", l)
 	}
 }
 
@@ -542,3 +566,10 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// lastSeen is when key ("ADDR what") was last seen, 0 if never.
+func (s *onceSet) lastSeen(key string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m[key]
+}
